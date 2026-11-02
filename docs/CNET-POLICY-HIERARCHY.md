@@ -6,8 +6,9 @@ exact-head LLVM CI passed. TCP pool READY/reuse merged in PR #161 after CI #160.
 Bounded send-credit recovery and TLS pool READY/reuse merged in PRs #162/#163
 after CI #163/#164. The external close/completion regression fix merged in
 PR #164 after CI #167. Local IPC admission/transfer merged in PR #165 after
-CI #169. Pipe policy admission and POSIX FIFO transfer changes are pending
-their own exact-head CI. The rest of M2 and M3 remain open in
+CI #169. Pipe policy admission and POSIX FIFO transfer merged in PR #166 after
+CI #171. Fixed 1/2/4-Owner SG cohosting/isolation tests are pending their own
+exact-head CI. The rest of M2 and M3 remain open in
 [SaltsCore #156](https://github.com/qigao/salts-core/issues/156).
 Baseline: SaltsCore master bc070affca0afbc5cad6e060b9c60a7a22abad10,
 reconciled with the native-testing merge. This RFC supersedes the earlier
@@ -443,6 +444,7 @@ write amplification, retained bytes and fair shutdown evidence.
 | Verified TLS protocol READY, exact security-key reuse and lease/Manager drain | #163 `aeb12701a76c519e3185b4375541126cb7de3d37` | [CI #164](https://github.com/qigao/salts-core/actions/runs/41399822641), ten LLVM jobs passed |
 | External close with observed send/pending receive terminals, retained obligations and stale replay | #164 `e1999a6ff3d5ee05f92a666cd1aa399306f3f4f6` | [CI #167](https://github.com/qigao/salts-core/actions/runs/41402483632), ten LLVM jobs passed |
 | Detached local IPC ownership, capacity rejection, retained request/final reply and accept drain | #165 `2f80ccf2cb29f61d768218b7a194175ebcf1de71` | [CI #169](https://github.com/qigao/salts-core/actions/runs/41404951972), ten LLVM jobs passed |
+| Pipe TCP-policy rejection and native FIFO/named-pipe retained transfer | #166 `1d26cd1439c77061abfca3242455089bae437539` | [CI #171](https://github.com/qigao/salts-core/actions/runs/41408786504), ten LLVM jobs passed |
 
 PR #161 extends the existing `saltscore.cnet_tcp_loopback`
 TinyTest/CTest against production `Salts::CNet`: one Manager/Pool connection
@@ -485,15 +487,32 @@ and its supported buffer-send API is tested separately. Both clients and
 pending listener accepts drain before destruction and caller-owned path cleanup.
 These checks passed the exact-head matrix above and do not cover POSIX FIFO pipes.
 
-The next regression applies the same TCP-only policy rejection to `pipe://`
+PR #166 applies the same TCP-only policy rejection to `pipe://`
 as to `ipc://`: enabled NODELAY, keepalive, linger and socket buffer overrides
 must fail admission without a partial handle rather than be silently ignored.
 The Windows test dials the real named-pipe endpoint with the Pipe URI; the
 POSIX test owns two actual `.rx`/`.tx` FIFOs and checks a noncontiguous retained
 vector, native peer reply, retained final send, EOF and caller-owned path cleanup.
-Live TCP properties and half-shutdown remain unsupported. These new Pipe checks
-and the admission fix are pending exact-head CI; POSIX FIFO runtime evidence
-cannot be inferred from the local Windows test.
+Live TCP properties and half-shutdown remain unsupported. The exact-head matrix
+above includes POSIX FIFO and Windows named-pipe runtime evidence; Android jobs
+remain build-only.
+
+The next M3 source slice uses the existing NativeIO SG runtime with 1, 2 and 4
+fixed Owners. Each Owner registers one host lease and hosts two independent
+external CNet clients on its backend: a 32-KiB bulk send and a small control
+exchange. Short routed tasks advance clients, observe once through the host
+lease, and route the whole native batch. Wrong/stale lease and unleased observe
+are refused. Thread affinity stays fixed across startup/progress/teardown.
+
+After native peers verify all initial bytes, the bulk client is closed and
+destroyed. The control client retains its pending native receive, receives a
+real peer reply, then admits a final send. SG shutdown and host release remain
+busy until all borrowed clients are gone. Each backend reaches zero requests
+and endpoints before host release and SG shutdown. Main accesses Owner state
+only between submit/wait boundaries; borrowed callback storage outlives runtime
+destruction. These tests are pending exact-head CI. They prove composition and
+teardown isolation, not latency fairness, saturation behavior, or mixed SG-owned
+completion routing.
 
 **Nonclaim:** each successful matrix qualifies only its tested slice. Android
 x64/ARM64 jobs build the SDK without device runtime tests. Forced partial writes,
