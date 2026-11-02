@@ -1,6 +1,10 @@
 # CNet-native policy hierarchy: owner, connection lifetime and transfer workload
 
-**Status:** M0 RFC + M1 native admission TinyTest changes in Draft PR #157; new test coverage is not qualified until exact-HEAD CI passes. Tracked in [SaltsCore #156](https://github.com/qigao/salts-core/issues/156).
+**Status:** M0/M1 and the M2 packet subset merged in PR #157; persistent TCP
+and TLS retained-transfer slices merged in PRs #159 and #160 after their
+exact-head LLVM CI passed. Pool READY/reuse tests are source changes pending
+their own exact-head CI. The rest of M2 and M3 remain open in
+[SaltsCore #156](https://github.com/qigao/salts-core/issues/156).
 Baseline: SaltsCore master bc070affca0afbc5cad6e060b9c60a7a22abad10,
 reconciled with the native-testing merge. This RFC supersedes the earlier
 ACE/Configurator-oriented draft in PR #157. **No CMeta, ACE, reflection,
@@ -389,13 +393,13 @@ must preserve current cnet_connection ABI, terminal identity and ownership.
 ## Acceptance without new workflows or consumer/test projects
 
 **M0:** approved design/mapping, no new runtime capability or performance
-claim. **M1 in this Draft PR:** extend the existing `tests/test_cnet_policy.c`
+claim. **Implemented M1:** extend the existing `tests/test_cnet_policy.c`
 with real CNet URI/TLS and UDP/KCP/secure-KCP admission checks, bounded FEC/
 Owner/terminal version rejections, positive endpoint initialization and
 pre-READY secure KCP send denial. Link the existing `saltscore.cnet_policy`
 CTest target against production `Salts::CNet` instead of duplicating policy
-sources into the test executable. This is **source test coverage pending CI**,
-not evidence of new first-class host Channel Plan APIs.
+sources into the test executable. PR #157's exact-head CI #153 passed all ten
+LLVM matrix jobs; this does not introduce first-class host Channel Plan APIs.
 
 **M1:** within existing tests/test_cnet_policy.c TinyTest, verify invalid
 classification/version, raw transport/channel recipe mismatch (e.g. TLS/UDP,
@@ -423,8 +427,26 @@ consumer or probe CI. Compare same workload raw vs host-composed policy
 in separate opt-in performance experiments with CPU/op, p95/p99,
 write amplification, retained bytes and fair shutdown evidence.
 
-**Nonclaim:** the previously successful CNet/TinyTest CI proves only its
-established API/test coverage. New M1 cases must pass CI at their exact HEAD;
-passing negative admission and pre-READY tests does **not** prove end-to-end
-TLS/DTLS/SCTP, cross-profile runtime composition, fairness, adaptive batching
-or per-connection stream deadlines. Keep M2/M3 independent. Track exact HEAD.
+### Qualified slices and remaining evidence
+
+| Slice | Exact tested PR head | Qualification |
+| --- | --- | --- |
+| M1 admission and M2 UDP/KCP/secure-KCP loopback | #157 `a2cb4fe520845f73ba3abc8d08f90144c70dc2a8` | [CI #153](https://github.com/qigao/salts-core/actions/runs/41388112357), ten LLVM jobs passed |
+| Persistent TCP small/bulk retained vector, FIFO, final send/FIN | #159 `859cd6975a95679954309e88eacbc75ce321d8d6` | [CI #156](https://github.com/qigao/salts-core/actions/runs/41392374952), ten LLVM jobs passed |
+| Verified TLS small/bulk noncontiguous retained vector, FIFO, final send/close | #160 `9be95670a5588a8aed033a8597c342c2dd3db61a` | [CI #158](https://github.com/qigao/salts-core/actions/runs/41394653685), ten LLVM jobs passed |
+
+The next source slice extends the existing `saltscore.cnet_tcp_loopback`
+TinyTest/CTest against production `Salts::CNet`: one Manager/Pool connection
+is unleaseable before a real peer's protocol READY greeting, then carries two
+leased request/reply exchanges on the same TCP generation. Every pool-key
+identity participates in reuse rejection. A local send terminal does not
+release the request lease; transport terminal does not release an outstanding
+lease or the Manager context hold. Pool/lease generations reject stale handles.
+These new checks remain pending exact-head cross-platform CI. The host chooses
+when to call `bind_ready`; the Pool does not parse or infer application READY.
+
+**Nonclaim:** each successful matrix qualifies only its tested slice. Android
+x64/ARM64 jobs build the SDK without device runtime tests. Pool reuse over TLS,
+forced partial writes, backpressure exhaustion, cancellation overlap, IPC/Pipe,
+fixed SG multi-Owner fairness, DTLS/SCTP, adaptive batching and per-connection
+stream deadlines retain separate gates. Keep M2/M3 independent. Track exact HEAD.
