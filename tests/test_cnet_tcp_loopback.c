@@ -278,7 +278,6 @@ static int saltscore_native_entry_test_cnet_tcp_stream_bulk(void) {
       backend_kind(), "127.0.0.1", 0u, 2u};
   tcp_probe probe = {0};
   cnet_observer observer = {on_state, on_borrowed, &probe, on_sent};
-  cnet_stream_socket_options options = CNET_STREAM_SOCKET_OPTIONS_INIT;
   cnet_connection connection = {0};
   test_socket peer = TEST_INVALID_SOCKET;
   struct sockaddr_in remote;
@@ -297,14 +296,15 @@ static int saltscore_native_entry_test_cnet_tcp_stream_bulk(void) {
   config.request_capacity = 8u;
   config.completion_batch_capacity = 8u;
   config.event_capacity = 16u;
-  options.nodelay = 1; /* Stable TCP-only connection setting, never per-write. */
 
   VERIFY(cnet_listener_init(&listener, &listener_config) == SALTS_OK);
   listener_live = 1;
   VERIFY(cnet_listener_port(&listener, &port) == SALTS_OK && port != 0u);
   VERIFY(cnet_client_init(&client, &config) == SALTS_OK);
   client_live = 1;
-  VERIFY(cnet_client_set_stream_socket_options(&client, &options) == SALTS_OK);
+  /* Direct accept preserves listener policy; client future-connection options
+   * apply to dialed sockets and explicit detached-stream adoption instead. */
+  VERIFY(cnet_listener_tcp_option_set(&listener, CNET_TCP_SOCKET_NODELAY, 1u) == SALTS_OK);
   peer = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
   VERIFY(peer != TEST_INVALID_SOCKET);
   VERIFY(test_recv_timeout(peer) == 0);
