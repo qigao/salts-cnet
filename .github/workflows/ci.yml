@@ -195,7 +195,8 @@ jobs:
         if: matrix.preset != 'ci-android'
         # This fixture-only version provides native wheels for all six host
         # OS/architecture pairs, including Windows ARM64 and Intel macOS.
-        run: python -m pip install --only-binary=:all: cryptography==46.0.3
+        run: |
+          python -m pip install --only-binary=:all: cryptography==46.0.3
 
       - name: Install macOS native autotools
         if: runner.os == 'macOS'
