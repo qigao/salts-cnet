@@ -2,19 +2,11 @@
 include(CMakeFindDependencyMacro)
 find_dependency(Threads)
 
-# Native first-party modules retain their own export sets in this SDK. Import
-# those exact sibling packages, never an unrelated installed Crypto repository.
-# Set normal variables before lookup so a cached path for another SDK cannot
-# outrank this exact installation. Keep ASN1_DIR available to Crypto's nested
-# find_dependency, including under an Android/iOS toolchain's find-root rules.
-get_filename_component(ASN1_DIR
-  "${CMAKE_CURRENT_LIST_DIR}/../ASN1" REALPATH)
-find_dependency(ASN1 0.1 CONFIG REQUIRED
-  PATHS "${ASN1_DIR}" NO_DEFAULT_PATH NO_CMAKE_FIND_ROOT_PATH)
-get_filename_component(Crypto_DIR
-  "${CMAKE_CURRENT_LIST_DIR}/../Crypto" REALPATH)
-find_dependency(Crypto 0.1 CONFIG REQUIRED
-  PATHS "${Crypto_DIR}" NO_DEFAULT_PATH NO_CMAKE_FIND_ROOT_PATH)
+# ASN1 retains its own export set, resolved through the caller's SDK prefix.
+# Crypto is a separate static API package: direct Crypto users load it explicitly.
+# Shared CNet already owns its private Crypto/GmSSL implementation. Importing
+# the shared runtime must not require its private build-time provider package.
+find_dependency(ASN1 0.1 CONFIG REQUIRED)
 
 # Reject a pre-existing legacy Salts runtime owner instead of silently accepting
 # colliding Salts:: targets from a different binary or SDK.
@@ -24,12 +16,12 @@ if(TARGET Salts::Core AND NOT _salts_core_owner STREQUAL "${CMAKE_CURRENT_LIST_D
 endif()
 include("${CMAKE_CURRENT_LIST_DIR}/SaltsCoreTargets.cmake")
 set_property(GLOBAL PROPERTY SALTS_CORE_PACKAGE_OWNER "${CMAKE_CURRENT_LIST_DIR}")
-foreach(_salts_core_required IN ITEMS Core Platform Concurrency FS Coroutine NativeIO ASN1 Crypto URI CNet)
+foreach(_salts_core_required IN ITEMS Core Platform Concurrency FS Coroutine NativeIO ASN1 URI CNet)
   if(NOT TARGET "Salts::${_salts_core_required}")
     message(FATAL_ERROR "SaltsCore SDK missing required Salts::${_salts_core_required} target")
   endif()
 endforeach()
-foreach(_salts_core_archive IN ITEMS ASN1 Crypto URI)
+foreach(_salts_core_archive IN ITEMS ASN1 URI)
   get_target_property(_salts_core_kind "Salts::${_salts_core_archive}" TYPE)
   if(NOT _salts_core_kind STREQUAL "STATIC_LIBRARY")
     message(FATAL_ERROR "SaltsCore requires its installed static ${_salts_core_archive} owner")
