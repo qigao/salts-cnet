@@ -78,6 +78,14 @@ cmake --build --preset ci-native
 ctest --preset ci-native --output-on-failure
 ```
 
+CI installs the complete autotools host prerequisites (autoconf,
+autoconf-archive, automake and libtool), including on Android's Linux hosts.
+The formal Python TLS tests use CPython 3.12 and cryptography 46.0.3 binary
+wheels, which cover Windows ARM64 and Intel macOS as well as the other native
+lanes. CMake receives that exact setup-python interpreter. Missing wheels
+fail installation immediately; fixture setup never starts an OpenSSL/Rust
+source build. This Python dependency is test-only and is not part of the SDK.
+
 All existing native CI lanes, including sanitizers, enable M5/M6 and the
 production Python TLS/mTLS/SAN tests. Android remains compile-only. The
 existing provider TinyTest suite also establishes real TLS1.2/1.3 CipherBIO
