@@ -162,21 +162,15 @@ if(TARGET saltscore_wsparser)
   add_test(NAME saltscore.wsparser COMMAND saltscore_wsparser_test)
 endif()
 
-# Compile the actual provider-free CNet policy sources in isolated unit tests.
-# These are test-only, never SDK exports.
-add_executable(saltscore_cnet_policy_test
-  test_cnet_policy.c
-  ../cnet/src/cnet_destination_policy.c
-  ../cnet/src/cnet_owner_strategy.c
-  ../cnet/src/cnet_recovery_policy.c)
+# Use the one production CNet DSO, not duplicate compiled policy sources.
+# Existing TinyTest/CTest target now tests real URI, TLS and UDP/KCP admission.
+# No consumer project, extra runtime/Owner, installer or new test workflow.
+add_executable(saltscore_cnet_policy_test test_cnet_policy.c)
 target_compile_features(saltscore_cnet_policy_test PRIVATE c_std_11)
 set_target_properties(saltscore_cnet_policy_test PROPERTIES
   C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
-target_include_directories(saltscore_cnet_policy_test PRIVATE
-  "${PROJECT_SOURCE_DIR}/cnet/include"
-  "${PROJECT_SOURCE_DIR}/platform/include"
-  "${PROJECT_SOURCE_DIR}/core/include")
-target_link_libraries(saltscore_cnet_policy_test PRIVATE Salts::Platform Salts::TinyTest)
+target_link_libraries(saltscore_cnet_policy_test PRIVATE
+  Salts::CNet Salts::TinyTest)
 if(MSVC)
   target_compile_options(saltscore_cnet_policy_test PRIVATE
     $<$<COMPILE_LANGUAGE:C>:-experimental:c11atomics>)
