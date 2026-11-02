@@ -2691,6 +2691,19 @@ static int cnet_owner_route_completion(cnet_owner_impl *impl,
     if (request->completed_size < request->requested_size) {
       if (request->operation.kind == NATIVE_IO_OPERATION_UDP_SEND_TO)
         return cnet_owner_fail_direct_request(impl, request, SALTS_EIO);
+      if (request->role == CNET_OWNER_REQUEST_SEND && session->close_requested) {
+        /* Close can lose cancellation to an already-observed prefix success.
+         * Its native borrow has ended, but the logical write is incomplete:
+         * settle the cancelled remainder without submitting more bytes or
+         * publishing a successful logical send. A fully completed write still
+         * follows the ordinary send-before-close path below. TLS ciphertext
+         * keeps its separate record/shutdown drain contract. */
+        terminal.kind = NATIVE_IO_COMPLETION_CANCELLED;
+        terminal.bytes = 0u;
+        terminal.status = SALTS_ECANCELED;
+        terminal.native_status = 0u;
+        return cnet_owner_finish_direct_completion(impl, request, &terminal);
+      }
       if (request->vector_write) {
         if (!cnet_write_handle_valid(request->write.handle) ||
             !request->write.vector_write || request->write.remaining == 0u)
