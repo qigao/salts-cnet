@@ -44,7 +44,7 @@ Application / CHttp / FlowMQ / Orbit
 
 NO CMeta/ACE call or reflection in per-packet dispatch.
 NO new threads, queue, retry engine, Actor or resource owner.
-~~~
+```
 
 CMeta's Interceptor header defines a native typed borrowed before/after/error
 chain, but **does not** itself supply a CNet policy runtime, guarantee a
@@ -94,7 +94,7 @@ different names is only valid if the application explicitly supplies a
 trusted, authorized candidate set. NEVER turn a failed `ipc://` or
 `pipe://` attempt into a fallback TCP connection or another path.
 
-**The existing `cnet_client_config` budgets/deadlines are **Owner/client
+The existing `cnet_client_config` budgets/deadlines are **Owner/client
 configuration**, not independently settable on every `cnet_connect()`.
 The dedicated `cnet_datagram_config` and `cnet_ipc_listener_config`
 own their own budgets. Pipe open on a native handle may complete/fail
@@ -175,7 +175,7 @@ int choose_new_tcp_admission(
         *out_remote = (cnet_destination_result){0, 0, SIZE_MAX};
     return rc;
 }
-~~~
+```
 
 **Host's next step, not performed by that function:**
 check that selected remote is still authorized, reserve final-Owner
@@ -235,7 +235,7 @@ static int bind_policy_from_published_host(
         != SALTS_SERVICE_HOST_OK) return -1;
     return result == SALTS_SERVICE_HOST_OK ? 0 : -1;
 }
-~~~
+```
 
 **Critical lifetime rule:** the above immediate Scope release is allowed
 ONLY if the actual host policy has been fully copied with no provider-owned
@@ -254,7 +254,7 @@ CMeta/ACE is an opt-in service-host composition dependency.
 find_package(SaltsCore CONFIG REQUIRED)
 find_package(CMeta CONFIG REQUIRED)  # No version in CMeta find_package.
 target_link_libraries(my_service PRIVATE Salts::CNet CMeta::ServiceHost)
-~~~
+```
 
 This is the application/host dependency graph. The Salts::CNet library
 must NOT link to CMeta::ServiceHost or CMeta::Configurator.
@@ -273,7 +273,7 @@ validate schema/version/transport + identity/security snapshot
  -> protocol READY authorizes pool bind / request admission
  -> real CNet terminal + CNet Manager recycle / Pool lease release
  -> ServiceHost Scope release / Plugin lease drain if any
-~~~
+```
 
 Each `reserve` succeeds exactly once or leaves no credit, and each
 successful reserve is eventually committed or released. A callback error,
