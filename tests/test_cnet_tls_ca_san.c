@@ -32,6 +32,16 @@
 #error CORE_TLS_TEST_EXTERNAL_CA is required
 #endif
 
+enum {
+  TLS_STREAM_SEGMENTS = CNET_RETAINED_VECTOR_MAX,
+  TLS_STREAM_SEGMENT_BYTES = 1024,
+  TLS_STREAM_BULK_BYTES = TLS_STREAM_SEGMENTS * TLS_STREAM_SEGMENT_BYTES,
+  TLS_STREAM_CONTROL_BYTES = 7,
+  TLS_STREAM_FINAL_BYTES = 5,
+  TLS_STREAM_TOTAL_BYTES = TLS_STREAM_CONTROL_BYTES + TLS_STREAM_BULK_BYTES +
+                           TLS_STREAM_FINAL_BYTES
+};
+
 typedef struct tls_probe {
   cnet_client *client;
   cnet_connection connection;
@@ -45,6 +55,12 @@ typedef struct tls_probe {
   unsigned sent_count;
   unsigned received_count;
   unsigned char received_byte;
+  bool stream_transfer;
+  const unsigned char *expected_stream;
+  size_t expected_stream_size;
+  size_t stream_received;
+  size_t send_sizes[3];
+  unsigned sends_at_terminal;
   /* Python ssl peer sends a complete two-byte TLS application record. */
   bool expect_python_ok_record;
   int tls_version_status;
@@ -76,6 +92,7 @@ static void state_callback(void *user, cnet_connection connection,
         p->client, connection, p->tls_cipher, sizeof(p->tls_cipher),
         &cipher_size);
   } else if (state == CNET_CONNECTION_FAILED || state == CNET_CONNECTION_CLOSED) {
+    p->sends_at_terminal = p->sent_count;
     ++p->terminal_count;
     if (state == CNET_CONNECTION_FAILED || error != NULL) {
       ++p->failed;
@@ -95,8 +112,22 @@ static void receive_callback(void *user, cnet_connection connection,
   tls_probe *p = (tls_probe *)user;
   (void)connection;
   if (view == NULL || view->kind != CNET_MESSAGE_BYTES ||
-      view->data == NULL || p->received_count != 0u) {
+      view->data == NULL || (!p->stream_transfer && p->received_count != 0u)) {
     ++p->failed;
+    return;
+  }
+  if (p->stream_transfer) {
+    /* TLS records and receive callbacks do not preserve logical write sizes. */
+    if (p->terminal_count != 0u || p->expected_stream == NULL ||
+        view->size == 0u || p->stream_received > p->expected_stream_size ||
+        view->size > p->expected_stream_size - p->stream_received ||
+        memcmp(view->data, p->expected_stream + p->stream_received,
+               view->size) != 0) {
+      ++p->failed;
+      return;
+    }
+    p->stream_received += view->size;
+    ++p->received_count;
     return;
   }
   if (p->expect_python_ok_record) {
@@ -116,7 +147,13 @@ static void receive_callback(void *user, cnet_connection connection,
 static void send_callback(void *user, cnet_connection connection, size_t size) {
   tls_probe *p = (tls_probe *)user;
   (void)connection;
-  if (size != 1u) ++p->failed;
+  if (p->stream_transfer) {
+    if (p->terminal_count != 0u ||
+        p->sent_count >= sizeof(p->send_sizes) / sizeof(p->send_sizes[0]))
+      ++p->failed;
+    else
+      p->send_sizes[p->sent_count] = size;
+  } else if (size != 1u) ++p->failed;
   ++p->sent_count;
 }
 
@@ -186,6 +223,7 @@ typedef struct tls_case_options {
   const char *server_key_file;
   const char *client_cert_file;
   const char *client_key_file;
+  bool stream_transfer;
 } tls_case_options;
 
 static int run_case(const tls_case_options *options) {
@@ -195,7 +233,7 @@ static int run_case(const tls_case_options *options) {
   cnet_client server = {0};
   cnet_listener listener = {0};
   cnet_tls_server tls_server = {0};
-  const cnet_client_config client_cfg = config();
+  cnet_client_config client_cfg = config();
   const cnet_client_config server_cfg = config();
   const cnet_listener_config listener_cfg = {
       client_cfg.backend, "127.0.0.1", 0u, 2u};
@@ -225,9 +263,26 @@ static int run_case(const tls_case_options *options) {
   uint64_t deadline;
   int result = 0;
   mem_buffer_t *outgoing = NULL;
+  mem_buffer_t *bulk = NULL;
+  mem_slice_t ranges[TLS_STREAM_SEGMENTS] = {{0}};
+  size_t range_count = 0u;
+  unsigned char expected_stream[TLS_STREAM_TOTAL_BYTES];
 
   client_probe.client = &client;
   server_probe.client = &server;
+  if (options->stream_transfer) {
+    client_cfg.max_send_bytes = TLS_STREAM_BULK_BYTES;
+    client_probe.stream_transfer = true;
+    server_probe.stream_transfer = true;
+    server_probe.expected_stream = expected_stream;
+    server_probe.expected_stream_size = sizeof(expected_stream);
+    memcpy(expected_stream, "CTRL-01", TLS_STREAM_CONTROL_BYTES);
+    for (size_t i = 0u; i < TLS_STREAM_BULK_BYTES; ++i)
+      expected_stream[TLS_STREAM_CONTROL_BYTES + i] =
+          (unsigned char)((i * 29u + 3u) & 0xffu);
+    memcpy(expected_stream + TLS_STREAM_CONTROL_BYTES + TLS_STREAM_BULK_BYTES,
+           "FIN!!", TLS_STREAM_FINAL_BYTES);
+  }
   REQUIRE(cnet_tls_server_init(&tls_server, &server_tls_cfg) == SALTS_OK);
   tls_live = true;
   REQUIRE(cnet_client_init(&client, &client_cfg) == SALTS_OK);
@@ -244,6 +299,18 @@ static int run_case(const tls_case_options *options) {
       .observer = {state_callback, receive_callback, &client_probe, send_callback},
       .tls = &client_tls_cfg};
   REQUIRE(cnet_connect(&client, &connect_options, &outbound) == SALTS_OK);
+  if (options->stream_transfer) {
+    outgoing = mem_get_buffer(mem_global(), TLS_STREAM_CONTROL_BYTES);
+    REQUIRE(outgoing != NULL);
+    memcpy(mem_buffer_data(outgoing), expected_stream, TLS_STREAM_CONTROL_BYTES);
+    mem_set_used(outgoing, TLS_STREAM_CONTROL_BYTES);
+    /* Admission before the verified Channel READY gate retains no payload. */
+    REQUIRE(cnet_send_buffer(&client, outbound, outgoing) == SALTS_EBUSY);
+    REQUIRE(mem_buffer_ref_count(outgoing) == 1u);
+    REQUIRE(client_probe.sent_count == 0u && server_probe.received_count == 0u);
+    mem_buffer_release(outgoing);
+    outgoing = NULL;
+  }
 
   deadline = cmeta_monotonic_ms() + 7000u;
   while (cmeta_monotonic_ms() < deadline) {
@@ -296,28 +363,104 @@ static int run_case(const tls_case_options *options) {
           &server, server_probe.connection, client_certificate_hash) == SALTS_OK);
       REQUIRE(strlen(client_certificate_hash) == 64u);
     }
-    REQUIRE(cnet_receive(&server, server_probe.connection, 1u) == SALTS_OK);
+    if (options->stream_transfer) {
+      /* Two Owners progress on this one issuing thread. Each accepted logical
+       * write retains immutable backing until its terminal. The receiver checks
+       * all plaintext independently of local send completion. One demand per
+       * possible byte bounds callbacks without assuming TLS record boundaries. */
+      REQUIRE(cnet_receive(&server, server_probe.connection,
+                           sizeof(expected_stream)) == SALTS_OK);
+      outgoing = mem_get_buffer(mem_global(), TLS_STREAM_BULK_BYTES + 1u);
+      REQUIRE(outgoing != NULL);
+      mem_set_used(outgoing, TLS_STREAM_BULK_BYTES + 1u);
+      REQUIRE(cnet_send_buffer(&client, outbound, outgoing) == SALTS_EMSGSIZE);
+      REQUIRE(mem_buffer_ref_count(outgoing) == 1u);
+      mem_buffer_release(outgoing);
+      outgoing = NULL;
 
-    outgoing = mem_get_buffer(mem_global(), 1u);
-    REQUIRE(outgoing != NULL);
-    *mem_buffer_data(outgoing) = 0x46;
-    mem_set_used(outgoing, 1u);
-    REQUIRE(cnet_send_buffer(&client, outbound, outgoing) == SALTS_OK);
-    mem_buffer_release(outgoing);
-    outgoing = NULL;
-    deadline = cmeta_monotonic_ms() + 7000u;
-    while ((server_probe.received_count < 1u ||
-            client_probe.sent_count < 1u) &&
-           !client_probe.terminal_count && !server_probe.terminal_count &&
-           cmeta_monotonic_ms() < deadline)
-      REQUIRE(drive(&client, &server, &listener, &tls_server,
-                    &server_probe, &accepted) == SALTS_OK);
-    REQUIRE(server_probe.received_count == 1u);
-    REQUIRE(server_probe.received_byte == 0x46);
-    REQUIRE(client_probe.sent_count == 1u);
-    REQUIRE(client_probe.failed == 0u && server_probe.failed == 0u);
+      outgoing = mem_get_buffer(mem_global(), TLS_STREAM_CONTROL_BYTES);
+      REQUIRE(outgoing != NULL);
+      memcpy(mem_buffer_data(outgoing), expected_stream, TLS_STREAM_CONTROL_BYTES);
+      mem_set_used(outgoing, TLS_STREAM_CONTROL_BYTES);
+      REQUIRE(cnet_send_buffer(&client, outbound, outgoing) == SALTS_OK);
+      mem_buffer_release(outgoing);
+      outgoing = NULL;
 
-    REQUIRE(cnet_close(&client, outbound) == SALTS_OK);
+      /* Gaps prevent contiguous-range merging: every retained span must pass
+       * through TLS in order, and the peer must never receive the gap bytes.
+       * Total plaintext also exceeds the configured minimum TLS IO buffer. */
+      bulk = mem_get_buffer(mem_global(),
+          TLS_STREAM_SEGMENTS * (TLS_STREAM_SEGMENT_BYTES + 1u));
+      REQUIRE(bulk != NULL);
+      memset(mem_buffer_data(bulk), 0xd9,
+             TLS_STREAM_SEGMENTS * (TLS_STREAM_SEGMENT_BYTES + 1u));
+      mem_set_used(bulk, TLS_STREAM_SEGMENTS * (TLS_STREAM_SEGMENT_BYTES + 1u));
+      for (size_t i = 0u; i < TLS_STREAM_SEGMENTS; ++i) {
+        const size_t offset = i * (TLS_STREAM_SEGMENT_BYTES + 1u);
+        memcpy(mem_buffer_data(bulk) + offset,
+               expected_stream + TLS_STREAM_CONTROL_BYTES + i * TLS_STREAM_SEGMENT_BYTES,
+               TLS_STREAM_SEGMENT_BYTES);
+        ranges[i] = mem_slice(bulk, offset, TLS_STREAM_SEGMENT_BYTES);
+        REQUIRE(ranges[i].buffer == bulk &&
+                ranges[i].length == TLS_STREAM_SEGMENT_BYTES);
+        ++range_count;
+      }
+      REQUIRE(cnet_send_slicev(&client, outbound, ranges, range_count) == SALTS_OK);
+      REQUIRE(mem_buffer_ref_count(bulk) == range_count + 2u);
+      for (size_t i = 0u; i < range_count; ++i) mem_slice_release(&ranges[i]);
+      range_count = 0u;
+      REQUIRE(mem_buffer_ref_count(bulk) == 2u);
+      mem_buffer_release(bulk);
+      bulk = NULL;
+
+      deadline = cmeta_monotonic_ms() + 7000u;
+      while ((client_probe.sent_count < 2u ||
+              server_probe.stream_received < TLS_STREAM_CONTROL_BYTES + TLS_STREAM_BULK_BYTES) &&
+             !client_probe.terminal_count && !server_probe.terminal_count &&
+             !client_probe.failed && !server_probe.failed &&
+             cmeta_monotonic_ms() < deadline)
+        REQUIRE(drive(&client, &server, &listener, &tls_server,
+                      &server_probe, &accepted) == SALTS_OK);
+      REQUIRE(client_probe.sent_count == 2u);
+      REQUIRE(client_probe.send_sizes[0] == TLS_STREAM_CONTROL_BYTES &&
+              client_probe.send_sizes[1] == TLS_STREAM_BULK_BYTES);
+      REQUIRE(server_probe.stream_received == TLS_STREAM_CONTROL_BYTES + TLS_STREAM_BULK_BYTES);
+      REQUIRE(client_probe.terminal_count == 0u && server_probe.terminal_count == 0u);
+      REQUIRE(client_probe.failed == 0u && server_probe.failed == 0u);
+
+      outgoing = mem_get_buffer(mem_global(), TLS_STREAM_FINAL_BYTES);
+      REQUIRE(outgoing != NULL);
+      memcpy(mem_buffer_data(outgoing),
+             expected_stream + TLS_STREAM_CONTROL_BYTES + TLS_STREAM_BULK_BYTES,
+             TLS_STREAM_FINAL_BYTES);
+      mem_set_used(outgoing, TLS_STREAM_FINAL_BYTES);
+      REQUIRE(cnet_send_buffer_and_close(&client, outbound, outgoing) == SALTS_OK);
+      mem_buffer_release(outgoing);
+      outgoing = NULL;
+    } else {
+      REQUIRE(cnet_receive(&server, server_probe.connection, 1u) == SALTS_OK);
+
+      outgoing = mem_get_buffer(mem_global(), 1u);
+      REQUIRE(outgoing != NULL);
+      *mem_buffer_data(outgoing) = 0x46;
+      mem_set_used(outgoing, 1u);
+      REQUIRE(cnet_send_buffer(&client, outbound, outgoing) == SALTS_OK);
+      mem_buffer_release(outgoing);
+      outgoing = NULL;
+      deadline = cmeta_monotonic_ms() + 7000u;
+      while ((server_probe.received_count < 1u ||
+              client_probe.sent_count < 1u) &&
+             !client_probe.terminal_count && !server_probe.terminal_count &&
+             cmeta_monotonic_ms() < deadline)
+        REQUIRE(drive(&client, &server, &listener, &tls_server,
+                      &server_probe, &accepted) == SALTS_OK);
+      REQUIRE(server_probe.received_count == 1u);
+      REQUIRE(server_probe.received_byte == 0x46);
+      REQUIRE(client_probe.sent_count == 1u);
+      REQUIRE(client_probe.failed == 0u && server_probe.failed == 0u);
+
+      REQUIRE(cnet_close(&client, outbound) == SALTS_OK);
+    }
     deadline = cmeta_monotonic_ms() + 7000u;
     while ((!client_probe.terminal_count || !server_probe.terminal_count) &&
            cmeta_monotonic_ms() < deadline)
@@ -326,9 +469,36 @@ static int run_case(const tls_case_options *options) {
     REQUIRE(client_probe.terminal_count == 1u);
     REQUIRE(server_probe.terminal_count == 1u);
     REQUIRE(client_probe.failed == 0u && server_probe.failed == 0u);
+    if (options->stream_transfer) {
+      REQUIRE(client_probe.sent_count == 3u && client_probe.sends_at_terminal == 3u);
+      REQUIRE(client_probe.send_sizes[2] == TLS_STREAM_FINAL_BYTES);
+      REQUIRE(server_probe.stream_received == sizeof(expected_stream));
+      REQUIRE(client_probe.last_connection_state == CNET_CONNECTION_CLOSED &&
+              server_probe.last_connection_state == CNET_CONNECTION_CLOSED);
+      /* Drain any late native completions before checking callback uniqueness. */
+      REQUIRE(drive(&client, &server, &listener, &tls_server,
+                    &server_probe, &accepted) == SALTS_OK);
+      REQUIRE(client_probe.sent_count == 3u && client_probe.terminal_count == 1u &&
+              server_probe.terminal_count == 1u &&
+              client_probe.connected_count == 1u && server_probe.connected_count == 1u &&
+              client_probe.failed == 0u && server_probe.failed == 0u);
+      REQUIRE(cnet_client_stop(&client, 5000u) == SALTS_OK);
+      REQUIRE(cnet_client_destroy(&client) == SALTS_OK);
+      client_live = false;
+      REQUIRE(cnet_client_stop(&server, 5000u) == SALTS_OK);
+      REQUIRE(cnet_client_destroy(&server) == SALTS_OK);
+      server_live = false;
+      REQUIRE(cnet_listener_close(&listener) == SALTS_OK);
+      REQUIRE(cnet_listener_destroy(&listener) == SALTS_OK);
+      listener_live = false;
+      REQUIRE(cnet_tls_server_destroy(&tls_server) == SALTS_OK);
+      tls_live = false;
+    }
   }
 
 cleanup:
+  for (size_t i = 0u; i < range_count; ++i) mem_slice_release(&ranges[i]);
+  if (bulk) mem_buffer_release(bulk);
   if (outgoing) mem_buffer_release(outgoing);
   if (accepted && !server_probe.terminal_count && server_live)
     (void)cnet_close(&server, server_probe.connection);
@@ -779,6 +949,18 @@ spec("CNet real TLS CA SAN mTLS Python peer interoperability") {
   it("preserves the real native integration and external peer contract") {
     const int result = saltscore_original_entry_test_cnet_tls_ca_san_c(saltscore_original_argc, saltscore_original_argv);
     check(result == 0, "native integration returned %d", result);
+  }
+  if (saltscore_original_argc == 1) {
+    it("retains TLS small and bulk writes through FIFO terminals and final close") {
+      const tls_case_options stream = {
+          .label = "persistent TLS retained-vector bulk and final close",
+          .ca_file = CORE_TLS_TEST_P384_CA,
+          .verified_hostname = "localhost",
+          .expect_success = true,
+          .stream_transfer = true};
+      const int result = run_case(&stream);
+      check(result == 0, "native TLS stream transfer returned %d", result);
+    }
   }
 }
 
