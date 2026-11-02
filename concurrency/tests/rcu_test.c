@@ -1,5 +1,6 @@
 #include <rcu.h>
 #include <thread.h>
+#include <clock.h>
 #include "tinytest.h"
 #include <stdatomic.h>
 #include <stdlib.h>
@@ -11,6 +12,8 @@ typedef struct stress {
     atomic_bool stop;
     atomic_uint errors;
     atomic_uint ready;
+    atomic_uint observed_generation;
+    atomic_uint read_operations;
 } stress;
 
 static snapshot *new_snapshot(unsigned generation) {
@@ -21,16 +24,49 @@ static snapshot *new_snapshot(unsigned generation) {
 static void stress_reader(void *arg) {
     stress *ctx = arg;
     bool announced = false;
+    unsigned consecutive = 0u;
     while (!atomic_load_explicit(&ctx->stop, memory_order_acquire)) {
         cmeta_rcu_guard guard = {0};
         int status = cmeta_rcu_read_lock(&ctx->domain, &guard);
         if (status == SALTS_OK) {
             const snapshot *value = cmeta_rcu_load(&guard);
-            if (value == NULL || value->inverse != ~value->generation)
-                atomic_fetch_add(&ctx->errors, 1);
-            if (cmeta_rcu_read_unlock(&guard) != SALTS_OK) atomic_fetch_add(&ctx->errors, 1);
-            if (!announced) { atomic_fetch_add(&ctx->ready, 1); announced = true; }
-        } else if (status != SALTS_ENOBUFS) atomic_fetch_add(&ctx->errors, 1);
+            if (value == NULL || value->inverse != ~value->generation) {
+                atomic_fetch_add_explicit(&ctx->errors, 1u, memory_order_relaxed);
+            } else {
+                /* Record the highest real generation observed under a pinned
+                 * guard. A late reader of an older snapshot must not regress
+                 * the writer's observation gate. */
+                unsigned seen = atomic_load_explicit(&ctx->observed_generation,
+                                                     memory_order_relaxed);
+                while (value->generation > seen &&
+                       !atomic_compare_exchange_weak_explicit(
+                           &ctx->observed_generation, &seen, value->generation,
+                           memory_order_release, memory_order_relaxed)) {}
+            }
+            if (cmeta_rcu_read_unlock(&guard) != SALTS_OK)
+                atomic_fetch_add_explicit(&ctx->errors, 1u, memory_order_relaxed);
+            atomic_fetch_add_explicit(&ctx->read_operations, 1u, memory_order_relaxed);
+            if (!announced) {
+                atomic_fetch_add_explicit(&ctx->ready, 1u, memory_order_release);
+                announced = true;
+            }
+            /*
+             * Do not continuously reacquire the Windows SRWLOCK without any
+             * runnable gap. Four high-frequency readers could otherwise
+             * starve the publisher/reclaimer on a constrained ARM64 runner.
+             * 31 of 32 consecutive reads remain unpaced real RCU accesses.
+             */
+            if (++consecutive == 32u) {
+                cmeta_sleep_ms(1u);
+                consecutive = 0u;
+            }
+        } else if (status != SALTS_ENOBUFS) {
+            atomic_fetch_add_explicit(&ctx->errors, 1u, memory_order_relaxed);
+        } else {
+            /* Reader-capacity contention is expected and not a reason
+             * to monopolize a single-core scheduler. */
+            cmeta_thread_yield();
+        }
     }
 }
 typedef struct handoff { cmeta_rcu_guard *guard; const void *seen; int status; } handoff;
@@ -114,8 +150,14 @@ spec("Portable epoch RCU") {
         cmeta_thread_t readers[RCU_READERS] = {0};
         snapshot *initial = new_snapshot(0);
         size_t started = 0;
+        unsigned published = 0u;
+        uint64_t deadline = cmeta_monotonic_ms() + UINT64_C(60000);
         void *retired = NULL;
-        atomic_init(&ctx.stop, false); atomic_init(&ctx.errors, 0); atomic_init(&ctx.ready, 0);
+        atomic_init(&ctx.stop, false);
+        atomic_init(&ctx.errors, 0u);
+        atomic_init(&ctx.ready, 0u);
+        atomic_init(&ctx.observed_generation, 0u);
+        atomic_init(&ctx.read_operations, 0u);
         check_not_null(initial);
         if (initial == NULL) return;
         check_equal(cmeta_rcu_init(&ctx.domain, initial, RCU_READERS), SALTS_OK);
@@ -125,23 +167,63 @@ spec("Portable epoch RCU") {
             check_equal(status, 0);
             if (status != 0) break;
         }
-        while (atomic_load(&ctx.ready) != started) cmeta_thread_yield();
-        for (unsigned generation = 1; generation <= RCU_REPLACEMENTS; ++generation) {
-            snapshot *replacement = new_snapshot(generation);
-            int status;
-            check_not_null(replacement);
-            if (replacement == NULL) break;
-            status = cmeta_rcu_replace(&ctx.domain, replacement);
-            check_equal(status, SALTS_OK);
-            if (status != SALTS_OK) { free(replacement); break; }
-            do { status = cmeta_rcu_try_reclaim(&ctx.domain, &retired); cmeta_thread_yield(); }
-            while (status == SALTS_EBUSY);
-            check_equal(status, SALTS_OK);
-            free(retired);
+        /* Bound every former unbounded wait. Even on failure, stop/join all
+         * live threads before reclaiming or freeing any published snapshot. */
+        while (atomic_load_explicit(&ctx.ready, memory_order_acquire) != started &&
+               cmeta_monotonic_ms() < deadline)
+            cmeta_sleep_ms(1u);
+        check_equal(atomic_load_explicit(&ctx.ready, memory_order_acquire), started);
+        if (atomic_load_explicit(&ctx.ready, memory_order_acquire) == started) {
+            for (unsigned generation = 1u; generation <= RCU_REPLACEMENTS; ++generation) {
+                snapshot *replacement = new_snapshot(generation);
+                int status;
+                check_not_null(replacement);
+                if (replacement == NULL) break;
+                status = cmeta_rcu_replace(&ctx.domain, replacement);
+                check_equal(status, SALTS_OK);
+                if (status != SALTS_OK) { free(replacement); break; }
+                published = generation;
+
+                /* A real reader must see each new immutable snapshot: the
+                 * test cannot pass by merely publishing 2000 unused values. */
+                while (atomic_load_explicit(&ctx.observed_generation,
+                                            memory_order_acquire) < generation &&
+                       cmeta_monotonic_ms() < deadline)
+                    cmeta_sleep_ms(1u);
+                if (atomic_load_explicit(&ctx.observed_generation,
+                                         memory_order_acquire) < generation) {
+                    check_true(false); /* bounded observation progress failure */
+                    break;
+                }
+
+                do {
+                    status = cmeta_rcu_try_reclaim(&ctx.domain, &retired);
+                    if (status == SALTS_EBUSY) cmeta_sleep_ms(1u);
+                } while (status == SALTS_EBUSY && cmeta_monotonic_ms() < deadline);
+                check_equal(status, SALTS_OK);
+                if (status != SALTS_OK) break;
+                free(retired);
+                retired = NULL;
+            }
         }
         atomic_store_explicit(&ctx.stop, true, memory_order_release);
-        for (size_t i = 0; i < started; ++i) check_equal(cmeta_thread_join(&readers[i]), 0);
-        check_equal(atomic_load(&ctx.errors), 0u);
+        for (size_t i = 0; i < started; ++i)
+            check_equal(cmeta_thread_join(&readers[i]), 0);
+
+        check_equal(published, (unsigned)RCU_REPLACEMENTS);
+        check_equal(atomic_load_explicit(&ctx.observed_generation,
+                                         memory_order_acquire), (unsigned)RCU_REPLACEMENTS);
+        check_true(atomic_load_explicit(&ctx.read_operations, memory_order_acquire) >=
+                   (unsigned)RCU_REPLACEMENTS);
+        check_equal(atomic_load_explicit(&ctx.errors, memory_order_acquire), 0u);
+
+        /* A deadline failure can leave one retired snapshot. Readers are now
+         * joined, so settle it before close/destroy instead of leaking it. */
+        {
+            int status = cmeta_rcu_try_reclaim(&ctx.domain, &retired);
+            check_true(status == SALTS_ENOENT || status == SALTS_OK);
+            if (status == SALTS_OK) { free(retired); retired = NULL; }
+        }
         check_equal(cmeta_rcu_close(&ctx.domain), SALTS_OK);
         check_equal(cmeta_rcu_destroy(&ctx.domain, &retired), SALTS_OK);
         free(retired);
