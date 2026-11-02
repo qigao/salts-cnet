@@ -7,6 +7,7 @@
 #include <cnet/cnet.h>
 #include <cnet/client_pool.h>
 #include <cnet/ipc.h>
+#include <cnet/sg_host.h>
 #include <clock.h>
 #include <thread.h>
 #include <error_codes.h>
@@ -1395,6 +1396,327 @@ cleanup:
 }
 #endif
 
+enum { SG_CASE_START, SG_CASE_STEP, SG_CASE_CLOSE_BULK, SG_CASE_CHECK_BORROW,
+       SG_CASE_FINAL_CONTROL, SG_CASE_FINISH, SG_CASE_CLEANUP, SG_BULK_BYTES = 32768 };
+
+typedef struct sg_owner_case {
+  cnet_listener listener;
+  cnet_client clients[2];
+  cnet_connection connections[2];
+  tcp_probe probes[2];
+  mem_buffer_t *pending[2];
+  test_socket peers[2];
+  native_io_backend *backend;
+  native_io_sharded_host_lease lease;
+  const void *thread;
+  size_t shard, owner_count, observations;
+  int command, failure;
+  bool host_active;
+} sg_owner_case;
+
+static bool sg_case_quiescent(void *user) {
+  const sg_owner_case *owner = user;
+  return owner->clients[0].impl == NULL && owner->clients[1].impl == NULL &&
+         owner->pending[0] == NULL && owner->pending[1] == NULL;
+}
+
+/* Exactly one host observe per bounded progress task; route the whole returned
+ * batch even if an earlier client advance failed. Main never observes NativeIO. */
+static int sg_case_progress(native_io_sharded_context *context, sg_owner_case *owner) {
+  cnet_client *clients[2];
+  size_t client_count = 0u, events = 0u, count = 0u, accepts = 0u, sharded = 0u;
+  native_io_sharded_completion completions[8];
+  int first = SALTS_OK, status;
+  for (size_t i = 0u; i < 2u; ++i) {
+    if (owner->clients[i].impl == NULL) continue;
+    clients[client_count++] = &owner->clients[i];
+    status = cnet_client_advance_external(&owner->clients[i], &events);
+    if (first == SALTS_OK && status != SALTS_OK) first = status;
+  }
+  ++owner->observations;
+  status = native_io_sharded_context_observe_host(context, owner->lease,
+                                                  completions, 8u, 1u, &count);
+  if (status == SALTS_ETIMEDOUT) status = SALTS_OK;
+  if (status == SALTS_OK) {
+    const cnet_sg_host_routes routes = {
+        sizeof(cnet_sg_host_routes), CNET_SG_HOST_ROUTING_VERSION, NULL, clients, client_count};
+    status = cnet_sg_host_route_batch(completions, count, &routes, &accepts, &sharded);
+    if (status == SALTS_OK && (accepts != 0u || sharded != 0u)) status = SALTS_EPROTO;
+  }
+  return first == SALTS_OK ? status : first;
+}
+
+static void sg_case_cleanup(native_io_sharded_context *context, sg_owner_case *owner) {
+  const uint64_t deadline = cmeta_monotonic_ms() + 3000u;
+  for (size_t i = 0u; i < 2u; ++i)
+    if (owner->clients[i].impl != NULL && owner->connections[i].slot != 0u)
+      (void)cnet_close(&owner->clients[i], owner->connections[i]);
+  while ((owner->clients[0].impl != NULL || owner->clients[1].impl != NULL) &&
+         cmeta_monotonic_ms() < deadline) {
+    for (size_t i = 0u; i < 2u; ++i) {
+      if (owner->clients[i].impl == NULL) continue;
+      const int status = cnet_client_stop_external(&owner->clients[i]);
+      if (status == SALTS_OK || status == SALTS_EALREADY)
+        (void)cnet_client_destroy(&owner->clients[i]);
+    }
+    if (owner->host_active &&
+        (owner->clients[0].impl != NULL || owner->clients[1].impl != NULL))
+      (void)sg_case_progress(context, owner);
+  }
+  for (size_t i = 0u; i < 2u; ++i) {
+    if (owner->pending[i]) mem_buffer_release(owner->pending[i]);
+    owner->pending[i] = NULL;
+  }
+  if (owner->host_active &&
+      native_io_sharded_context_release_host(context, owner->lease) == SALTS_OK) {
+    owner->host_active = false;
+    owner->backend = NULL;
+  }
+  if (owner->listener.impl != NULL) {
+    (void)cnet_listener_close(&owner->listener);
+    (void)cnet_listener_destroy(&owner->listener);
+  }
+}
+
+/* Owner state lives on main's heap until all accepted SG tasks and the runtime
+ * are destroyed. Main reads/mutates it only between submit+wait boundaries.
+ * Clients, backend, lease and listeners are touched only on their fixed shard;
+ * unassociated native peer sockets transfer to main after startup completes. */
+static void sg_case_task(native_io_sharded_context *context, void *user) {
+  sg_owner_case *owner = user;
+  size_t events = 0u;
+  native_io_backend_stats stats = {0};
+#define SG_REQUIRE(expr) do { if (!(expr)) {                                    \
+    if (owner->failure == 0) owner->failure = __LINE__; return;                 \
+  } } while (0)
+  SG_REQUIRE(native_io_sharded_context_shard(context) == owner->shard);
+  if (owner->thread == NULL) owner->thread = cmeta_thread_current_token();
+  SG_REQUIRE(owner->thread == cmeta_thread_current_token());
+  if (owner->command == SG_CASE_CLEANUP) {
+    sg_case_cleanup(context, owner);
+  } else if (owner->command == SG_CASE_START) {
+    cnet_client_config config = client_config();
+    const cnet_listener_config listener_config = {backend_kind(), "127.0.0.1", 0u, 2u};
+    struct sockaddr_in remote = {0};
+    native_io_sharded_completion completion;
+    native_io_sharded_host_lease wrong;
+    uint16_t port = 0u;
+    size_t count = 0u;
+    config.connection_capacity = 1u;
+    config.max_send_bytes = SG_BULK_BYTES;
+    SG_REQUIRE(native_io_sharded_context_acquire_host(context, sg_case_quiescent, owner,
+                                                      &owner->lease, &owner->backend) == SALTS_OK);
+    owner->host_active = true;
+    SG_REQUIRE(owner->lease.owner_shard == owner->shard && owner->lease.generation != 0u);
+    SG_REQUIRE(native_io_sharded_context_observe(context, &completion, 1u, 0u, &count) == SALTS_EPERM);
+    SG_REQUIRE(count == 0u);
+    wrong = owner->lease;
+    if (owner->owner_count > 1u)
+      wrong.owner_shard = (uint32_t)((owner->shard + 1u) % owner->owner_count);
+    else
+      ++wrong.generation;
+    SG_REQUIRE(native_io_sharded_context_observe_host(context, wrong, &completion,
+                                                      1u, 0u, &count) == SALTS_EPERM);
+    SG_REQUIRE(count == 0u);
+    SG_REQUIRE(cnet_listener_init(&owner->listener, &listener_config) == SALTS_OK);
+    SG_REQUIRE(cnet_listener_port(&owner->listener, &port) == SALTS_OK && port != 0u);
+    remote.sin_family = AF_INET;
+    remote.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    remote.sin_port = htons(port);
+    for (size_t i = 0u; i < 2u; ++i) {
+      int ready = 0;
+      const cnet_observer observer = {on_state, on_borrowed, &owner->probes[i], on_sent};
+      SG_REQUIRE(cnet_client_init_external(&owner->clients[i], &config, owner->backend) == SALTS_OK);
+      owner->peers[i] = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+      SG_REQUIRE(owner->peers[i] != TEST_INVALID_SOCKET);
+      SG_REQUIRE(test_recv_timeout(owner->peers[i]) == 0);
+      SG_REQUIRE(connect(owner->peers[i], (const struct sockaddr *)&remote, (int)sizeof(remote)) == 0);
+      SG_REQUIRE(cnet_listener_wait(&owner->listener, 5000u, &ready) == SALTS_OK && ready == 1);
+      SG_REQUIRE(cnet_listener_accept(&owner->listener, &owner->clients[i], &observer,
+                                      &owner->connections[i]) == SALTS_OK);
+      SG_REQUIRE(cnet_client_advance_external(&owner->clients[i], &events) == SALTS_OK);
+      SG_REQUIRE(owner->probes[i].connected == 1u && owner->probes[i].failed == 0u);
+      const size_t bytes = i == 0u ? SG_BULK_BYTES : 1u;
+      owner->pending[i] = mem_get_buffer(mem_global(), bytes);
+      SG_REQUIRE(owner->pending[i] != NULL);
+      for (size_t j = 0u; j < bytes; ++j)
+        mem_buffer_data(owner->pending[i])[j] =
+            (char)(i == 0u ? (j * 29u + 3u + owner->shard * 17u) & 0xffu : 0x60u + owner->shard);
+      mem_set_used(owner->pending[i], bytes);
+      SG_REQUIRE(cnet_send_buffer(&owner->clients[i], owner->connections[i], owner->pending[i]) == SALTS_OK);
+      mem_buffer_release(owner->pending[i]);
+      owner->pending[i] = NULL;
+    }
+    SG_REQUIRE(cnet_receive(&owner->clients[1], owner->connections[1], 1u) == SALTS_OK);
+    SG_REQUIRE(native_io_sharded_context_release_host(context, owner->lease) == SALTS_EBUSY);
+  } else if (owner->command == SG_CASE_STEP) {
+    SG_REQUIRE(sg_case_progress(context, owner) == SALTS_OK);
+    SG_REQUIRE(owner->probes[0].failed == 0u && owner->probes[1].failed == 0u);
+  } else if (owner->command == SG_CASE_CLOSE_BULK) {
+    SG_REQUIRE(owner->probes[0].sent == 1u && owner->probes[0].last_send_bytes == SG_BULK_BYTES);
+    SG_REQUIRE(owner->probes[1].sent == 1u && owner->probes[1].last_send_bytes == 1u);
+    SG_REQUIRE(cnet_close(&owner->clients[0], owner->connections[0]) == SALTS_OK);
+    SG_REQUIRE(cnet_client_advance_external(&owner->clients[0], &events) == SALTS_OK);
+    SG_REQUIRE(owner->probes[0].terminal == 1u && owner->probes[0].sends_at_terminal == 1u);
+    SG_REQUIRE(cnet_client_stop_external(&owner->clients[0]) == SALTS_OK);
+    SG_REQUIRE(cnet_client_destroy(&owner->clients[0]) == SALTS_OK);
+    SG_REQUIRE(native_io_sharded_context_release_host(context, owner->lease) == SALTS_EBUSY);
+  } else if (owner->command == SG_CASE_CHECK_BORROW) {
+    SG_REQUIRE(owner->clients[0].impl == NULL && owner->clients[1].impl != NULL);
+    SG_REQUIRE(owner->probes[1].borrowed_bytes == 0u && owner->probes[1].terminal == 0u);
+    SG_REQUIRE(native_io_backend_get_stats(owner->backend, &stats));
+    SG_REQUIRE(stats.active_requests == 1u && stats.endpoint_count == 1u && stats.admission_open);
+  } else if (owner->command == SG_CASE_FINAL_CONTROL) {
+    SG_REQUIRE(owner->probes[1].borrowed_bytes == 1u &&
+               owner->probes[1].borrowed_data[0] == (unsigned char)(0xc0u + owner->shard));
+    owner->pending[1] = mem_get_buffer(mem_global(), 1u);
+    SG_REQUIRE(owner->pending[1] != NULL);
+    *mem_buffer_data(owner->pending[1]) = (char)(0xe0u + owner->shard);
+    mem_set_used(owner->pending[1], 1u);
+    SG_REQUIRE(cnet_send_buffer_and_close(&owner->clients[1], owner->connections[1],
+                                          owner->pending[1]) == SALTS_OK);
+    mem_buffer_release(owner->pending[1]);
+    owner->pending[1] = NULL;
+  } else if (owner->command == SG_CASE_FINISH) {
+    SG_REQUIRE(owner->probes[0].connected == 1u && owner->probes[0].sent == 1u &&
+               owner->probes[0].terminal == 1u && owner->probes[0].failed == 0u);
+    SG_REQUIRE(owner->probes[1].connected == 1u && owner->probes[1].sent == 2u &&
+               owner->probes[1].terminal == 1u && owner->probes[1].sends_at_terminal == 2u &&
+               owner->probes[1].failed == 0u && owner->observations != 0u);
+    SG_REQUIRE(cnet_client_stop_external(&owner->clients[1]) == SALTS_OK);
+    SG_REQUIRE(cnet_client_destroy(&owner->clients[1]) == SALTS_OK);
+    SG_REQUIRE(native_io_backend_get_stats(owner->backend, &stats));
+    SG_REQUIRE(stats.active_requests == 0u && stats.endpoint_count == 0u && stats.admission_open);
+    SG_REQUIRE(native_io_sharded_context_release_host(context, owner->lease) == SALTS_OK);
+    owner->host_active = false;
+    owner->backend = NULL;
+    SG_REQUIRE(cnet_listener_close(&owner->listener) == SALTS_OK);
+    SG_REQUIRE(cnet_listener_destroy(&owner->listener) == SALTS_OK);
+  }
+#undef SG_REQUIRE
+}
+
+static int sg_case_run_all(native_io_sharded *runtime, sg_owner_case *owners,
+                            size_t count, int command) {
+  int first = SALTS_OK;
+  for (size_t i = 0u; i < count; ++i) {
+    const native_io_sharded_task task = {sg_case_task, NULL, NULL, &owners[i]};
+    owners[i].command = command;
+    const int status = native_io_sharded_submit_to(runtime, i, &task);
+    if (first == SALTS_OK && status != SALTS_OK) first = status;
+  }
+  const int waited = native_io_sharded_wait(runtime);
+  if (first == SALTS_OK && waited != SALTS_OK) first = waited;
+  if (command != SG_CASE_CLEANUP) {
+    for (size_t i = 0u; i < count; ++i) {
+      if (owners[i].failure == 0) continue;
+      fprintf(stderr, "SG owner %zu/%zu failed at source line %d\n", i, count, owners[i].failure);
+      if (first == SALTS_OK) first = SALTS_EIO;
+    }
+  }
+  return first;
+}
+
+static int saltscore_native_entry_test_cnet_sg_owners(size_t owner_count) {
+  native_io_sharded *runtime = NULL;
+  const native_io_sharded_config config = {owner_count, 8u, {backend_kind(), 4u, 8u, 8u}};
+  sg_owner_case *owners = NULL;
+  unsigned char *received = NULL;
+  native_io_sharded_stats stats = NATIVE_IO_SHARDED_STATS_V1_INITIALIZER;
+  uint64_t deadline;
+  bool complete;
+  int result = 0;
+  owners = calloc(owner_count, sizeof(*owners));
+  VERIFY(owners != NULL);
+  for (size_t i = 0u; i < owner_count; ++i) {
+    owners[i].shard = i;
+    owners[i].owner_count = owner_count;
+    owners[i].peers[0] = owners[i].peers[1] = TEST_INVALID_SOCKET;
+  }
+  received = malloc(SG_BULK_BYTES);
+  VERIFY(received != NULL);
+  VERIFY(native_io_sharded_create(&config, &runtime) == SALTS_OK);
+  VERIFY(sg_case_run_all(runtime, owners, owner_count, SG_CASE_START) == SALTS_OK);
+  for (size_t i = 0u; i < owner_count; ++i)
+    for (size_t j = 0u; j < i; ++j)
+      VERIFY(owners[i].thread != owners[j].thread && owners[i].backend != owners[j].backend);
+  VERIFY(native_io_sharded_shutdown(runtime) == SALTS_EBUSY);
+  deadline = cmeta_monotonic_ms() + 5000u;
+  do {
+    VERIFY(sg_case_run_all(runtime, owners, owner_count, SG_CASE_STEP) == SALTS_OK);
+    complete = true;
+    for (size_t i = 0u; i < owner_count; ++i)
+      complete = complete && owners[i].probes[0].sent == 1u && owners[i].probes[1].sent == 1u;
+  } while (!complete && cmeta_monotonic_ms() < deadline);
+  VERIFY(complete);
+  for (size_t i = 0u; i < owner_count; ++i) {
+    VERIFY(test_recv_exact(owners[i].peers[0], received, SG_BULK_BYTES) == 0);
+    for (size_t j = 0u; j < SG_BULK_BYTES; ++j)
+      VERIFY(received[j] == (unsigned char)((j * 29u + 3u + i * 17u) & 0xffu));
+    VERIFY(test_recv_exact(owners[i].peers[1], received, 1u) == 0);
+    VERIFY(received[0] == (unsigned char)(0x60u + i));
+  }
+  VERIFY(sg_case_run_all(runtime, owners, owner_count, SG_CASE_CLOSE_BULK) == SALTS_OK);
+  VERIFY(native_io_sharded_shutdown(runtime) == SALTS_EBUSY);
+  VERIFY(sg_case_run_all(runtime, owners, owner_count, SG_CASE_CHECK_BORROW) == SALTS_OK);
+  for (size_t i = 0u; i < owner_count; ++i) {
+    unsigned char byte = (unsigned char)(0xc0u + i);
+    VERIFY(recv(owners[i].peers[0], (char *)received, 1, 0) == 0);
+    VERIFY(send(owners[i].peers[1], (const char *)&byte, 1, 0) == 1);
+  }
+  deadline = cmeta_monotonic_ms() + 5000u;
+  do {
+    VERIFY(sg_case_run_all(runtime, owners, owner_count, SG_CASE_STEP) == SALTS_OK);
+    complete = true;
+    for (size_t i = 0u; i < owner_count; ++i)
+      complete = complete && owners[i].probes[1].borrowed_bytes == 1u;
+  } while (!complete && cmeta_monotonic_ms() < deadline);
+  VERIFY(complete);
+  VERIFY(sg_case_run_all(runtime, owners, owner_count, SG_CASE_FINAL_CONTROL) == SALTS_OK);
+  deadline = cmeta_monotonic_ms() + 5000u;
+  do {
+    VERIFY(sg_case_run_all(runtime, owners, owner_count, SG_CASE_STEP) == SALTS_OK);
+    complete = true;
+    for (size_t i = 0u; i < owner_count; ++i)
+      complete = complete && owners[i].probes[1].terminal == 1u;
+  } while (!complete && cmeta_monotonic_ms() < deadline);
+  VERIFY(complete);
+  for (size_t i = 0u; i < owner_count; ++i) {
+    VERIFY(test_recv_exact(owners[i].peers[1], received, 1u) == 0);
+    VERIFY(received[0] == (unsigned char)(0xe0u + i));
+    VERIFY(recv(owners[i].peers[1], (char *)received, 1, 0) == 0);
+    for (size_t j = 0u; j < 2u; ++j) {
+      test_close_socket(owners[i].peers[j]);
+      owners[i].peers[j] = TEST_INVALID_SOCKET;
+    }
+  }
+  VERIFY(sg_case_run_all(runtime, owners, owner_count, SG_CASE_FINISH) == SALTS_OK);
+  VERIFY(native_io_sharded_shutdown(runtime) == SALTS_OK);
+  VERIFY(native_io_sharded_wait(runtime) == SALTS_OK);
+  VERIFY(native_io_sharded_get_stats(runtime, &stats));
+  VERIFY(stats.shard_count == owner_count && stats.active_command_slots == 0u && !stats.accepting);
+  VERIFY(native_io_sharded_destroy(runtime) == SALTS_OK);
+  runtime = NULL;
+
+cleanup:
+  if (owners != NULL) {
+    for (size_t i = 0u; i < owner_count; ++i)
+      for (size_t j = 0u; j < 2u; ++j) {
+        test_close_socket(owners[i].peers[j]);
+        owners[i].peers[j] = TEST_INVALID_SOCKET;
+      }
+  }
+  if (runtime != NULL) {
+    (void)sg_case_run_all(runtime, owners, owner_count, SG_CASE_CLEANUP);
+    if (native_io_sharded_destroy(runtime) == SALTS_OK) runtime = NULL;
+  }
+  /* Preserve callback storage on a failing runtime teardown instead of leaving
+   * a borrowed host-quiescence pointer dangling. The failing test reports it. */
+  if (runtime == NULL) free(owners);
+  free(received);
+  return result;
+}
+
 spec("CNet real TCP loopback and retained slice") {
   it("preserves the real owner lifecycle and original failure code") {
     const int result = saltscore_original_entry_test_cnet_tcp_loopback_c();
@@ -1427,5 +1749,11 @@ spec("CNet real TCP loopback and retained slice") {
     const int result = saltscore_native_entry_test_cnet_fifo_lifetime();
 #endif
     check(result == 0, "native pipe lifetime returned %d", result);
+  }
+  for (size_t owners = 1u; owners <= 4u; owners *= 2u) {
+    it("isolates bulk/control clients and drains %zu fixed SG Owners", owners) {
+      const int result = saltscore_native_entry_test_cnet_sg_owners(owners);
+      check(result == 0, "SG %zu-owner integration returned %d", owners, result);
+    }
   }
 }
