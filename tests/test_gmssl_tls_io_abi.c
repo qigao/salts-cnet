@@ -2,6 +2,7 @@
  * This is not a network handshake, peer auth or CNet runtime conformance.
  * The test links the actual pinned GmSSL provider from the CNet feature. */
 #include <tinytest.h>
+#include <crypto/tls_close.h>
 #include <gmssl/tls.h>
 #include <stdint.h>
 #include <stddef.h>
@@ -64,5 +65,21 @@ spec("GmSSL TLS IO callback ABI") {
   it("preserves the original native exit and lifetime contract") {
     const int result = saltscore_legacy_entry_test_gmssl_tls_io_abi_c();
     check(result == 0, "original native contract returned %d", result);
+  }
+}
+
+spec("Crypto versioned peer close_notify facade") {
+  it("rejects absent and malformed output without falsifying evidence") {
+    uint32_t peer = UINT32_C(0xfeedbeef);
+    check(crypto_tls_close_abi_version() == CRYPTO_TLS_CLOSE_ABI_VERSION,
+          "close extension API version changed");
+    check(crypto_tls_session_peer_close_notify_v1_4(NULL, &peer)
+          == CRYPTO_TLS_INVALID_ARGUMENT,
+          "NULL TLS session must be rejected");
+    check(peer == UINT32_C(0xfeedbeef),
+          "invalid session must not modify peer-alert evidence");
+    check(crypto_tls_session_peer_close_notify_v1_4(NULL, NULL)
+          == CRYPTO_TLS_INVALID_ARGUMENT,
+          "NULL peer-alert output must be rejected");
   }
 }

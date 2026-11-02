@@ -13,6 +13,7 @@
 #include <crypto/tls_ext.h>
 #include <crypto/tls_auth.h>
 #include <crypto/tls_peer.h>
+#include <crypto/tls_close.h>
 #include <error_codes.h>
 
 #include <stdatomic.h>
@@ -590,7 +591,26 @@ static int consume_plaintext(cnet_crypto_state *eng, void *data,
     return SALTS_OK;
 }
 
-static int refill_plaintext(cnet_crypto_state *eng)
+/* Only the provider's authenticated/decrypted peer alert is permitted to
+ * set the Owner's sticky peer-close bit. This is NOT a transport EOF test.
+ * A real session lock/cancel/error remains fail-closed.
+ */
+static int update_authenticated_peer_close(cnet_tls_state *state)
+{
+    cnet_crypto_state *eng = get_engine(state);
+    uint32_t peer_received = 0u;
+    crypto_tls_result result;
+    if (!eng || !state->handshake_complete) return SALTS_ENOTCONN;
+    result = crypto_tls_session_peer_close_notify_v1_4(
+        eng->session, &peer_received);
+    if (result == CRYPTO_TLS_AGAIN) return SALTS_EPROTO;
+    if (result != CRYPTO_TLS_OK) return crypto_error(result);
+    if (peer_received > 1u) return SALTS_EPROTO;
+    if (peer_received == 1u) state->peer_close_notify = true;
+    return SALTS_OK;
+}
+
+static int refill_plaintext(cnet_tls_state *state, cnet_crypto_state *eng)
 {
     crypto_tls_cipher_bio_snapshot snapshot = {0};
     size_t received = 0u;
@@ -620,11 +640,19 @@ static int refill_plaintext(cnet_crypto_state *eng)
     result = crypto_tls_session_receive(
         eng->session, eng->plaintext, eng->plaintext_capacity, &received);
     if (result == CRYPTO_TLS_AGAIN) return SALTS_ENOENT;
-    /* Crypto TLS's CLOSED may mean raw transport closure; it is not
-     * independently proven authenticated close_notify. Never convert
-     * this into CNet's peer_closed=true.
+    /* GmSSL returns 0 for a successfully decrypted peer close_notify,
+     * which the v1.0 Crypto wrapper maps to BACKEND_ERROR. The transport
+     * can separately yield raw TCP EOF / CLOSED. Query authenticated
+     * evidence in BOTH cases; only the real validated alert is accepted.
      */
-    if (result == CRYPTO_TLS_CLOSED) return SALTS_ECONNABORTED;
+    if (result == CRYPTO_TLS_CLOSED ||
+        result == CRYPTO_TLS_BACKEND_ERROR) {
+        const int peer_status = update_authenticated_peer_close(state);
+        if (peer_status != SALTS_OK) return peer_status;
+        if (state->peer_close_notify) return SALTS_ENOENT;
+        return result == CRYPTO_TLS_CLOSED
+            ? SALTS_ECONNABORTED : crypto_error(result);
+    }
     if (result != CRYPTO_TLS_OK) return crypto_error(result);
     if (!received || received > eng->plaintext_capacity)
         return SALTS_EPROTO;
@@ -645,8 +673,15 @@ int cnet_tls_read(cnet_tls_state *state, void *buffer, size_t capacity,
     if (!state->handshake_complete) return SALTS_ENOTCONN;
     if (eng->write_source != NULL) return SALTS_OK;
     if (eng->plaintext_size == 0u) {
-        status = refill_plaintext(eng);
-        if (status == SALTS_ENOENT) return SALTS_OK;
+        if (state->peer_close_notify) {
+            *out_peer_closed = true;
+            return SALTS_OK;
+        }
+        status = refill_plaintext(state, eng);
+        if (status == SALTS_ENOENT) {
+            *out_peer_closed = state->peer_close_notify;
+            return SALTS_OK;
+        }
         if (status != SALTS_OK) return status;
     }
     return consume_plaintext(eng, buffer, capacity, out_size);
@@ -667,9 +702,16 @@ int cnet_tls_probe_peer_close(cnet_tls_state *state, bool *out_peer_closed,
         *out_plaintext_pending = true;
         return SALTS_OK;
     }
+    if (state->peer_close_notify) {
+        *out_peer_closed = true;
+        return SALTS_OK;
+    }
     if (eng->write_source != NULL) return SALTS_OK;
-    status = refill_plaintext(eng);
-    if (status == SALTS_ENOENT) return SALTS_OK;
+    status = refill_plaintext(state, eng);
+    if (status == SALTS_ENOENT) {
+        *out_peer_closed = state->peer_close_notify;
+        return SALTS_OK;
+    }
     if (status != SALTS_OK) return status;
     *out_plaintext_pending = true;
     return SALTS_OK;
@@ -685,39 +727,43 @@ int cnet_tls_shutdown(cnet_tls_state *state, bool *out_notify_generated,
         out_peer_notify_received == NULL || eng == NULL)
         return SALTS_EINVAL;
     *out_notify_generated = state->close_notify_started;
-    /* This test-only Crypto v1.0 TLS API has no authenticated
-     * peer-close-notify inspection. Do not convert CRYPTO_TLS_CLOSED,
-     * transport EOF, or a locally queued shutdown into peer consent.
-     * Production CNet's direct TLS owner uses tls_get_peer_close_notify().
-     * The deferred capability gap belongs to production Provider #81.
-     */
     *out_peer_notify_received = false;
     if (!state->handshake_complete) return SALTS_ENOTCONN;
     if (eng->write_source != NULL) return SALTS_EBUSY;
 
-    /* CNet's close contract is "close_notify ciphertext was generated",
-     * NOT "GmSSL has received the peer close_notify". The backend can
-     * successfully enqueue the complete outbound alert and then return
-     * CRYPTO_TLS_AGAIN while awaiting the peer's reciprocal alert.
-     *
-     * Once queued, the CNet Owner holds the exact ciphertext via NativeIO
-     * until a real matching write terminal, then finalizes the session.
-     * The sticky flag prevents a second tls_shutdown from waiting for a
-     * peer alert after that write has completed.
+    before.struct_size = (uint32_t)sizeof(before);
+    if (crypto_tls_cipher_bio_get_snapshot(eng->bio, &before) != CRYPTO_TLS_OK
+        || before.output_pending > before.capacity ||
+        before.input_pending > before.capacity)
+        return SALTS_EPROTO;
+
+    /* A successful local output is NOT peer authentication. Once a complete
+     * close_notify has been generated, GmSSL's shutdown_state keeps it
+     * single-shot; when a NEW ciphertext input arrives we must still drive
+     * its receive state to authenticate the reciprocal alert.
      */
     if (state->close_notify_started) {
-        CRYPTO_TEST_DIAG("shutdown_sticky", state, 0, 1u);
+        if (!state->peer_close_notify && before.input_pending != 0u) {
+            result = crypto_tls_session_shutdown(eng->session);
+            if (result != CRYPTO_TLS_OK && result != CRYPTO_TLS_AGAIN) {
+                const int peer_status = update_authenticated_peer_close(state);
+                if (peer_status != SALTS_OK) return peer_status;
+                if (!state->peer_close_notify) return crypto_error(result);
+            }
+        }
+        {
+            const int peer_status = update_authenticated_peer_close(state);
+            if (peer_status != SALTS_OK) return peer_status;
+        }
+        *out_peer_notify_received = state->peer_close_notify;
+        CRYPTO_TEST_DIAG("shutdown_progress", state, result,
+                         before.input_pending);
         return SALTS_OK;
     }
 
-    before.struct_size = (uint32_t)sizeof(before);
-    if (crypto_tls_cipher_bio_get_snapshot(eng->bio, &before) != CRYPTO_TLS_OK
-        || before.output_pending > before.capacity)
-        return SALTS_EPROTO;
     if (before.output_pending != 0u) {
-        /* Drain pre-existing application ciphertext FIRST. Otherwise a
-         * partially admitted close_notify could masquerade as a complete
-         * fatal/close Alert when the bounded BIO has little free space.
+        /* Drain pre-existing application ciphertext before creating an
+         * outbound alert. The complete output BIO capacity is still needed.
          */
         CRYPTO_TEST_DIAG("shutdown_drain_prior_cipher", state, 0,
                          before.output_pending);
@@ -730,23 +776,22 @@ int cnet_tls_shutdown(cnet_tls_state *state, bool *out_notify_generated,
     if (crypto_tls_cipher_bio_get_snapshot(eng->bio, &after) != CRYPTO_TLS_OK
         || after.output_pending > after.capacity)
         return SALTS_EPROTO;
-    /* A genuine TLS close_notify record was enqueued into the EMPTY,
-     * >=17 KiB output BIO. We never infer authenticated peer closure
-     * from TCP EOF or from CRYPTO_TLS_CLOSED.
-     */
+    /* Outbound alert is queued, never inferred from a close/EOF status. */
     if (after.output_pending > before.output_pending)
         state->close_notify_started = true;
     *out_notify_generated = state->close_notify_started;
+    {
+        const int peer_status = update_authenticated_peer_close(state);
+        if (peer_status != SALTS_OK) return peer_status;
+    }
+    *out_peer_notify_received = state->peer_close_notify;
     CRYPTO_TEST_DIAG("shutdown_result", state, result,
                      after.output_pending);
 
     if (result == CRYPTO_TLS_AGAIN)
-        return SALTS_OK; /* alert is queued; peer's alert may be pending */
+        return SALTS_OK; /* locally queued; reciprocal alert may be pending */
     if (result == CRYPTO_TLS_OK && state->close_notify_started)
         return SALTS_OK;
-    /* Do not report successful terminal close if the backend generated
-     * no TLS alert, even if its internal shutdown says "complete".
-     */
     return result == CRYPTO_TLS_OK ? SALTS_EPROTO : crypto_error(result);
 }
 
