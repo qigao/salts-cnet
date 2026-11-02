@@ -3,7 +3,7 @@ option(SALTSCORE_BUILD_CNET "Build canonical local Crypto/CNet owners" ON)
 option(SALTSCORE_BUILD_WEBSOCKET_PARSER
   "Qualify CNet-private WebSocket frame parser" OFF)
 option(SALTSCORE_BUILD_CSERDE "Build standalone C11 CSerde owner" OFF)
-option(SALTSCORE_BUILD_TINYTEST "Build standalone C11 TinyTest owner" OFF)
+option(SALTSCORE_BUILD_TINYTEST "Build standalone C11 TinyTest owner (mandatory for native tests)" ON)
 option(SALTSCORE_BUILD_UNICODE "Build original pinned Unicode 17 owner" OFF)
 option(SALTSCORE_BUILD_IDNA "Build original pinned Unicode 17 IDNA owner" OFF)
 option(SALTSCORE_NATIVE_CPP_CONFORMANCE

@@ -1,4 +1,5 @@
 #include <clock.h>
+#include <tinytest.h>
 #include <error_codes.h>
 #include <platform.h>
 #include <random.h>
@@ -159,7 +160,7 @@ static int test_original_native_timer(void) {
   return 0;
 }
 
-int main(void) {
+static int saltscore_legacy_entry_test_platform_c(void) {
   uint8_t random_bytes[32] = {0};
   cmeta_thread_t thread = NULL;
   cmeta_mutex_t lock = NULL;
@@ -202,4 +203,13 @@ int main(void) {
   status = test_original_native_timer();
   if (status != 0) return status;
   return 0;
+}
+
+/* Keep the native contract's original exit codes and cleanup paths intact;
+ * surface its exact nonzero result as one registered TinyTest failure. */
+spec("Platform lifecycle and clock") {
+  it("preserves the original native exit and lifetime contract") {
+    const int result = saltscore_legacy_entry_test_platform_c();
+    check(result == 0, "original native contract returned %d", result);
+  }
 }

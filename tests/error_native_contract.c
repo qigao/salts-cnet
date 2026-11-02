@@ -1,4 +1,5 @@
 #include <cmeta_error.h>
+#include <tinytest.h>
 #include <thread.h>
 
 #include <limits.h>
@@ -261,10 +262,19 @@ static int resolution_order_and_output(void) {
   return 0;
 }
 
-int main(void) {
+static int saltscore_legacy_entry_error_native_contract_c(void) {
   if (concurrent_registry_and_thread_local_output() || native_domain_helpers() ||
       bounded_registry_and_borrowed_storage() || invalid_descriptors_and_encoding_boundaries() ||
       resolution_order_and_output()) return 1;
   puts("error domains, bounded borrowed registry, native precedence and thread-local output: PASS");
   return 0;
+}
+
+/* Keep the native contract's original exit codes and cleanup paths intact;
+ * surface its exact nonzero result as one registered TinyTest failure. */
+spec("Error registry native lifetime") {
+  it("preserves the original native exit and lifetime contract") {
+    const int result = saltscore_legacy_entry_error_native_contract_c();
+    check(result == 0, "original native contract returned %d", result);
+  }
 }

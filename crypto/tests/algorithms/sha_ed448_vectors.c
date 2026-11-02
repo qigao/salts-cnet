@@ -3,9 +3,7 @@
 #include <gmssl/sm3.h>
 #include <stdio.h>
 #include <string.h>
-#define VERIFY(expr) do { if (!(expr)) { \
-  fprintf(stderr, "Crypto migration contract failed line %d: %s\n", __LINE__, #expr); \
-  return __LINE__; } } while (0)
+#include <tinytest.h>
 
 static const uint8_t rfc8032_private_key[SALTS_CRYPTO_ED448_PRIVATE_KEY_SIZE] = {
     0x6c, 0x82, 0xa5, 0x62, 0xcb, 0x80, 0x8d, 0x10, 0xd6, 0x32, 0xbe, 0x89, 0xc8, 0x51, 0x3e,
@@ -30,7 +28,8 @@ static const uint8_t rfc8032_signature[SALTS_CRYPTO_ED448_SIGNATURE_SIZE] = {
     0x71, 0xd9, 0x58, 0x08, 0xff, 0x2e, 0x65, 0x26, 0x00};
 
 
-int main(void) {
+spec("Crypto SHA256, SM3 and Ed448 algorithm vectors") {
+  it("preserves RFC vectors, streaming state, negatives and key ownership") {
     static const uint8_t sha256_abc[32] = {
         0xba,0x78,0x16,0xbf,0x8f,0x01,0xcf,0xea,0x41,0x41,0x40,0xde,0x5d,0xae,0x22,0x23,
         0xb0,0x03,0x61,0xa3,0x96,0x17,0x7a,0x9c,0xb4,0x10,0xff,0x61,0xf2,0x00,0x15,0xad
@@ -46,33 +45,33 @@ int main(void) {
     uint8_t overlap[SALTS_CRYPTO_ED448_PRIVATE_KEY_SIZE+1];
     salts_crypto_sha256_ctx_t ctx;
     static const char message[] = "generated Ed448 key";
-    VERIFY(salts_crypto_sha256("abc",3,digest)==SALTS_CRYPTO_OK);
-    VERIFY(memcmp(digest,sha256_abc,sizeof(digest))==0);
-    VERIFY(salts_crypto_sha256_init(&ctx)==SALTS_CRYPTO_OK);
-    VERIFY(salts_crypto_sha256_update(&ctx,"a",1)==SALTS_CRYPTO_OK);
-    VERIFY(salts_crypto_sha256_update(&ctx,"bc",2)==SALTS_CRYPTO_OK);
-    VERIFY(salts_crypto_sha256_final(&ctx,digest)==SALTS_CRYPTO_OK);
-    VERIFY(memcmp(digest,sha256_abc,sizeof(digest))==0);
-    VERIFY(salts_crypto_sha256_final(&ctx,digest)==SALTS_CRYPTO_ESTATE);
-    VERIFY(salts_crypto_sha256(NULL,1,digest)==SALTS_CRYPTO_EINVAL);
+    check(salts_crypto_sha256("abc",3,digest)==SALTS_CRYPTO_OK);
+    check(memcmp(digest,sha256_abc,sizeof(digest))==0);
+    check(salts_crypto_sha256_init(&ctx)==SALTS_CRYPTO_OK);
+    check(salts_crypto_sha256_update(&ctx,"a",1)==SALTS_CRYPTO_OK);
+    check(salts_crypto_sha256_update(&ctx,"bc",2)==SALTS_CRYPTO_OK);
+    check(salts_crypto_sha256_final(&ctx,digest)==SALTS_CRYPTO_OK);
+    check(memcmp(digest,sha256_abc,sizeof(digest))==0);
+    check(salts_crypto_sha256_final(&ctx,digest)==SALTS_CRYPTO_ESTATE);
+    check(salts_crypto_sha256(NULL,1,digest)==SALTS_CRYPTO_EINVAL);
     /* Direct GmSSL SM3, linked from the sole Salts::Crypto archive. */
     SM3_CTX sm3;
     sm3_init(&sm3);
     sm3_update(&sm3, (const uint8_t*)"abc", 3u);
     sm3_finish(&sm3, digest);
-    VERIFY(memcmp(digest,sm3_abc,sizeof(digest))==0);
-    VERIFY(salts_crypto_ed448_public_key(rfc8032_private_key,pub)==SALTS_CRYPTO_OK);
-    VERIFY(memcmp(pub,rfc8032_public_key,sizeof(pub))==0);
-    VERIFY(salts_crypto_ed448_sign(rfc8032_private_key,NULL,0,sig)==SALTS_CRYPTO_OK);
-    VERIFY(memcmp(sig,rfc8032_signature,sizeof(sig))==0);
-    VERIFY(salts_crypto_ed448_verify(pub,NULL,0,sig)==SALTS_CRYPTO_OK);
+    check(memcmp(digest,sm3_abc,sizeof(digest))==0);
+    check(salts_crypto_ed448_public_key(rfc8032_private_key,pub)==SALTS_CRYPTO_OK);
+    check(memcmp(pub,rfc8032_public_key,sizeof(pub))==0);
+    check(salts_crypto_ed448_sign(rfc8032_private_key,NULL,0,sig)==SALTS_CRYPTO_OK);
+    check(memcmp(sig,rfc8032_signature,sizeof(sig))==0);
+    check(salts_crypto_ed448_verify(pub,NULL,0,sig)==SALTS_CRYPTO_OK);
     sig[0]^=1u;
-    VERIFY(salts_crypto_ed448_verify(pub,NULL,0,sig)==SALTS_CRYPTO_EVERIFY);
-    VERIFY(salts_crypto_ed448_keygen(priv,pub)==SALTS_CRYPTO_OK);
-    VERIFY(salts_crypto_ed448_sign(priv,message,sizeof(message)-1u,sig)==SALTS_CRYPTO_OK);
-    VERIFY(salts_crypto_ed448_verify(pub,message,sizeof(message)-1u,sig)==SALTS_CRYPTO_OK);
-    VERIFY(salts_crypto_ed448_keygen(overlap,overlap+1)==SALTS_CRYPTO_EINVAL);
-    VERIFY(salts_crypto_ed448_sign(rfc8032_private_key,NULL,1,sig)==SALTS_CRYPTO_EINVAL);
-    memset(priv,0,sizeof(priv));
-    return 0;
+    check(salts_crypto_ed448_verify(pub,NULL,0,sig)==SALTS_CRYPTO_EVERIFY);
+    check(salts_crypto_ed448_keygen(priv,pub)==SALTS_CRYPTO_OK);
+    check(salts_crypto_ed448_sign(priv,message,sizeof(message)-1u,sig)==SALTS_CRYPTO_OK);
+    check(salts_crypto_ed448_verify(pub,message,sizeof(message)-1u,sig)==SALTS_CRYPTO_OK);
+    check(salts_crypto_ed448_keygen(overlap,overlap+1)==SALTS_CRYPTO_EINVAL);
+    check(salts_crypto_ed448_sign(rfc8032_private_key,NULL,1,sig)==SALTS_CRYPTO_EINVAL);
+    memset(priv, 0, sizeof(priv));
+  }
 }

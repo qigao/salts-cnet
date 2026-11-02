@@ -52,6 +52,13 @@ on:
       - "vendor/reed/**"
       - "vendor/monocypher/**"
       - "crypto/gmssl-extensions/**"
+      - "CMakeLists.txt"
+      - "CMakeOptions.cmake"
+      - "CMakePresets.json"
+      - ".github/workflows/ci.yml"
+      - "tests/**"
+      - "**/tests/**"
+      - "tinytest/test/**"
   push:
     branches: [master]
     tags: ["v0.1.002"]
@@ -105,7 +112,20 @@ on:
       - "vendor/reed/**"
       - "vendor/monocypher/**"
       - "crypto/gmssl-extensions/**"
+      - "CMakeLists.txt"
+      - "CMakeOptions.cmake"
+      - "CMakePresets.json"
+      - ".github/workflows/ci.yml"
+      - "tests/**"
+      - "**/tests/**"
+      - "tinytest/test/**"
   workflow_dispatch:
+    inputs:
+      cnet_crypto_optional:
+        description: "Run real test-only CNet Crypto M5/M6 Owner/DSO qualification (Linux x64)"
+        type: boolean
+        required: false
+        default: false
 
 permissions:
   contents: read
@@ -220,7 +240,28 @@ jobs:
 
       - name: Configure full graph
         shell: bash
-        run: cmake --preset "${{ matrix.preset }}"
+        run: |
+          # Qualify real Owner handoff and genuine dlopen/dlclose in the
+          # existing Linux native + TSan lanes, never an extra probe job.
+          # Original test-only Crypto TLS v1.0 does not yet expose
+          # authenticated reciprocal close_notify. Keep the genuine M5/M6
+          # gate available, but do not impose its known semantic RED on
+          # ordinary PRs until the independent #81 Provider contract lands.
+          # This is a real source/CTest opt-in, not a synthetic probe.
+          if [[ "${{ matrix.rid }}" == "linux-x64" &&
+                "${{ github.event_name }}" == "workflow_dispatch" &&
+                "${{ inputs.cnet_crypto_optional }}" == "true" ]]; then
+            cmake --preset "${{ matrix.preset }}" \
+              -DCNET_SCTP_TEST_OWNER_THREADS=ON \
+              -DSALTSCORE_TEST_CNET_CRYPTO_QUALIFICATION=ON \
+              -DSALTSCORE_CNET_M6_SHARED_DSO_TEST=ON \
+              "-DSALTSCORE_CRYPTO_TEST_FIXTURES=${GITHUB_WORKSPACE}/crypto/tests/fixtures"
+          elif [[ "${{ matrix.rid }}" == "linux-x64" ||
+                  "${{ matrix.rid }}" == "linux-x64-tsan" ]]; then
+            cmake --preset "${{ matrix.preset }}" -DCNET_SCTP_TEST_OWNER_THREADS=ON
+          else
+            cmake --preset "${{ matrix.preset }}"
+          fi
 
       - name: Build full graph
         shell: bash

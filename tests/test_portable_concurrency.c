@@ -1,4 +1,5 @@
 #include <platform_atomic.h>
+#include <tinytest.h>
 #include <platform_thread.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -92,7 +93,7 @@ static int basic_atomic(void) {
         salts_atomic_signal_fence(SALTS_MEMORY_ACQUIRE)) return 14;
     return 0;
 }
-int main(void) {
+static int saltscore_legacy_entry_test_portable_concurrency_c(void) {
     salts_platform_thread *workers[THREADS] = {0};
     salts_platform_thread *reader = NULL, *detached = NULL;
     uint32_t v32 = 0, done = 0; uint64_t v64 = 0;
@@ -127,4 +128,13 @@ int main(void) {
     if (!done) return 43;
     puts("Salts::Platform portable atomic/thread ABI PASS");
     return 0;
+}
+
+/* Keep the native contract's original exit codes and cleanup paths intact;
+ * surface its exact nonzero result as one registered TinyTest failure. */
+spec("Portable atomic and thread ABI") {
+  it("preserves the original native exit and lifetime contract") {
+    const int result = saltscore_legacy_entry_test_portable_concurrency_c();
+    check(result == 0, "original native contract returned %d", result);
+  }
 }

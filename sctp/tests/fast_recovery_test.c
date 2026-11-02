@@ -1,9 +1,7 @@
 #include "sctp_data_internal.h"
 
-#ifdef NDEBUG
-#undef NDEBUG
-#endif
-#include <assert.h>
+#define TINYTEST_NO_MAIN
+#include <tinytest.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -49,13 +47,13 @@ static cnet_sctp_data_config config(fixture *f, int initiator) {
 static void ack(fixture *f, uint64_t now, const void *p, size_t n) {
   uint8_t output[CNET_SCTP_DATA_MTU];
   size_t size = 99u;
-  assert(cnet_sctp_data_input(&f->a, now, p, n, output, sizeof(output),
+  check(cnet_sctp_data_input(&f->a, now, p, n, output, sizeof(output),
                              &size) == CNET_SCTP_DATA_OK);
-  assert(size == 0u);
+  check(size == 0u);
 }
 static void deliver(fixture *f, uint64_t now, const void *p, size_t n,
                     uint8_t *sack, size_t *size) {
-  assert(cnet_sctp_data_input(&f->b, now, p, n, sack,
+  check(cnet_sctp_data_input(&f->b, now, p, n, sack,
       CNET_SCTP_DATA_MTU, size) == CNET_SCTP_DATA_OK);
 }
 static void init(fixture *f, uint32_t first) {
@@ -67,8 +65,8 @@ static void init(fixture *f, uint32_t first) {
   unsigned int sent = 0u, done = 0u;
   memset(f, 0, sizeof(*f)); f->admitted = 1; f->first = first;
   a = config(f, 1); b = config(f, 0);
-  assert(cnet_sctp_data_init(&f->a, &a, 0u) == CNET_SCTP_DATA_OK);
-  assert(cnet_sctp_data_init(&f->b, &b, 0u) == CNET_SCTP_DATA_OK);
+  check(cnet_sctp_data_init(&f->a, &a, 0u) == CNET_SCTP_DATA_OK);
+  check(cnet_sctp_data_init(&f->b, &b, 0u) == CNET_SCTP_DATA_OK);
   /* Stop-and-wait is application limited and must no longer warm cwnd.
    * Keep a bounded wire pipeline full, then drain every packet through the
    * receiver. A single virtual instant keeps the original test clock range. */
@@ -78,24 +76,24 @@ static void init(fixture *f, uint32_t first) {
           0u, 53u, 0, body, sizeof(body), p[sent % 16u],
           sizeof(p[0]), &n[sent % 16u]);
       if (status == CNET_SCTP_DATA_CAPACITY) break;
-      assert(status == CNET_SCTP_DATA_OK);
+      check(status == CNET_SCTP_DATA_OK);
       ++sent;
     }
-    assert(done < sent);
+    check(done < sent);
     deliver(f, 1u, p[done % 16u], n[done % 16u], sack, &ns);
     ack(f, 1u, sack, ns);
-    assert(cnet_sctp_data_take(&f->b, &m, body, sizeof(body), &nm) ==
+    check(cnet_sctp_data_take(&f->b, &m, body, sizeof(body), &nm) ==
            CNET_SCTP_DATA_OK);
-    assert(nm == sizeof(body));
+    check(nm == sizeof(body));
     ++done;
   }
-  assert(f->a.next_tsn == first && f->a.in_flight == 0u);
-  assert(f->a.cwnd > 8u * CNET_SCTP_DATA_MTU);
+  check(f->a.next_tsn == first && f->a.in_flight == 0u);
+  check(f->a.cwnd > 8u * CNET_SCTP_DATA_MTU);
 }
 static void send(fixture *f, unsigned int i, uint64_t now) {
   const uint8_t body = (uint8_t)i;
-  assert(i < 12u);
-  assert(cnet_sctp_data_send(&f->a, now, 0u, 53u, 0, &body, 1u,
+  check(i < 12u);
+  check(cnet_sctp_data_send(&f->a, now, 0u, 53u, 0, &body, 1u,
       f->packet[i], sizeof(f->packet[i]), &f->size[i]) == CNET_SCTP_DATA_OK);
 }
 static void gap(fixture *f, unsigned int i, uint64_t now) {
@@ -108,7 +106,7 @@ static cnet_sctp_data_tx *ticket(fixture *f, unsigned int i) {
   for (j = 0u; j < CNET_SCTP_DATA_TX_SLOTS; ++j)
     if (f->a.tx[j].used && f->a.tx[j].tsn == f->first + i)
       return &f->a.tx[j];
-  assert(0); return NULL;
+  check(0); return NULL;
 }
 /* Flight accounting and retransmission intent must remain independent. */
 static void assert_flight_invariant(const cnet_sctp_data *d) {
@@ -117,26 +115,26 @@ static void assert_flight_invariant(const cnet_sctp_data *d) {
   for (i = 0u; i < CNET_SCTP_DATA_TX_SLOTS; ++i) {
     const cnet_sctp_data_tx *tx = &d->tx[i];
     if (!tx->used) {
-      assert(!tx->flight_accounted && !tx->pending_retransmit);
+      check(!tx->flight_accounted && !tx->pending_retransmit);
       continue;
     }
     if (tx->flight_accounted) {
-      assert(!tx->gap_acked);
+      check(!tx->gap_acked);
       actual += tx->packet_size - 12u;
     }
     if (tx->pending_retransmit) {
-      assert(!tx->gap_acked && !tx->fast_retransmitted);
-      assert(tx->missing_reports >= 3u);
+      check(!tx->gap_acked && !tx->fast_retransmitted);
+      check(tx->missing_reports >= 3u);
     }
   }
   /* Application payload accounting is distinct from padded DATA flight. */
-  assert(actual <= CNET_SCTP_DATA_TX_SLOTS * CNET_SCTP_DATA_MTU);
+  check(actual <= CNET_SCTP_DATA_TX_SLOTS * CNET_SCTP_DATA_MTU);
 }
 
 static void finished(fixture *f) {
   assert_flight_invariant(&f->a);
-  assert(cnet_sctp_data_stop(&f->a) == CNET_SCTP_DATA_OK);
-  assert(cnet_sctp_data_stop(&f->b) == CNET_SCTP_DATA_OK);
+  check(cnet_sctp_data_stop(&f->a) == CNET_SCTP_DATA_OK);
+  check(cnet_sctp_data_stop(&f->b) == CNET_SCTP_DATA_OK);
 }
 static size_t peer_sack(fixture *f, uint32_t cumulative,
                         uint16_t first, uint16_t last, uint8_t *packet) {
@@ -147,7 +145,7 @@ static size_t peer_sack(fixture *f, uint32_t cumulative,
   put16(value + 8u, first ? 1u : 0u);
   put16(value + 12u, first); put16(value + 14u, last);
   c.type = 3u; c.value = value; c.value_size = first ? 16u : 12u;
-  assert(cnet_sctp_wire_encode(f->b.config.local_port,
+  check(cnet_sctp_wire_encode(f->b.config.local_port,
       f->b.config.remote_port, f->a.config.local_tag, &c, 1u,
       packet, CNET_SCTP_DATA_MTU, &n) == CNET_SCTP_WIRE_OK);
   return n;
@@ -164,29 +162,29 @@ static void timer_restart(void) {
   for (i = 2u; i < 5u; ++i) gap(&f, i, 76u + 2u * i);
   memcpy(&before, &f.a, sizeof(before));
   memset(output, 0xa5, sizeof(output));
-  assert(cnet_sctp_data_advance(&f.a, 90u, output, 1u, &n) ==
+  check(cnet_sctp_data_advance(&f.a, 90u, output, 1u, &n) ==
          CNET_SCTP_DATA_CAPACITY);
-  assert(n == 0u && memcmp(&before, &f.a, sizeof(before)) == 0);
-  assert(output[0] == 0xa5u);
+  check(n == 0u && memcmp(&before, &f.a, sizeof(before)) == 0);
+  check(output[0] == 0xa5u);
   f.admitted = 0;
-  assert(cnet_sctp_data_advance(&f.a, 90u, output, sizeof(output), &n) ==
+  check(cnet_sctp_data_advance(&f.a, 90u, output, sizeof(output), &n) ==
          CNET_SCTP_DATA_OWNER);
-  assert(memcmp(&before, &f.a, sizeof(before)) == 0); f.admitted = 1;
-  assert(cnet_sctp_data_advance(&f.a, 63u, output, sizeof(output), &n) ==
+  check(memcmp(&before, &f.a, sizeof(before)) == 0); f.admitted = 1;
+  check(cnet_sctp_data_advance(&f.a, 63u, output, sizeof(output), &n) ==
          CNET_SCTP_DATA_CLOCK);
-  assert(memcmp(&before, &f.a, sizeof(before)) == 0);
-  assert(cnet_sctp_data_advance(&f.a, 90u, output, sizeof(output), &n) ==
+  check(memcmp(&before, &f.a, sizeof(before)) == 0);
+  check(cnet_sctp_data_advance(&f.a, 90u, output, sizeof(output), &n) ==
          CNET_SCTP_DATA_OK);
-  assert(n == f.size[0] && memcmp(output, f.packet[0], n) == 0);
-  assert(f.a.t3_deadline_ms == 90u + f.a.rto_ms);
+  check(n == f.size[0] && memcmp(output, f.packet[0], n) == 0);
+  check(f.a.t3_deadline_ms == 90u + f.a.rto_ms);
   deadline = f.a.t3_deadline_ms;
-  assert(cnet_sctp_data_advance(&f.a, 91u, output, sizeof(output), &n) ==
+  check(cnet_sctp_data_advance(&f.a, 91u, output, sizeof(output), &n) ==
          CNET_SCTP_DATA_OK);
-  assert(n == f.size[1] && memcmp(output, f.packet[1], n) == 0);
-  assert(f.a.t3_deadline_ms == deadline);
-  assert(cnet_sctp_data_advance(&f.a, before.t3_deadline_ms,
+  check(n == f.size[1] && memcmp(output, f.packet[1], n) == 0);
+  check(f.a.t3_deadline_ms == deadline);
+  check(cnet_sctp_data_advance(&f.a, before.t3_deadline_ms,
       output, sizeof(output), &n) == CNET_SCTP_DATA_OK);
-  assert(n == 0u); /* the original, now superseded deadline is not due */
+  check(n == 0u); /* the original, now superseded deadline is not due */
   finished(&f);
 }
 
@@ -211,67 +209,67 @@ static void partial_one(uint32_t first, int enter_recovery) {
   }
   if (enter_recovery) {
     const uint32_t old_window = f.a.cwnd;
-    assert(cnet_sctp_data_advance(&f.a, 90u, fast, sizeof(fast), &nfast) ==
+    check(cnet_sctp_data_advance(&f.a, 90u, fast, sizeof(fast), &nfast) ==
            CNET_SCTP_DATA_OK);
-    assert(nfast == f.size[0] && memcmp(fast, f.packet[0], nfast) == 0);
-    assert(f.a.cwnd == old_window / 2u && f.a.recovery_active);
-    assert(f.a.recovery_exit_tsn == first + 6u);
+    check(nfast == f.size[0] && memcmp(fast, f.packet[0], nfast) == 0);
+    check(f.a.cwnd == old_window / 2u && f.a.recovery_active);
+    check(f.a.recovery_exit_tsn == first + 6u);
   }
   if (enter_recovery)
     send(&f, 7u, 91u); /* recovery exit point remains unchanged */
   gap(&f, 5u, 92u); gap(&f, 6u, 94u);
-  assert(ticket(&f, 4u)->missing_reports == 2u);
-  assert(ticket(&f, 7u)->missing_reports == 0u);
+  check(ticket(&f, 4u)->missing_reports == 2u);
+  check(ticket(&f, 7u)->missing_reports == 0u);
   nstale = peer_sack(&f, first - 1u, 6u, 7u, stale);
   deliver(&f, 96u, enter_recovery ? fast : f.packet[0],
           enter_recovery ? nfast : f.size[0], sack, &ns);
-  assert(get32(sack + 16u) == first + 3u);
+  check(get32(sack + 16u) == first + 3u);
   srtt = f.a.srtt_x8_ms; variance = f.a.rttvar_x4_ms; rto = f.a.rto_ms;
   window = f.a.cwnd;
   ack(&f, 97u, sack, ns);
-  assert(ticket(&f, 4u)->missing_reports == (enter_recovery ? 3u : 2u));
-  assert(ticket(&f, 7u)->missing_reports == 0u);
+  check(ticket(&f, 4u)->missing_reports == (enter_recovery ? 3u : 2u));
+  check(ticket(&f, 7u)->missing_reports == 0u);
   deadline = f.a.t3_deadline_ms;
   ack(&f, 98u, sack, ns); /* exact duplicate adds no evidence */
-  assert(ticket(&f, 4u)->missing_reports == (enter_recovery ? 3u : 2u));
-  assert(f.a.t3_deadline_ms == deadline);
+  check(ticket(&f, 4u)->missing_reports == (enter_recovery ? 3u : 2u));
+  check(f.a.t3_deadline_ms == deadline);
   memcpy(&before, &f.a, sizeof(before));
   ack(&f, 99u, stale, nstale); /* old cumulative SACK cannot undo state */
-  assert(memcmp(&before, &f.a, sizeof(before)) == 0);
+  check(memcmp(&before, &f.a, sizeof(before)) == 0);
   if (!enter_recovery) { finished(&f); return; }
-  assert(f.a.cwnd == window && f.a.recovery_active);
-  assert(cnet_sctp_data_advance(&f.a, 100u, output, 0u, &n) ==
+  check(f.a.cwnd == window && f.a.recovery_active);
+  check(cnet_sctp_data_advance(&f.a, 100u, output, 0u, &n) ==
          CNET_SCTP_DATA_CAPACITY);
-  assert(memcmp(&before, &f.a, sizeof(before)) == 0);
-  assert(cnet_sctp_data_advance(&f.a, 100u, output, sizeof(output), &n) ==
+  check(memcmp(&before, &f.a, sizeof(before)) == 0);
+  check(cnet_sctp_data_advance(&f.a, 100u, output, sizeof(output), &n) ==
          CNET_SCTP_DATA_OK);
-  assert(n == f.size[4] && memcmp(output, f.packet[4], n) == 0);
-  assert(f.a.cwnd == window && f.a.recovery_exit_tsn == first + 6u);
+  check(n == f.size[4] && memcmp(output, f.packet[4], n) == 0);
+  check(f.a.cwnd == window && f.a.recovery_exit_tsn == first + 6u);
   deliver(&f, 101u, output, n, sack, &ns); ack(&f, 102u, sack, ns);
-  assert(!f.a.recovery_active && f.a.last_ack == first + 6u);
-  assert(f.a.in_flight == 1u && ticket(&f, 7u)->missing_reports == 0u);
-  assert(f.a.cwnd == window); /* exit ACK must not also grow cwnd */
-  assert(f.a.srtt_x8_ms == srtt && f.a.rttvar_x4_ms == variance &&
+  check(!f.a.recovery_active && f.a.last_ack == first + 6u);
+  check(f.a.in_flight == 1u && ticket(&f, 7u)->missing_reports == 0u);
+  check(f.a.cwnd == window); /* exit ACK must not also grow cwnd */
+  check(f.a.srtt_x8_ms == srtt && f.a.rttvar_x4_ms == variance &&
          f.a.rto_ms == rto); /* fast retransmitted + prior Gap ACK: no RTT */
   for (i = 0u; i < 7u; ++i) {
-    assert(cnet_sctp_data_take(&f.b, &m, body, sizeof(body), &nm) ==
+    check(cnet_sctp_data_take(&f.b, &m, body, sizeof(body), &nm) ==
            CNET_SCTP_DATA_OK);
-    assert(nm == 1u && body[0] == i && m.tsn == first + i);
-    assert(m.stream_sequence == 32u + i && m.ppid == 53u && !m.unordered);
+    check(nm == 1u && body[0] == i && m.tsn == first + i);
+    check(m.stream_sequence == 32u + i && m.ppid == 53u && !m.unordered);
   }
-  assert(cnet_sctp_data_take(&f.b, &m, body, sizeof(body), &nm) ==
+  check(cnet_sctp_data_take(&f.b, &m, body, sizeof(body), &nm) ==
          CNET_SCTP_DATA_EMPTY);
   deliver(&f, 103u, f.packet[4], f.size[4], sack, &ns);
   ack(&f, 104u, sack, ns);
-  assert(cnet_sctp_data_take(&f.b, &m, body, sizeof(body), &nm) ==
+  check(cnet_sctp_data_take(&f.b, &m, body, sizeof(body), &nm) ==
          CNET_SCTP_DATA_EMPTY); /* late original is not delivered twice */
   deliver(&f, 105u, f.packet[7], f.size[7], sack, &ns);
   ack(&f, 106u, sack, ns);
-  assert(f.a.in_flight == 0u && f.a.t3_deadline_ms == 0u);
-  assert(cnet_sctp_data_take(&f.b, &m, body, sizeof(body), &nm) ==
+  check(f.a.in_flight == 0u && f.a.t3_deadline_ms == 0u);
+  check(cnet_sctp_data_take(&f.b, &m, body, sizeof(body), &nm) ==
          CNET_SCTP_DATA_OK);
-  assert(nm == 1u && body[0] == 7u);
-  for (i = 0u; i < CNET_SCTP_DATA_TX_SLOTS; ++i) assert(!f.a.tx[i].used);
+  check(nm == 1u && body[0] == 7u);
+  for (i = 0u; i < CNET_SCTP_DATA_TX_SLOTS; ++i) check(!f.a.tx[i].used);
   finished(&f);
 }
 static void partial_recovery(void) {
@@ -288,19 +286,19 @@ static void reneging_streak(void) {
   init(&f, 100u);
   for (i = 0u; i < 4u; ++i) send(&f, i, 64u + i);
   gap(&f, 2u, 80u); gap(&f, 3u, 82u);
-  assert(ticket(&f, 1u)->missing_reports == 2u);
+  check(ticket(&f, 1u)->missing_reports == 2u);
   deliver(&f, 84u, f.packet[1], f.size[1], sack, &ns); ack(&f, 85u, sack, ns);
-  assert(ticket(&f, 1u)->gap_acked && ticket(&f, 1u)->missing_reports == 0u);
+  check(ticket(&f, 1u)->gap_acked && ticket(&f, 1u)->missing_reports == 0u);
   nw = peer_sack(&f, f.first - 1u, 3u, 4u, withdrawn);
   ack(&f, 86u, withdrawn, nw);
-  assert(!ticket(&f, 1u)->gap_acked && ticket(&f, 1u)->missing_reports == 1u);
-  assert(ticket(&f, 1u)->ack_counted && f.a.in_flight == 2u);
+  check(!ticket(&f, 1u)->gap_acked && ticket(&f, 1u)->missing_reports == 1u);
+  check(ticket(&f, 1u)->ack_counted && f.a.in_flight == 2u);
   ack(&f, 87u, withdrawn, nw);
-  assert(ticket(&f, 1u)->missing_reports == 1u);
+  check(ticket(&f, 1u)->missing_reports == 1u);
   ack(&f, 88u, sack, ns);
-  assert(ticket(&f, 1u)->missing_reports == 0u);
+  check(ticket(&f, 1u)->missing_reports == 0u);
   ack(&f, 89u, withdrawn, nw);
-  assert(ticket(&f, 1u)->missing_reports == 1u);
+  check(ticket(&f, 1u)->missing_reports == 1u);
   finished(&f);
 }
 
@@ -315,17 +313,17 @@ static void sack_rejection_atomicity(void) {
   gap(&f, 2u, 80u); gap(&f, 3u, 82u);
   memcpy(&before, &f.a, sizeof(before));
   ns = peer_sack(&f, f.first - 1u, 1u, 9u, sack); /* ACKs unsent TSNs */
-  assert(cnet_sctp_data_input(&f.a, 90u, sack, ns, output, sizeof(output),
+  check(cnet_sctp_data_input(&f.a, 90u, sack, ns, output, sizeof(output),
                              &n) == CNET_SCTP_DATA_PROTOCOL);
-  assert(n == 0u && memcmp(&before, &f.a, sizeof(before)) == 0);
+  check(n == 0u && memcmp(&before, &f.a, sizeof(before)) == 0);
   ns = peer_sack(&f, f.a.last_ack + UINT32_C(0x80000000), 0u, 0u, sack);
-  assert(cnet_sctp_data_input(&f.a, 90u, sack, ns, output, sizeof(output),
+  check(cnet_sctp_data_input(&f.a, 90u, sack, ns, output, sizeof(output),
                              &n) == CNET_SCTP_DATA_PROTOCOL);
-  assert(memcmp(&before, &f.a, sizeof(before)) == 0);
+  check(memcmp(&before, &f.a, sizeof(before)) == 0);
   ns = peer_sack(&f, f.first, 0u, 0u, sack);
-  assert(cnet_sctp_data_input(&f.a, UINT64_MAX - 200u, sack, ns,
+  check(cnet_sctp_data_input(&f.a, UINT64_MAX - 200u, sack, ns,
       output, sizeof(output), &n) == CNET_SCTP_DATA_CLOCK);
-  assert(n == 0u && memcmp(&before, &f.a, sizeof(before)) == 0);
+  check(n == 0u && memcmp(&before, &f.a, sizeof(before)) == 0);
   finished(&f);
 }
 
@@ -336,31 +334,31 @@ static void t3_after_fast(void) {
   init(&f, 100u);
   for (i = 0u; i < 5u; ++i) send(&f, i, 64u + i);
   for (i = 2u; i < 5u; ++i) gap(&f, i, 76u + 2u * i);
-  assert(cnet_sctp_data_advance(&f.a, 90u, output, sizeof(output), &n) ==
+  check(cnet_sctp_data_advance(&f.a, 90u, output, sizeof(output), &n) ==
          CNET_SCTP_DATA_OK); /* deliberately lose this retransmission */
   due = f.a.t3_deadline_ms; rto = f.a.rto_ms;
   memcpy(&before, &f.a, sizeof(before));
-  assert(cnet_sctp_data_advance(&f.a, due, output, 0u, &n) ==
+  check(cnet_sctp_data_advance(&f.a, due, output, 0u, &n) ==
          CNET_SCTP_DATA_CAPACITY);
-  assert(n == 0u && memcmp(&before, &f.a, sizeof(before)) == 0);
-  assert(cnet_sctp_data_advance(&f.a, due, output, sizeof(output), &n) ==
+  check(n == 0u && memcmp(&before, &f.a, sizeof(before)) == 0);
+  check(cnet_sctp_data_advance(&f.a, due, output, sizeof(output), &n) ==
          CNET_SCTP_DATA_OK);
-  assert(n == f.size[0] && memcmp(output, f.packet[0], n) == 0);
-  assert(ticket(&f, 0u)->retransmits == 2u);
-  assert(!f.a.recovery_active && f.a.cwnd == CNET_SCTP_DATA_MTU);
-  assert(f.a.rto_ms == 2u * rto);
+  check(n == f.size[0] && memcmp(output, f.packet[0], n) == 0);
+  check(ticket(&f, 0u)->retransmits == 2u);
+  check(!f.a.recovery_active && f.a.cwnd == CNET_SCTP_DATA_MTU);
+  check(f.a.rto_ms == 2u * rto);
   for (i = 0u; i < CNET_SCTP_DATA_TX_SLOTS; ++i)
-    assert(f.a.tx[i].missing_reports == 0u);
-  assert(cnet_sctp_data_advance(&f.a, due + 1u, output, sizeof(output), &n) ==
+    check(f.a.tx[i].missing_reports == 0u);
+  check(cnet_sctp_data_advance(&f.a, due + 1u, output, sizeof(output), &n) ==
          CNET_SCTP_DATA_OK);
-  assert(n == 0u); /* stale evidence for the second hole was cleared */
-  assert(cnet_sctp_data_advance(&f.a, f.a.t3_deadline_ms, output,
+  check(n == 0u); /* stale evidence for the second hole was cleared */
+  check(cnet_sctp_data_advance(&f.a, f.a.t3_deadline_ms, output,
       sizeof(output), &n) == CNET_SCTP_DATA_OK);
-  assert(ticket(&f, 0u)->retransmits == 3u);
-  assert(cnet_sctp_data_advance(&f.a, f.a.t3_deadline_ms, output,
+  check(ticket(&f, 0u)->retransmits == 3u);
+  check(cnet_sctp_data_advance(&f.a, f.a.t3_deadline_ms, output,
       sizeof(output), &n) == CNET_SCTP_DATA_EXPIRED);
-  assert(n == 0u && f.a.closed);
-  assert(cnet_sctp_data_stop(&f.b) == CNET_SCTP_DATA_OK);
+  check(n == 0u && f.a.closed);
+  check(cnet_sctp_data_stop(&f.b) == CNET_SCTP_DATA_OK);
 }
 
 
@@ -377,23 +375,23 @@ static void multi_tsn_fast_recovery(void) {
   for (i = 0u; i < 6u; ++i) send(&f, i, 64u + i);
   for (i = 3u; i < 6u; ++i) gap(&f, i, 80u + i * 2u);
   for (i = 0u; i < 3u; ++i) {
-    assert(ticket(&f, i)->pending_retransmit);
-    assert(ticket(&f, i)->flight_accounted);
+    check(ticket(&f, i)->pending_retransmit);
+    check(ticket(&f, i)->flight_accounted);
   }
   assert_flight_invariant(&f.a);
   for (i = 0u; i < 3u; ++i) {
-    assert(cnet_sctp_data_advance(&f.a, 95u + i, output,
+    check(cnet_sctp_data_advance(&f.a, 95u + i, output,
         sizeof(output), &n) == CNET_SCTP_DATA_OK);
-    assert(n == f.size[i] && memcmp(output, f.packet[i], n) == 0);
-    assert(!ticket(&f, i)->pending_retransmit);
-    assert(ticket(&f, i)->retransmits == 1u);
+    check(n == f.size[i] && memcmp(output, f.packet[i], n) == 0);
+    check(!ticket(&f, i)->pending_retransmit);
+    check(ticket(&f, i)->retransmits == 1u);
     if (i == 0u) reduced = f.a.cwnd;
-    else assert(f.a.cwnd == reduced);
+    else check(f.a.cwnd == reduced);
     assert_flight_invariant(&f.a);
   }
-  assert(cnet_sctp_data_advance(&f.a, 99u, output,
+  check(cnet_sctp_data_advance(&f.a, 99u, output,
       sizeof(output), &n) == CNET_SCTP_DATA_OK);
-  assert(n == 0u);
+  check(n == 0u);
   finished(&f);
 }
 
@@ -409,18 +407,18 @@ static void reneging_flight_accounting(void) {
   send(&f, 1u, 65u);
   send(&f, 2u, 66u);
   gap(&f, 1u, 80u);
-  assert(ticket(&f, 1u)->gap_acked);
-  assert(!ticket(&f, 1u)->flight_accounted);
+  check(ticket(&f, 1u)->gap_acked);
+  check(!ticket(&f, 1u)->flight_accounted);
   assert_flight_invariant(&f.a);
   nw = peer_sack(&f, f.first - 1u, 3u, 3u, withdrawn);
   ack(&f, 85u, withdrawn, nw);
-  assert(ticket(&f, 1u)->flight_accounted);
-  assert(!ticket(&f, 1u)->gap_acked);
-  assert(ticket(&f, 1u)->retransmits == 0u);
+  check(ticket(&f, 1u)->flight_accounted);
+  check(!ticket(&f, 1u)->gap_acked);
+  check(ticket(&f, 1u)->retransmits == 0u);
   assert_flight_invariant(&f.a);
   ns = peer_sack(&f, f.first + 2u, 0u, 0u, sack);
   ack(&f, 86u, sack, ns);
-  assert(f.a.in_flight == 0u);
+  check(f.a.in_flight == 0u);
   assert_flight_invariant(&f.a);
   finished(&f);
 }
@@ -438,26 +436,26 @@ static void t3_sack_interleave(void) {
   send(&f, 0u, 64u);
   send(&f, 1u, 65u);
   due = f.a.t3_deadline_ms;
-  assert(cnet_sctp_data_advance(&f.a, due, output,
+  check(cnet_sctp_data_advance(&f.a, due, output,
       sizeof(output), &n) == CNET_SCTP_DATA_OK);
-  assert(n == f.size[0] && memcmp(output, f.packet[0], n) == 0);
-  assert(f.a.t3_wait_ack && f.a.t3_wait_tsn == f.first);
-  assert(ticket(&f, 0u)->flight_accounted);
+  check(n == f.size[0] && memcmp(output, f.packet[0], n) == 0);
+  check(f.a.t3_wait_ack && f.a.t3_wait_tsn == f.first);
+  check(ticket(&f, 0u)->flight_accounted);
   assert_flight_invariant(&f.a);
   ns = peer_sack(&f, f.first, 0u, 0u, sack);
   ack(&f, due + 1u, sack, ns);
-  assert(!f.a.t3_wait_ack);
-  assert(f.a.last_ack == f.first);
-  assert(f.a.in_flight == 1u);
+  check(!f.a.t3_wait_ack);
+  check(f.a.last_ack == f.first);
+  check(f.a.in_flight == 1u);
   renewed = f.a.t3_deadline_ms;
-  assert(renewed > due + 1u);
+  check(renewed > due + 1u);
   assert_flight_invariant(&f.a);
-  assert(cnet_sctp_data_advance(&f.a, due + 2u, output,
+  check(cnet_sctp_data_advance(&f.a, due + 2u, output,
       sizeof(output), &n) == CNET_SCTP_DATA_OK);
-  assert(n == 0u);
-  assert(cnet_sctp_data_advance(&f.a, renewed, output,
+  check(n == 0u);
+  check(cnet_sctp_data_advance(&f.a, renewed, output,
       sizeof(output), &n) == CNET_SCTP_DATA_OK);
-  assert(n == f.size[1] && memcmp(output, f.packet[1], n) == 0);
+  check(n == f.size[1] && memcmp(output, f.packet[1], n) == 0);
   assert_flight_invariant(&f.a);
   finished(&f);
 }
@@ -478,19 +476,19 @@ static void t3_capacity_then_sack(void) {
   send(&f, 1u, 65u);
   due = f.a.t3_deadline_ms;
   memcpy(&before, &f.a, sizeof(before));
-  assert(cnet_sctp_data_advance(&f.a, due, output, 0u, &n) ==
+  check(cnet_sctp_data_advance(&f.a, due, output, 0u, &n) ==
       CNET_SCTP_DATA_CAPACITY);
-  assert(n == 0u && memcmp(&before, &f.a, sizeof(before)) == 0);
+  check(n == 0u && memcmp(&before, &f.a, sizeof(before)) == 0);
   ns = peer_sack(&f, f.first, 0u, 0u, sack);
   ack(&f, due + 1u, sack, ns);
-  assert(f.a.last_ack == f.first && !f.a.t3_wait_ack);
+  check(f.a.last_ack == f.first && !f.a.t3_wait_ack);
   assert_flight_invariant(&f.a);
   next_due = f.a.t3_deadline_ms;
-  assert(next_due > due);
-  assert(cnet_sctp_data_advance(&f.a, next_due, output,
+  check(next_due > due);
+  check(cnet_sctp_data_advance(&f.a, next_due, output,
       sizeof(output), &n) == CNET_SCTP_DATA_OK);
-  assert(n == f.size[1] && memcmp(output, f.packet[1], n) == 0);
-  assert(f.a.t3_wait_tsn == f.first + 1u);
+  check(n == f.size[1] && memcmp(output, f.packet[1], n) == 0);
+  check(f.a.t3_wait_tsn == f.first + 1u);
   assert_flight_invariant(&f.a);
   finished(&f);
 }
@@ -508,21 +506,21 @@ static void t3_preempts_pending_fast(void) {
   init(&f, 100u);
   for (i = 0u; i < 6u; ++i) send(&f, i, 64u + i);
   for (i = 3u; i < 6u; ++i) gap(&f, i, 80u + i * 2u);
-  assert(ticket(&f, 0u)->pending_retransmit);
-  assert(ticket(&f, 1u)->pending_retransmit);
+  check(ticket(&f, 0u)->pending_retransmit);
+  check(ticket(&f, 1u)->pending_retransmit);
   due = f.a.t3_deadline_ms;
-  assert(cnet_sctp_data_advance(&f.a, due, out, sizeof(out), &n)
+  check(cnet_sctp_data_advance(&f.a, due, out, sizeof(out), &n)
       == CNET_SCTP_DATA_OK);
-  assert(n == f.size[0] && memcmp(out, f.packet[0], n) == 0);
-  assert(f.a.t3_wait_ack && f.a.t3_wait_tsn == f.first);
-  assert(f.a.cwnd == CNET_SCTP_DATA_MTU);
+  check(n == f.size[0] && memcmp(out, f.packet[0], n) == 0);
+  check(f.a.t3_wait_ack && f.a.t3_wait_tsn == f.first);
+  check(f.a.cwnd == CNET_SCTP_DATA_MTU);
   for (i = 0u; i < 3u; ++i) {
-    assert(!ticket(&f, i)->pending_retransmit);
-    assert(ticket(&f, i)->missing_reports == 0u);
+    check(!ticket(&f, i)->pending_retransmit);
+    check(ticket(&f, i)->missing_reports == 0u);
   }
-  assert(cnet_sctp_data_advance(&f.a, due + 1u, out,
+  check(cnet_sctp_data_advance(&f.a, due + 1u, out,
       sizeof(out), &n) == CNET_SCTP_DATA_OK);
-  assert(n == 0u);
+  check(n == 0u);
   assert_flight_invariant(&f.a);
   finished(&f);
 }
@@ -539,23 +537,23 @@ static void t3_ack_then_fresh_loss(void) {
   init(&f, 100u);
   for (i = 0u; i < 6u; ++i) send(&f, i, 64u + i);
   due = f.a.t3_deadline_ms;
-  assert(cnet_sctp_data_advance(&f.a, due, out, sizeof(out), &n)
+  check(cnet_sctp_data_advance(&f.a, due, out, sizeof(out), &n)
       == CNET_SCTP_DATA_OK);
-  assert(n == f.size[0]);
-  assert(f.a.t3_wait_ack);
+  check(n == f.size[0]);
+  check(f.a.t3_wait_ack);
   ns = peer_sack(&f, f.first, 0u, 0u, sack);
   ack(&f, due + 1u, sack, ns);
-  assert(!f.a.t3_wait_ack);
-  assert(f.a.last_ack == f.first);
+  check(!f.a.t3_wait_ack);
+  check(f.a.last_ack == f.first);
   for (i = 1u; i < 6u; ++i)
-    assert(ticket(&f, i)->missing_reports == 0u);
+    check(ticket(&f, i)->missing_reports == 0u);
   /* New higher TSNs provide fresh evidence about TSN first+1. */
   for (i = 3u; i < 6u; ++i) {
     ns = peer_sack(&f, f.first, (uint16_t)i,
                    (uint16_t)i, sack);
     ack(&f, due + 2u + i, sack, ns);
   }
-  assert(ticket(&f, 1u)->pending_retransmit);
+  check(ticket(&f, 1u)->pending_retransmit);
   assert_flight_invariant(&f.a);
   finished(&f);
 }
@@ -576,16 +574,16 @@ static void duplicate_sack_no_false_fast(void) {
   ack(&f, 80u, sack, ns);
   misses = ticket(&f, 0u)->missing_reports;
   deadline = f.a.t3_deadline_ms;
-  assert(misses == 1u);
+  check(misses == 1u);
   for (i = 0u; i < 5u; ++i) {
     ack(&f, 81u + i, sack, ns);
-    assert(ticket(&f, 0u)->missing_reports == misses);
-    assert(!ticket(&f, 0u)->pending_retransmit);
-    assert(f.a.t3_deadline_ms == deadline);
+    check(ticket(&f, 0u)->missing_reports == misses);
+    check(!ticket(&f, 0u)->pending_retransmit);
+    check(f.a.t3_deadline_ms == deadline);
   }
-  assert(cnet_sctp_data_advance(&f.a, 90u, out,
+  check(cnet_sctp_data_advance(&f.a, 90u, out,
       sizeof(out), &n) == CNET_SCTP_DATA_OK);
-  assert(n == 0u);
+  check(n == 0u);
   assert_flight_invariant(&f.a);
   finished(&f);
 }
@@ -602,22 +600,22 @@ static void reneging_reack_pending(void) {
   send(&f, 1u, 65u);
   send(&f, 2u, 66u);
   gap(&f, 1u, 80u);
-  assert(ticket(&f, 1u)->gap_acked);
-  assert(!ticket(&f, 1u)->flight_accounted);
+  check(ticket(&f, 1u)->gap_acked);
+  check(!ticket(&f, 1u)->flight_accounted);
   nw = peer_sack(&f, f.first - 1u, 3u, 3u, withdrawn);
   ack(&f, 85u, withdrawn, nw);
-  assert(ticket(&f, 1u)->flight_accounted);
-  assert(ticket(&f, 1u)->missing_reports == 1u);
+  check(ticket(&f, 1u)->flight_accounted);
+  check(ticket(&f, 1u)->missing_reports == 1u);
   before = f.a.in_flight;
   ack(&f, 86u, withdrawn, nw);
-  assert(f.a.in_flight == before);
-  assert(ticket(&f, 1u)->missing_reports == 1u);
+  check(f.a.in_flight == before);
+  check(ticket(&f, 1u)->missing_reports == 1u);
   ns = peer_sack(&f, f.first - 1u, 2u, 3u, sack);
   ack(&f, 87u, sack, ns);
-  assert(ticket(&f, 1u)->gap_acked);
-  assert(!ticket(&f, 1u)->flight_accounted);
-  assert(!ticket(&f, 1u)->pending_retransmit);
-  assert(ticket(&f, 1u)->missing_reports == 0u);
+  check(ticket(&f, 1u)->gap_acked);
+  check(!ticket(&f, 1u)->flight_accounted);
+  check(!ticket(&f, 1u)->pending_retransmit);
+  check(ticket(&f, 1u)->missing_reports == 0u);
   assert_flight_invariant(&f.a);
   finished(&f);
 }
@@ -637,19 +635,19 @@ static void multi_loss_single_cwnd_reduction(void) {
   for (i = 3u; i < 6u; ++i) gap(&f, i, 80u + i * 2u);
   cwnd_before = f.a.cwnd;
   flight_before = f.a.in_flight;
-  assert(cnet_sctp_data_advance(&f.a, 95u, out,
+  check(cnet_sctp_data_advance(&f.a, 95u, out,
       sizeof(out), &n) == CNET_SCTP_DATA_OK);
-  assert(n == f.size[0]);
+  check(n == f.size[0]);
   reduced = f.a.cwnd;
-  assert(reduced <= cwnd_before);
-  assert(f.a.in_flight == flight_before);
+  check(reduced <= cwnd_before);
+  check(f.a.in_flight == flight_before);
   assert_flight_invariant(&f.a);
   for (i = 1u; i < 3u; ++i) {
-    assert(cnet_sctp_data_advance(&f.a, 95u + i, out,
+    check(cnet_sctp_data_advance(&f.a, 95u + i, out,
         sizeof(out), &n) == CNET_SCTP_DATA_OK);
-    assert(n == f.size[i]);
-    assert(f.a.cwnd == reduced);
-    assert(f.a.in_flight == flight_before);
+    check(n == f.size[i]);
+    check(f.a.cwnd == reduced);
+    check(f.a.in_flight == flight_before);
     assert_flight_invariant(&f.a);
   }
   finished(&f);
@@ -672,28 +670,28 @@ static void pending_priority_for_direct_and_pump(void) {
   init(&f, 100u);
   for (i = 0u; i < 6u; ++i) send(&f, i, 64u + i);
   for (i = 3u; i < 6u; ++i) gap(&f, i, 80u + i * 2u);
-  for (i = 0u; i < 3u; ++i) assert(ticket(&f, i)->pending_retransmit);
-  assert(cnet_sctp_data_deadline(&f.a, &due, &has_due) == CNET_SCTP_DATA_OK);
-  assert(has_due && due == f.a.last_time_ms);
+  for (i = 0u; i < 3u; ++i) check(ticket(&f, i)->pending_retransmit);
+  check(cnet_sctp_data_deadline(&f.a, &due, &has_due) == CNET_SCTP_DATA_OK);
+  check(has_due && due == f.a.last_time_ms);
   next = f.a.next_tsn;
-  assert(cnet_sctp_data_send(&f.a, 94u, 0u, 53u, 0, body,
+  check(cnet_sctp_data_send(&f.a, 94u, 0u, 53u, 0, body,
       sizeof(body), out, sizeof(out), &n) ==
       CNET_SCTP_DATA_RETRANSMIT_PENDING);
-  assert(n == 0u && f.a.next_tsn == next);
-  assert(cnet_sctp_data_queue_message(&f.a, 94u, 0u, 53u, 0,
+  check(n == 0u && f.a.next_tsn == next);
+  check(cnet_sctp_data_queue_message(&f.a, 94u, 0u, 53u, 0,
       body, sizeof(body)) == CNET_SCTP_DATA_OK);
-  assert(cnet_sctp_data_pump(&f.a, 94u, out, sizeof(out), &n) ==
+  check(cnet_sctp_data_pump(&f.a, 94u, out, sizeof(out), &n) ==
       CNET_SCTP_DATA_RETRANSMIT_PENDING);
-  assert(n == 0u && f.a.pending.active &&
+  check(n == 0u && f.a.pending.active &&
       f.a.pending.offset == 0u && f.a.next_tsn == next);
   for (i = 0u; i < 3u; ++i) {
-    assert(cnet_sctp_data_advance(&f.a, 95u + i, out,
+    check(cnet_sctp_data_advance(&f.a, 95u + i, out,
         sizeof(out), &n) == CNET_SCTP_DATA_OK);
-    assert(n == f.size[i] && memcmp(out, f.packet[i], n) == 0);
+    check(n == f.size[i] && memcmp(out, f.packet[i], n) == 0);
   }
-  assert(cnet_sctp_data_pump(&f.a, 99u, out, sizeof(out), &n) ==
+  check(cnet_sctp_data_pump(&f.a, 99u, out, sizeof(out), &n) ==
       CNET_SCTP_DATA_OK);
-  assert(n != 0u && !f.a.pending.active && f.a.next_tsn == next + 1u);
+  check(n != 0u && !f.a.pending.active && f.a.next_tsn == next + 1u);
   assert_flight_invariant(&f.a);
   finished(&f);
 }
@@ -709,61 +707,85 @@ static void t3_resets_fast_retransmit_epoch(void) {
   init(&f, 100u);
   for (i = 0u; i < 6u; ++i) send(&f, i, 64u + i);
   for (i = 3u; i < 6u; ++i) gap(&f, i, 80u + i * 2u);
-  assert(ticket(&f, 0u)->pending_retransmit);
-  assert(ticket(&f, 1u)->pending_retransmit);
-  assert(cnet_sctp_data_advance(&f.a, 95u, out, sizeof(out), &n) ==
+  check(ticket(&f, 0u)->pending_retransmit);
+  check(ticket(&f, 1u)->pending_retransmit);
+  check(cnet_sctp_data_advance(&f.a, 95u, out, sizeof(out), &n) ==
       CNET_SCTP_DATA_OK);
-  assert(n == f.size[0] && ticket(&f, 0u)->fast_retransmitted);
-  assert(cnet_sctp_data_advance(&f.a, 96u, out, sizeof(out), &n) ==
+  check(n == f.size[0] && ticket(&f, 0u)->fast_retransmitted);
+  check(cnet_sctp_data_advance(&f.a, 96u, out, sizeof(out), &n) ==
       CNET_SCTP_DATA_OK);
-  assert(n == f.size[1] && ticket(&f, 1u)->fast_retransmitted);
+  check(n == f.size[1] && ticket(&f, 1u)->fast_retransmitted);
   due = f.a.t3_deadline_ms;
-  assert(cnet_sctp_data_advance(&f.a, due, out, sizeof(out), &n) ==
+  check(cnet_sctp_data_advance(&f.a, due, out, sizeof(out), &n) ==
       CNET_SCTP_DATA_OK);
-  assert(n == f.size[0] && f.a.t3_wait_ack);
-  assert(!ticket(&f, 1u)->fast_retransmitted);
+  check(n == f.size[0] && f.a.t3_wait_ack);
+  check(!ticket(&f, 1u)->fast_retransmitted);
   deliver(&f, due + 1u, out, n, sack, &ns);
   ack(&f, due + 1u, sack, ns);
-  assert(!f.a.t3_wait_ack);
+  check(!f.a.t3_wait_ack);
   /* Replaying pre-timeout gap evidence cannot start another fast recovery
    * epoch; only newly acknowledged higher TSNs may add missing reports. */
   ns = peer_sack(&f, f.first - 1u, 4u, 6u, sack);
   ack(&f, due + 2u, sack, ns);
-  assert(ticket(&f, 1u)->missing_reports == 0u);
-  assert(!ticket(&f, 1u)->pending_retransmit);
+  check(ticket(&f, 1u)->missing_reports == 0u);
+  check(!ticket(&f, 1u)->pending_retransmit);
   for (i = 6u; i < 9u; ++i) {
     const uint64_t step = (uint64_t)(i - 6u) * 4u;
     send(&f, i, due + 2u + step);
     gap(&f, i, due + 3u + step);
   }
-  assert(ticket(&f, 1u)->pending_retransmit);
+  check(ticket(&f, 1u)->pending_retransmit);
   assert_flight_invariant(&f.a);
   finished(&f);
 }
 
+
+spec("SCTP Fast recovery") {
+  it("[case:multi_tsn_fast_recovery]") { multi_tsn_fast_recovery(); }
+  it("[case:pending_priority_for_direct_and_pump]") { pending_priority_for_direct_and_pump(); }
+  it("[case:t3_sack_interleave]") { t3_sack_interleave(); }
+  it("[case:t3_capacity_then_sack]") { t3_capacity_then_sack(); }
+  it("[case:t3_preempts_pending_fast]") { t3_preempts_pending_fast(); }
+  it("[case:t3_ack_then_fresh_loss]") { t3_ack_then_fresh_loss(); }
+  it("[case:t3_resets_fast_retransmit_epoch]") { t3_resets_fast_retransmit_epoch(); }
+  it("[case:duplicate_sack_no_false_fast]") { duplicate_sack_no_false_fast(); }
+  it("[case:reneging_reack_pending]") { reneging_reack_pending(); }
+  it("[case:multi_loss_single_cwnd_reduction]") { multi_loss_single_cwnd_reduction(); }
+  it("[case:reneging_flight_accounting]") { reneging_flight_accounting(); }
+  it("[case:timer_restart]") { timer_restart(); }
+  it("[case:partial_recovery]") { partial_recovery(); }
+  it("[case:ordinary_htna]") { ordinary_htna(); }
+  it("[case:reneging_streak]") { reneging_streak(); }
+  it("[case:t3_after_fast]") { t3_after_fast(); }
+  it("[case:sack_rejection_atomicity]") { sack_rejection_atomicity(); }
+}
+
+/* Preserve the original exact-name CLI admission. CTest runs all cases.
+ * An explicit legacy name must resolve to exactly one TinyTest case. */
 int main(int argc, char **argv) {
-  static const struct { const char *name; void (*run)(void); } cases[] = {
-    {"multi_tsn_fast_recovery", multi_tsn_fast_recovery},
-    {"pending_priority_for_direct_and_pump", pending_priority_for_direct_and_pump},
-    {"t3_sack_interleave", t3_sack_interleave},
-    {"t3_capacity_then_sack", t3_capacity_then_sack},
-    {"t3_preempts_pending_fast", t3_preempts_pending_fast},
-    {"t3_ack_then_fresh_loss", t3_ack_then_fresh_loss},
-    {"t3_resets_fast_retransmit_epoch", t3_resets_fast_retransmit_epoch},
-    {"duplicate_sack_no_false_fast", duplicate_sack_no_false_fast},
-    {"reneging_reack_pending", reneging_reack_pending},
-    {"multi_loss_single_cwnd_reduction", multi_loss_single_cwnd_reduction},
-    {"reneging_flight_accounting", reneging_flight_accounting},
-    {"timer_restart", timer_restart}, {"partial_recovery", partial_recovery},
-    {"ordinary_htna", ordinary_htna}, {"reneging_streak", reneging_streak},
-    {"t3_after_fast", t3_after_fast},
-    {"sack_rejection_atomicity", sack_rejection_atomicity}
-  };
-  size_t i; unsigned int ran = 0u;
-  for (i = 0u; i < sizeof(cases) / sizeof(cases[0]); ++i) {
-    if (argc > 1 && strcmp(argv[1], cases[i].name) != 0) continue;
-    cases[i].run(); ++ran; printf("PASS %s\n", cases[i].name);
+  if (argc == 1) {
+    return ttest_main__(argc, argv, TTEST_INVOKE_SPEC_ADAPTER__,
+                        TT_USE_COLOR != 0, TT_USE_TAP != 0,
+                        TTEST_IS_ATTY__() != 0, TTEST_PRINT_TRACE_DEFAULT__);
   }
-  assert(ran != 0u);
-  return 0;
+  if (argc != 2 || argv[1] == NULL) {
+    fprintf(stderr, "expected one exact SCTP case name\n");
+    return 2;
+  }
+  static const char *const names[] = {"multi_tsn_fast_recovery", "pending_priority_for_direct_and_pump", "t3_sack_interleave", "t3_capacity_then_sack", "t3_preempts_pending_fast", "t3_ack_then_fresh_loss", "t3_resets_fast_retransmit_epoch", "duplicate_sack_no_false_fast", "reneging_reack_pending", "multi_loss_single_cwnd_reduction", "reneging_flight_accounting", "timer_restart", "partial_recovery", "ordinary_htna", "reneging_streak", "t3_after_fast", "sack_rejection_atomicity"};
+  bool accepted = false;
+  for (size_t i = 0u; i < sizeof(names)/sizeof(names[0]); ++i) {
+    if (strcmp(argv[1], names[i]) == 0) { accepted = true; break; }
+  }
+  if (!accepted) {
+    fprintf(stderr, "unknown SCTP case '%s'\n", argv[1]);
+    return 2;
+  }
+  char filter[160];
+  int count = snprintf(filter, sizeof(filter), "[case:%s]", argv[1]);
+  if (count < 0 || (size_t)count >= sizeof(filter)) return 2;
+  char *filtered_argv[] = {argv[0], "--filter", filter};
+  return ttest_main__(3, filtered_argv, TTEST_INVOKE_SPEC_ADAPTER__,
+                      TT_USE_COLOR != 0, TT_USE_TAP != 0,
+                      TTEST_IS_ATTY__() != 0, TTEST_PRINT_TRACE_DEFAULT__);
 }

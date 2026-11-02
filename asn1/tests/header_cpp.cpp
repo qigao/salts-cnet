@@ -1,6 +1,6 @@
 #include <asn1.h>
 #include <asn1_value.h>
-#include "test.h"
+#include <tinytest.hpp>
 #include <cstddef>
 #include <cstdint>
 #include <type_traits>

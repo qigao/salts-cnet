@@ -1,5 +1,5 @@
 #include <crypto/asn1_crypto.h>
-#include "test.h"
+#include <tinytest.h>
 
 #include <stdint.h>
 #include <string.h>

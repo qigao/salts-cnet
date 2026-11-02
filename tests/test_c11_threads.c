@@ -1,6 +1,7 @@
 /* Source-compatible, EXPLICITLY OPT-IN C11 threads.h client.
  * Compiles with TinyCC/MSVC/Clang and makes no native _Atomic assumptions.
  */
+#include <tinytest.h>
 #include <threads.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -42,7 +43,7 @@ static int SALTS_CORE_PLATFORM_CALL detached(void *arg) {
     if (salts_atomic32_store(&finished,1u,SALTS_MEMORY_RELEASE)) return -1;
     return 0;
 }
-int main(void) {
+static int saltscore_legacy_entry_test_c11_threads_c(void) {
     thrd_t threads[WORKERS], one, loose;
     uint32_t count=0, done=0;
     struct timespec expired={0,0};
@@ -91,4 +92,13 @@ int main(void) {
     mtx_destroy(&gate);
     puts("experimental C11 threads: join/detach/early-exit/current/equal/mutex/condition/once PASS");
     return 0;
+}
+
+/* Keep the native contract's original exit codes and cleanup paths intact;
+ * surface its exact nonzero result as one registered TinyTest failure. */
+spec("C11 native thread synchronization") {
+  it("preserves the original native exit and lifetime contract") {
+    const int result = saltscore_legacy_entry_test_c11_threads_c();
+    check(result == 0, "original native contract returned %d", result);
+  }
 }

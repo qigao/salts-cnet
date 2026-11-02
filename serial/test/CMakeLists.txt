@@ -52,7 +52,7 @@ if(UNIX)
     C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
   target_compile_definitions(saltscore_serial_pty PRIVATE
     _DEFAULT_SOURCE=1 _DARWIN_C_SOURCE=1 _XOPEN_SOURCE=700)
-  target_link_libraries(saltscore_serial_pty PRIVATE Salts::Serial)
+  target_link_libraries(saltscore_serial_pty PRIVATE Salts::Serial Salts::TinyTest)
   if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     target_link_libraries(saltscore_serial_pty PRIVATE util)
   endif()

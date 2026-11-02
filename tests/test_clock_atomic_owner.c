@@ -1,6 +1,7 @@
 /* Real production clock owner: concurrent first-use frequency publication.
  * All clients use the one Platform Atomic ABI, never a volatile race.
  */
+#include <tinytest.h>
 #include <clock.h>
 #include <platform_thread.h>
 #include <stdint.h>
@@ -18,7 +19,7 @@ static int worker(void *opaque) {
     }
     return 29;
 }
-int main(void) {
+static int saltscore_legacy_entry_test_clock_atomic_owner_c(void) {
     salts_platform_thread *threads[WORKERS] = {0};
     int i, result;
     for(i=0;i<WORKERS;i++)
@@ -29,4 +30,13 @@ int main(void) {
     }
     puts("production Platform monotonic clock and atomic frequency initialization PASS");
     return 0;
+}
+
+/* Keep the native contract's original exit codes and cleanup paths intact;
+ * surface its exact nonzero result as one registered TinyTest failure. */
+spec("Clock and atomic initialization") {
+  it("preserves the original native exit and lifetime contract") {
+    const int result = saltscore_legacy_entry_test_clock_atomic_owner_c();
+    check(result == 0, "original native contract returned %d", result);
+  }
 }

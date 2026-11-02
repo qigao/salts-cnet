@@ -1,5 +1,6 @@
 #include <crypto/sha256.h>
 #include <crypto/ed448.h>
+#include <tinytest.hpp>
 
 #include <cstddef>
 #include <cstdint>
@@ -15,4 +16,8 @@ static_assert(
 static_assert(std::is_same_v<decltype(&salts_crypto_sha256_update),
                              int (*)(salts_crypto_sha256_ctx_t *, const void *, std::size_t)>);
 
-int main() { return SALTS_CRYPTO_OK == 0 ? 0 : 1; }
+spec("Crypto C++17 public algorithms header") {
+  it("retains SHA256 and Ed448 public headers and expected native status") {
+    check(SALTS_CRYPTO_OK == 0);
+  }
+}

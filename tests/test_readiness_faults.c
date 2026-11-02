@@ -9,9 +9,7 @@
 #include <stdint.h>
 #include <stdio.h>
 
-#define CHECK(e) do { if (!(e)) { \
-  fprintf(stderr, "readiness fake contract at %d: %s\n", __LINE__, #e); \
-  return __LINE__; } } while (0)
+#include <tinytest.h>
 
 typedef struct fake_backend {
   uint64_t token;
@@ -111,7 +109,7 @@ static const cmeta_readiness_backend_ops fake_ops = {
     fake_shutdown, fake_destroy
 };
 
-static int test_fault_rollback_and_reuse(void) {
+static void test_fault_rollback_and_reuse(void) {
   fake_backend fake = {0};
   cmeta_readiness_backend_ops invalid = fake_ops;
   cmeta_readiness_config config = {1u, 1u};
@@ -122,145 +120,146 @@ static int test_fault_rollback_and_reuse(void) {
   uint64_t first_generation_token, current_arm;
 
   invalid.arm = NULL;
-  CHECK(cmeta_readiness_reactor_init_backend(
+  check(cmeta_readiness_reactor_init_backend(
       &reactor, &config, &invalid, &fake) == SALTS_EINVAL);
-  CHECK(reactor.impl == NULL);
-  CHECK(cmeta_readiness_reactor_init_backend(
+  check(reactor.impl == NULL);
+  check(cmeta_readiness_reactor_init_backend(
       &reactor, &config, &fake_ops, &fake) == SALTS_OK);
   fake.fail_register = 1u;
-  CHECK(cmeta_readiness_register(&reactor, 101, &reg) == SALTS_EIO);
-  CHECK(reg.impl == NULL);
-  CHECK(cmeta_readiness_reactor_stats(&reactor, &stats) == SALTS_OK);
-  CHECK(stats.registered_count == 0u);
-  CHECK(cmeta_readiness_register(&reactor, 101, &reg) == SALTS_OK);
-  CHECK(fake.token != 0u && reg.impl != NULL);
-  CHECK(cmeta_readiness_register(&reactor, 102, &rejected) == SALTS_ENOBUFS);
-  CHECK(rejected.impl == NULL);
+  check(cmeta_readiness_register(&reactor, 101, &reg) == SALTS_EIO);
+  check(reg.impl == NULL);
+  check(cmeta_readiness_reactor_stats(&reactor, &stats) == SALTS_OK);
+  check(stats.registered_count == 0u);
+  check(cmeta_readiness_register(&reactor, 101, &reg) == SALTS_OK);
+  check(fake.token != 0u && reg.impl != NULL);
+  check(cmeta_readiness_register(&reactor, 102, &rejected) == SALTS_ENOBUFS);
+  check(rejected.impl == NULL);
   first_generation_token = fake.token;
 
   fake.fail_arm = 1u;
-  CHECK(cmeta_readiness_arm(&reg, SALTS_READINESS_EVENT_READ,
+  check(cmeta_readiness_arm(&reg, SALTS_READINESS_EVENT_READ,
                             observe, &observe_result) == SALTS_EIO);
-  CHECK(reg.impl != NULL);
-  CHECK(cmeta_readiness_reactor_stats(&reactor, &stats) == SALTS_OK);
-  CHECK(stats.armed_count == 0u);
-  CHECK(cmeta_readiness_arm(&reg, SALTS_READINESS_EVENT_READ,
+  check(reg.impl != NULL);
+  check(cmeta_readiness_reactor_stats(&reactor, &stats) == SALTS_OK);
+  check(stats.armed_count == 0u);
+  check(cmeta_readiness_arm(&reg, SALTS_READINESS_EVENT_READ,
                             observe, &observe_result) == SALTS_OK);
-  CHECK(fake.arm_token != 0u);
+  check(fake.arm_token != 0u);
   current_arm = fake.arm_token;
-  CHECK(cmeta_readiness_backend_dispatch_generation(
+  check(cmeta_readiness_backend_dispatch_generation(
       &reactor, fake.token, current_arm + 1u,
       SALTS_READINESS_EVENT_READ, SALTS_OK) == SALTS_OK);
-  CHECK(observe_result.calls == 0u);
-  CHECK(cmeta_readiness_backend_dispatch_generation(
+  check(observe_result.calls == 0u);
+  check(cmeta_readiness_backend_dispatch_generation(
       &reactor, fake.token, current_arm,
       SALTS_READINESS_EVENT_READ, SALTS_OK) == SALTS_OK);
-  CHECK(observe_result.calls == 1u &&
+  check(observe_result.calls == 1u &&
         observe_result.events == SALTS_READINESS_EVENT_READ &&
         observe_result.status == SALTS_OK);
-  CHECK(cmeta_readiness_backend_dispatch_generation(
+  check(cmeta_readiness_backend_dispatch_generation(
       &reactor, fake.token, current_arm,
       SALTS_READINESS_EVENT_READ, SALTS_OK) == SALTS_OK);
-  CHECK(observe_result.calls == 1u);
+  check(observe_result.calls == 1u);
 
-  CHECK(cmeta_readiness_arm(&reg, SALTS_READINESS_EVENT_READ,
+  check(cmeta_readiness_arm(&reg, SALTS_READINESS_EVENT_READ,
                             observe, &observe_result) == SALTS_OK);
   fake.fail_unarm = 1u;
-  CHECK(cmeta_readiness_unarm(&reg) == SALTS_EIO);
-  CHECK(cmeta_readiness_reactor_stats(&reactor, &stats) == SALTS_OK);
-  CHECK(stats.armed_count == 1u);
-  CHECK(cmeta_readiness_unarm(&reg) == SALTS_OK);
-  CHECK(cmeta_readiness_reactor_stats(&reactor, &stats) == SALTS_OK);
-  CHECK(stats.armed_count == 0u);
+  check(cmeta_readiness_unarm(&reg) == SALTS_EIO);
+  check(cmeta_readiness_reactor_stats(&reactor, &stats) == SALTS_OK);
+  check(stats.armed_count == 1u);
+  check(cmeta_readiness_unarm(&reg) == SALTS_OK);
+  check(cmeta_readiness_reactor_stats(&reactor, &stats) == SALTS_OK);
+  check(stats.armed_count == 0u);
 
-  CHECK(cmeta_readiness_arm(&reg, SALTS_READINESS_EVENT_READ,
+  check(cmeta_readiness_arm(&reg, SALTS_READINESS_EVENT_READ,
                             observe, &observe_result) == SALTS_OK);
   fake.fail_close = 1u;
-  CHECK(cmeta_readiness_close(&reg) == SALTS_EIO);
-  CHECK(reg.impl != NULL);
-  CHECK(cmeta_readiness_reactor_stats(&reactor, &stats) == SALTS_OK);
-  CHECK(stats.registered_count == 1u);
-  CHECK(cmeta_readiness_close(&reg) == SALTS_OK);
-  CHECK(reg.impl == NULL);
-  CHECK(cmeta_readiness_reactor_stats(&reactor, &stats) == SALTS_OK);
-  CHECK(stats.registered_count == 0u && stats.armed_count == 0u);
-  CHECK(stats.rejected_full == 1u && stats.stale_events == 1u &&
+  check(cmeta_readiness_close(&reg) == SALTS_EIO);
+  check(reg.impl != NULL);
+  check(cmeta_readiness_reactor_stats(&reactor, &stats) == SALTS_OK);
+  check(stats.registered_count == 1u);
+  check(cmeta_readiness_close(&reg) == SALTS_OK);
+  check(reg.impl == NULL);
+  check(cmeta_readiness_reactor_stats(&reactor, &stats) == SALTS_OK);
+  check(stats.registered_count == 0u && stats.armed_count == 0u);
+  check(stats.rejected_full == 1u && stats.stale_events == 1u &&
         stats.duplicate_events == 1u);
 
   /* A new slot incarnation cannot accept old generation events. */
-  CHECK(cmeta_readiness_register(&reactor, 103, &reg) == SALTS_OK);
-  CHECK(fake.token != first_generation_token);
-  CHECK(cmeta_readiness_arm(&reg, SALTS_READINESS_EVENT_READ,
+  check(cmeta_readiness_register(&reactor, 103, &reg) == SALTS_OK);
+  check(fake.token != first_generation_token);
+  check(cmeta_readiness_arm(&reg, SALTS_READINESS_EVENT_READ,
                             observe, &observe_result) == SALTS_OK);
-  CHECK(cmeta_readiness_backend_dispatch(
+  check(cmeta_readiness_backend_dispatch(
       &reactor, first_generation_token, SALTS_READINESS_EVENT_READ,
       SALTS_OK) == SALTS_OK);
-  CHECK(observe_result.calls == 1u);
-  CHECK(cmeta_readiness_backend_dispatch_generation(
+  check(observe_result.calls == 1u);
+  check(cmeta_readiness_backend_dispatch_generation(
       &reactor, fake.token, fake.arm_token,
       SALTS_READINESS_EVENT_READ, SALTS_OK) == SALTS_OK);
-  CHECK(observe_result.calls == 2u);
-  CHECK(cmeta_readiness_close(&reg) == SALTS_OK);
+  check(observe_result.calls == 2u);
+  check(cmeta_readiness_close(&reg) == SALTS_OK);
 
-  CHECK(cmeta_readiness_reactor_destroy(&reactor) == SALTS_EBUSY);
+  check(cmeta_readiness_reactor_destroy(&reactor) == SALTS_EBUSY);
   fake.fail_shutdown = 1u;
-  CHECK(cmeta_readiness_reactor_shutdown(&reactor) == SALTS_EIO);
-  CHECK(reactor.impl != NULL);
-  CHECK(cmeta_readiness_reactor_shutdown(&reactor) == SALTS_OK);
-  CHECK(cmeta_readiness_reactor_shutdown(&reactor) == SALTS_EALREADY);
-  CHECK(cmeta_readiness_reactor_destroy(&reactor) == SALTS_OK);
-  CHECK(reactor.impl == NULL && fake.destroy_calls == 1u);
-  CHECK(fake.resource_owned_by_caller == 1);
-  return 0;
+  check(cmeta_readiness_reactor_shutdown(&reactor) == SALTS_EIO);
+  check(reactor.impl != NULL);
+  check(cmeta_readiness_reactor_shutdown(&reactor) == SALTS_OK);
+  check(cmeta_readiness_reactor_shutdown(&reactor) == SALTS_EALREADY);
+  check(cmeta_readiness_reactor_destroy(&reactor) == SALTS_OK);
+  check(reactor.impl == NULL && fake.destroy_calls == 1u);
+  check(fake.resource_owned_by_caller == 1);
 }
 
-static int test_terminal_delivery_and_shutdown_cleanup(void) {
+static void test_terminal_delivery_and_shutdown_cleanup(void) {
   fake_backend fake = {0};
   cmeta_readiness_reactor reactor = {0};
   cmeta_readiness_config config = {1u, 1u};
   cmeta_readiness_registration reg = {0};
   callback_observer callback = {0};
-  CHECK(cmeta_readiness_reactor_init_backend(
+  check(cmeta_readiness_reactor_init_backend(
       &reactor, &config, &fake_ops, &fake) == SALTS_OK);
-  CHECK(cmeta_readiness_register(&reactor, 203, &reg) == SALTS_OK);
-  CHECK(cmeta_readiness_arm(&reg, SALTS_READINESS_EVENT_READ,
+  check(cmeta_readiness_register(&reactor, 203, &reg) == SALTS_OK);
+  check(cmeta_readiness_arm(&reg, SALTS_READINESS_EVENT_READ,
                             observe, &callback) == SALTS_OK);
-  CHECK(cmeta_readiness_reactor_shutdown(&reactor) == SALTS_OK);
-  CHECK(callback.calls == 1u);
-  CHECK(callback.events == 0u && callback.status == SALTS_ESHUTDOWN);
-  CHECK(cmeta_readiness_close(&reg) == SALTS_OK);
-  CHECK(cmeta_readiness_reactor_destroy(&reactor) == SALTS_OK);
-  CHECK(fake.destroy_calls == 1u);
-  return 0;
+  check(cmeta_readiness_reactor_shutdown(&reactor) == SALTS_OK);
+  check(callback.calls == 1u);
+  check(callback.events == 0u && callback.status == SALTS_ESHUTDOWN);
+  check(cmeta_readiness_close(&reg) == SALTS_OK);
+  check(cmeta_readiness_reactor_destroy(&reactor) == SALTS_OK);
+  check(fake.destroy_calls == 1u);
 }
 
-static int test_backend_fatal_terminal_once(void) {
+static void test_backend_fatal_terminal_once(void) {
   fake_backend fake = {0};
   cmeta_readiness_reactor reactor = {0};
   cmeta_readiness_config config = {1u, 1u};
   cmeta_readiness_registration reg = {0};
   callback_observer callback = {0};
-  CHECK(cmeta_readiness_reactor_init_backend(
+  check(cmeta_readiness_reactor_init_backend(
       &reactor, &config, &fake_ops, &fake) == SALTS_OK);
-  CHECK(cmeta_readiness_register(&reactor, 303, &reg) == SALTS_OK);
-  CHECK(cmeta_readiness_arm(&reg, SALTS_READINESS_EVENT_READ,
+  check(cmeta_readiness_register(&reactor, 303, &reg) == SALTS_OK);
+  check(cmeta_readiness_arm(&reg, SALTS_READINESS_EVENT_READ,
                             observe, &callback) == SALTS_OK);
-  CHECK(cmeta_readiness_backend_fail(&reactor, SALTS_EIO) == SALTS_OK);
-  CHECK(callback.calls == 1u && callback.events == 0u &&
+  check(cmeta_readiness_backend_fail(&reactor, SALTS_EIO) == SALTS_OK);
+  check(callback.calls == 1u && callback.events == 0u &&
         callback.status == SALTS_EIO);
-  CHECK(cmeta_readiness_backend_fail(&reactor, SALTS_EIO) == SALTS_EALREADY);
-  CHECK(cmeta_readiness_reactor_shutdown(&reactor) == SALTS_OK);
-  CHECK(callback.calls == 1u);
-  CHECK(cmeta_readiness_close(&reg) == SALTS_OK);
-  CHECK(cmeta_readiness_reactor_destroy(&reactor) == SALTS_OK);
-  CHECK(fake.destroy_calls == 1u);
-  return 0;
+  check(cmeta_readiness_backend_fail(&reactor, SALTS_EIO) == SALTS_EALREADY);
+  check(cmeta_readiness_reactor_shutdown(&reactor) == SALTS_OK);
+  check(callback.calls == 1u);
+  check(cmeta_readiness_close(&reg) == SALTS_OK);
+  check(cmeta_readiness_reactor_destroy(&reactor) == SALTS_OK);
+  check(fake.destroy_calls == 1u);
 }
 
-int main(void) {
-  int status = test_fault_rollback_and_reuse();
-  if (status != 0) return status;
-  status = test_terminal_delivery_and_shutdown_cleanup();
-  if (status != 0) return status;
-  return test_backend_fatal_terminal_once();
+spec("Platform Readiness fault-atomic owner") {
+  it("rolls back failed registration, arm, unarm and close operations") {
+    test_fault_rollback_and_reuse();
+  }
+  it("delivers one terminal shutdown callback and destroys once") {
+    test_terminal_delivery_and_shutdown_cleanup();
+  }
+  it("delivers one terminal fatal-backend callback") {
+    test_backend_fatal_terminal_once();
+  }
 }

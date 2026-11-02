@@ -126,7 +126,7 @@ endif()
 
 if(BUILD_TESTING)
   add_executable(cnet_sctp_wire_test tests/wire_test.c)
-  target_link_libraries(cnet_sctp_wire_test PRIVATE Salts::SCTPWire)
+  target_link_libraries(cnet_sctp_wire_test PRIVATE Salts::SCTPWire Salts::TinyTest)
   set_target_properties(cnet_sctp_wire_test PROPERTIES
     C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
   if(MSVC)
@@ -137,7 +137,7 @@ if(BUILD_TESTING)
   add_test(NAME cnet_sctp_wire_test COMMAND cnet_sctp_wire_test)
 
   add_executable(cnet_sctp_assoc_test tests/assoc_test.c)
-  target_link_libraries(cnet_sctp_assoc_test PRIVATE cnet_sctp_assoc_proto)
+  target_link_libraries(cnet_sctp_assoc_test PRIVATE cnet_sctp_assoc_proto Salts::TinyTest)
   target_include_directories(cnet_sctp_assoc_test PRIVATE src)
   set_target_properties(cnet_sctp_assoc_test PROPERTIES
     C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
@@ -149,7 +149,7 @@ if(BUILD_TESTING)
   add_test(NAME cnet_sctp_assoc_test COMMAND cnet_sctp_assoc_test)
 
   add_executable(cnet_sctp_init_params_test tests/init_params_test.c)
-  target_link_libraries(cnet_sctp_init_params_test PRIVATE cnet_sctp_assoc_proto)
+  target_link_libraries(cnet_sctp_init_params_test PRIVATE cnet_sctp_assoc_proto Salts::TinyTest)
   target_include_directories(cnet_sctp_init_params_test PRIVATE src)
   set_target_properties(cnet_sctp_init_params_test PROPERTIES
     C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
@@ -162,7 +162,7 @@ if(BUILD_TESTING)
 
   # Table 12 classifiers are decision-only: no side effects or production cutover.
   add_executable(cnet_sctp_collision_test tests/collision_test.c)
-  target_link_libraries(cnet_sctp_collision_test PRIVATE cnet_sctp_assoc_proto)
+  target_link_libraries(cnet_sctp_collision_test PRIVATE cnet_sctp_assoc_proto Salts::TinyTest)
   target_include_directories(cnet_sctp_collision_test PRIVATE src)
   set_target_properties(cnet_sctp_collision_test PROPERTIES
     C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
@@ -174,7 +174,7 @@ if(BUILD_TESTING)
   add_test(NAME cnet_sctp_collision_test COMMAND cnet_sctp_collision_test)
 
   add_executable(cnet_sctp_data_test tests/data_test.c)
-  target_link_libraries(cnet_sctp_data_test PRIVATE cnet_sctp_data_proto)
+  target_link_libraries(cnet_sctp_data_test PRIVATE cnet_sctp_data_proto Salts::TinyTest)
   target_include_directories(cnet_sctp_data_test PRIVATE src)
   set_target_properties(cnet_sctp_data_test PROPERTIES
     C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
@@ -186,7 +186,7 @@ if(BUILD_TESTING)
   add_test(NAME cnet_sctp_data_test COMMAND cnet_sctp_data_test)
 
   add_executable(cnet_sctp_sack_recovery_test tests/sack_recovery_test.c)
-  target_link_libraries(cnet_sctp_sack_recovery_test PRIVATE cnet_sctp_data_proto)
+  target_link_libraries(cnet_sctp_sack_recovery_test PRIVATE cnet_sctp_data_proto Salts::TinyTest)
   target_include_directories(cnet_sctp_sack_recovery_test PRIVATE src)
   set_target_properties(cnet_sctp_sack_recovery_test PROPERTIES
     C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
@@ -198,7 +198,7 @@ if(BUILD_TESTING)
   add_test(NAME cnet_sctp_sack_recovery_test COMMAND cnet_sctp_sack_recovery_test)
 
   add_executable(cnet_sctp_fast_recovery_test tests/fast_recovery_test.c)
-  target_link_libraries(cnet_sctp_fast_recovery_test PRIVATE cnet_sctp_data_proto)
+  target_link_libraries(cnet_sctp_fast_recovery_test PRIVATE cnet_sctp_data_proto Salts::TinyTest)
   target_include_directories(cnet_sctp_fast_recovery_test PRIVATE src)
   set_target_properties(cnet_sctp_fast_recovery_test PROPERTIES
     C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
@@ -210,7 +210,7 @@ if(BUILD_TESTING)
   add_test(NAME cnet_sctp_fast_recovery_test COMMAND cnet_sctp_fast_recovery_test)
 
   add_executable(cnet_sctp_congestion_test tests/congestion_test.c)
-  target_link_libraries(cnet_sctp_congestion_test PRIVATE cnet_sctp_data_proto)
+  target_link_libraries(cnet_sctp_congestion_test PRIVATE cnet_sctp_data_proto Salts::TinyTest)
   target_include_directories(cnet_sctp_congestion_test PRIVATE src)
   set_target_properties(cnet_sctp_congestion_test PROPERTIES
     C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
@@ -222,7 +222,7 @@ if(BUILD_TESTING)
   add_test(NAME cnet_sctp_congestion_test COMMAND cnet_sctp_congestion_test)
 
   add_executable(cnet_sctp_zero_window_test tests/zero_window_test.c)
-  target_link_libraries(cnet_sctp_zero_window_test PRIVATE cnet_sctp_data_proto)
+  target_link_libraries(cnet_sctp_zero_window_test PRIVATE cnet_sctp_data_proto Salts::TinyTest)
   target_include_directories(cnet_sctp_zero_window_test PRIVATE src)
   set_target_properties(cnet_sctp_zero_window_test PROPERTIES
     C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
@@ -235,7 +235,7 @@ if(BUILD_TESTING)
 
   add_executable(cnet_sctp_pr_sctp_test tests/pr_sctp_test.c)
   target_link_libraries(cnet_sctp_pr_sctp_test PRIVATE
-    cnet_sctp_data_proto cnet_sctp_wire)
+    cnet_sctp_data_proto cnet_sctp_wire Salts::TinyTest)
   target_include_directories(cnet_sctp_pr_sctp_test PRIVATE src)
   set_target_properties(cnet_sctp_pr_sctp_test PROPERTIES
     C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
@@ -249,7 +249,7 @@ if(BUILD_TESTING)
 
   add_executable(cnet_sctp_interleaving_test tests/interleaving_test.c)
   target_link_libraries(cnet_sctp_interleaving_test PRIVATE
-    cnet_sctp_data_proto cnet_sctp_wire)
+    cnet_sctp_data_proto cnet_sctp_wire Salts::TinyTest)
   target_include_directories(cnet_sctp_interleaving_test PRIVATE src)
   set_target_properties(cnet_sctp_interleaving_test PROPERTIES
     C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
@@ -263,7 +263,7 @@ if(BUILD_TESTING)
     COMMAND cnet_sctp_interleaving_test)
 
   add_executable(cnet_sctp_bundle_test tests/bundle_test.c)
-  target_link_libraries(cnet_sctp_bundle_test PRIVATE cnet_sctp_data_proto)
+  target_link_libraries(cnet_sctp_bundle_test PRIVATE cnet_sctp_data_proto Salts::TinyTest)
   target_include_directories(cnet_sctp_bundle_test PRIVATE src)
   set_target_properties(cnet_sctp_bundle_test PROPERTIES
     C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
@@ -275,7 +275,7 @@ if(BUILD_TESTING)
   add_test(NAME cnet_sctp_bundle_test COMMAND cnet_sctp_bundle_test)
 
   add_executable(cnet_sctp_fragment_test tests/fragment_test.c)
-  target_link_libraries(cnet_sctp_fragment_test PRIVATE cnet_sctp_data_proto)
+  target_link_libraries(cnet_sctp_fragment_test PRIVATE cnet_sctp_data_proto Salts::TinyTest)
   target_include_directories(cnet_sctp_fragment_test PRIVATE src)
   set_target_properties(cnet_sctp_fragment_test PROPERTIES
     C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
@@ -288,7 +288,7 @@ if(BUILD_TESTING)
 
   add_executable(cnet_sctp_assoc_data_test tests/assoc_data_test.c)
   target_link_libraries(cnet_sctp_assoc_data_test PRIVATE
-    cnet_sctp_assoc_proto cnet_sctp_dcep_proto cnet_sctp_webrtc_proto)
+    cnet_sctp_assoc_proto cnet_sctp_dcep_proto cnet_sctp_webrtc_proto Salts::TinyTest)
   target_include_directories(cnet_sctp_assoc_data_test PRIVATE src)
   set_target_properties(cnet_sctp_assoc_data_test PROPERTIES
     C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
@@ -300,7 +300,7 @@ if(BUILD_TESTING)
   add_test(NAME cnet_sctp_assoc_data_test COMMAND cnet_sctp_assoc_data_test)
 
   add_executable(cnet_sctp_dcep_test tests/dcep_test.c)
-  target_link_libraries(cnet_sctp_dcep_test PRIVATE cnet_sctp_dcep_proto)
+  target_link_libraries(cnet_sctp_dcep_test PRIVATE cnet_sctp_dcep_proto Salts::TinyTest)
   target_include_directories(cnet_sctp_dcep_test PRIVATE src)
   set_target_properties(cnet_sctp_dcep_test PROPERTIES
     C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
@@ -312,7 +312,7 @@ if(BUILD_TESTING)
   add_test(NAME cnet_sctp_dcep_test COMMAND cnet_sctp_dcep_test)
 
   add_executable(cnet_sctp_session_test tests/session_test.c)
-  target_link_libraries(cnet_sctp_session_test PRIVATE cnet_sctp_session_proto)
+  target_link_libraries(cnet_sctp_session_test PRIVATE cnet_sctp_session_proto Salts::TinyTest)
   target_include_directories(cnet_sctp_session_test PRIVATE src)
   set_target_properties(cnet_sctp_session_test PROPERTIES
     C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
@@ -327,7 +327,7 @@ if(BUILD_TESTING)
   # Public opaque Session behavior remains a source-tree formal test. It is
   # deliberately not configured as a second installed-consumer project.
   add_executable(cnet_sctp_public_api_test tests/public_api_test.c)
-  target_link_libraries(cnet_sctp_public_api_test PRIVATE Salts::SCTP)
+  target_link_libraries(cnet_sctp_public_api_test PRIVATE Salts::SCTP Salts::TinyTest)
   set_target_properties(cnet_sctp_public_api_test PROPERTIES
     C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
   if(MSVC)
@@ -355,13 +355,14 @@ if(CNET_SCTP_TEST_OWNER_THREADS)
   add_executable(cnet_sctp_owner_thread_test tests/owner_thread_test.c)
   target_include_directories(cnet_sctp_owner_thread_test PRIVATE src)
   target_link_libraries(cnet_sctp_owner_thread_test PRIVATE
-    cnet_sctp_assoc_proto Threads::Threads)
+    cnet_sctp_assoc_proto Threads::Threads Salts::TinyTest)
   set_target_properties(cnet_sctp_owner_thread_test PROPERTIES
     C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
   target_compile_options(cnet_sctp_owner_thread_test PRIVATE
     -Wall -Wextra -Wpedantic -Werror)
   add_test(NAME cnet_sctp_owner_thread_test
     COMMAND cnet_sctp_owner_thread_test)
+  set_tests_properties(cnet_sctp_owner_thread_test PROPERTIES TIMEOUT 60)
   # Actual dlopen/dlclose validation is POSIX only and never installed.
   # Keep the provider and host as independently compiled C11 code: a future
   # DSO unload must wait until the last borrowed callback has settled.
@@ -377,7 +378,7 @@ if(CNET_SCTP_TEST_OWNER_THREADS)
   add_executable(cnet_sctp_provider_dso_test tests/provider_dso_test.c)
   target_include_directories(cnet_sctp_provider_dso_test PRIVATE src tests)
   target_link_libraries(cnet_sctp_provider_dso_test PRIVATE
-    cnet_sctp_assoc_proto Threads::Threads ${CMAKE_DL_LIBS})
+    cnet_sctp_assoc_proto Threads::Threads ${CMAKE_DL_LIBS} Salts::TinyTest)
   set_target_properties(cnet_sctp_provider_dso_test PROPERTIES
     C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
   target_compile_options(cnet_sctp_provider_dso_test PRIVATE
@@ -387,6 +388,7 @@ if(CNET_SCTP_TEST_OWNER_THREADS)
   add_test(NAME cnet_sctp_provider_dso_test
     COMMAND cnet_sctp_provider_dso_test
       $<TARGET_FILE:cnet_sctp_test_provider_dso>)
+  set_tests_properties(cnet_sctp_provider_dso_test PROPERTIES TIMEOUT 90)
 
   # Test-only public opaque Session + real DSO cancellation/Owner/drain.
   # The existing private Association DSO gate remains separate.
@@ -395,7 +397,7 @@ if(CNET_SCTP_TEST_OWNER_THREADS)
   target_include_directories(cnet_sctp_session_provider_dso_test
     PRIVATE tests)
   target_link_libraries(cnet_sctp_session_provider_dso_test PRIVATE
-    Salts::SCTP Threads::Threads ${CMAKE_DL_LIBS})
+    Salts::SCTP Threads::Threads ${CMAKE_DL_LIBS} Salts::TinyTest)
   set_target_properties(cnet_sctp_session_provider_dso_test PROPERTIES
     C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
   target_compile_options(cnet_sctp_session_provider_dso_test PRIVATE
@@ -405,6 +407,7 @@ if(CNET_SCTP_TEST_OWNER_THREADS)
   add_test(NAME cnet_sctp_session_provider_dso_test
     COMMAND cnet_sctp_session_provider_dso_test
       $<TARGET_FILE:cnet_sctp_test_provider_dso>)
+  set_tests_properties(cnet_sctp_session_provider_dso_test PROPERTIES TIMEOUT 90)
 endif()
 
 # Test-only independent Pion SCTP oracle. Real UDP datagrams to an external

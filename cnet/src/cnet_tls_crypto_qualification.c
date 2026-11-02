@@ -675,14 +675,23 @@ int cnet_tls_probe_peer_close(cnet_tls_state *state, bool *out_peer_closed,
     return SALTS_OK;
 }
 
-int cnet_tls_shutdown(cnet_tls_state *state, bool *out_notify_generated)
+int cnet_tls_shutdown(cnet_tls_state *state, bool *out_notify_generated,
+                      bool *out_peer_notify_received)
 {
     cnet_crypto_state *eng = get_engine(state);
     crypto_tls_cipher_bio_snapshot before = {0}, after = {0};
     crypto_tls_result result;
-    if (out_notify_generated == NULL) return SALTS_EINVAL;
-    *out_notify_generated = state != NULL && state->close_notify_started;
-    if (eng == NULL) return SALTS_EINVAL;
+    if (state == NULL || out_notify_generated == NULL ||
+        out_peer_notify_received == NULL || eng == NULL)
+        return SALTS_EINVAL;
+    *out_notify_generated = state->close_notify_started;
+    /* This test-only Crypto v1.0 TLS API has no authenticated
+     * peer-close-notify inspection. Do not convert CRYPTO_TLS_CLOSED,
+     * transport EOF, or a locally queued shutdown into peer consent.
+     * Production CNet's direct TLS owner uses tls_get_peer_close_notify().
+     * The deferred capability gap belongs to production Provider #81.
+     */
+    *out_peer_notify_received = false;
     if (!state->handshake_complete) return SALTS_ENOTCONN;
     if (eng->write_source != NULL) return SALTS_EBUSY;
 

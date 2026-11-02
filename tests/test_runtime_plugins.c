@@ -3,6 +3,8 @@
  * Core buffer outstanding, then release it from B. Repeat to catch stale
  * module-local owner identity after unload/reload.
  */
+#define TINYTEST_NO_MAIN
+#include <tinytest.h>
 #include <cmeta_buffer.h>
 #include <thread.h>
 #include <error_codes.h>
@@ -91,7 +93,7 @@ static void release_worker(void *opaque) {
   w->success = w->slice.buffer == NULL;
 }
 
-int main(int argc, char **argv) {
+static int saltscore_original_entry_test_runtime_plugins_c(int argc, char **argv) {
   int result = 0, round;
   mem_pool_t *const pool = mem_global();
   const void *const token = cmeta_thread_current_token();
@@ -174,4 +176,25 @@ cleanup:
 #undef VERIFY
   }
   return 0;
+}
+
+/* Preserve original real peer / module argument delivery and all cleanup.
+ * TinyTest owns the process result, while the original integration executes. */
+static int saltscore_original_argc;
+static char **saltscore_original_argv;
+
+spec("CNet two loadable plugins and retained owner") {
+  it("preserves the real native integration and external peer contract") {
+    const int result = saltscore_original_entry_test_runtime_plugins_c(saltscore_original_argc, saltscore_original_argv);
+    check(result == 0, "native integration returned %d", result);
+  }
+}
+
+int main(int argc, char **argv) {
+  saltscore_original_argc = argc;
+  saltscore_original_argv = argv;
+  char *runner_argv[] = {argv[0]};
+  return ttest_main__(1, runner_argv, TTEST_INVOKE_SPEC_ADAPTER__,
+                      TT_USE_COLOR != 0, TT_USE_TAP != 0,
+                      TTEST_IS_ATTY__() != 0, TTEST_PRINT_TRACE_DEFAULT__);
 }

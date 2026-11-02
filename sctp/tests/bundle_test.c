@@ -1,9 +1,6 @@
 #include "sctp_data_internal.h"
 
-#ifdef NDEBUG
-#undef NDEBUG
-#endif
-#include <assert.h>
+#include <tinytest.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
@@ -35,18 +32,18 @@ static void init(pair *p) {
   cnet_sctp_data_config a, b;
   memset(p, 0, sizeof(*p)); p->admitted = 1;
   a = cfg(p, 1); b = cfg(p, 0);
-  assert(cnet_sctp_data_init(&p->a, &a, 0u) == CNET_SCTP_DATA_OK);
-  assert(cnet_sctp_data_init(&p->b, &b, 0u) == CNET_SCTP_DATA_OK);
+  check(cnet_sctp_data_init(&p->a, &a, 0u) == CNET_SCTP_DATA_OK);
+  check(cnet_sctp_data_init(&p->b, &b, 0u) == CNET_SCTP_DATA_OK);
 }
 static cnet_sctp_wire_chunk one(const uint8_t *packet, size_t n,
     uint8_t expected) {
   cnet_sctp_wire_header h = {0};
   cnet_sctp_wire_decoder dec = {0};
   cnet_sctp_wire_chunk ch = {0};
-  assert(cnet_sctp_wire_decode(packet, n, &h, &dec) == CNET_SCTP_WIRE_OK);
-  assert(h.chunk_count == 1u);
-  assert(cnet_sctp_wire_next_chunk(&dec, &ch) == CNET_SCTP_WIRE_OK);
-  assert(ch.type == expected);
+  check(cnet_sctp_wire_decode(packet, n, &h, &dec) == CNET_SCTP_WIRE_OK);
+  check(h.chunk_count == 1u);
+  check(cnet_sctp_wire_next_chunk(&dec, &ch) == CNET_SCTP_WIRE_OK);
+  check(ch.type == expected);
   return ch;
 }
 static size_t pack(const cnet_sctp_data *d, int outbound,
@@ -56,7 +53,7 @@ static size_t pack(const cnet_sctp_data *d, int outbound,
   const uint16_t source = outbound ? d->config.local_port : d->config.remote_port;
   const uint16_t dest = outbound ? d->config.remote_port : d->config.local_port;
   const uint32_t tag = outbound ? d->config.peer_tag : d->config.local_tag;
-  assert(cnet_sctp_wire_encode(source, dest, tag, chunks, count,
+  check(cnet_sctp_wire_encode(source, dest, tag, chunks, count,
       out, cap, &n) == CNET_SCTP_WIRE_OK);
   return n;
 }
@@ -71,7 +68,7 @@ static void multi_data_atomicity(void) {
   cnet_sctp_data before;
   init(&p);
   for (i = 0u; i < 3u; ++i) {
-    assert(cnet_sctp_data_send(&p.a, i + 1u, 0u, 53u, 0,
+    check(cnet_sctp_data_send(&p.a, i + 1u, 0u, 53u, 0,
         &payload[i], 1u, original[i], sizeof(original[i]),
         &sent[i]) == CNET_SCTP_DATA_OK);
     chunks[i] = one(original[i], sent[i], 0u);
@@ -85,32 +82,32 @@ static void multi_data_atomicity(void) {
   ns = pack(&p.a, 1, corrupt, 3u, combined, sizeof(combined));
   memcpy(&before, &p.b, sizeof(before));
   nr = 0u;
-  assert(cnet_sctp_data_input(&p.b, 10u, combined, ns, sack,
+  check(cnet_sctp_data_input(&p.b, 10u, combined, ns, sack,
       sizeof(sack), &nr) == CNET_SCTP_DATA_PROTOCOL);
-  assert(nr == 0u && memcmp(&before, &p.b, sizeof(before)) == 0);
+  check(nr == 0u && memcmp(&before, &p.b, sizeof(before)) == 0);
   /* Receive-side reserved DATA flags and the I bit must not invalidate
    * an otherwise legal DATA bundle. The sender's own packets stay clean. */
   chunks[1].flags = (uint8_t)(chunks[1].flags | 0xF8u);
   n = pack(&p.a, 1, chunks, 3u, combined, sizeof(combined));
-  assert(cnet_sctp_data_input(&p.b, 10u, combined, n, sack, 8u,
+  check(cnet_sctp_data_input(&p.b, 10u, combined, n, sack, 8u,
       &nr) == CNET_SCTP_DATA_CAPACITY);
-  assert(nr == 0u && memcmp(&before, &p.b, sizeof(before)) == 0);
-  assert(cnet_sctp_data_input(&p.b, 10u, combined, n, sack,
+  check(nr == 0u && memcmp(&before, &p.b, sizeof(before)) == 0);
+  check(cnet_sctp_data_input(&p.b, 10u, combined, n, sack,
       sizeof(sack), &nr) == CNET_SCTP_DATA_OK);
   reported = one(sack, nr, 3u);
-  assert(reported.value_size >= 12u && reported.value[3] == 102u);
-  assert(p.b.buffered_rx == 3u && p.b.cumulative_rx == 102u);
-  assert(cnet_sctp_data_input(&p.a, 11u, sack, nr, combined,
+  check(reported.value_size >= 12u && reported.value[3] == 102u);
+  check(p.b.buffered_rx == 3u && p.b.cumulative_rx == 102u);
+  check(cnet_sctp_data_input(&p.a, 11u, sack, nr, combined,
       sizeof(combined), &ns) == CNET_SCTP_DATA_OK);
-  assert(ns == 0u && p.a.in_flight == 0u);
+  check(ns == 0u && p.a.in_flight == 0u);
   for (i = 0u; i < 3u; ++i) {
-    assert(cnet_sctp_data_take(&p.b, &meta, body,
+    check(cnet_sctp_data_take(&p.b, &meta, body,
         sizeof(body), &nm) == CNET_SCTP_DATA_OK);
-    assert(nm == 1u && body[0] == payload[i] &&
+    check(nm == 1u && body[0] == payload[i] &&
         meta.stream_sequence == (uint16_t)i);
   }
-  assert(cnet_sctp_data_stop(&p.a) == CNET_SCTP_DATA_OK);
-  assert(cnet_sctp_data_stop(&p.b) == CNET_SCTP_DATA_OK);
+  check(cnet_sctp_data_stop(&p.a) == CNET_SCTP_DATA_OK);
+  check(cnet_sctp_data_stop(&p.b) == CNET_SCTP_DATA_OK);
 }
 static void sack_before_data_and_bad_order(void) {
   pair p;
@@ -123,11 +120,11 @@ static void sack_before_data_and_bad_order(void) {
   cnet_sctp_data_message meta = {0};
   cnet_sctp_data before;
   init(&p);
-  assert(cnet_sctp_data_send(&p.a, 1u, 0u, 53u, 0,
+  check(cnet_sctp_data_send(&p.a, 1u, 0u, 53u, 0,
       &request, 1u, data_a, sizeof(data_a), &na) == CNET_SCTP_DATA_OK);
-  assert(cnet_sctp_data_input(&p.b, 2u, data_a, na, ack_a,
+  check(cnet_sctp_data_input(&p.b, 2u, data_a, na, ack_a,
       sizeof(ack_a), &ns) == CNET_SCTP_DATA_OK);
-  assert(cnet_sctp_data_send(&p.b, 3u, 0u, 53u, 0,
+  check(cnet_sctp_data_send(&p.b, 3u, 0u, 53u, 0,
       &reply, 1u, data_b, sizeof(data_b), &nb) == CNET_SCTP_DATA_OK);
   sack = one(ack_a, ns, 3u);
   good[0] = sack;
@@ -135,22 +132,22 @@ static void sack_before_data_and_bad_order(void) {
   bad[0] = good[1]; bad[1] = good[0];
   np = pack(&p.b, 1, bad, 2u, combined, sizeof(combined));
   memcpy(&before, &p.a, sizeof(before));
-  assert(cnet_sctp_data_input(&p.a, 10u, combined, np,
+  check(cnet_sctp_data_input(&p.a, 10u, combined, np,
       response, sizeof(response), &nr) == CNET_SCTP_DATA_PROTOCOL);
-  assert(nr == 0u && memcmp(&before, &p.a, sizeof(before)) == 0);
+  check(nr == 0u && memcmp(&before, &p.a, sizeof(before)) == 0);
   np = pack(&p.b, 1, good, 2u, combined, sizeof(combined));
-  assert(cnet_sctp_data_input(&p.a, 10u, combined, np,
+  check(cnet_sctp_data_input(&p.a, 10u, combined, np,
       response, sizeof(response), &nr) == CNET_SCTP_DATA_OK);
-  assert(one(response, nr, 3u).type == 3u);
-  assert(p.a.in_flight == 0u && p.a.buffered_rx == 1u);
-  assert(cnet_sctp_data_input(&p.b, 11u, response, nr,
+  check(one(response, nr, 3u).type == 3u);
+  check(p.a.in_flight == 0u && p.a.buffered_rx == 1u);
+  check(cnet_sctp_data_input(&p.b, 11u, response, nr,
       combined, sizeof(combined), &ns) == CNET_SCTP_DATA_OK);
-  assert(ns == 0u && p.b.in_flight == 0u);
-  assert(cnet_sctp_data_take(&p.a, &meta, body,
+  check(ns == 0u && p.b.in_flight == 0u);
+  check(cnet_sctp_data_take(&p.a, &meta, body,
       sizeof(body), &nm) == CNET_SCTP_DATA_OK);
-  assert(nm == 1u && body[0] == reply);
-  assert(cnet_sctp_data_stop(&p.a) == CNET_SCTP_DATA_OK);
-  assert(cnet_sctp_data_stop(&p.b) == CNET_SCTP_DATA_OK);
+  check(nm == 1u && body[0] == reply);
+  check(cnet_sctp_data_stop(&p.a) == CNET_SCTP_DATA_OK);
+  check(cnet_sctp_data_stop(&p.b) == CNET_SCTP_DATA_OK);
 }
 /* The emitted bundle has 3 chunks, but the one-Owner T3 schedule keeps
  * three separately retransmittable single-DATA tickets when it is lost. */
@@ -177,55 +174,55 @@ static void outbound_bundle_and_per_tsn_t3(void) {
     items[i].payload_size = 1u;
   }
   memcpy(&before, &p.a, sizeof(before));
-  assert(cnet_sctp_data_send_bundle(&p.a, 1u, items, 5u,
+  check(cnet_sctp_data_send_bundle(&p.a, 1u, items, 5u,
       combined, sizeof(combined), &n) == CNET_SCTP_DATA_CAPACITY);
-  assert(n == 0u && memcmp(&before, &p.a, sizeof(before)) == 0);
+  check(n == 0u && memcmp(&before, &p.a, sizeof(before)) == 0);
   memset(combined, 0xA5, sizeof(combined));
-  assert(cnet_sctp_data_send_bundle(&p.a, 1u, items, 3u,
+  check(cnet_sctp_data_send_bundle(&p.a, 1u, items, 3u,
       combined, 10u, &n) == CNET_SCTP_DATA_CAPACITY);
-  assert(n == 0u && combined[0] == 0xA5 &&
+  check(n == 0u && combined[0] == 0xA5 &&
       memcmp(&before, &p.a, sizeof(before)) == 0);
   p.admitted = 0;
-  assert(cnet_sctp_data_send_bundle(&p.a, 1u, items, 3u,
+  check(cnet_sctp_data_send_bundle(&p.a, 1u, items, 3u,
       combined, sizeof(combined), &n) == CNET_SCTP_DATA_OWNER);
   p.admitted = 1;
-  assert(memcmp(&before, &p.a, sizeof(before)) == 0);
-  assert(cnet_sctp_data_send_bundle(&p.a, 1u, items, 3u,
+  check(memcmp(&before, &p.a, sizeof(before)) == 0);
+  check(cnet_sctp_data_send_bundle(&p.a, 1u, items, 3u,
       combined, sizeof(combined), &n) == CNET_SCTP_DATA_OK);
-  assert(n > 0u && p.a.next_tsn == 103u && p.a.in_flight == 3u);
-  assert(cnet_sctp_wire_decode(combined, n, &header, &decoder) ==
+  check(n > 0u && p.a.next_tsn == 103u && p.a.in_flight == 3u);
+  check(cnet_sctp_wire_decode(combined, n, &header, &decoder) ==
       CNET_SCTP_WIRE_OK);
-  assert(header.chunk_count == 3u);
+  check(header.chunk_count == 3u);
   for (i = 0u; i < 3u; ++i) {
-    assert(cnet_sctp_wire_next_chunk(&decoder, &chunk) == CNET_SCTP_WIRE_OK);
-    assert(chunk.type == 0u && chunk.value_size == 13u &&
+    check(cnet_sctp_wire_next_chunk(&decoder, &chunk) == CNET_SCTP_WIRE_OK);
+    check(chunk.type == 0u && chunk.value_size == 13u &&
         chunk.value[3] == (uint8_t)(100u + i));
   }
   /* Drop the complete outbound bundle: T3 MUST resend original TSNs
    * separately, not replay the combined packet or duplicate any ticket. */
   for (i = 0u; i < 3u; ++i) {
-    assert(cnet_sctp_data_deadline(&p.a, &due, &has_due) == CNET_SCTP_DATA_OK);
-    assert(has_due);
-    assert(cnet_sctp_data_advance(&p.a, due, single,
+    check(cnet_sctp_data_deadline(&p.a, &due, &has_due) == CNET_SCTP_DATA_OK);
+    check(has_due);
+    check(cnet_sctp_data_advance(&p.a, due, single,
         sizeof(single), &nr) == CNET_SCTP_DATA_OK);
     chunk = one(single, nr, 0u);
-    assert(chunk.value_size == 13u &&
+    check(chunk.value_size == 13u &&
         chunk.value[3] == (uint8_t)(100u + i));
-    assert(cnet_sctp_data_input(&p.b, due + 1u, single, nr,
+    check(cnet_sctp_data_input(&p.b, due + 1u, single, nr,
         sack, sizeof(sack), &ns) == CNET_SCTP_DATA_OK);
-    assert(cnet_sctp_data_input(&p.a, due + 2u, sack, ns,
+    check(cnet_sctp_data_input(&p.a, due + 2u, sack, ns,
         response, sizeof(response), &n) == CNET_SCTP_DATA_OK);
-    assert(n == 0u && p.a.in_flight == 2u - i);
+    check(n == 0u && p.a.in_flight == 2u - i);
   }
-  assert(p.a.next_tsn == 103u && p.a.t3_deadline_ms == 0u);
+  check(p.a.next_tsn == 103u && p.a.t3_deadline_ms == 0u);
   for (i = 0u; i < 3u; ++i) {
-    assert(cnet_sctp_data_take(&p.b, &meta, body,
+    check(cnet_sctp_data_take(&p.b, &meta, body,
         sizeof(body), &nm) == CNET_SCTP_DATA_OK);
-    assert(nm == 1u && body[0] == payload[i] &&
+    check(nm == 1u && body[0] == payload[i] &&
         meta.stream_sequence == (uint16_t)i);
   }
-  assert(cnet_sctp_data_stop(&p.a) == CNET_SCTP_DATA_OK);
-  assert(cnet_sctp_data_stop(&p.b) == CNET_SCTP_DATA_OK);
+  check(cnet_sctp_data_stop(&p.a) == CNET_SCTP_DATA_OK);
+  check(cnet_sctp_data_stop(&p.b) == CNET_SCTP_DATA_OK);
 }
 static void outbound_bundle_respects_peer_window(void) {
   pair p;
@@ -241,17 +238,17 @@ static void outbound_bundle_respects_peer_window(void) {
   /* The configured value seeds the initial rwnd; the live advertised
    * peer window is the state used by sender admission after initialization. */
   p.a.peer_rwnd = 1u;
-  assert(cnet_sctp_data_send_bundle(&p.a, 1u, items, 1u,
+  check(cnet_sctp_data_send_bundle(&p.a, 1u, items, 1u,
       packet, sizeof(packet), &written) == CNET_SCTP_DATA_OK);
-  assert(written > 0u && p.a.in_flight == 1u);
+  check(written > 0u && p.a.in_flight == 1u);
   memcpy(&before, &p.a, sizeof(before));
   memset(packet, 0xA5, sizeof(packet)); written = 99u;
-  assert(cnet_sctp_data_send_bundle(&p.a, 2u, items, 2u,
+  check(cnet_sctp_data_send_bundle(&p.a, 2u, items, 2u,
       packet, sizeof(packet), &written) == CNET_SCTP_DATA_CAPACITY);
-  assert(written == 0u && packet[0] == 0xA5 &&
+  check(written == 0u && packet[0] == 0xA5 &&
       memcmp(&before, &p.a, sizeof(before)) == 0);
-  assert(cnet_sctp_data_stop(&p.a) == CNET_SCTP_DATA_OK);
-  assert(cnet_sctp_data_stop(&p.b) == CNET_SCTP_DATA_OK);
+  check(cnet_sctp_data_stop(&p.a) == CNET_SCTP_DATA_OK);
+  check(cnet_sctp_data_stop(&p.b) == CNET_SCTP_DATA_OK);
 }
 static void outbound_bundle_fast_retransmit_is_per_tsn(void) {
   pair p;
@@ -271,36 +268,36 @@ static void outbound_bundle_fast_retransmit_is_per_tsn(void) {
     items[i].payload = &payload[i];
     items[i].payload_size = 1u;
   }
-  assert(cnet_sctp_data_send_bundle(&p.a, 1u, items, 4u,
+  check(cnet_sctp_data_send_bundle(&p.a, 1u, items, 4u,
       combined, sizeof(combined), &combined_size) == CNET_SCTP_DATA_OK);
-  assert(p.a.in_flight == 4u);
-  assert(cnet_sctp_wire_decode(combined, combined_size,
+  check(p.a.in_flight == 4u);
+  check(cnet_sctp_wire_decode(combined, combined_size,
       &header, &decoder) == CNET_SCTP_WIRE_OK);
-  assert(header.chunk_count == 4u);
+  check(header.chunk_count == 4u);
   for (i = 0u; i < 4u; ++i)
-    assert(cnet_sctp_wire_next_chunk(&decoder, &chunks[i]) == CNET_SCTP_WIRE_OK);
+    check(cnet_sctp_wire_next_chunk(&decoder, &chunks[i]) == CNET_SCTP_WIRE_OK);
   /* Simulate loss of the first TSN inside the aggregate, while later DATA
    * chunks are delivered individually by a packetizing intermediate. */
   for (i = 1u; i < 4u; ++i) {
     single_size = pack(&p.a, 1, &chunks[i], 1u, single, sizeof(single));
-    assert(cnet_sctp_data_input(&p.b, 10u + i, single, single_size,
+    check(cnet_sctp_data_input(&p.b, 10u + i, single, single_size,
         sack, sizeof(sack), &sack_size) == CNET_SCTP_DATA_OK);
-    assert(sack_size != 0u);
-    assert(cnet_sctp_data_input(&p.a, 20u + i, sack, sack_size,
+    check(sack_size != 0u);
+    check(cnet_sctp_data_input(&p.a, 20u + i, sack, sack_size,
         response, sizeof(response), &response_size) == CNET_SCTP_DATA_OK);
   }
-  assert(p.a.tx[0].missing_reports == 3u);
-  assert(cnet_sctp_data_advance(&p.a, 24u, response, sizeof(response),
+  check(p.a.tx[0].missing_reports == 3u);
+  check(cnet_sctp_data_advance(&p.a, 24u, response, sizeof(response),
       &response_size) == CNET_SCTP_DATA_OK);
-  assert(response_size != 0u);
+  check(response_size != 0u);
   retransmitted = one(response, response_size, 0u);
-  assert(retransmitted.value_size == 13u &&
+  check(retransmitted.value_size == 13u &&
       retransmitted.value[3] == 100u);
-  assert(p.a.tx[0].fast_retransmitted && p.a.tx[0].retransmits == 1u);
+  check(p.a.tx[0].fast_retransmitted && p.a.tx[0].retransmits == 1u);
   /* Gap-ACKed TSNs 101-103 leave only missing TSN 100 in Flight Size. */
-  assert(p.a.recovery_active && p.a.in_flight == 1u);
-  assert(cnet_sctp_data_stop(&p.a) == CNET_SCTP_DATA_OK);
-  assert(cnet_sctp_data_stop(&p.b) == CNET_SCTP_DATA_OK);
+  check(p.a.recovery_active && p.a.in_flight == 1u);
+  check(cnet_sctp_data_stop(&p.a) == CNET_SCTP_DATA_OK);
+  check(cnet_sctp_data_stop(&p.b) == CNET_SCTP_DATA_OK);
 }
 /* Two missing TSNs from one aggregate must be retransmitted as two
  * independent DATA chunks after later TSNs supply distinct miss reports.
@@ -326,55 +323,55 @@ static void outbound_bundle_multiple_losses_are_per_tsn(void) {
     items[i].payload = &payload[i];
     items[i].payload_size = 1u;
   }
-  assert(cnet_sctp_data_send_bundle(&p.a, 1u, items, 4u,
+  check(cnet_sctp_data_send_bundle(&p.a, 1u, items, 4u,
       combined, sizeof(combined), &combined_size) == CNET_SCTP_DATA_OK);
-  assert(cnet_sctp_wire_decode(combined, combined_size,
+  check(cnet_sctp_wire_decode(combined, combined_size,
       &header, &decoder) == CNET_SCTP_WIRE_OK);
-  assert(header.chunk_count == 4u);
+  check(header.chunk_count == 4u);
   for (i = 0u; i < 4u; ++i)
-    assert(cnet_sctp_wire_next_chunk(&decoder, &chunks[i]) == CNET_SCTP_WIRE_OK);
+    check(cnet_sctp_wire_next_chunk(&decoder, &chunks[i]) == CNET_SCTP_WIRE_OK);
 
   /* Create TSNs 104/105 before delivering any SACKs. Once loss
    * evidence reaches the fast-retransmit threshold, RFC 9260 6.1(C)
    * correctly backpressures new DATA until Owner advance() repairs loss. */
   for (i = 0u; i < 2u; ++i) {
     const uint8_t extra = (uint8_t)('e' + i);
-    assert(cnet_sctp_data_send(&p.a, 2u + i, 0u, 53u, 0,
+    check(cnet_sctp_data_send(&p.a, 2u + i, 0u, 53u, 0,
         &extra, 1u, extra_packets[i], sizeof(extra_packets[i]),
         &extra_sizes[i]) == CNET_SCTP_DATA_OK);
   }
   /* Lose TSNs 100 and 101 from the aggregate; later TSNs arrive in order. */
   for (i = 2u; i < 4u; ++i) {
     single_size = pack(&p.a, 1, &chunks[i], 1u, single, sizeof(single));
-    assert(cnet_sctp_data_input(&p.b, 10u + i, single, single_size,
+    check(cnet_sctp_data_input(&p.b, 10u + i, single, single_size,
         sack, sizeof(sack), &sack_size) == CNET_SCTP_DATA_OK);
-    assert(cnet_sctp_data_input(&p.a, 20u + i, sack, sack_size,
+    check(cnet_sctp_data_input(&p.a, 20u + i, sack, sack_size,
         response, sizeof(response), &response_size) == CNET_SCTP_DATA_OK);
   }
   for (i = 0u; i < 2u; ++i) {
-    assert(cnet_sctp_data_input(&p.b, 30u + i, extra_packets[i],
+    check(cnet_sctp_data_input(&p.b, 30u + i, extra_packets[i],
         extra_sizes[i], sack, sizeof(sack), &sack_size) == CNET_SCTP_DATA_OK);
-    assert(sack_size != 0u);
-    assert(cnet_sctp_data_input(&p.a, 40u + i, sack, sack_size,
+    check(sack_size != 0u);
+    check(cnet_sctp_data_input(&p.a, 40u + i, sack, sack_size,
         response, sizeof(response), &response_size) == CNET_SCTP_DATA_OK);
   }
-  assert(p.a.tx[0].tsn == 100u && p.a.tx[0].pending_retransmit);
-  assert(p.a.tx[1].tsn == 101u && p.a.tx[1].pending_retransmit);
-  assert(p.a.tx[0].missing_reports >= 3u && p.a.tx[1].missing_reports >= 3u);
-  assert(p.a.in_flight == 2u);
+  check(p.a.tx[0].tsn == 100u && p.a.tx[0].pending_retransmit);
+  check(p.a.tx[1].tsn == 101u && p.a.tx[1].pending_retransmit);
+  check(p.a.tx[0].missing_reports >= 3u && p.a.tx[1].missing_reports >= 3u);
+  check(p.a.in_flight == 2u);
   for (i = 0u; i < 2u; ++i) {
-    assert(cnet_sctp_data_advance(&p.a, 60u + i, response,
+    check(cnet_sctp_data_advance(&p.a, 60u + i, response,
         sizeof(response), &response_size) == CNET_SCTP_DATA_OK);
     retransmitted = one(response, response_size, 0u);
-    assert(retransmitted.value_size == 13u);
-    assert(retransmitted.value[3] == (uint8_t)(100u + i));
-    assert(p.a.tx[i].fast_retransmitted && p.a.tx[i].retransmits == 1u);
+    check(retransmitted.value_size == 13u);
+    check(retransmitted.value[3] == (uint8_t)(100u + i));
+    check(p.a.tx[i].fast_retransmitted && p.a.tx[i].retransmits == 1u);
     if (i == 0u) reduced_cwnd = p.a.cwnd;
-    else assert(p.a.cwnd == reduced_cwnd);
+    else check(p.a.cwnd == reduced_cwnd);
   }
-  assert(p.a.recovery_active && p.a.in_flight == 2u);
-  assert(cnet_sctp_data_stop(&p.a) == CNET_SCTP_DATA_OK);
-  assert(cnet_sctp_data_stop(&p.b) == CNET_SCTP_DATA_OK);
+  check(p.a.recovery_active && p.a.in_flight == 2u);
+  check(cnet_sctp_data_stop(&p.a) == CNET_SCTP_DATA_OK);
+  check(cnet_sctp_data_stop(&p.b) == CNET_SCTP_DATA_OK);
 }
 static void outbound_bundle_waits_for_retained_tickets_to_be_acked(void) {
   pair p;
@@ -387,35 +384,36 @@ static void outbound_bundle_waits_for_retained_tickets_to_be_acked(void) {
   init(&p);
   for (i = 0u; i < 16u; ++i) {
     payload[i] = (uint8_t)i;
-    assert(cnet_sctp_data_send(&p.a, i + 1u, 0u, 53u, 0,
+    check(cnet_sctp_data_send(&p.a, i + 1u, 0u, 53u, 0,
         &payload[i], 1u, packet, sizeof(packet), &written) ==
         CNET_SCTP_DATA_OK);
-    assert(cnet_sctp_data_input(&p.b, i + 1u, packet, written,
+    check(cnet_sctp_data_input(&p.b, i + 1u, packet, written,
         sack, sizeof(sack), &sack_size) == CNET_SCTP_DATA_OK);
-    assert(sack_size != 0u);
+    check(sack_size != 0u);
   }
-  assert(p.a.in_flight == 16u);
+  check(p.a.in_flight == 16u);
   items[0].ppid = items[1].ppid = 53u;
   items[0].payload = &bundle_body[0];
   items[1].payload = &bundle_body[1];
   items[0].payload_size = items[1].payload_size = 1u;
   memcpy(&before, &p.a, sizeof(before));
   memset(packet, 0xA5, sizeof(packet));
-  assert(cnet_sctp_data_send_bundle(&p.a, 20u, items, 2u,
+  check(cnet_sctp_data_send_bundle(&p.a, 20u, items, 2u,
       packet, sizeof(packet), &written) == CNET_SCTP_DATA_CAPACITY);
-  assert(written == 0u && packet[0] == 0xA5 &&
+  check(written == 0u && packet[0] == 0xA5 &&
       memcmp(&before, &p.a, sizeof(before)) == 0);
   /* The latest cumulative SACK releases all 16 retained tickets. */
-  assert(cnet_sctp_data_input(&p.a, 21u, sack, sack_size,
+  check(cnet_sctp_data_input(&p.a, 21u, sack, sack_size,
       response, sizeof(response), &response_size) == CNET_SCTP_DATA_OK);
-  assert(p.a.in_flight == 0u);
-  assert(cnet_sctp_data_send_bundle(&p.a, 22u, items, 2u,
+  check(p.a.in_flight == 0u);
+  check(cnet_sctp_data_send_bundle(&p.a, 22u, items, 2u,
       packet, sizeof(packet), &written) == CNET_SCTP_DATA_OK);
-  assert(written != 0u && p.a.in_flight == 2u);
-  assert(cnet_sctp_data_stop(&p.a) == CNET_SCTP_DATA_OK);
-  assert(cnet_sctp_data_stop(&p.b) == CNET_SCTP_DATA_OK);
+  check(written != 0u && p.a.in_flight == 2u);
+  check(cnet_sctp_data_stop(&p.a) == CNET_SCTP_DATA_OK);
+  check(cnet_sctp_data_stop(&p.b) == CNET_SCTP_DATA_OK);
 }
-int main(void) {
+spec("SCTP native bundle contract") {
+  it("preserves all original RFC, boundary and negative-path assertions") {
   outbound_bundle_multiple_losses_are_per_tsn();
   outbound_bundle_fast_retransmit_is_per_tsn();
   outbound_bundle_waits_for_retained_tickets_to_be_acked();
@@ -424,5 +422,5 @@ int main(void) {
   multi_data_atomicity();
   sack_before_data_and_bad_order();
   puts("C11 SCTP bounded bundled DATA / leading SACK atomicity PASS");
-  return 0;
+  }
 }

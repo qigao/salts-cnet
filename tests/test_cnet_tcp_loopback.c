@@ -3,6 +3,7 @@
  * One caller owns the CNet client and listener. The native peer owns its
  * blocking socket. The received mem_slice_t deliberately survives stop/destroy.
  */
+#include <tinytest.h>
 #include <cnet/cnet.h>
 #include <clock.h>
 #include <thread.h>
@@ -138,7 +139,7 @@ static int poll_until(cnet_client *client, unsigned *counter, unsigned expected)
     }                                                                        \
   } while (0)
 
-int main(void) {
+static int saltscore_original_entry_test_cnet_tcp_loopback_c(void) {
   cnet_client client = {0};
   cnet_listener listener = {0};
   const cnet_client_config config = client_config();
@@ -234,4 +235,11 @@ cleanup:
   /* Last release deliberately occurs in another DLL/DSO after CNet destroy. */
   if (probe.owned_slice.buffer) saltscore_owner_probe_release(&probe.owned_slice);
   return result;
+}
+
+spec("CNet real TCP loopback and retained slice") {
+  it("preserves the real owner lifecycle and original failure code") {
+    const int result = saltscore_original_entry_test_cnet_tcp_loopback_c();
+    check(result == 0, "native integration returned %d", result);
+  }
 }

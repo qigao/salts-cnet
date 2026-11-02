@@ -1,3 +1,4 @@
+#include <tinytest.h>
 #include <cmeta_error.h>
 #include <cmeta_zstd.h>
 
@@ -13,7 +14,7 @@
   } \
 } while (0)
 
-int main(void) {
+static int saltscore_legacy_zstd_native_contract_c(void) {
   /* Standard raw-block frames, constructed from the pinned provider's
    * doc/zstd_compression_format.md. Each payload is exactly 00 80 ff.
    * Unknown-size: no single-segment flag, 1 KiB window, no content size.
@@ -84,4 +85,11 @@ int main(void) {
   REQUIRE(result == (size_t)UINT64_C(4294967296));
 #endif
   return 0;
+}
+
+spec("Core pinned Zstd byte-exact ownership and decompression") {
+  it("runs all original source assertions and preserves exit status") {
+    const int result = saltscore_legacy_zstd_native_contract_c();
+    check(result == 0, "original native contract returned %d", result);
+  }
 }

@@ -5,6 +5,7 @@
  * evidence about the pinned *private provider*; it does not claim that CNet
  * exposes SM2/SM3/SM4, or that a real RFC 8998/TLCP handshake has passed.
  */
+#include <tinytest.h>
 #include <gmssl/hkdf.h>
 #include <gmssl/mem.h>
 #include <gmssl/sm2.h>
@@ -408,7 +409,7 @@ done:
   return ok;
 }
 
-int main(void) {
+static int saltscore_original_entry_test_gmssl_shangmi_provider_c(void) {
   if (strcmp(TLS13_SM2_ID, "TLSv1.3+GM+Cipher+Suite") != 0 ||
       TLS13_SM2_ID_LENGTH != sizeof("TLSv1.3+GM+Cipher+Suite") - 1u) {
     fprintf(stderr, "RFC 8998 TLS 1.3 SM2 CertificateVerify identity mismatch\n");
@@ -428,4 +429,11 @@ int main(void) {
   puts("GmSSL ShangMi private provider: KAT, AEAD, SM2 and config probes passed");
   puts("NOTE: real RFC 8998 and TLCP handshakes remain separate open gates.");
   return 0;
+}
+
+spec("GmSSL private ShangMi KAT and protocol settings") {
+  it("preserves the real owner lifecycle and original failure code") {
+    const int result = saltscore_original_entry_test_gmssl_shangmi_provider_c();
+    check(result == 0, "native integration returned %d", result);
+  }
 }

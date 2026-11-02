@@ -10,6 +10,14 @@ suite("review fixes") {
     check_true(1);
   }
 
+  it("interprets unformatted assertions as literal diagnostics, never printf formats") {
+    const unsigned value = 17u;
+    const char *percent_text = "rate=10%";
+    check((value % 5u) == 2u);
+    check(percent_text[7] == '%');
+    check_warn((value % 5u) == 2u);
+  }
+
   it("compares 64-bit signed values") {
     check_equal(0x100000000LL, 0x100000000LL);
     check_not_equal(0x100000000LL, 0LL);

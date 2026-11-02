@@ -1,4 +1,5 @@
 #include <platform_thread.h>
+#include <tinytest.h>
 #include <stdint.h>
 #include <stdio.h>
 
@@ -15,7 +16,7 @@ static int worker(void *unused) {
     if (salts_platform_mutex_unlock(gate)) return -3;
     return 77;
 }
-int main(void) {
+static int saltscore_legacy_entry_test_portable_timing_c(void) {
     salts_platform_thread *thread = NULL;
     int rc, out = 0;
     if (salts_platform_mutex_create(&gate) || salts_platform_condition_create(&cv)) return 1;
@@ -36,4 +37,13 @@ int main(void) {
     if (salts_platform_condition_destroy(&cv) || salts_platform_mutex_destroy(&gate)) return 13;
     puts("portable relative timedwait/sleep PASS");
     return 0;
+}
+
+/* Keep the native contract's original exit codes and cleanup paths intact;
+ * surface its exact nonzero result as one registered TinyTest failure. */
+spec("Portable timed wait and sleep") {
+  it("preserves the original native exit and lifetime contract") {
+    const int result = saltscore_legacy_entry_test_portable_timing_c();
+    check(result == 0, "original native contract returned %d", result);
+  }
 }

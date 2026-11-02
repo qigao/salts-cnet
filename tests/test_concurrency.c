@@ -1,4 +1,5 @@
 #include <deadline_queue.h>
+#include <tinytest.h>
 #include <disruptor.h>
 #include <error_codes.h>
 #include <rcu.h>
@@ -81,7 +82,7 @@ static int rcu_contract(void) {
   return 0;
 }
 
-int main(void) {
+static int saltscore_legacy_entry_test_concurrency_c(void) {
   int r = deadline_contract();
   if (r) return 10 + r;
   r = spsc_contract();
@@ -116,4 +117,13 @@ int main(void) {
     disruptor_destroy(ring);
   }
   return 0;
+}
+
+/* Keep the native contract's original exit codes and cleanup paths intact;
+ * surface its exact nonzero result as one registered TinyTest failure. */
+spec("Concurrency RCU SPSC ThreadPool") {
+  it("preserves the original native exit and lifetime contract") {
+    const int result = saltscore_legacy_entry_test_concurrency_c();
+    check(result == 0, "original native contract returned %d", result);
+  }
 }

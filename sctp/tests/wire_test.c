@@ -1,9 +1,6 @@
 #include <cnet/sctp_wire.h>
 
-#ifdef NDEBUG
-#undef NDEBUG /* Release CI must actually execute every assertion. */
-#endif
-#include <assert.h>
+#include <tinytest.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
@@ -24,20 +21,20 @@ static void seal(uint8_t *p, size_t length) {
 static void test_unknown_chunk_action_bits(void) {
   /* RFC 9260 §3.2: 00 stop/discard, 01 stop/report,
    * 10 skip, 11 skip/report. Test each class with distinct type values. */
-  assert(cnet_sctp_wire_unknown_chunk_action(0x00u) ==
+  check(cnet_sctp_wire_unknown_chunk_action(0x00u) ==
          CNET_SCTP_WIRE_UNKNOWN_STOP_DISCARD);
-  assert(cnet_sctp_wire_unknown_chunk_action(0x41u) ==
+  check(cnet_sctp_wire_unknown_chunk_action(0x41u) ==
          CNET_SCTP_WIRE_UNKNOWN_STOP_REPORT);
-  assert(cnet_sctp_wire_unknown_chunk_action(0x82u) ==
+  check(cnet_sctp_wire_unknown_chunk_action(0x82u) ==
          CNET_SCTP_WIRE_UNKNOWN_SKIP);
-  assert(cnet_sctp_wire_unknown_chunk_action(0xC3u) ==
+  check(cnet_sctp_wire_unknown_chunk_action(0xC3u) ==
          CNET_SCTP_WIRE_UNKNOWN_SKIP_REPORT);
-  assert(cnet_sctp_wire_unknown_chunk_action(0xFFu) ==
+  check(cnet_sctp_wire_unknown_chunk_action(0xFFu) ==
          CNET_SCTP_WIRE_UNKNOWN_SKIP_REPORT);
   {
     unsigned int type;
     for (type = 0u; type <= 255u; ++type) {
-      assert((unsigned int)cnet_sctp_wire_unknown_chunk_action((uint8_t)type) ==
+      check((unsigned int)cnet_sctp_wire_unknown_chunk_action((uint8_t)type) ==
              ((type >> 6) & 0x03u));
     }
   }
@@ -57,25 +54,25 @@ static void test_unknown_chunk_types_in_packet_order(void) {
   cnet_sctp_wire_chunk out = {0};
   uint8_t packet[64] = {0};
   size_t written = 0u;
-  assert(cnet_sctp_wire_encode(5000u, 5001u, 0x12345678u, chunks, 3u,
+  check(cnet_sctp_wire_encode(5000u, 5001u, 0x12345678u, chunks, 3u,
                                packet, sizeof(packet), &written) == CNET_SCTP_WIRE_OK);
-  assert(cnet_sctp_wire_decode(packet, written, &header, &decoder) == CNET_SCTP_WIRE_OK);
-  assert(header.chunk_count == 3u);
-  assert(cnet_sctp_wire_next_chunk(&decoder, &out) == CNET_SCTP_WIRE_OK);
-  assert(out.type == 0x41u && out.flags == 0x5Au && out.value_size == sizeof(a));
-  assert(cnet_sctp_wire_unknown_chunk_action(out.type) ==
+  check(cnet_sctp_wire_decode(packet, written, &header, &decoder) == CNET_SCTP_WIRE_OK);
+  check(header.chunk_count == 3u);
+  check(cnet_sctp_wire_next_chunk(&decoder, &out) == CNET_SCTP_WIRE_OK);
+  check(out.type == 0x41u && out.flags == 0x5Au && out.value_size == sizeof(a));
+  check(cnet_sctp_wire_unknown_chunk_action(out.type) ==
          CNET_SCTP_WIRE_UNKNOWN_STOP_REPORT);
-  assert(memcmp(out.value, a, sizeof(a)) == 0);
-  assert(cnet_sctp_wire_next_chunk(&decoder, &out) == CNET_SCTP_WIRE_OK);
-  assert(out.type == 0x82u && out.value_size == sizeof(b));
-  assert(cnet_sctp_wire_unknown_chunk_action(out.type) == CNET_SCTP_WIRE_UNKNOWN_SKIP);
-  assert(out.value[0] == b[0]);
-  assert(cnet_sctp_wire_next_chunk(&decoder, &out) == CNET_SCTP_WIRE_OK);
-  assert(out.type == 0xC3u && out.value_size == sizeof(c));
-  assert(cnet_sctp_wire_unknown_chunk_action(out.type) ==
+  check(memcmp(out.value, a, sizeof(a)) == 0);
+  check(cnet_sctp_wire_next_chunk(&decoder, &out) == CNET_SCTP_WIRE_OK);
+  check(out.type == 0x82u && out.value_size == sizeof(b));
+  check(cnet_sctp_wire_unknown_chunk_action(out.type) == CNET_SCTP_WIRE_UNKNOWN_SKIP);
+  check(out.value[0] == b[0]);
+  check(cnet_sctp_wire_next_chunk(&decoder, &out) == CNET_SCTP_WIRE_OK);
+  check(out.type == 0xC3u && out.value_size == sizeof(c));
+  check(cnet_sctp_wire_unknown_chunk_action(out.type) ==
          CNET_SCTP_WIRE_UNKNOWN_SKIP_REPORT);
-  assert(memcmp(out.value, c, sizeof(c)) == 0);
-  assert(cnet_sctp_wire_next_chunk(&decoder, &out) == CNET_SCTP_WIRE_END);
+  check(memcmp(out.value, c, sizeof(c)) == 0);
+  check(cnet_sctp_wire_next_chunk(&decoder, &out) == CNET_SCTP_WIRE_END);
 }
 
 static void test_crc_and_init(void) {
@@ -91,22 +88,22 @@ static void test_crc_and_init(void) {
   cnet_sctp_wire_decoder decoder = {0};
   uint8_t packet[64] = {0};
   size_t written = 0u;
-  assert(cnet_sctp_wire_crc32c("123456789", 9u) == UINT32_C(0xe3069283));
-  assert(cnet_sctp_wire_encode(5000u, 5001u, 0u, &chunk, 1u,
+  check(cnet_sctp_wire_crc32c("123456789", 9u) == UINT32_C(0xe3069283));
+  check(cnet_sctp_wire_encode(5000u, 5001u, 0u, &chunk, 1u,
                                packet, sizeof(packet), &written) == CNET_SCTP_WIRE_OK);
-  assert(written == 32u);
-  assert(packet[0] == 0x13u && packet[1] == 0x88u);
-  assert(packet[2] == 0x13u && packet[3] == 0x89u);
-  assert(packet[12] == 1u && packet[14] == 0u && packet[15] == 20u);
-  assert(cnet_sctp_wire_decode(packet, written, &header, &decoder) == CNET_SCTP_WIRE_OK);
-  assert(header.source_port == 5000u && header.destination_port == 5001u);
-  assert(header.verification_tag == 0u && header.chunk_count == 1u);
-  assert(cnet_sctp_wire_next_chunk(&decoder, &output) == CNET_SCTP_WIRE_OK);
-  assert(output.type == 1u && output.value_size == sizeof(init));
-  assert(memcmp(output.value, init, sizeof(init)) == 0);
-  assert(cnet_sctp_wire_next_chunk(&decoder, &output) == CNET_SCTP_WIRE_END);
+  check(written == 32u);
+  check(packet[0] == 0x13u && packet[1] == 0x88u);
+  check(packet[2] == 0x13u && packet[3] == 0x89u);
+  check(packet[12] == 1u && packet[14] == 0u && packet[15] == 20u);
+  check(cnet_sctp_wire_decode(packet, written, &header, &decoder) == CNET_SCTP_WIRE_OK);
+  check(header.source_port == 5000u && header.destination_port == 5001u);
+  check(header.verification_tag == 0u && header.chunk_count == 1u);
+  check(cnet_sctp_wire_next_chunk(&decoder, &output) == CNET_SCTP_WIRE_OK);
+  check(output.type == 1u && output.value_size == sizeof(init));
+  check(memcmp(output.value, init, sizeof(init)) == 0);
+  check(cnet_sctp_wire_next_chunk(&decoder, &output) == CNET_SCTP_WIRE_END);
   packet[17] ^= 0x01u;
-  assert(cnet_sctp_wire_decode(packet, written, &header, &decoder) == CNET_SCTP_WIRE_CHECKSUM);
+  check(cnet_sctp_wire_decode(packet, written, &header, &decoder) == CNET_SCTP_WIRE_CHECKSUM);
 }
 
 static void test_multiple_chunks_and_padding(void) {
@@ -121,27 +118,27 @@ static void test_multiple_chunks_and_padding(void) {
   cnet_sctp_wire_decoder decoder = {0};
   uint8_t packet[64] = {0};
   size_t written = 0u;
-  assert(cnet_sctp_wire_encode(1000u, 1001u, 0x10203040u, chunks, 2u,
+  check(cnet_sctp_wire_encode(1000u, 1001u, 0x10203040u, chunks, 2u,
                                packet, sizeof(packet), &written) == CNET_SCTP_WIRE_OK);
-  assert(written == 28u); /* header 12 + 8 + 8 */
-  assert(packet[17] == 0u && packet[18] == 0u && packet[19] == 0u);
-  assert(cnet_sctp_wire_decode(packet, written, &header, &decoder) == CNET_SCTP_WIRE_OK);
-  assert(header.verification_tag == 0x10203040u && header.chunk_count == 2u);
-  assert(cnet_sctp_wire_next_chunk(&decoder, &output) == CNET_SCTP_WIRE_OK);
-  assert(output.type == 0u && output.flags == 3u && output.value_size == 1u);
-  assert(output.value[0] == 0x10u);
-  assert(cnet_sctp_wire_next_chunk(&decoder, &output) == CNET_SCTP_WIRE_OK);
-  assert(output.type == 3u && output.value_size == 3u);
-  assert(output.value[0] == 0x20u && output.value[2] == 0x40u);
-  assert(cnet_sctp_wire_next_chunk(&decoder, &output) == CNET_SCTP_WIRE_END);
+  check(written == 28u); /* header 12 + 8 + 8 */
+  check(packet[17] == 0u && packet[18] == 0u && packet[19] == 0u);
+  check(cnet_sctp_wire_decode(packet, written, &header, &decoder) == CNET_SCTP_WIRE_OK);
+  check(header.verification_tag == 0x10203040u && header.chunk_count == 2u);
+  check(cnet_sctp_wire_next_chunk(&decoder, &output) == CNET_SCTP_WIRE_OK);
+  check(output.type == 0u && output.flags == 3u && output.value_size == 1u);
+  check(output.value[0] == 0x10u);
+  check(cnet_sctp_wire_next_chunk(&decoder, &output) == CNET_SCTP_WIRE_OK);
+  check(output.type == 3u && output.value_size == 3u);
+  check(output.value[0] == 0x20u && output.value[2] == 0x40u);
+  check(cnet_sctp_wire_next_chunk(&decoder, &output) == CNET_SCTP_WIRE_END);
   /* RFC 9260 robust receiver tolerates omitted final padding. */
   seal(packet, written - 1u);
-  assert(cnet_sctp_wire_decode(packet, written - 1u, &header, &decoder) ==
+  check(cnet_sctp_wire_decode(packet, written - 1u, &header, &decoder) ==
          CNET_SCTP_WIRE_OK);
-  assert(header.chunk_count == 2u);
-  assert(cnet_sctp_wire_next_chunk(&decoder, &output) == CNET_SCTP_WIRE_OK);
-  assert(cnet_sctp_wire_next_chunk(&decoder, &output) == CNET_SCTP_WIRE_OK);
-  assert(output.value_size == 3u);
+  check(header.chunk_count == 2u);
+  check(cnet_sctp_wire_next_chunk(&decoder, &output) == CNET_SCTP_WIRE_OK);
+  check(cnet_sctp_wire_next_chunk(&decoder, &output) == CNET_SCTP_WIRE_OK);
+  check(output.value_size == 3u);
 }
 
 /* The 128-Chunk cap is this library's bounded Wire profile, not an
@@ -165,30 +162,30 @@ static void test_max_chunk_count_and_no_partial_decode(void) {
     chunks[i].value_size = 0u;
   }
   memset(packet, 0xCC, sizeof(packet));
-  assert(cnet_sctp_wire_encode(5000u, 5001u, UINT32_C(0x12345678),
+  check(cnet_sctp_wire_encode(5000u, 5001u, UINT32_C(0x12345678),
       chunks, full_count + 1u, packet, sizeof(packet), &written) ==
       CNET_SCTP_WIRE_CAPACITY);
-  assert(written == 0u && packet[0] == 0xCCu &&
+  check(written == 0u && packet[0] == 0xCCu &&
       packet[sizeof(packet) - 1u] == 0xCCu);
 
-  assert(cnet_sctp_wire_encode(5000u, 5001u, UINT32_C(0x12345678),
+  check(cnet_sctp_wire_encode(5000u, 5001u, UINT32_C(0x12345678),
       chunks, full_count, packet, full_size - 1u, &written) ==
       CNET_SCTP_WIRE_CAPACITY);
-  assert(written == 0u && packet[0] == 0xCCu);
-  assert(cnet_sctp_wire_encode(5000u, 5001u, UINT32_C(0x12345678),
+  check(written == 0u && packet[0] == 0xCCu);
+  check(cnet_sctp_wire_encode(5000u, 5001u, UINT32_C(0x12345678),
       chunks, full_count, packet, full_size, &written) ==
       CNET_SCTP_WIRE_OK);
-  assert(written == full_size);
-  assert(packet[8] == 0x56u && packet[9] == 0x53u &&
+  check(written == full_size);
+  check(packet[8] == 0x56u && packet[9] == 0x53u &&
       packet[10] == 0x46u && packet[11] == 0xD0u);
-  assert(cnet_sctp_wire_decode(packet, written, &header, &decoder) ==
+  check(cnet_sctp_wire_decode(packet, written, &header, &decoder) ==
       CNET_SCTP_WIRE_OK && header.chunk_count == full_count);
   for (i = 0u; i < full_count; ++i) {
-    assert(cnet_sctp_wire_next_chunk(&decoder, &view) == CNET_SCTP_WIRE_OK);
-    assert(view.type == 0xA2u && view.flags == 0x5Au &&
+    check(cnet_sctp_wire_next_chunk(&decoder, &view) == CNET_SCTP_WIRE_OK);
+    check(view.type == 0xA2u && view.flags == 0x5Au &&
         view.value_size == 0u);
   }
-  assert(cnet_sctp_wire_next_chunk(&decoder, &view) == CNET_SCTP_WIRE_END);
+  check(cnet_sctp_wire_next_chunk(&decoder, &view) == CNET_SCTP_WIRE_END);
 
   /* A separate, CRC-valid 129th Chunk reaches the decode count gate.
    * Failed decoding clears parsed outputs and never publishes partial state. */
@@ -199,12 +196,12 @@ static void test_max_chunk_count_and_no_partial_decode(void) {
   seal(packet, full_size + 4u);
   memset(&header, 0xCC, sizeof(header));
   memset(&decoder, 0xCC, sizeof(decoder));
-  assert(cnet_sctp_wire_decode(packet, full_size + 4u,
+  check(cnet_sctp_wire_decode(packet, full_size + 4u,
       &header, &decoder) == CNET_SCTP_WIRE_CAPACITY);
-  assert(header.source_port == 0u && header.destination_port == 0u &&
+  check(header.source_port == 0u && header.destination_port == 0u &&
       header.verification_tag == 0u && header.checksum == 0u &&
       header.chunk_count == 0u);
-    assert(decoder.packet == NULL && decoder.packet_size == 0u &&
+    check(decoder.packet == NULL && decoder.packet_size == 0u &&
       decoder.next_offset == 0u && decoder.chunks_remaining == 0u);
 }
 
@@ -244,10 +241,10 @@ static void test_abort_data_bundle_rejected(void) {
         forbidden[1] = swap;
       }
       written = 99u;
-      assert(cnet_sctp_wire_encode(5000u, 5001u, UINT32_C(0x12345678),
+      check(cnet_sctp_wire_encode(5000u, 5001u, UINT32_C(0x12345678),
           forbidden, 2u, output, sizeof(output), &written) ==
           CNET_SCTP_WIRE_MALFORMED);
-      assert(written == 0u && output[0] == 0xCCu &&
+      check(written == 0u && output[0] == 0xCCu &&
           output[sizeof(output) - 1u] == 0xCCu);
 
       /* Construct the invalid packet independently of the encoder so decode
@@ -270,21 +267,21 @@ static void test_abort_data_bundle_rejected(void) {
       seal(packet, packet_size);
       memset(&header, 0xCC, sizeof(header));
       memset(&decoder, 0xCC, sizeof(decoder));
-      assert(cnet_sctp_wire_decode(packet, packet_size, &header, &decoder) ==
+      check(cnet_sctp_wire_decode(packet, packet_size, &header, &decoder) ==
           CNET_SCTP_WIRE_MALFORMED);
-      assert(header.source_port == 0u && header.destination_port == 0u &&
+      check(header.source_port == 0u && header.destination_port == 0u &&
         header.verification_tag == 0u && header.checksum == 0u &&
         header.chunk_count == 0u);
-      assert(decoder.packet == NULL && decoder.packet_size == 0u &&
+      check(decoder.packet == NULL && decoder.packet_size == 0u &&
         decoder.next_offset == 0u && decoder.chunks_remaining == 0u);
     }
   }
 
   /* Control-before-ABORT remains legal; do not over-restrict ABORT to a
    * standalone chunk, because RFC 9260 allows control chunks before it. */
-  assert(cnet_sctp_wire_encode(5000u, 5001u, UINT32_C(0x12345678),
+  check(cnet_sctp_wire_encode(5000u, 5001u, UINT32_C(0x12345678),
       allowed, 2u, output, sizeof(output), &written) == CNET_SCTP_WIRE_OK);
-  assert(cnet_sctp_wire_decode(output, written, &header, &decoder) ==
+  check(cnet_sctp_wire_decode(output, written, &header, &decoder) ==
       CNET_SCTP_WIRE_OK && header.chunk_count == 2u);
 }
 
@@ -324,9 +321,9 @@ static void test_abort_standalone_control_chunks_cannot_bundle(void) {
           sizeof(init_value) : 0u;
 
       memset(output, 0xCC, sizeof(output));
-      assert(cnet_sctp_wire_encode(5000u, 5001u, 0u, pair, 2u,
+      check(cnet_sctp_wire_encode(5000u, 5001u, 0u, pair, 2u,
           output, sizeof(output), &written) == CNET_SCTP_WIRE_MALFORMED);
-      assert(written == 0u && output[0] == 0xCCu &&
+      check(written == 0u && output[0] == 0xCCu &&
           output[sizeof(output) - 1u] == 0xCCu);
 
       memset(packet, 0, sizeof(packet));
@@ -346,15 +343,15 @@ static void test_abort_standalone_control_chunks_cannot_bundle(void) {
       seal(packet, packet_n);
       memset(&header, 0xCC, sizeof(header));
       memset(&decoder, 0xCC, sizeof(decoder));
-      assert(cnet_sctp_wire_decode(packet, packet_n, &header, &decoder) ==
+      check(cnet_sctp_wire_decode(packet, packet_n, &header, &decoder) ==
           CNET_SCTP_WIRE_MALFORMED);
       {
         const uint8_t *p = (const uint8_t *)&header;
-        for (i = 0u; i < sizeof(header); ++i) assert(p[i] == 0u);
+        for (i = 0u; i < sizeof(header); ++i) check(p[i] == 0u);
         p = (const uint8_t *)&decoder;
-        for (i = 0u; i < sizeof(decoder); ++i) assert(p[i] == 0u);
+        for (i = 0u; i < sizeof(decoder); ++i) check(p[i] == 0u);
       }
-      for (i = 0u; i < sizeof(output); ++i) assert(output[i] == 0xCCu);
+      for (i = 0u; i < sizeof(output); ++i) check(output[i] == 0xCCu);
     }
   }
 }
@@ -373,27 +370,27 @@ static void test_reject_and_no_partial_write(void) {
   uint8_t packet[64];
   size_t written = 44u;
   memset(packet, 0x5au, sizeof(packet));
-  assert(cnet_sctp_wire_encode(1u, 2u, 0u, chunks, 2u,
+  check(cnet_sctp_wire_encode(1u, 2u, 0u, chunks, 2u,
                                packet, sizeof(packet), &written) == CNET_SCTP_WIRE_MALFORMED);
-  assert(packet[0] == 0x5au && written == 0u);
-  assert(cnet_sctp_wire_encode(1u, 2u, 3u, chunks, 1u,
+  check(packet[0] == 0x5au && written == 0u);
+  check(cnet_sctp_wire_encode(1u, 2u, 3u, chunks, 1u,
                                packet, sizeof(packet), &written) == CNET_SCTP_WIRE_MALFORMED);
-  assert(cnet_sctp_wire_encode(0u, 2u, 0u, chunks, 1u,
+  check(cnet_sctp_wire_encode(0u, 2u, 0u, chunks, 1u,
                                packet, sizeof(packet), &written) == CNET_SCTP_WIRE_EINVAL);
-  assert(cnet_sctp_wire_encode(1u, 2u, 0u, chunks, 1u,
+  check(cnet_sctp_wire_encode(1u, 2u, 0u, chunks, 1u,
                                packet, 31u, &written) == CNET_SCTP_WIRE_CAPACITY);
-  assert(packet[0] == 0x5au);
-  assert(cnet_sctp_wire_encode(1u, 2u, 0u, chunks, 1u,
+  check(packet[0] == 0x5au);
+  check(cnet_sctp_wire_encode(1u, 2u, 0u, chunks, 1u,
                                packet, sizeof(packet), &written) == CNET_SCTP_WIRE_OK);
-  assert(written == 32u);
+  check(written == 32u);
   packet[12 + 2] = 0;
   packet[12 + 3] = 0;
   seal(packet, written);
-  assert(cnet_sctp_wire_decode(packet, written, &header, &decoder) ==
+  check(cnet_sctp_wire_decode(packet, written, &header, &decoder) ==
          CNET_SCTP_WIRE_MALFORMED);
-  assert(cnet_sctp_wire_decode(NULL, 0u, &header, &decoder) ==
+  check(cnet_sctp_wire_decode(NULL, 0u, &header, &decoder) ==
          CNET_SCTP_WIRE_EINVAL);
-  assert(cnet_sctp_wire_decode(packet, CNET_SCTP_WIRE_MAX_PACKET_BYTES + 1u,
+  check(cnet_sctp_wire_decode(packet, CNET_SCTP_WIRE_MAX_PACKET_BYTES + 1u,
                                &header, &decoder) == CNET_SCTP_WIRE_CAPACITY);
 }
 
@@ -407,10 +404,10 @@ static void test_truncation_and_mutations(void) {
   size_t written = 0u;
   size_t i;
   uint32_t seed = UINT32_C(0x31415926);
-  assert(cnet_sctp_wire_encode(123u, 456u, 789u, &chunk, 1u,
+  check(cnet_sctp_wire_encode(123u, 456u, 789u, &chunk, 1u,
                                packet, sizeof(packet), &written) == CNET_SCTP_WIRE_OK);
   for (i = 0u; i < written; ++i) {
-    assert(cnet_sctp_wire_decode(packet, i, &header, &decoder) != CNET_SCTP_WIRE_OK);
+    check(cnet_sctp_wire_decode(packet, i, &header, &decoder) != CNET_SCTP_WIRE_OK);
   }
   for (i = 0u; i < 5000u; ++i) {
     size_t at;
@@ -422,7 +419,7 @@ static void test_truncation_and_mutations(void) {
     {
       cnet_sctp_wire_status status = cnet_sctp_wire_decode(scratch, written,
                                                             &header, &decoder);
-      assert(status == CNET_SCTP_WIRE_OK || status == CNET_SCTP_WIRE_CHECKSUM ||
+      check(status == CNET_SCTP_WIRE_OK || status == CNET_SCTP_WIRE_CHECKSUM ||
              status == CNET_SCTP_WIRE_MALFORMED);
     }
   }
@@ -436,47 +433,48 @@ static void test_output_cleared_on_errors(void) {
   size_t written;
   memset(&header, 0xa5, sizeof(header));
   memset(&decoder, 0xa5, sizeof(decoder));
-  assert(cnet_sctp_wire_decode(NULL, 0u, &header, &decoder) ==
+  check(cnet_sctp_wire_decode(NULL, 0u, &header, &decoder) ==
          CNET_SCTP_WIRE_EINVAL);
   {
     const uint8_t *p = (const uint8_t *)&header;
     size_t i;
-    for (i = 0u; i < sizeof(header); ++i) assert(p[i] == 0u);
+    for (i = 0u; i < sizeof(header); ++i) check(p[i] == 0u);
     p = (const uint8_t *)&decoder;
-    for (i = 0u; i < sizeof(decoder); ++i) assert(p[i] == 0u);
+    for (i = 0u; i < sizeof(decoder); ++i) check(p[i] == 0u);
   }
 
   memset(&chunk, 0xa5, sizeof(chunk));
   memset(&decoder, 0, sizeof(decoder));
   decoder.chunks_remaining = 1u;
-  assert(cnet_sctp_wire_next_chunk(&decoder, &chunk) ==
+  check(cnet_sctp_wire_next_chunk(&decoder, &chunk) ==
          CNET_SCTP_WIRE_MALFORMED);
   {
     const uint8_t *p = (const uint8_t *)&chunk;
     size_t i;
-    for (i = 0u; i < sizeof(chunk); ++i) assert(p[i] == 0u);
+    for (i = 0u; i < sizeof(chunk); ++i) check(p[i] == 0u);
   }
   memset(&chunk, 0xa5, sizeof(chunk));
   memset(&decoder, 0, sizeof(decoder));
-  assert(cnet_sctp_wire_next_chunk(&decoder, &chunk) == CNET_SCTP_WIRE_END);
+  check(cnet_sctp_wire_next_chunk(&decoder, &chunk) == CNET_SCTP_WIRE_END);
   {
     const uint8_t *p = (const uint8_t *)&chunk;
     size_t i;
-    for (i = 0u; i < sizeof(chunk); ++i) assert(p[i] == 0u);
+    for (i = 0u; i < sizeof(chunk); ++i) check(p[i] == 0u);
   }
 
   memset(packet, 0x5a, sizeof(packet));
   written = 99u;
-  assert(cnet_sctp_wire_encode(0u, 5001u, 0u, NULL, 1u,
+  check(cnet_sctp_wire_encode(0u, 5001u, 0u, NULL, 1u,
       packet, sizeof(packet), &written) == CNET_SCTP_WIRE_EINVAL);
-  assert(written == 0u && packet[0] == 0x5au);
+  check(written == 0u && packet[0] == 0x5au);
   written = 99u;
-  assert(cnet_sctp_wire_encode(5000u, 5001u, 0u, NULL, 1u,
+  check(cnet_sctp_wire_encode(5000u, 5001u, 0u, NULL, 1u,
       packet, sizeof(packet), &written) == CNET_SCTP_WIRE_EINVAL);
-  assert(written == 0u && packet[0] == 0x5au);
+  check(written == 0u && packet[0] == 0x5au);
 }
 
-int main(void) {
+spec("SCTP native wire contract") {
+  it("preserves all original RFC, boundary and negative-path assertions") {
   test_output_cleared_on_errors();
   test_max_chunk_count_and_no_partial_decode();
   test_unknown_chunk_action_bits();
@@ -488,5 +486,5 @@ int main(void) {
   test_reject_and_no_partial_write();
   test_truncation_and_mutations();
   puts("cnet SCTP RFC 9260 wire M1: PASS (not protocol interoperability)");
-  return 0;
+  }
 }

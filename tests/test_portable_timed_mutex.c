@@ -1,4 +1,5 @@
 #include <platform_thread.h>
+#include <tinytest.h>
 #include <stdint.h>
 #include <stdio.h>
 
@@ -42,7 +43,7 @@ static int contending_worker(void *ignored) {
     }
     return 45;
 }
-int main(void) {
+static int saltscore_legacy_entry_test_portable_timed_mutex_c(void) {
     salts_platform_thread *holder = NULL, *unlocker = NULL, *threads[N] = {0};
     int value, i, rc;
     uint32_t seen = 0, total = 0;
@@ -95,4 +96,13 @@ int main(void) {
     if (salts_platform_mutex_destroy(&lock) || lock) return 21;
     puts("portable monotonic timed mutex: held/zero/overflow/release/contention PASS");
     return 0;
+}
+
+/* Keep the native contract's original exit codes and cleanup paths intact;
+ * surface its exact nonzero result as one registered TinyTest failure. */
+spec("Portable timed mutex contention") {
+  it("preserves the original native exit and lifetime contract") {
+    const int result = saltscore_legacy_entry_test_portable_timed_mutex_c();
+    check(result == 0, "original native contract returned %d", result);
+  }
 }

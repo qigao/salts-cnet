@@ -1,4 +1,5 @@
 #include <coro.h>
+#include <tinytest.h>
 #include <coro_executor.h>
 #include <error_codes.h>
 #include <thread.h>
@@ -127,7 +128,7 @@ static int scheduler_thread_isolation(void) {
   return first == 0 && second == 0 && coro_current_scheduler() == NULL ? 0 : -1;
 }
 
-int main(void) {
+static int saltscore_legacy_entry_test_coroutine_c(void) {
   int steps = 0;
   coro_t *co = coro_create(manual_entry, &steps, NULL);
   if (co == NULL || !coro_alive(co) || steps != 0) return 1;
@@ -167,4 +168,13 @@ int main(void) {
   if (coro_executor_yield() != SALTS_EINVAL) return 9;
   if (scheduler_thread_isolation() != 0) return 10;
   return 0;
+}
+
+/* Keep the native contract's original exit codes and cleanup paths intact;
+ * surface its exact nonzero result as one registered TinyTest failure. */
+spec("Coroutine scheduler and cancellation") {
+  it("preserves the original native exit and lifetime contract") {
+    const int result = saltscore_legacy_entry_test_coroutine_c();
+    check(result == 0, "original native contract returned %d", result);
+  }
 }

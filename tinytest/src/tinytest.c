@@ -1656,7 +1656,7 @@ int ttest_main__(int argc, char **argv, ttest_invoke_spec_adapter__ invoke_spec,
     ttest_array_free__(all_specs);
     ttest_array_free__(all_steps);
     ttest_cleanup_specs__();
-    return 0;
+    return total_test_count == 0u ? 1 : 0;
   }
 
   if (config.use_tap) {
@@ -1714,6 +1714,12 @@ int ttest_main__(int argc, char **argv, ttest_invoke_spec_adapter__ invoke_spec,
     }
   }
 
+  const bool empty_cases = (total_test_count == 0u);
+  const bool empty_filter = (config.filter != NULL && !empty_cases &&
+                             filtered_count == total_test_count);
+  if (empty_cases) fprintf(stderr, "tinytest: no test cases registered\n");
+  if (empty_filter) fprintf(stderr, "tinytest: no test cases match filter '%s'\n", config.filter);
+
   if (!config.use_tap) {
     const char *c_rst = config.use_color ? TTEST_COLOR_RESET__ : "";
     const char *c_red = config.use_color ? TTEST_COLOR_RED__ : "";
@@ -1739,7 +1745,8 @@ int ttest_main__(int argc, char **argv, ttest_invoke_spec_adapter__ invoke_spec,
            passed_count, config.failed_test_count, skipped_count, filtered_count, todo_count,
            config.assertion_count, ttest_duration__);
 
-    if (config.failed_test_count == 0 && todo_count == 0) {
+    if (config.failed_test_count == 0 && todo_count == 0 &&
+        !empty_cases && !empty_filter) {
       printf("%sAll tests passed in %f sec.%s\n\n", c_grn, ttest_duration__, c_rst);
     } else {
       printf("\n");
@@ -1747,7 +1754,7 @@ int ttest_main__(int argc, char **argv, ttest_invoke_spec_adapter__ invoke_spec,
   }
 
   /* Generate JUnit XML report if requested - must be done before freeing steps */
-  int exit_code = config.failed_test_count > 0 ? 1 : 0;
+  int exit_code = (config.failed_test_count > 0 || empty_cases || empty_filter) ? 1 : 0;
   if (config.junit_file) {
     ttest_result__ junit_result = ttest_generate_junit__(&config, all_steps, total_test_count);
     if (!junit_result.ok) {

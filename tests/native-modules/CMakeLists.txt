@@ -13,13 +13,13 @@ function(saltscore_native_case name source owner)
   set_tests_properties("saltscore.native.${name}" PROPERTIES TIMEOUT 300)
 endfunction()
 
-if(SALTSCORE_BUILD_TINYTEST)
-  foreach(_name IN ITEMS regression_fixes regression_runtime equality_test
-      result_x_macro_test c11_generic_test)
-    saltscore_native_case("tinytest_${_name}"
-      "tinytest/test/${_name}.c" Salts::TinyTest)
-  endforeach()
-endif()
+# BUILD_TESTING=ON always provides TinyTest; its original regression suites
+# must be registered just like all other actual native tests.
+foreach(_name IN ITEMS regression_fixes regression_runtime equality_test
+    result_x_macro_test c11_generic_test)
+  saltscore_native_case("tinytest_${_name}"
+    "tinytest/test/${_name}.c" Salts::TinyTest)
+endforeach()
 
 if(SALTSCORE_BUILD_CSERDE)
   foreach(_name IN ITEMS cserde_token_test cserde_reader_test cserde_writer_test)

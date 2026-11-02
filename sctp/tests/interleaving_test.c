@@ -1,9 +1,6 @@
 #include "sctp_data_internal.h"
 
-#ifdef NDEBUG
-#undef NDEBUG
-#endif
-#include <assert.h>
+#include <tinytest.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -57,10 +54,10 @@ static cnet_sctp_wire_chunk one_chunk(const uint8_t *packet, size_t size) {
   cnet_sctp_wire_header header = {0};
   cnet_sctp_wire_decoder decoder = {0};
   cnet_sctp_wire_chunk chunk = {0};
-  assert(cnet_sctp_wire_decode(packet, size, &header, &decoder) ==
+  check(cnet_sctp_wire_decode(packet, size, &header, &decoder) ==
       CNET_SCTP_WIRE_OK);
-  assert(header.chunk_count == 1u);
-  assert(cnet_sctp_wire_next_chunk(&decoder, &chunk) == CNET_SCTP_WIRE_OK);
+  check(header.chunk_count == 1u);
+  check(cnet_sctp_wire_next_chunk(&decoder, &chunk) == CNET_SCTP_WIRE_OK);
   return chunk;
 }
 
@@ -71,7 +68,7 @@ static size_t encode_i_data(const cnet_sctp_data_config *receiver,
   uint8_t value[16u + CNET_SCTP_DATA_RX_PAYLOAD_MAX] = {0};
   cnet_sctp_wire_chunk chunk = {0};
   size_t written = 0u;
-  assert(payload && payload_size != 0u &&
+  check(payload && payload_size != 0u &&
       payload_size <= CNET_SCTP_DATA_RX_PAYLOAD_MAX);
   write32(value, tsn);
   write16(value + 4u, stream);
@@ -82,7 +79,7 @@ static size_t encode_i_data(const cnet_sctp_data_config *receiver,
   chunk.flags = flags;
   chunk.value = value;
   chunk.value_size = 16u + payload_size;
-  assert(cnet_sctp_wire_encode(receiver->remote_port, receiver->local_port,
+  check(cnet_sctp_wire_encode(receiver->remote_port, receiver->local_port,
       receiver->local_tag, &chunk, 1u, packet, capacity, &written) ==
       CNET_SCTP_WIRE_OK);
   return written;
@@ -98,20 +95,20 @@ static void sender_uses_mid_fsn_and_i_data_only(void) {
   size_t written = 0u;
   cnet_sctp_wire_chunk chunk;
   memset(message, 0x5Au, sizeof(message));
-  assert(cnet_sctp_data_init(&sender, &cfg, 0u) == CNET_SCTP_DATA_OK);
-  assert(cnet_sctp_data_queue_message(&sender, 1u, 2u, 53u, 0,
+  check(cnet_sctp_data_init(&sender, &cfg, 0u) == CNET_SCTP_DATA_OK);
+  check(cnet_sctp_data_queue_message(&sender, 1u, 2u, 53u, 0,
       message, sizeof(message)) == CNET_SCTP_DATA_OK);
-  assert(cnet_sctp_data_pump(&sender, 2u, packet, sizeof(packet),
+  check(cnet_sctp_data_pump(&sender, 2u, packet, sizeof(packet),
       &written) == CNET_SCTP_DATA_OK);
   chunk = one_chunk(packet, written);
-  assert(chunk.type == 64u && chunk.flags == I_DATA_B &&
+  check(chunk.type == 64u && chunk.flags == I_DATA_B &&
       chunk.value_size == 16u + CNET_SCTP_DATA_PAYLOAD_MAX &&
       read32(chunk.value + 8u) == 0u &&
       read32(chunk.value + 12u) == 53u);
-  assert(cnet_sctp_data_pump(&sender, 3u, packet, sizeof(packet),
+  check(cnet_sctp_data_pump(&sender, 3u, packet, sizeof(packet),
       &written) == CNET_SCTP_DATA_OK);
   chunk = one_chunk(packet, written);
-  assert(chunk.type == 64u && chunk.flags == I_DATA_E &&
+  check(chunk.type == 64u && chunk.flags == I_DATA_E &&
       chunk.value_size == 17u && read32(chunk.value + 8u) == 0u &&
       read32(chunk.value + 12u) == 1u &&
       sender.tx_mid_ordered[2] == 1u);
@@ -131,21 +128,21 @@ static void receiver_reassembles_by_fsn_across_interleaved_tsns(void) {
       I_DATA_B | I_DATA_E, "middle", 6u, b, sizeof(b));
   a1n = encode_i_data(&cfg, 102u, 0u, 0u, 1u, I_DATA_E,
       "right", 5u, a1, sizeof(a1));
-  assert(cnet_sctp_data_init(&receiver, &cfg, 0u) == CNET_SCTP_DATA_OK);
-  assert(cnet_sctp_data_input(&receiver, 1u, a0, a0n,
+  check(cnet_sctp_data_init(&receiver, &cfg, 0u) == CNET_SCTP_DATA_OK);
+  check(cnet_sctp_data_input(&receiver, 1u, a0, a0n,
       sack, sizeof(sack), &sackn) == CNET_SCTP_DATA_OK);
-  assert(cnet_sctp_data_input(&receiver, 2u, b, bn,
+  check(cnet_sctp_data_input(&receiver, 2u, b, bn,
       sack, sizeof(sack), &sackn) == CNET_SCTP_DATA_OK);
-  assert(cnet_sctp_data_take(&receiver, &message, payload, sizeof(payload),
+  check(cnet_sctp_data_take(&receiver, &message, payload, sizeof(payload),
       &payloadn) == CNET_SCTP_DATA_OK);
-  assert(message.interleaved && message.stream_id == 1u &&
+  check(message.interleaved && message.stream_id == 1u &&
       message.message_identifier == 0u && message.ppid == 51u &&
       payloadn == 6u && memcmp(payload, "middle", 6u) == 0);
-  assert(cnet_sctp_data_input(&receiver, 3u, a1, a1n,
+  check(cnet_sctp_data_input(&receiver, 3u, a1, a1n,
       sack, sizeof(sack), &sackn) == CNET_SCTP_DATA_OK);
-  assert(cnet_sctp_data_take(&receiver, &message, payload, sizeof(payload),
+  check(cnet_sctp_data_take(&receiver, &message, payload, sizeof(payload),
       &payloadn) == CNET_SCTP_DATA_OK);
-  assert(message.stream_id == 0u && message.message_identifier == 0u &&
+  check(message.stream_id == 0u && message.message_identifier == 0u &&
       message.ppid == 53u && payloadn == 9u &&
       memcmp(payload, "leftright", 9u) == 0);
 }
@@ -164,13 +161,13 @@ static void receiver_accepts_web_rtc_1280_byte_i_data_fragment(void) {
   packetn = encode_i_data(&cfg, 100u, 0u, 0u, 53u,
       I_DATA_B | I_DATA_E, expected, sizeof(expected),
       packet, sizeof(packet));
-  assert(packetn == CNET_SCTP_DATA_INGRESS_MTU);
-  assert(cnet_sctp_data_init(&receiver, &cfg, 0u) == CNET_SCTP_DATA_OK);
-  assert(cnet_sctp_data_input(&receiver, 1u, packet, packetn,
+  check(packetn == CNET_SCTP_DATA_INGRESS_MTU);
+  check(cnet_sctp_data_init(&receiver, &cfg, 0u) == CNET_SCTP_DATA_OK);
+  check(cnet_sctp_data_input(&receiver, 1u, packet, packetn,
       sack, sizeof(sack), &sackn) == CNET_SCTP_DATA_OK);
-  assert(cnet_sctp_data_take(&receiver, &message, payload, sizeof(payload),
+  check(cnet_sctp_data_take(&receiver, &message, payload, sizeof(payload),
       &payloadn) == CNET_SCTP_DATA_OK);
-  assert(message.interleaved && message.ppid == 53u &&
+  check(message.interleaved && message.ppid == 53u &&
       payloadn == sizeof(expected) &&
       memcmp(payload, expected, sizeof(expected)) == 0);
 }
@@ -188,21 +185,21 @@ static void partial_reliability_uses_i_forward_tsn(void) {
   uint8_t data[1200], forward[1200], sack[1200];
   size_t datan = 0u, forwardn = 0u, sackn = 0u;
   cnet_sctp_wire_chunk chunk;
-  assert(cnet_sctp_data_init(&sender, &sc, 0u) == CNET_SCTP_DATA_OK);
-  assert(cnet_sctp_data_init(&receiver, &rc, 0u) == CNET_SCTP_DATA_OK);
-  assert(cnet_sctp_data_send_pr(&sender, 1u, 3u, 53u, 1, &timed,
+  check(cnet_sctp_data_init(&sender, &sc, 0u) == CNET_SCTP_DATA_OK);
+  check(cnet_sctp_data_init(&receiver, &rc, 0u) == CNET_SCTP_DATA_OK);
+  check(cnet_sctp_data_send_pr(&sender, 1u, 3u, 53u, 1, &timed,
       "lost", 4u, data, sizeof(data), &datan) == CNET_SCTP_DATA_OK);
   chunk = one_chunk(data, datan);
-  assert(chunk.type == 64u && (chunk.flags & I_DATA_U) != 0u);
-  assert(cnet_sctp_data_advance(&sender, 6u, forward, sizeof(forward),
+  check(chunk.type == 64u && (chunk.flags & I_DATA_U) != 0u);
+  check(cnet_sctp_data_advance(&sender, 6u, forward, sizeof(forward),
       &forwardn) == CNET_SCTP_DATA_OK);
   chunk = one_chunk(forward, forwardn);
-  assert(chunk.type == 194u && chunk.value_size == 12u &&
+  check(chunk.type == 194u && chunk.value_size == 12u &&
       read32(chunk.value) == 100u && chunk.value[5] == 3u &&
       chunk.value[7] == 1u && read32(chunk.value + 8u) == 0u);
-  assert(cnet_sctp_data_input(&receiver, 7u, forward, forwardn,
+  check(cnet_sctp_data_input(&receiver, 7u, forward, forwardn,
       sack, sizeof(sack), &sackn) == CNET_SCTP_DATA_OK);
-  assert(receiver.cumulative_rx == 100u &&
+  check(receiver.cumulative_rx == 100u &&
       receiver.rx_mid_unordered_floor[3] == 1u);
 }
 
@@ -221,17 +218,17 @@ static void bundled_records_remain_i_data(void) {
   cnet_sctp_wire_chunk chunk = {0};
   uint8_t packet[1200];
   size_t written = 0u, i;
-  assert(cnet_sctp_data_init(&sender, &cfg, 0u) == CNET_SCTP_DATA_OK);
-  assert(cnet_sctp_data_send_bundle(&sender, 1u, items, 2u,
+  check(cnet_sctp_data_init(&sender, &cfg, 0u) == CNET_SCTP_DATA_OK);
+  check(cnet_sctp_data_send_bundle(&sender, 1u, items, 2u,
       packet, sizeof(packet), &written) == CNET_SCTP_DATA_OK);
-  assert(cnet_sctp_wire_decode(packet, written, &header, &decoder) ==
+  check(cnet_sctp_wire_decode(packet, written, &header, &decoder) ==
       CNET_SCTP_WIRE_OK && header.chunk_count == 2u);
   for (i = 0u; i < 2u; ++i) {
-    assert(cnet_sctp_wire_next_chunk(&decoder, &chunk) ==
+    check(cnet_sctp_wire_next_chunk(&decoder, &chunk) ==
         CNET_SCTP_WIRE_OK && chunk.type == 64u &&
         read32(chunk.value + 8u) == 0u);
   }
-  assert(sender.tx_mid_ordered[0] == 1u &&
+  check(sender.tx_mid_ordered[0] == 1u &&
       sender.tx_mid_unordered[1] == 1u);
 }
 
@@ -249,36 +246,36 @@ static void ordered_skip_releases_later_mid(void) {
   cnet_sctp_wire_chunk chunk;
   uint8_t lost[1200], received[1200], sack[1200], forward[1200], body[8];
   size_t lostn = 0u, receivedn = 0u, sackn = 0u, forwardn = 0u, bodyn = 0u;
-  assert(cnet_sctp_data_init(&sender, &sc, 0u) == CNET_SCTP_DATA_OK);
-  assert(cnet_sctp_data_init(&receiver, &rc, 0u) == CNET_SCTP_DATA_OK);
-  assert(cnet_sctp_data_send_pr(&sender, 1u, 1u, 53u, 0, &timed,
+  check(cnet_sctp_data_init(&sender, &sc, 0u) == CNET_SCTP_DATA_OK);
+  check(cnet_sctp_data_init(&receiver, &rc, 0u) == CNET_SCTP_DATA_OK);
+  check(cnet_sctp_data_send_pr(&sender, 1u, 1u, 53u, 0, &timed,
       "old", 3u, lost, sizeof(lost), &lostn) == CNET_SCTP_DATA_OK);
-  assert(cnet_sctp_data_send(&sender, 2u, 1u, 53u, 0,
+  check(cnet_sctp_data_send(&sender, 2u, 1u, 53u, 0,
       "new", 3u, received, sizeof(received), &receivedn) ==
       CNET_SCTP_DATA_OK);
-  assert(cnet_sctp_data_input(&receiver, 3u, received, receivedn,
+  check(cnet_sctp_data_input(&receiver, 3u, received, receivedn,
       sack, sizeof(sack), &sackn) == CNET_SCTP_DATA_OK);
-  assert(cnet_sctp_data_take(&receiver, &message, body, sizeof(body),
+  check(cnet_sctp_data_take(&receiver, &message, body, sizeof(body),
       &bodyn) == CNET_SCTP_DATA_EMPTY);
-  assert(cnet_sctp_data_input(&sender, 4u, sack, sackn,
+  check(cnet_sctp_data_input(&sender, 4u, sack, sackn,
       forward, sizeof(forward), &forwardn) == CNET_SCTP_DATA_OK);
-  assert(cnet_sctp_data_advance(&sender, 6u, forward, sizeof(forward),
+  check(cnet_sctp_data_advance(&sender, 6u, forward, sizeof(forward),
       &forwardn) == CNET_SCTP_DATA_OK);
   chunk = one_chunk(forward, forwardn);
-  assert(chunk.type == 194u && chunk.value_size == 12u &&
+  check(chunk.type == 194u && chunk.value_size == 12u &&
       read32(chunk.value) == 101u && chunk.value[5] == 1u &&
       chunk.value[7] == 0u && read32(chunk.value + 8u) == 0u);
   memcpy(&before, &receiver, sizeof(before));
-  assert(cnet_sctp_data_input(&receiver, 7u, forward, forwardn,
+  check(cnet_sctp_data_input(&receiver, 7u, forward, forwardn,
       sack, 8u, &sackn) == CNET_SCTP_DATA_CAPACITY);
-  assert(sackn == 0u && memcmp(&before, &receiver, sizeof(before)) == 0);
-  assert(cnet_sctp_data_input(&receiver, 7u, forward, forwardn,
+  check(sackn == 0u && memcmp(&before, &receiver, sizeof(before)) == 0);
+  check(cnet_sctp_data_input(&receiver, 7u, forward, forwardn,
       sack, sizeof(sack), &sackn) == CNET_SCTP_DATA_OK);
-  assert(receiver.rx_mid_ordered[1] == 1u &&
+  check(receiver.rx_mid_ordered[1] == 1u &&
       receiver.buffered_rx == 3u);
-  assert(cnet_sctp_data_take(&receiver, &message, body, sizeof(body),
+  check(cnet_sctp_data_take(&receiver, &message, body, sizeof(body),
       &bodyn) == CNET_SCTP_DATA_OK);
-  assert(message.message_identifier == 1u && bodyn == 3u &&
+  check(message.message_identifier == 1u && bodyn == 3u &&
       memcmp(body, "new", 3u) == 0 && receiver.rx_mid_ordered[1] == 2u);
 }
 
@@ -297,21 +294,21 @@ static void complete_message_crossed_by_forward_remains_deliverable(void) {
   uint8_t body[8];
   size_t datan = 0u, first_sackn = 0u, forwardn = 0u;
   size_t second_sackn = 0u, bodyn = 0u;
-  assert(cnet_sctp_data_init(&sender, &sc, 0u) == CNET_SCTP_DATA_OK);
-  assert(cnet_sctp_data_init(&receiver, &rc, 0u) == CNET_SCTP_DATA_OK);
-  assert(cnet_sctp_data_send_pr(&sender, 1u, 2u, 53u, 0, &timed,
+  check(cnet_sctp_data_init(&sender, &sc, 0u) == CNET_SCTP_DATA_OK);
+  check(cnet_sctp_data_init(&receiver, &rc, 0u) == CNET_SCTP_DATA_OK);
+  check(cnet_sctp_data_send_pr(&sender, 1u, 2u, 53u, 0, &timed,
       "keep", 4u, data, sizeof(data), &datan) == CNET_SCTP_DATA_OK);
-  assert(cnet_sctp_data_input(&receiver, 2u, data, datan,
+  check(cnet_sctp_data_input(&receiver, 2u, data, datan,
       first_sack, sizeof(first_sack), &first_sackn) == CNET_SCTP_DATA_OK);
   /* Deliberately lose the SACK so the sender legally abandons its ticket. */
-  assert(cnet_sctp_data_advance(&sender, 6u, forward, sizeof(forward),
+  check(cnet_sctp_data_advance(&sender, 6u, forward, sizeof(forward),
       &forwardn) == CNET_SCTP_DATA_OK);
-  assert(one_chunk(forward, forwardn).type == 194u);
-  assert(cnet_sctp_data_input(&receiver, 7u, forward, forwardn,
+  check(one_chunk(forward, forwardn).type == 194u);
+  check(cnet_sctp_data_input(&receiver, 7u, forward, forwardn,
       second_sack, sizeof(second_sack), &second_sackn) == CNET_SCTP_DATA_OK);
-  assert(cnet_sctp_data_take(&receiver, &message, body, sizeof(body),
+  check(cnet_sctp_data_take(&receiver, &message, body, sizeof(body),
       &bodyn) == CNET_SCTP_DATA_OK);
-  assert(message.message_identifier == 0u && bodyn == 4u &&
+  check(message.message_identifier == 0u && bodyn == 4u &&
       memcmp(body, "keep", 4u) == 0);
 }
 
@@ -329,26 +326,27 @@ static void wrong_family_and_invalid_fsn_fail_closed(void) {
   size_t packetn, replyn = 0u;
   lc.interleaving_supported = 0u;
   rc.forward_tsn_supported = 0u;
-  assert(cnet_sctp_data_init(&receiver, &ic, 0u) == CNET_SCTP_DATA_OK);
-  assert(cnet_sctp_data_init(&legacy, &lc, 0u) == CNET_SCTP_DATA_OK);
-  assert(cnet_sctp_data_init(&reliable_only, &rc, 0u) == CNET_SCTP_DATA_OK);
+  check(cnet_sctp_data_init(&receiver, &ic, 0u) == CNET_SCTP_DATA_OK);
+  check(cnet_sctp_data_init(&legacy, &lc, 0u) == CNET_SCTP_DATA_OK);
+  check(cnet_sctp_data_init(&reliable_only, &rc, 0u) == CNET_SCTP_DATA_OK);
   packetn = encode_i_data(&ic, 100u, 0u, 0u, 0u, I_DATA_E,
       "x", 1u, packet, sizeof(packet));
-  assert(cnet_sctp_data_input(&receiver, 1u, packet, packetn,
+  check(cnet_sctp_data_input(&receiver, 1u, packet, packetn,
       reply, sizeof(reply), &replyn) == CNET_SCTP_DATA_PROTOCOL);
   packetn = encode_i_data(&lc, 100u, 0u, 0u, 51u,
       I_DATA_B | I_DATA_E, "x", 1u, packet, sizeof(packet));
-  assert(cnet_sctp_data_input(&legacy, 1u, packet, packetn,
+  check(cnet_sctp_data_input(&legacy, 1u, packet, packetn,
       reply, sizeof(reply), &replyn) == CNET_SCTP_DATA_PROTOCOL);
-  assert(cnet_sctp_data_send(&reliable_only, 1u, 0u, 51u, 0,
+  check(cnet_sctp_data_send(&reliable_only, 1u, 0u, 51u, 0,
       "ok", 2u, packet, sizeof(packet), &packetn) == CNET_SCTP_DATA_OK);
-  assert(one_chunk(packet, packetn).type == 64u);
-  assert(cnet_sctp_data_send_pr(&reliable_only, 2u, 0u, 51u, 0,
+  check(one_chunk(packet, packetn).type == 64u);
+  check(cnet_sctp_data_send_pr(&reliable_only, 2u, 0u, 51u, 0,
       &timed, "no", 2u, packet, sizeof(packet), &packetn) ==
       CNET_SCTP_DATA_INVALID);
 }
 
-int main(void) {
+spec("SCTP native interleaving contract") {
+  it("preserves all original RFC, boundary and negative-path assertions") {
   sender_uses_mid_fsn_and_i_data_only();
   receiver_reassembles_by_fsn_across_interleaved_tsns();
   receiver_accepts_web_rtc_1280_byte_i_data_fragment();
@@ -358,5 +356,5 @@ int main(void) {
   complete_message_crossed_by_forward_remains_deliverable();
   wrong_family_and_invalid_fsn_fail_closed();
   puts("C11 RFC8260 I-DATA/I-FORWARD-TSN bounded Owner path: PASS");
-  return 0;
+  }
 }

@@ -1,5 +1,5 @@
 #include <asn1.h>
-#include "test.h"
+#include <tinytest.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <string.h>

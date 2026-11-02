@@ -1,9 +1,7 @@
 #include "sctp_data_internal.h"
 
-#ifdef NDEBUG
-#undef NDEBUG
-#endif
-#include <assert.h>
+#define TINYTEST_NO_MAIN
+#include <tinytest.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -27,7 +25,7 @@ static void init(cnet_sctp_data *d, int *admitted, uint32_t tsn) {
   cfg.max_retransmits = 3u;
   cfg.is_owner = owner;
   cfg.owner_context = admitted;
-  assert(cnet_sctp_data_init(d, &cfg, 0u) == CNET_SCTP_DATA_OK);
+  check(cnet_sctp_data_init(d, &cfg, 0u) == CNET_SCTP_DATA_OK);
 }
 static void wr16(uint8_t *p, uint16_t n) {
   p[0] = (uint8_t)(n >> 8); p[1] = (uint8_t)n;
@@ -41,7 +39,7 @@ static size_t sack(const cnet_sctp_data *d, uint32_t cumulative,
   uint8_t value[12u + 16u * 4u] = {0};
   cnet_sctp_wire_chunk ch = {0};
   size_t i, written = 0u;
-  assert(blocks <= 16u);
+  check(blocks <= 16u);
   wr32(value, cumulative);
   wr32(value + 4u, window);
   wr16(value + 8u, (uint16_t)blocks);
@@ -49,7 +47,7 @@ static size_t sack(const cnet_sctp_data *d, uint32_t cumulative,
   ch.type = 3u;
   ch.value = value;
   ch.value_size = 12u + 4u * blocks;
-  assert(cnet_sctp_wire_encode(d->config.remote_port, d->config.local_port,
+  check(cnet_sctp_wire_encode(d->config.remote_port, d->config.local_port,
       d->config.local_tag, &ch, 1u, out, CNET_SCTP_DATA_MTU, &written) ==
       CNET_SCTP_WIRE_OK);
   return written;
@@ -60,13 +58,13 @@ static cnet_sctp_data_status ack(cnet_sctp_data *d, uint64_t now,
   size_t n = sack(d, cumulative, window, gaps, blocks, packet), written = 99u;
   cnet_sctp_data_status status = cnet_sctp_data_input(d, now, packet, n,
       out, sizeof(out), &written);
-  if (status != CNET_SCTP_DATA_OWNER) assert(written == 0u);
+  if (status != CNET_SCTP_DATA_OWNER) check(written == 0u);
   return status;
 }
 static size_t send_byte(cnet_sctp_data *d, uint64_t now, uint8_t value,
     uint8_t *packet) {
   size_t n = 0u;
-  assert(cnet_sctp_data_send(d, now, 0u, 53u, 0, &value, 1u,
+  check(cnet_sctp_data_send(d, now, 0u, 53u, 0, &value, 1u,
       packet, CNET_SCTP_DATA_MTU, &n) == CNET_SCTP_DATA_OK);
   return n;
 }
@@ -79,8 +77,8 @@ static void retransmit(cnet_sctp_data *d, uint64_t now,
     const uint8_t *expected, size_t size) {
   uint8_t out[CNET_SCTP_DATA_MTU];
   size_t n = 0u;
-  assert(cnet_sctp_data_advance(d, now, out, sizeof(out), &n) == CNET_SCTP_DATA_OK);
-  assert(n == size && memcmp(out, expected, size) == 0);
+  check(cnet_sctp_data_advance(d, now, out, sizeof(out), &n) == CNET_SCTP_DATA_OK);
+  check(n == size && memcmp(out, expected, size) == 0);
 }
 
 static void gap_retains_bytes(void) {
@@ -91,11 +89,11 @@ static void gap_retains_bytes(void) {
   unsigned int i;
   init(&d, &admitted, 100u);
   for (i = 0u; i < 3u; ++i) (void)send_byte(&d, 1u + i, (uint8_t)i, packets[i]);
-  assert(ack(&d, 10u, 99u, 32768u, gaps, 1u) == CNET_SCTP_DATA_OK);
-  assert(d.in_flight == 1u);
-  assert(retained(&d) == 3u); /* Gap ACK is revocable, NOT a release. */
-  assert(ack(&d, 11u, 102u, 32768u, NULL, 0u) == CNET_SCTP_DATA_OK);
-  assert(d.in_flight == 0u && retained(&d) == 0u && d.t3_deadline_ms == 0u);
+  check(ack(&d, 10u, 99u, 32768u, gaps, 1u) == CNET_SCTP_DATA_OK);
+  check(d.in_flight == 1u);
+  check(retained(&d) == 3u); /* Gap ACK is revocable, NOT a release. */
+  check(ack(&d, 11u, 102u, 32768u, NULL, 0u) == CNET_SCTP_DATA_OK);
+  check(d.in_flight == 0u && retained(&d) == 0u && d.t3_deadline_ms == 0u);
 }
 
 static void gap_does_not_postpone_t3(void) {
@@ -108,10 +106,10 @@ static void gap_does_not_postpone_t3(void) {
   n0 = send_byte(&d, 1u, 'a', packets[0]);
   (void)send_byte(&d, 2u, 'b', packets[1]);
   (void)send_byte(&d, 3u, 'c', packets[2]);
-  assert(ack(&d, 90u, 99u, 32768u, gap1, 1u) == CNET_SCTP_DATA_OK);
-  assert(d.t3_deadline_ms == 101u);
-  assert(ack(&d, 100u, 99u, 32768u, gap2, 1u) == CNET_SCTP_DATA_OK);
-  assert(d.t3_deadline_ms == 101u);
+  check(ack(&d, 90u, 99u, 32768u, gap1, 1u) == CNET_SCTP_DATA_OK);
+  check(d.t3_deadline_ms == 101u);
+  check(ack(&d, 100u, 99u, 32768u, gap2, 1u) == CNET_SCTP_DATA_OK);
+  check(d.t3_deadline_ms == 101u);
   retransmit(&d, 101u, packets[0], n0);
 }
 
@@ -125,19 +123,19 @@ static void reneging_recovers_wraparound(void) {
   n0 = send_byte(&d, 1u, 'a', packets[0]);
   n1 = send_byte(&d, 2u, 'b', packets[1]);
   n2 = send_byte(&d, 3u, 'c', packets[2]);
-  assert(ack(&d, 10u, UINT32_MAX - 2u, 32768u, gaps, 1u) == CNET_SCTP_DATA_OK);
+  check(ack(&d, 10u, UINT32_MAX - 2u, 32768u, gaps, 1u) == CNET_SCTP_DATA_OK);
   retransmit(&d, 101u, packets[0], n0);
   /* Peer now cumulatively ACKs the first TSN but retracts the middle one. */
-  assert(ack(&d, 102u, UINT32_MAX - 1u, 32768u, only_last, 1u) == CNET_SCTP_DATA_OK);
-  assert(d.in_flight == 1u && retained(&d) == 2u);
-  assert(d.rto_ms == 200u && d.t3_deadline_ms == 302u);
+  check(ack(&d, 102u, UINT32_MAX - 1u, 32768u, only_last, 1u) == CNET_SCTP_DATA_OK);
+  check(d.in_flight == 1u && retained(&d) == 2u);
+  check(d.rto_ms == 200u && d.t3_deadline_ms == 302u);
   retransmit(&d, 302u, packets[1], n1);
   /* The remaining last gap is also revoked, across TSN UINT32_MAX -> 0. */
-  assert(ack(&d, 303u, UINT32_MAX, 32768u, NULL, 0u) == CNET_SCTP_DATA_OK);
-  assert(d.in_flight == 1u && d.rto_ms == 400u && d.t3_deadline_ms == 703u);
+  check(ack(&d, 303u, UINT32_MAX, 32768u, NULL, 0u) == CNET_SCTP_DATA_OK);
+  check(d.in_flight == 1u && d.rto_ms == 400u && d.t3_deadline_ms == 703u);
   retransmit(&d, 703u, packets[2], n2);
-  assert(ack(&d, 704u, 0u, 32768u, NULL, 0u) == CNET_SCTP_DATA_OK);
-  assert(retained(&d) == 0u && d.in_flight == 0u && d.t3_deadline_ms == 0u);
+  check(ack(&d, 704u, 0u, 32768u, NULL, 0u) == CNET_SCTP_DATA_OK);
+  check(retained(&d) == 0u && d.in_flight == 0u && d.t3_deadline_ms == 0u);
 }
 
 static void all_gap_acked_timer_restart(void) {
@@ -148,12 +146,12 @@ static void all_gap_acked_timer_restart(void) {
   size_t n0, n = 0u;
   init(&d, &admitted, 100u);
   n0 = send_byte(&d, 1u, 'a', packet);
-  assert(ack(&d, 2u, 99u, 32768u, gap, 1u) == CNET_SCTP_DATA_OK);
-  assert(d.in_flight == 0u && d.t3_deadline_ms == 0u);
-  assert(cnet_sctp_data_advance(&d, 500u, out, sizeof(out), &n) == CNET_SCTP_DATA_OK);
-  assert(n == 0u); /* Do not retransmit still gap-acknowledged bytes. */
-  assert(ack(&d, 501u, 99u, 32768u, NULL, 0u) == CNET_SCTP_DATA_OK);
-  assert(d.in_flight == 1u && d.t3_deadline_ms == 601u);
+  check(ack(&d, 2u, 99u, 32768u, gap, 1u) == CNET_SCTP_DATA_OK);
+  check(d.in_flight == 0u && d.t3_deadline_ms == 0u);
+  check(cnet_sctp_data_advance(&d, 500u, out, sizeof(out), &n) == CNET_SCTP_DATA_OK);
+  check(n == 0u); /* Do not retransmit still gap-acknowledged bytes. */
+  check(ack(&d, 501u, 99u, 32768u, NULL, 0u) == CNET_SCTP_DATA_OK);
+  check(d.in_flight == 1u && d.t3_deadline_ms == 601u);
   retransmit(&d, 601u, packet, n0);
 }
 
@@ -166,11 +164,11 @@ static void rto_backoff_survives_ack(void) {
   n0 = send_byte(&d, 1u, 'a', packets[0]);
   n1 = send_byte(&d, 2u, 'b', packets[1]);
   retransmit(&d, 101u, packets[0], n0);
-  assert(d.rto_ms == 200u);
-  assert(ack(&d, 102u, 100u, 32768u, NULL, 0u) == CNET_SCTP_DATA_OK);
-  assert(d.rto_ms == 200u && d.t3_deadline_ms == 302u);
-  assert(ack(&d, 103u, 100u, 32768u, NULL, 0u) == CNET_SCTP_DATA_OK);
-  assert(d.rto_ms == 200u && d.t3_deadline_ms == 302u);
+  check(d.rto_ms == 200u);
+  check(ack(&d, 102u, 100u, 32768u, NULL, 0u) == CNET_SCTP_DATA_OK);
+  check(d.rto_ms == 200u && d.t3_deadline_ms == 302u);
+  check(ack(&d, 103u, 100u, 32768u, NULL, 0u) == CNET_SCTP_DATA_OK);
+  check(d.rto_ms == 200u && d.t3_deadline_ms == 302u);
   retransmit(&d, 302u, packets[1], n1);
 }
 
@@ -184,14 +182,14 @@ static void bounded_gap_tickets(void) {
   init(&d, &admitted, 100u);
   for (i = 0u; i < CNET_SCTP_DATA_TX_SLOTS; ++i)
     (void)send_byte(&d, 1u + i, (uint8_t)i, packet);
-  assert(ack(&d, 20u, 99u, 32768u, gap, 1u) == CNET_SCTP_DATA_OK);
+  check(ack(&d, 20u, 99u, 32768u, gap, 1u) == CNET_SCTP_DATA_OK);
   memcpy(&before, &d, sizeof(d));
-  assert(cnet_sctp_data_send(&d, 21u, 0u, 53u, 0, &byte, 1u,
+  check(cnet_sctp_data_send(&d, 21u, 0u, 53u, 0, &byte, 1u,
       packet, sizeof(packet), &n) == CNET_SCTP_DATA_CAPACITY);
-  assert(n == 0u && memcmp(&d, &before, sizeof(d)) == 0);
-  assert(ack(&d, 22u, 115u, 32768u, NULL, 0u) == CNET_SCTP_DATA_OK);
+  check(n == 0u && memcmp(&d, &before, sizeof(d)) == 0);
+  check(ack(&d, 22u, 115u, 32768u, NULL, 0u) == CNET_SCTP_DATA_OK);
   (void)send_byte(&d, 23u, 'n', packet); /* Cumulative ACK releases slots. */
-  assert(retained(&d) == 1u);
+  check(retained(&d) == 1u);
 }
 
 static void stale_sack_is_ignored(void) {
@@ -200,11 +198,11 @@ static void stale_sack_is_ignored(void) {
   uint8_t packet[CNET_SCTP_DATA_MTU];
   init(&d, &admitted, 100u);
   (void)send_byte(&d, 1u, 'a', packet);
-  assert(ack(&d, 2u, 100u, 32768u, NULL, 0u) == CNET_SCTP_DATA_OK);
+  check(ack(&d, 2u, 100u, 32768u, NULL, 0u) == CNET_SCTP_DATA_OK);
   (void)send_byte(&d, 3u, 'b', packet);
   memcpy(&before, &d, sizeof(d));
-  assert(ack(&d, 4u, 99u, 0u, NULL, 0u) == CNET_SCTP_DATA_OK);
-  assert(memcmp(&d, &before, sizeof(d)) == 0);
+  check(ack(&d, 4u, 99u, 0u, NULL, 0u) == CNET_SCTP_DATA_OK);
+  check(memcmp(&d, &before, sizeof(d)) == 0);
 }
 
 static void rejection_is_atomic(void) {
@@ -217,25 +215,25 @@ static void rejection_is_atomic(void) {
   (void)send_byte(&d, 1u, 'a', packet);
   (void)send_byte(&d, 2u, 'b', packet);
   memcpy(&before, &d, sizeof(d));
-  assert(ack(&d, 3u, 102u, 1u, NULL, 0u) == CNET_SCTP_DATA_PROTOCOL);
-  assert(memcmp(&d, &before, sizeof(d)) == 0);
-  assert(ack(&d, 3u, 99u + UINT32_C(0x80000000), 1u, NULL, 0u) ==
+  check(ack(&d, 3u, 102u, 1u, NULL, 0u) == CNET_SCTP_DATA_PROTOCOL);
+  check(memcmp(&d, &before, sizeof(d)) == 0);
+  check(ack(&d, 3u, 99u + UINT32_C(0x80000000), 1u, NULL, 0u) ==
       CNET_SCTP_DATA_PROTOCOL);
-  assert(memcmp(&d, &before, sizeof(d)) == 0);
-  assert(ack(&d, 3u, 99u, 1u, unsent, 1u) == CNET_SCTP_DATA_PROTOCOL);
-  assert(memcmp(&d, &before, sizeof(d)) == 0);
-  assert(ack(&d, 3u, 99u, 1u, overlap, 2u) == CNET_SCTP_DATA_PROTOCOL);
-  assert(memcmp(&d, &before, sizeof(d)) == 0);
+  check(memcmp(&d, &before, sizeof(d)) == 0);
+  check(ack(&d, 3u, 99u, 1u, unsent, 1u) == CNET_SCTP_DATA_PROTOCOL);
+  check(memcmp(&d, &before, sizeof(d)) == 0);
+  check(ack(&d, 3u, 99u, 1u, overlap, 2u) == CNET_SCTP_DATA_PROTOCOL);
+  check(memcmp(&d, &before, sizeof(d)) == 0);
   admitted = 0;
-  assert(ack(&d, 3u, 100u, 1u, NULL, 0u) == CNET_SCTP_DATA_OWNER);
-  assert(memcmp(&d, &before, sizeof(d)) == 0);
+  check(ack(&d, 3u, 100u, 1u, NULL, 0u) == CNET_SCTP_DATA_OWNER);
+  check(memcmp(&d, &before, sizeof(d)) == 0);
   admitted = 1;
-  assert(ack(&d, 0u, 100u, 1u, NULL, 0u) == CNET_SCTP_DATA_CLOCK);
-  assert(memcmp(&d, &before, sizeof(d)) == 0);
-  assert(ack(&d, UINT64_MAX, 100u, 1u, NULL, 0u) == CNET_SCTP_DATA_CLOCK);
-  assert(memcmp(&d, &before, sizeof(d)) == 0);
-  assert(cnet_sctp_data_advance(&d, 101u, out, 0u, &n) == CNET_SCTP_DATA_CAPACITY);
-  assert(n == 0u && memcmp(&d, &before, sizeof(d)) == 0);
+  check(ack(&d, 0u, 100u, 1u, NULL, 0u) == CNET_SCTP_DATA_CLOCK);
+  check(memcmp(&d, &before, sizeof(d)) == 0);
+  check(ack(&d, UINT64_MAX, 100u, 1u, NULL, 0u) == CNET_SCTP_DATA_CLOCK);
+  check(memcmp(&d, &before, sizeof(d)) == 0);
+  check(cnet_sctp_data_advance(&d, 101u, out, 0u, &n) == CNET_SCTP_DATA_CAPACITY);
+  check(n == 0u && memcmp(&d, &before, sizeof(d)) == 0);
 }
 
 static void gap_reack_does_not_inflate_cwnd(void) {
@@ -250,34 +248,52 @@ static void gap_reack_does_not_inflate_cwnd(void) {
   (void)send_byte(&d, 2u, 'b', packet);
   initial = d.cwnd;
   for (i = 0u; i < 20u; ++i) {
-    assert(ack(&d, 3u + 2u * i, 99u, 32768u, gap, 1u) == CNET_SCTP_DATA_OK);
-    assert(ack(&d, 4u + 2u * i, 99u, 32768u, NULL, 0u) == CNET_SCTP_DATA_OK);
-    assert(d.cwnd == initial && d.t3_deadline_ms == 101u);
-    assert(d.in_flight == 2u && retained(&d) == 2u);
+    check(ack(&d, 3u + 2u * i, 99u, 32768u, gap, 1u) == CNET_SCTP_DATA_OK);
+    check(ack(&d, 4u + 2u * i, 99u, 32768u, NULL, 0u) == CNET_SCTP_DATA_OK);
+    check(d.cwnd == initial && d.t3_deadline_ms == 101u);
+    check(d.in_flight == 2u && retained(&d) == 2u);
   }
 }
 
+
+spec("SCTP SACK retention and reneging") {
+  it("[case:gap-retains]") { gap_retains_bytes(); }
+  it("[case:gap-timer]") { gap_does_not_postpone_t3(); }
+  it("[case:reneging-wrap]") { reneging_recovers_wraparound(); }
+  it("[case:timer-restart]") { all_gap_acked_timer_restart(); }
+  it("[case:rto-backoff]") { rto_backoff_survives_ack(); }
+  it("[case:bounded-tickets]") { bounded_gap_tickets(); }
+  it("[case:stale-sack]") { stale_sack_is_ignored(); }
+  it("[case:atomic-rejection]") { rejection_is_atomic(); }
+  it("[case:cwnd-reack]") { gap_reack_does_not_inflate_cwnd(); }
+}
+
+/* Preserve the original exact-name CLI admission. CTest runs all cases.
+ * An explicit legacy name must resolve to exactly one TinyTest case. */
 int main(int argc, char **argv) {
-  typedef void (*test_fn)(void);
-  static const struct { const char *name; test_fn run; } tests[] = {
-    {"gap-retains", gap_retains_bytes},
-    {"gap-timer", gap_does_not_postpone_t3},
-    {"reneging-wrap", reneging_recovers_wraparound},
-    {"timer-restart", all_gap_acked_timer_restart},
-    {"rto-backoff", rto_backoff_survives_ack},
-    {"bounded-tickets", bounded_gap_tickets},
-    {"stale-sack", stale_sack_is_ignored},
-    {"atomic-rejection", rejection_is_atomic},
-    {"cwnd-reack", gap_reack_does_not_inflate_cwnd}
-  };
-  size_t i, ran = 0u;
-  for (i = 0u; i < sizeof(tests) / sizeof(tests[0]); ++i) {
-    if (argc > 1 && strcmp(argv[1], tests[i].name) != 0) continue;
-    tests[i].run();
-    printf("PASS %s\n", tests[i].name);
-    ++ran;
+  if (argc == 1) {
+    return ttest_main__(argc, argv, TTEST_INVOKE_SPEC_ADAPTER__,
+                        TT_USE_COLOR != 0, TT_USE_TAP != 0,
+                        TTEST_IS_ATTY__() != 0, TTEST_PRINT_TRACE_DEFAULT__);
   }
-  assert(ran != 0u);
-  puts("SCTP C11 SACK retention/reneging/T3 recovery tests PASS");
-  return 0;
+  if (argc != 2 || argv[1] == NULL) {
+    fprintf(stderr, "expected one exact SCTP case name\n");
+    return 2;
+  }
+  static const char *const names[] = {"gap-retains", "gap-timer", "reneging-wrap", "timer-restart", "rto-backoff", "bounded-tickets", "stale-sack", "atomic-rejection", "cwnd-reack"};
+  bool accepted = false;
+  for (size_t i = 0u; i < sizeof(names)/sizeof(names[0]); ++i) {
+    if (strcmp(argv[1], names[i]) == 0) { accepted = true; break; }
+  }
+  if (!accepted) {
+    fprintf(stderr, "unknown SCTP case '%s'\n", argv[1]);
+    return 2;
+  }
+  char filter[160];
+  int count = snprintf(filter, sizeof(filter), "[case:%s]", argv[1]);
+  if (count < 0 || (size_t)count >= sizeof(filter)) return 2;
+  char *filtered_argv[] = {argv[0], "--filter", filter};
+  return ttest_main__(3, filtered_argv, TTEST_INVOKE_SPEC_ADAPTER__,
+                      TT_USE_COLOR != 0, TT_USE_TAP != 0,
+                      TTEST_IS_ATTY__() != 0, TTEST_PRINT_TRACE_DEFAULT__);
 }

@@ -1,3 +1,4 @@
+#include <tinytest.h>
 #include <fs.h>
 #include <stdio.h>
 #include <string.h>
@@ -7,7 +8,7 @@
 #else
 #include <unistd.h>
 #endif
-int main(void) {
+static int saltscore_legacy_test_fs_c(void) {
   char tmp[1024] = {0}, path[1400] = {0}, name[120] = {0};
   const char body[] = "salts core fs native\n";
   salts_fs_buf_t input = salts_fs_buf_init((char *)body, sizeof(body) - 1u);
@@ -43,4 +44,11 @@ int main(void) {
   if (salts_fs_unlink(path)) return 13;
   puts("Salts::FS root ownership and path rejection PASS");
   return 0;
+}
+
+spec("Core real FS root and path exclusion") {
+  it("runs all original source assertions and preserves exit status") {
+    const int result = saltscore_legacy_test_fs_c();
+    check(result == 0, "original native contract returned %d", result);
+  }
 }

@@ -3,6 +3,7 @@
  * flushes, page accounting, owner closure and contiguous multi-file maps.
  * No CMeta reflection/runtime, fallback provider or mock backing memory.
  */
+#include <tinytest.h>
 #include "cmeta_mmap.h"
 #include <stdint.h>
 #include <stdio.h>
@@ -132,7 +133,13 @@ static int original_mmap_native_contract(void)
     return 0;
 }
 
-int main(void)
-{
+static int saltscore_original_entry_test_original_native_mmap_c(void) {
     return original_mmap_native_contract();
+}
+
+spec("Core real mmap range flush and owner lifetimes") {
+  it("preserves the real owner lifecycle and original failure code") {
+    const int result = saltscore_original_entry_test_original_native_mmap_c();
+    check(result == 0, "native integration returned %d", result);
+  }
 }

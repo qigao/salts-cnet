@@ -1,5 +1,6 @@
 #include <cnet/sctp_wire.h>
 #include <cnet/sctp_session.h>
+#include <tinytest.h>
 
 #include <stddef.h>
 #include <stdint.h>
@@ -2024,7 +2025,7 @@ cleanup:
   return result;
 }
 
-int main(void) {
+static int original_sctp_public_api_contract(void) {
   const uint8_t payload[] = {1u, 2u, 3u};
   const cnet_sctp_wire_chunk chunk = {0u, 0u, payload, sizeof(payload)};
   cnet_sctp_wire_chunk received = {0};
@@ -2070,4 +2071,11 @@ int main(void) {
     if (abort_reason != 0) return abort_reason;
   }
   return session_peer_abort_with_unread_pr();
+}
+
+spec("SCTP public Wire and opaque Session API") {
+  it("preserves the original ABI, real wire round-trip and full Session lifecycle") {
+    const int result = original_sctp_public_api_contract();
+    check(result == 0, "SCTP public native API contract returned %d", result);
+  }
 }

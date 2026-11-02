@@ -28,10 +28,11 @@
 - The outer CMake toolchain is the vcpkg manifest toolchain. Native LLVM or
   the Android NDK is supplied only through `VCPKG_CHAINLOAD_TOOLCHAIN_FILE`.
   Reversing these two toolchains bypasses manifest-mode dependency ownership.
-- CI path filters intentionally contain only source/public-header/data
-  directories. CMake, workflow, test, tool, documentation and packaging files
-  must not trigger product CI; use `workflow_dispatch` to qualify CI-only
-  changes.
+- Existing product CI path filters include production sources and public
+  headers, plus native test sources, root CMake settings and the workflow
+  itself. These test-only changes qualify the actual native owner graph;
+  documentation/packaging-only edits do not trigger new product jobs.
+  No separate probe or synthetic installer/consumer workflow is introduced.
 - Do not restore installed-consumer/smoke CMake projects. Configure owns the
   complete graph, build runs it without `--target`, and formal tests run only
   through CTest.

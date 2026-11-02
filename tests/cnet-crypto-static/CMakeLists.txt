@@ -6,6 +6,9 @@ if(SALTSCORE_TEST_CNET_CRYPTO_QUALIFICATION)
   if(NOT BUILD_TESTING OR NOT TARGET saltscore_cnet)
     message(FATAL_ERROR "CNet Crypto qualification requires BUILD_TESTING and the actual CNet graph")
   endif()
+  if(NOT TARGET Salts::TinyTest)
+    message(FATAL_ERROR "CNet Crypto native tests require canonical Salts::TinyTest")
+  endif()
   if(NOT DEFINED SALTSCORE_CRYPTO_TEST_FIXTURES)
     message(FATAL_ERROR "Exact pinned static Crypto TLS fixtures required")
   endif()
@@ -73,8 +76,15 @@ if(SALTSCORE_TEST_CNET_CRYPTO_QUALIFICATION)
     endif()
   endforeach()
   file(TO_CMAKE_PATH "${SALTSCORE_CRYPTO_TEST_FIXTURES}" _owner_fixtures)
+  # The original CNet private Owner is also built into the M6 shared image.
+  # Rename only its CLI entry symbol; never add a TinyTest main to the DSO.
+  set_source_files_properties(
+    "${PROJECT_SOURCE_DIR}/tests/cnet-crypto-static/owner.c"
+    PROPERTIES COMPILE_DEFINITIONS
+      "main=saltscore_cnet_crypto_legacy_main")
   add_executable(saltscore_cnet_crypto_static_original_owner
-    ${_static_owner_sources})
+    ${_static_owner_sources}
+    "${PROJECT_SOURCE_DIR}/tests/cnet-crypto-static/owner_tinytest.c")
   target_compile_features(saltscore_cnet_crypto_static_original_owner
     PRIVATE c_std_11)
   set_target_properties(saltscore_cnet_crypto_static_original_owner PROPERTIES
@@ -93,7 +103,7 @@ if(SALTSCORE_TEST_CNET_CRYPTO_QUALIFICATION)
     "SDK_SERVER_KEY_FILE=\"${_owner_fixtures}/external-io-server-key.pem\"")
   target_link_libraries(saltscore_cnet_crypto_static_original_owner PRIVATE
     Salts::Core Salts::NativeIO Salts::Concurrency
-    Salts::URI Salts::Platform Salts::Crypto
+    Salts::URI Salts::Platform Salts::Crypto Salts::TinyTest
     saltscore_cnet_monocypher saltscore_cnet_reed
     c-ares::cares kcp::kcp
     $<$<PLATFORM_ID:Windows>:crypt32>)
@@ -247,8 +257,12 @@ if(SALTSCORE_TEST_CNET_CRYPTO_QUALIFICATION)
 
     # The loader never links Salts::CNet nor Salts::Crypto, and must
     # unload plugin A while a Provider lease from A is still outstanding.
+    set_source_files_properties(
+      "${PROJECT_SOURCE_DIR}/tests/cnet-crypto-static/m6_loader.c"
+      PROPERTIES COMPILE_DEFINITIONS "main=saltscore_cnet_m6_legacy_main")
     add_executable(saltscore_cnet_m6_two_plugin_loader
-      "${PROJECT_SOURCE_DIR}/tests/cnet-crypto-static/m6_loader.c")
+      "${PROJECT_SOURCE_DIR}/tests/cnet-crypto-static/m6_loader.c"
+      "${PROJECT_SOURCE_DIR}/tests/cnet-crypto-static/m6_loader_tinytest.c")
     target_compile_features(saltscore_cnet_m6_two_plugin_loader
       PRIVATE c_std_11)
     set_target_properties(saltscore_cnet_m6_two_plugin_loader PROPERTIES
@@ -256,7 +270,7 @@ if(SALTSCORE_TEST_CNET_CRYPTO_QUALIFICATION)
     target_include_directories(saltscore_cnet_m6_two_plugin_loader PRIVATE
       "${PROJECT_SOURCE_DIR}/tests/cnet-crypto-static")
     target_link_libraries(saltscore_cnet_m6_two_plugin_loader PRIVATE
-      Salts::Core Salts::Platform ${CMAKE_DL_LIBS})
+      Salts::Core Salts::Platform Salts::TinyTest ${CMAKE_DL_LIBS})
     add_dependencies(saltscore_cnet_m6_two_plugin_loader
       saltscore_cnet_m6_plugin_a saltscore_cnet_m6_plugin_b)
     if(MSVC)

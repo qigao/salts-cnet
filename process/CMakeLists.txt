@@ -32,7 +32,7 @@ if(BUILD_TESTING)
   target_compile_features(saltscore_process_test PRIVATE c_std_11)
   set_target_properties(saltscore_process_test PROPERTIES
     C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
-  target_link_libraries(saltscore_process_test PRIVATE Salts::Process)
+  target_link_libraries(saltscore_process_test PRIVATE Salts::Process Salts::TinyTest)
   add_test(NAME saltscore.process_spawn_reap COMMAND saltscore_process_test)
   set_tests_properties(saltscore.process_spawn_reap PROPERTIES TIMEOUT 30)
 endif()

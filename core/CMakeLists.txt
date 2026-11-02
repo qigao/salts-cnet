@@ -80,7 +80,7 @@ if(SALTSCORE_BUILD_ZSTD)
     target_compile_features(saltscore_zstd_contract PRIVATE c_std_11)
     set_target_properties(saltscore_zstd_contract PROPERTIES
       C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
-    target_link_libraries(saltscore_zstd_contract PRIVATE Salts::Core)
+    target_link_libraries(saltscore_zstd_contract PRIVATE Salts::Core Salts::TinyTest)
     add_test(NAME saltscore.zstd_native_contract COMMAND saltscore_zstd_contract)
 
     if(CMAKE_EXECUTABLE_FORMAT STREQUAL "ELF")

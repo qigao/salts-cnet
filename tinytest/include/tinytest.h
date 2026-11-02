@@ -386,7 +386,7 @@ int main(int argc, char **argv) {
   TTEST_CHECK_IMPL__(condition, __FILE__, __STRING__LINE__, __VA_ARGS__)
 
 #define TTEST_CHECK_ONE__(condition)                                                               \
-  TTEST_CHECK_IMPL__(condition, __FILE__, __STRING__LINE__, #condition)
+  TTEST_CHECK_IMPL__(condition, __FILE__, __STRING__LINE__, "%s", #condition)
 
 #define check(...) TTEST_MACRO__(TTEST_CHECK_, __VA_ARGS__)
 
@@ -536,7 +536,7 @@ int main(int argc, char **argv) {
   TTEST_WARN_IMPL__(condition, __FILE__, __STRING__LINE__, __VA_ARGS__)
 
 #define TTEST_WARN_ONE__(condition)                                                                \
-  TTEST_WARN_IMPL__(condition, __FILE__, __STRING__LINE__, #condition)
+  TTEST_WARN_IMPL__(condition, __FILE__, __STRING__LINE__, "%s", #condition)
 
 #define check_warn(...) TTEST_MACRO__(TTEST_WARN_, __VA_ARGS__)
 

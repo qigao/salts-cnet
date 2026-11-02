@@ -2,6 +2,7 @@
  * holds borrowed stack state; the original shared Readiness implementation
  * MUST drain its callback before either owner may be reclaimed.
  */
+#include <tinytest.h>
 #include <error_codes.h>
 #include <readiness.h>
 #include "../platform/src/readiness_internal.h"
@@ -158,7 +159,7 @@ cleanup:
 #undef REQUIRE
 }
 
-int main(void) {
+static int saltscore_legacy_entry_test_readiness_race_c(void) {
   unsigned iteration;
   for (iteration = 0u; iteration < 8u; ++iteration) {
     int result = run_case(0, iteration);
@@ -167,4 +168,13 @@ int main(void) {
     if (result != 0) return result;
   }
   return 0;
+}
+
+/* Keep the native contract's original exit codes and cleanup paths intact;
+ * surface its exact nonzero result as one registered TinyTest failure. */
+spec("Readiness race shutdown lifecycle") {
+  it("preserves the original native exit and lifetime contract") {
+    const int result = saltscore_legacy_entry_test_readiness_race_c();
+    check(result == 0, "original native contract returned %d", result);
+  }
 }

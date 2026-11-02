@@ -1,4 +1,5 @@
 #include <serial.h>
+#include <tinytest.h>
 
 #include <errno.h>
 #include <poll.h>
@@ -46,7 +47,7 @@ static int wait_rx(salts_serial_t *serial, size_t expected) {
   return 0;
 }
 
-int main(void) {
+static int serial_pty_native_contract(void) {
   const unsigned char payload[] = {'A', 0u, 0xffu, 0x80u, 0xc3u, 0xa9u, 'Z'};
   unsigned char received[sizeof(payload)] = {0};
   salts_serial_config_t config;
@@ -137,4 +138,13 @@ cleanup:
   if (slave >= 0) (void)close(slave);
   if (master >= 0) (void)close(master);
   return result;
+}
+
+/* Keep the exact real POSIX PTY peer and goto-cleanup failure atomicity.
+ * TinyTest reports the original nonzero status after all owned fds close. */
+spec("Serial real POSIX pseudo-terminal") {
+  it("preserves synchronous and asynchronous RX/TX and stop/error drain") {
+    const int result = serial_pty_native_contract();
+    check(result == 0, "serial PTY native contract returned %d", result);
+  }
 }

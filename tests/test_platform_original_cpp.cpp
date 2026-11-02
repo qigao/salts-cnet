@@ -1,5 +1,6 @@
 #include <platform.h>
 #include <thread.h>
+#include <tinytest.hpp>
 
 #include <cstddef>
 #include <cstdint>
@@ -13,7 +14,8 @@ static_assert(std::is_standard_layout_v<cmeta_platform_memory_info_t>);
 static_assert(std::is_standard_layout_v<cmeta_platform_load_average_t>);
 static_assert(std::is_standard_layout_v<cmeta_platform_network_interface_t>);
 
-int main() {
+spec("Platform native C++17 public ABI") {
+  it("retains all exported native function signatures and runtime thread state") {
   int (*gettimeofday_fn)(cmeta_timeval_t *, cmeta_timezone_t *) =
       &cmeta_gettimeofday;
   int (*gmtime_fn)(std::time_t, std::tm *) = &cmeta_gmtime;
@@ -52,18 +54,17 @@ int main() {
   int (*single_get_fn)(void) = &cmeta_sync_is_single_threaded;
   int (*getpid_fn)(void) = &cmeta_getpid;
 
-  if (!gettimeofday_fn || !gmtime_fn || !localtime_fn || !timegm_fn ||
+  check(!(!gettimeofday_fn || !gmtime_fn || !localtime_fn || !timegm_fn ||
       !mktime_fn || !strftime_utc_fn || !strftime_local_fn ||
       !secure_random_fn || !os_name_fn || !os_version_fn || !arch_fn ||
       !username_fn || !hostname_fn || !cpu_info_fn || !memory_info_fn ||
       !load_fn || !interfaces_fn || !timer_create_fn || !timer_destroy_fn ||
       !timer_start_fn || !timer_stop_fn || !timer_set_data_fn ||
       !timer_get_data_fn || !timer_get_repeat_fn || !single_set_fn ||
-      !single_get_fn || !getpid_fn)
-    return 1;
+      !single_get_fn || !getpid_fn));
 
   single_set_fn(1);
-  if (single_get_fn() != 1 || getpid_fn() <= 0) return 2;
+  check(single_get_fn() == 1 && getpid_fn() > 0);
   single_set_fn(0);
-  return 0;
+  }
 }

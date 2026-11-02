@@ -1,9 +1,6 @@
 #include "sctp_assoc_internal.h"
 
-#ifdef NDEBUG
-#undef NDEBUG /* Runtime checks remain enabled for release CI. */
-#endif
-#include <assert.h>
+#include <tinytest.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
@@ -129,8 +126,8 @@ static void setup(cnet_sctp_assoc *a, cnet_sctp_assoc *b,
   ca->association = a; cb->association = b;
   ac = config(5000u, UINT32_C(0x12345678), ca);
   bc = config(5001u, UINT32_C(0x87654321), cb);
-  assert(cnet_sctp_assoc_init(a, &ac, 0u) == CNET_SCTP_ASSOC_OK);
-  assert(cnet_sctp_assoc_init(b, &bc, 0u) == CNET_SCTP_ASSOC_OK);
+  check(cnet_sctp_assoc_init(a, &ac, 0u) == CNET_SCTP_ASSOC_OK);
+  check(cnet_sctp_assoc_init(b, &bc, 0u) == CNET_SCTP_ASSOC_OK);
 }
 
 static void entropy_init_fail_closed(void) {
@@ -143,38 +140,38 @@ static void entropy_init_fail_closed(void) {
   ctx.association = &a;
   c = config(5000u, UINT32_C(0x12345678), &ctx);
   c.verify_mac = NULL;
-  assert(cnet_sctp_assoc_init(&a, &c, 0u) == CNET_SCTP_ASSOC_INVALID);
+  check(cnet_sctp_assoc_init(&a, &c, 0u) == CNET_SCTP_ASSOC_INVALID);
   c.verify_mac = fake_verify;
   c.entropy = NULL;
-  assert(cnet_sctp_assoc_init(&a, &c, 0u) == CNET_SCTP_ASSOC_INVALID);
-  assert(ctx.entropy_calls == 0);
+  check(cnet_sctp_assoc_init(&a, &c, 0u) == CNET_SCTP_ASSOC_INVALID);
+  check(ctx.entropy_calls == 0);
   c.entropy = fake_entropy;
   ctx.on_owner = 0;
-  assert(cnet_sctp_assoc_init(&a, &c, 0u) == CNET_SCTP_ASSOC_INVALID);
-  assert(ctx.entropy_calls == 0);
+  check(cnet_sctp_assoc_init(&a, &c, 0u) == CNET_SCTP_ASSOC_INVALID);
+  check(ctx.entropy_calls == 0);
   ctx.on_owner = 1;
   ctx.fail_entropy = 1;
-  assert(cnet_sctp_assoc_init(&a, &c, 0u) == CNET_SCTP_ASSOC_ENTROPY);
-  assert(ctx.entropy_calls == 1);
-  assert(a.magic == 0u && a.local_tag == 0u && a.initial_tsn == 0u);
-  assert(cnet_sctp_assoc_start(&a, 0u, packet, sizeof(packet), &packet_size) ==
+  check(cnet_sctp_assoc_init(&a, &c, 0u) == CNET_SCTP_ASSOC_ENTROPY);
+  check(ctx.entropy_calls == 1);
+  check(a.magic == 0u && a.local_tag == 0u && a.initial_tsn == 0u);
+  check(cnet_sctp_assoc_start(&a, 0u, packet, sizeof(packet), &packet_size) ==
          CNET_SCTP_ASSOC_INVALID);
   ctx.fail_entropy = 0;
   ctx.zero_tag = 1;
-  assert(cnet_sctp_assoc_init(&a, &c, 0u) == CNET_SCTP_ASSOC_ENTROPY);
-  assert(a.magic == 0u && a.local_tag == 0u);
+  check(cnet_sctp_assoc_init(&a, &c, 0u) == CNET_SCTP_ASSOC_ENTROPY);
+  check(a.magic == 0u && a.local_tag == 0u);
   ctx.zero_tag = 0;
   ctx.attempt_entropy_reentry = 1;
   ctx.attempt_entropy_init_reentry = 1;
-  assert(cnet_sctp_assoc_init(&a, &c, 0u) == CNET_SCTP_ASSOC_OK);
-  assert(ctx.entropy_reentry_result == CNET_SCTP_ASSOC_BUSY);
-  assert(ctx.entropy_init_reentry_result == CNET_SCTP_ASSOC_BUSY);
-  assert(cnet_sctp_assoc_init(&a, &c, 0u) == CNET_SCTP_ASSOC_BUSY);
-  assert(a.local_tag == UINT32_C(0x12345678));
-  assert(a.initial_tsn == UINT32_C(0x0f0e0d0c));
-  assert(ctx.entropy_calls == 3);
-  assert(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_OK);
-  assert(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
+  check(cnet_sctp_assoc_init(&a, &c, 0u) == CNET_SCTP_ASSOC_OK);
+  check(ctx.entropy_reentry_result == CNET_SCTP_ASSOC_BUSY);
+  check(ctx.entropy_init_reentry_result == CNET_SCTP_ASSOC_BUSY);
+  check(cnet_sctp_assoc_init(&a, &c, 0u) == CNET_SCTP_ASSOC_BUSY);
+  check(a.local_tag == UINT32_C(0x12345678));
+  check(a.initial_tsn == UINT32_C(0x0f0e0d0c));
+  check(ctx.entropy_calls == 3);
+  check(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_OK);
+  check(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
 }
 
 /* Re-encode one borrowed Chunk with incoming ignored flag bits and a
@@ -186,15 +183,15 @@ static void retag_single_chunk_flags(uint8_t *packet, size_t size,
   cnet_sctp_wire_decoder d = {0};
   cnet_sctp_wire_chunk ch = {0};
   size_t written = 0u;
-  assert(packet && size <= sizeof(revised));
-  assert(cnet_sctp_wire_decode(packet, size, &h, &d) == CNET_SCTP_WIRE_OK);
-  assert(h.chunk_count == 1u);
-  assert(cnet_sctp_wire_next_chunk(&d, &ch) == CNET_SCTP_WIRE_OK);
+  check(packet && size <= sizeof(revised));
+  check(cnet_sctp_wire_decode(packet, size, &h, &d) == CNET_SCTP_WIRE_OK);
+  check(h.chunk_count == 1u);
+  check(cnet_sctp_wire_next_chunk(&d, &ch) == CNET_SCTP_WIRE_OK);
   ch.flags = flags;
-  assert(cnet_sctp_wire_encode(h.source_port, h.destination_port,
+  check(cnet_sctp_wire_encode(h.source_port, h.destination_port,
       h.verification_tag, &ch, 1u, revised, sizeof(revised),
       &written) == CNET_SCTP_WIRE_OK);
-  assert(written == size);
+  check(written == size);
   memcpy(packet, revised, written);
 }
 
@@ -209,29 +206,29 @@ static void init_ack_capacity_preserves_input_watermark(void) {
   const uint64_t now = 20u;
 
   setup(&a, &b, &ca, &cb);
-  assert(cnet_sctp_assoc_start(&a, 10u, packet, sizeof(packet),
+  check(cnet_sctp_assoc_start(&a, 10u, packet, sizeof(packet),
       &packet_n) == CNET_SCTP_ASSOC_OK);
-  assert(packet_n == 44u && b.state == CNET_SCTP_ASSOC_CLOSED);
+  check(packet_n == 44u && b.state == CNET_SCTP_ASSOC_CLOSED);
   memcpy(&before, &b, sizeof(before));
   memset(output, 0xCC, sizeof(output));
-  assert(cnet_sctp_assoc_input(&b, now, packet, packet_n, output, 8u,
+  check(cnet_sctp_assoc_input(&b, now, packet, packet_n, output, 8u,
       &output_n) == CNET_SCTP_ASSOC_CAPACITY);
-  assert(output_n == 0u && memcmp(&b, &before, sizeof(before)) == 0);
-  for (i = 0u; i < sizeof(output); ++i) assert(output[i] == 0xCCu);
-  assert(cb.mac_calls == 0); /* early output capacity gate, no signing */
+  check(output_n == 0u && memcmp(&b, &before, sizeof(before)) == 0);
+  for (i = 0u; i < sizeof(output); ++i) check(output[i] == 0xCCu);
+  check(cb.mac_calls == 0); /* early output capacity gate, no signing */
 
-  assert(cnet_sctp_assoc_input(&b, now, packet, packet_n,
+  check(cnet_sctp_assoc_input(&b, now, packet, packet_n,
       output, sizeof(output), &output_n) == CNET_SCTP_ASSOC_OK);
-  assert(output_n > 0u && b.state == CNET_SCTP_ASSOC_CLOSED &&
+  check(output_n > 0u && b.state == CNET_SCTP_ASSOC_CLOSED &&
       b.last_time_ms == now && cb.mac_calls > 0);
   output_n = 123u;
-  assert(cnet_sctp_assoc_input(&b, now - 1u, packet, packet_n,
+  check(cnet_sctp_assoc_input(&b, now - 1u, packet, packet_n,
       output, sizeof(output), &output_n) == CNET_SCTP_ASSOC_CLOCK);
-  assert(output_n == 0u && b.last_time_ms == now);
-  assert(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_OK);
-  assert(cnet_sctp_assoc_stop(&b) == CNET_SCTP_ASSOC_OK);
-  assert(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
-  assert(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
+  check(output_n == 0u && b.last_time_ms == now);
+  check(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_OK);
+  check(cnet_sctp_assoc_stop(&b) == CNET_SCTP_ASSOC_OK);
+  check(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
+  check(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
 }
 
 static void normal_handshake(void) {
@@ -246,75 +243,75 @@ static void normal_handshake(void) {
   uint64_t deadline;
   int has_deadline;
   setup(&a, &b, &ca, &cb);
-  assert(cnet_sctp_assoc_start(&a, 10u, wire_init, 8u, &n_init) ==
+  check(cnet_sctp_assoc_start(&a, 10u, wire_init, 8u, &n_init) ==
          CNET_SCTP_ASSOC_CAPACITY);
-  assert(cnet_sctp_assoc_state_get(&a) == CNET_SCTP_ASSOC_CLOSED);
-  assert(cnet_sctp_assoc_start(&a, 10u, wire_init, sizeof(wire_init), &n_init) ==
+  check(cnet_sctp_assoc_state_get(&a) == CNET_SCTP_ASSOC_CLOSED);
+  check(cnet_sctp_assoc_start(&a, 10u, wire_init, sizeof(wire_init), &n_init) ==
          CNET_SCTP_ASSOC_OK);
-  assert(n_init == 44u && cnet_sctp_assoc_state_get(&a) == CNET_SCTP_ASSOC_COOKIE_WAIT);
+  check(n_init == 44u && cnet_sctp_assoc_state_get(&a) == CNET_SCTP_ASSOC_COOKIE_WAIT);
   retag_single_chunk_flags(wire_init, n_init, 0x80u); /* INIT */
-  assert(cnet_sctp_assoc_next_deadline(&a, &deadline, &has_deadline) ==
+  check(cnet_sctp_assoc_next_deadline(&a, &deadline, &has_deadline) ==
          CNET_SCTP_ASSOC_OK);
-  assert(has_deadline && deadline == 110u);
-  assert(cnet_sctp_assoc_input(&b, 20u, wire_init, n_init,
+  check(has_deadline && deadline == 110u);
+  check(cnet_sctp_assoc_input(&b, 20u, wire_init, n_init,
                                wire_ack, 8u, &n_ack) == CNET_SCTP_ASSOC_CAPACITY);
-  assert(cnet_sctp_assoc_state_get(&b) == CNET_SCTP_ASSOC_CLOSED);
-  assert(cnet_sctp_assoc_input(&b, 20u, wire_init, n_init,
+  check(cnet_sctp_assoc_state_get(&b) == CNET_SCTP_ASSOC_CLOSED);
+  check(cnet_sctp_assoc_input(&b, 20u, wire_init, n_init,
                                wire_ack, sizeof(wire_ack), &n_ack) == CNET_SCTP_ASSOC_OK);
-  assert(n_ack == 140u && cnet_sctp_assoc_state_get(&b) == CNET_SCTP_ASSOC_CLOSED);
+  check(n_ack == 140u && cnet_sctp_assoc_state_get(&b) == CNET_SCTP_ASSOC_CLOSED);
   retag_single_chunk_flags(wire_ack, n_ack, 0xA0u); /* INIT ACK */
-  assert(cnet_sctp_assoc_input(&a, 30u, wire_ack, n_ack,
+  check(cnet_sctp_assoc_input(&a, 30u, wire_ack, n_ack,
                                wire_echo, 4u, &n_echo) == CNET_SCTP_ASSOC_CAPACITY);
-  assert(cnet_sctp_assoc_state_get(&a) == CNET_SCTP_ASSOC_COOKIE_WAIT);
-  assert(cnet_sctp_assoc_input(&a, 30u, wire_ack, n_ack,
+  check(cnet_sctp_assoc_state_get(&a) == CNET_SCTP_ASSOC_COOKIE_WAIT);
+  check(cnet_sctp_assoc_input(&a, 30u, wire_ack, n_ack,
                                wire_echo, sizeof(wire_echo), &n_echo) == CNET_SCTP_ASSOC_OK);
-  assert(n_echo == 108u && cnet_sctp_assoc_state_get(&a) == CNET_SCTP_ASSOC_COOKIE_ECHOED);
+  check(n_echo == 108u && cnet_sctp_assoc_state_get(&a) == CNET_SCTP_ASSOC_COOKIE_ECHOED);
   retag_single_chunk_flags(wire_echo, n_echo, 0xF0u); /* COOKIE ECHO */
-  assert(cnet_sctp_assoc_next_deadline(&a, &deadline, &has_deadline) ==
+  check(cnet_sctp_assoc_next_deadline(&a, &deadline, &has_deadline) ==
          CNET_SCTP_ASSOC_OK);
-  assert(has_deadline && deadline == 130u);
-  assert(cnet_sctp_wire_decode(wire_echo, n_echo, &header, &decoder) == CNET_SCTP_WIRE_OK);
-  assert(cnet_sctp_wire_next_chunk(&decoder, &echo) == CNET_SCTP_WIRE_OK);
-  assert(echo.type == 10u && echo.value_size == CNET_SCTP_ASSOC_COOKIE_BYTES);
+  check(has_deadline && deadline == 130u);
+  check(cnet_sctp_wire_decode(wire_echo, n_echo, &header, &decoder) == CNET_SCTP_WIRE_OK);
+  check(cnet_sctp_wire_next_chunk(&decoder, &echo) == CNET_SCTP_WIRE_OK);
+  check(echo.type == 10u && echo.value_size == CNET_SCTP_ASSOC_COOKIE_BYTES);
   {
     uint8_t tampered[CNET_SCTP_ASSOC_COOKIE_BYTES];
     cnet_sctp_wire_chunk bad_echo = echo;
     memcpy(tampered, echo.value, sizeof(tampered));
     tampered[24u] ^= 1u; /* tamper peer TSN without breaking framing/CRC */
     bad_echo.value = tampered;
-    assert(cnet_sctp_wire_encode(5000u, 5001u, UINT32_C(0x87654321),
+    check(cnet_sctp_wire_encode(5000u, 5001u, UINT32_C(0x87654321),
              &bad_echo, 1u, forged, sizeof(forged), &n_forged) == CNET_SCTP_WIRE_OK);
   }
-  assert(cnet_sctp_assoc_input(&b, 40u, forged, n_forged,
+  check(cnet_sctp_assoc_input(&b, 40u, forged, n_forged,
                                wire_ok, sizeof(wire_ok), &n_ok) == CNET_SCTP_ASSOC_AUTH);
-  assert(n_ok == 0u && cnet_sctp_assoc_state_get(&b) == CNET_SCTP_ASSOC_CLOSED);
-  assert(cnet_sctp_assoc_input(&b, 40u, wire_echo, n_echo,
+  check(n_ok == 0u && cnet_sctp_assoc_state_get(&b) == CNET_SCTP_ASSOC_CLOSED);
+  check(cnet_sctp_assoc_input(&b, 40u, wire_echo, n_echo,
                                wire_ok, 8u, &n_ok) == CNET_SCTP_ASSOC_CAPACITY);
-  assert(cnet_sctp_assoc_state_get(&b) == CNET_SCTP_ASSOC_CLOSED);
+  check(cnet_sctp_assoc_state_get(&b) == CNET_SCTP_ASSOC_CLOSED);
   cb.attempt_reentry = 1;
-  assert(cnet_sctp_assoc_input(&b, 40u, wire_echo, n_echo,
+  check(cnet_sctp_assoc_input(&b, 40u, wire_echo, n_echo,
                                wire_ok, sizeof(wire_ok), &n_ok) == CNET_SCTP_ASSOC_OK);
   cb.attempt_reentry = 0;
-  assert(cb.reentry_called == CNET_SCTP_ASSOC_BUSY);
-  assert(n_ok == 16u && cnet_sctp_assoc_state_get(&b) == CNET_SCTP_ASSOC_ESTABLISHED);
+  check(cb.reentry_called == CNET_SCTP_ASSOC_BUSY);
+  check(n_ok == 16u && cnet_sctp_assoc_state_get(&b) == CNET_SCTP_ASSOC_ESTABLISHED);
   /* COOKIE ACK loss: another COOKIE ECHO must ACK without opening twice. */
-  assert(cnet_sctp_assoc_input(&b, 50u, wire_echo, n_echo,
+  check(cnet_sctp_assoc_input(&b, 50u, wire_echo, n_echo,
                                wire_ack, sizeof(wire_ack), &n_ack) == CNET_SCTP_ASSOC_OK);
-  assert(n_ack == n_ok && memcmp(wire_ack, wire_ok, n_ack) == 0);
+  check(n_ack == n_ok && memcmp(wire_ack, wire_ok, n_ack) == 0);
   retag_single_chunk_flags(wire_ok, n_ok, 0xC0u); /* COOKIE ACK */
-  assert(cnet_sctp_assoc_input(&a, 55u, wire_ok, n_ok,
+  check(cnet_sctp_assoc_input(&a, 55u, wire_ok, n_ok,
                                forged, sizeof(forged), &n_forged) == CNET_SCTP_ASSOC_OK);
-  assert(n_forged == 0u && cnet_sctp_assoc_state_get(&a) == CNET_SCTP_ASSOC_ESTABLISHED);
-  assert(cnet_sctp_assoc_next_deadline(&a, &deadline, &has_deadline) == CNET_SCTP_ASSOC_OK);
-  assert(!has_deadline);
-  assert(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_OK);
-  assert(cnet_sctp_assoc_stop(&b) == CNET_SCTP_ASSOC_OK);
-  assert(cnet_sctp_assoc_drained(&a) && cnet_sctp_assoc_drained(&b));
-  assert(cnet_sctp_assoc_input(&a, 60u, wire_ok, n_ok,
+  check(n_forged == 0u && cnet_sctp_assoc_state_get(&a) == CNET_SCTP_ASSOC_ESTABLISHED);
+  check(cnet_sctp_assoc_next_deadline(&a, &deadline, &has_deadline) == CNET_SCTP_ASSOC_OK);
+  check(!has_deadline);
+  check(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_OK);
+  check(cnet_sctp_assoc_stop(&b) == CNET_SCTP_ASSOC_OK);
+  check(cnet_sctp_assoc_drained(&a) && cnet_sctp_assoc_drained(&b));
+  check(cnet_sctp_assoc_input(&a, 60u, wire_ok, n_ok,
                                forged, sizeof(forged), &n_forged) ==
          CNET_SCTP_ASSOC_CLOSED_ERROR);
-  assert(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
-  assert(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
+  check(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
+  check(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
 }
 
 static void clock_owner_and_timeout(void) {
@@ -327,41 +324,41 @@ static void clock_owner_and_timeout(void) {
   setup(&a, &b, &ca, &cb);
   ca.on_owner = 0;
   n = 99u;
-  assert(cnet_sctp_assoc_input(&a, 0u, init, sizeof(init), out, sizeof(out), &n) ==
+  check(cnet_sctp_assoc_input(&a, 0u, init, sizeof(init), out, sizeof(out), &n) ==
          CNET_SCTP_ASSOC_OWNER);
-  assert(n == 0u);
+  check(n == 0u);
   n = 99u;
-  assert(cnet_sctp_assoc_advance(&a, 0u, out, sizeof(out), &n) ==
+  check(cnet_sctp_assoc_advance(&a, 0u, out, sizeof(out), &n) ==
          CNET_SCTP_ASSOC_OWNER);
-  assert(n == 0u);
-  assert(cnet_sctp_assoc_start(&a, 0u, init, sizeof(init), &init_n) ==
+  check(n == 0u);
+  check(cnet_sctp_assoc_start(&a, 0u, init, sizeof(init), &init_n) ==
          CNET_SCTP_ASSOC_OWNER);
   ca.on_owner = 1;
-  assert(cnet_sctp_assoc_start(&a, 0u, init, sizeof(init), &init_n) ==
+  check(cnet_sctp_assoc_start(&a, 0u, init, sizeof(init), &init_n) ==
          CNET_SCTP_ASSOC_OK);
-  assert(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_BUSY);
-  assert(cnet_sctp_assoc_advance(&a, 90u, out, sizeof(out), &n) == CNET_SCTP_ASSOC_OK);
-  assert(n == 0u);
-  assert(cnet_sctp_assoc_advance(&a, 100u, out, 2u, &n) == CNET_SCTP_ASSOC_CAPACITY);
-  assert(n == 0u);
-  assert(cnet_sctp_assoc_advance(&a, 100u, out, sizeof(out), &n) == CNET_SCTP_ASSOC_OK);
-  assert(n == init_n && memcmp(out, init, n) == 0);
-  assert(cnet_sctp_assoc_next_deadline(&a, &deadline, &exists) == CNET_SCTP_ASSOC_OK);
-  assert(exists && deadline == 300u);
-  assert(cnet_sctp_assoc_advance(&a, 299u, out, sizeof(out), &n) == CNET_SCTP_ASSOC_OK);
-  assert(n == 0u);
-  assert(cnet_sctp_assoc_advance(&a, 300u, out, sizeof(out), &n) == CNET_SCTP_ASSOC_OK);
-  assert(n == init_n && memcmp(out, init, n) == 0);
-  assert(cnet_sctp_assoc_next_deadline(&a, &deadline, &exists) == CNET_SCTP_ASSOC_OK);
-  assert(exists && deadline == 700u);
-  assert(cnet_sctp_assoc_advance(&a, 700u, out, sizeof(out), &n) == CNET_SCTP_ASSOC_EXPIRED);
-  assert(n == 0u && cnet_sctp_assoc_state_get(&a) == CNET_SCTP_ASSOC_FAILED);
-  assert(cnet_sctp_assoc_advance(&a, 701u, out, sizeof(out), &n) ==
+  check(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_BUSY);
+  check(cnet_sctp_assoc_advance(&a, 90u, out, sizeof(out), &n) == CNET_SCTP_ASSOC_OK);
+  check(n == 0u);
+  check(cnet_sctp_assoc_advance(&a, 100u, out, 2u, &n) == CNET_SCTP_ASSOC_CAPACITY);
+  check(n == 0u);
+  check(cnet_sctp_assoc_advance(&a, 100u, out, sizeof(out), &n) == CNET_SCTP_ASSOC_OK);
+  check(n == init_n && memcmp(out, init, n) == 0);
+  check(cnet_sctp_assoc_next_deadline(&a, &deadline, &exists) == CNET_SCTP_ASSOC_OK);
+  check(exists && deadline == 300u);
+  check(cnet_sctp_assoc_advance(&a, 299u, out, sizeof(out), &n) == CNET_SCTP_ASSOC_OK);
+  check(n == 0u);
+  check(cnet_sctp_assoc_advance(&a, 300u, out, sizeof(out), &n) == CNET_SCTP_ASSOC_OK);
+  check(n == init_n && memcmp(out, init, n) == 0);
+  check(cnet_sctp_assoc_next_deadline(&a, &deadline, &exists) == CNET_SCTP_ASSOC_OK);
+  check(exists && deadline == 700u);
+  check(cnet_sctp_assoc_advance(&a, 700u, out, sizeof(out), &n) == CNET_SCTP_ASSOC_EXPIRED);
+  check(n == 0u && cnet_sctp_assoc_state_get(&a) == CNET_SCTP_ASSOC_FAILED);
+  check(cnet_sctp_assoc_advance(&a, 701u, out, sizeof(out), &n) ==
          CNET_SCTP_ASSOC_CLOSED_ERROR);
-  assert(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_OK);
-  assert(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
-  assert(cnet_sctp_assoc_stop(&b) == CNET_SCTP_ASSOC_OK);
-  assert(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
+  check(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_OK);
+  check(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
+  check(cnet_sctp_assoc_stop(&b) == CNET_SCTP_ASSOC_OK);
+  check(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
 }
 
 static void stale_cookie_and_wrong_mac(void) {
@@ -370,29 +367,29 @@ static void stale_cookie_and_wrong_mac(void) {
   uint8_t init[1200], ack[1200], echo[1200], out[1200];
   size_t init_n = 0, ack_n = 0, echo_n = 0, n = 0;
   setup(&a, &b, &ca, &cb);
-  assert(cnet_sctp_assoc_start(&a, 2u, init, sizeof(init), &init_n) == CNET_SCTP_ASSOC_OK);
+  check(cnet_sctp_assoc_start(&a, 2u, init, sizeof(init), &init_n) == CNET_SCTP_ASSOC_OK);
   cb.fail_mac = 1;
-  assert(cnet_sctp_assoc_input(&b, 4u, init, init_n, ack, sizeof(ack), &ack_n) ==
+  check(cnet_sctp_assoc_input(&b, 4u, init, init_n, ack, sizeof(ack), &ack_n) ==
          CNET_SCTP_ASSOC_AUTH);
-  assert(ack_n == 0 && cnet_sctp_assoc_state_get(&b) == CNET_SCTP_ASSOC_CLOSED);
+  check(ack_n == 0 && cnet_sctp_assoc_state_get(&b) == CNET_SCTP_ASSOC_CLOSED);
   cb.fail_mac = 0;
-  assert(cnet_sctp_assoc_input(&b, 4u, init, init_n, ack, sizeof(ack), &ack_n) ==
+  check(cnet_sctp_assoc_input(&b, 4u, init, init_n, ack, sizeof(ack), &ack_n) ==
          CNET_SCTP_ASSOC_OK);
-  assert(cnet_sctp_assoc_input(&a, 5u, ack, ack_n, echo, sizeof(echo), &echo_n) ==
+  check(cnet_sctp_assoc_input(&a, 5u, ack, ack_n, echo, sizeof(echo), &echo_n) ==
          CNET_SCTP_ASSOC_OK);
   cb.test_key ^= 0x11002200u;
-  assert(cnet_sctp_assoc_input(&b, 10u, echo, echo_n, out, sizeof(out), &n) ==
+  check(cnet_sctp_assoc_input(&b, 10u, echo, echo_n, out, sizeof(out), &n) ==
          CNET_SCTP_ASSOC_AUTH);
   cb.test_key ^= 0x11002200u;
-  assert(cnet_sctp_assoc_input(&b, 505u, echo, echo_n, out, sizeof(out), &n) ==
+  check(cnet_sctp_assoc_input(&b, 505u, echo, echo_n, out, sizeof(out), &n) ==
          CNET_SCTP_ASSOC_EXPIRED);
-  assert(cnet_sctp_assoc_state_get(&b) == CNET_SCTP_ASSOC_CLOSED);
-  assert(cnet_sctp_assoc_input(&b, 10u, echo, echo_n, out, sizeof(out), &n) ==
+  check(cnet_sctp_assoc_state_get(&b) == CNET_SCTP_ASSOC_CLOSED);
+  check(cnet_sctp_assoc_input(&b, 10u, echo, echo_n, out, sizeof(out), &n) ==
          CNET_SCTP_ASSOC_CLOCK);
-  assert(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_OK);
-  assert(cnet_sctp_assoc_stop(&b) == CNET_SCTP_ASSOC_OK);
-  assert(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
-  assert(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
+  check(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_OK);
+  check(cnet_sctp_assoc_stop(&b) == CNET_SCTP_ASSOC_OK);
+  check(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
+  check(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
 }
 
 
@@ -410,40 +407,40 @@ static void binding_vtag_and_invalid_input(void) {
   cg.association = &wrong_generation;
   cfg = config(5001u, UINT32_C(0x87654321), &cg);
   cfg.peer_binding ^= UINT64_C(0x100);
-  assert(cnet_sctp_assoc_init(&wrong_generation, &cfg, 0u) == CNET_SCTP_ASSOC_OK);
-  assert(cnet_sctp_assoc_start(&a, 3u, init, sizeof(init), &init_n) == CNET_SCTP_ASSOC_OK);
+  check(cnet_sctp_assoc_init(&wrong_generation, &cfg, 0u) == CNET_SCTP_ASSOC_OK);
+  check(cnet_sctp_assoc_start(&a, 3u, init, sizeof(init), &init_n) == CNET_SCTP_ASSOC_OK);
   cb.on_owner = 0;
-  assert(cnet_sctp_assoc_input(&b, 4u, init, init_n, ack, sizeof(ack), &ack_n) ==
+  check(cnet_sctp_assoc_input(&b, 4u, init, init_n, ack, sizeof(ack), &ack_n) ==
          CNET_SCTP_ASSOC_OWNER);
-  assert(cb.mac_calls == 0);
+  check(cb.mac_calls == 0);
   cb.on_owner = 1;
-  assert(cnet_sctp_assoc_input(&b, 4u, init, init_n, ack, sizeof(ack), &ack_n) ==
+  check(cnet_sctp_assoc_input(&b, 4u, init, init_n, ack, sizeof(ack), &ack_n) ==
          CNET_SCTP_ASSOC_OK);
-  assert(cnet_sctp_assoc_input(&a, 5u, ack, ack_n, echo, sizeof(echo), &echo_n) ==
+  check(cnet_sctp_assoc_input(&a, 5u, ack, ack_n, echo, sizeof(echo), &echo_n) ==
          CNET_SCTP_ASSOC_OK);
-  assert(cnet_sctp_assoc_input(&wrong_generation, 6u, echo, echo_n,
+  check(cnet_sctp_assoc_input(&wrong_generation, 6u, echo, echo_n,
                                out, sizeof(out), &out_n) == CNET_SCTP_ASSOC_AUTH);
-  assert(out_n == 0u && cnet_sctp_assoc_state_get(&wrong_generation) ==
+  check(out_n == 0u && cnet_sctp_assoc_state_get(&wrong_generation) ==
          CNET_SCTP_ASSOC_CLOSED);
-  assert(cnet_sctp_wire_encode(5001u, 5000u, UINT32_C(0xfefe0001),
+  check(cnet_sctp_wire_encode(5001u, 5000u, UINT32_C(0xfefe0001),
       &cookie_ack, 1u, bad_ack, sizeof(bad_ack), &bad_n) == CNET_SCTP_WIRE_OK);
   {
     uint64_t last_valid_time = a.last_time_ms;
-    assert(cnet_sctp_assoc_input(&a, 7u, bad_ack, bad_n, out, sizeof(out), &out_n) ==
+    check(cnet_sctp_assoc_input(&a, 7u, bad_ack, bad_n, out, sizeof(out), &out_n) ==
            CNET_SCTP_ASSOC_PROTOCOL);
-    assert(a.last_time_ms == last_valid_time);
-    assert(cnet_sctp_assoc_state_get(&a) == CNET_SCTP_ASSOC_COOKIE_ECHOED);
-    assert(cnet_sctp_assoc_input(&a, 8u, bad_ack, bad_n - 1u,
+    check(a.last_time_ms == last_valid_time);
+    check(cnet_sctp_assoc_state_get(&a) == CNET_SCTP_ASSOC_COOKIE_ECHOED);
+    check(cnet_sctp_assoc_input(&a, 8u, bad_ack, bad_n - 1u,
                                  out, sizeof(out), &out_n) ==
            CNET_SCTP_ASSOC_PROTOCOL);
-    assert(a.last_time_ms == last_valid_time);
+    check(a.last_time_ms == last_valid_time);
   }
-  assert(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_OK);
-  assert(cnet_sctp_assoc_stop(&b) == CNET_SCTP_ASSOC_OK);
-  assert(cnet_sctp_assoc_stop(&wrong_generation) == CNET_SCTP_ASSOC_OK);
-  assert(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
-  assert(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
-  assert(cnet_sctp_assoc_destroy(&wrong_generation) == CNET_SCTP_ASSOC_OK);
+  check(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_OK);
+  check(cnet_sctp_assoc_stop(&b) == CNET_SCTP_ASSOC_OK);
+  check(cnet_sctp_assoc_stop(&wrong_generation) == CNET_SCTP_ASSOC_OK);
+  check(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
+  check(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
+  check(cnet_sctp_assoc_destroy(&wrong_generation) == CNET_SCTP_ASSOC_OK);
 }
 
 static void cookie_echo_t1_retransmission(void) {
@@ -455,27 +452,27 @@ static void cookie_echo_t1_retransmission(void) {
   uint64_t deadline = 0u;
   int exists = 0;
   setup(&a, &b, &ca, &cb);
-  assert(cnet_sctp_assoc_start(&a, 1u, init, sizeof(init), &init_n) == CNET_SCTP_ASSOC_OK);
-  assert(cnet_sctp_assoc_input(&b, 2u, init, init_n, ack, sizeof(ack), &ack_n) ==
+  check(cnet_sctp_assoc_start(&a, 1u, init, sizeof(init), &init_n) == CNET_SCTP_ASSOC_OK);
+  check(cnet_sctp_assoc_input(&b, 2u, init, init_n, ack, sizeof(ack), &ack_n) ==
          CNET_SCTP_ASSOC_OK);
-  assert(cnet_sctp_assoc_input(&a, 3u, ack, ack_n, echo, sizeof(echo), &echo_n) ==
+  check(cnet_sctp_assoc_input(&a, 3u, ack, ack_n, echo, sizeof(echo), &echo_n) ==
          CNET_SCTP_ASSOC_OK);
-  assert(cnet_sctp_assoc_next_deadline(&a, &deadline, &exists) == CNET_SCTP_ASSOC_OK);
-  assert(exists && deadline == 103u);
-  assert(cnet_sctp_assoc_advance(&a, 103u, repeated, sizeof(repeated), &repeated_n) ==
+  check(cnet_sctp_assoc_next_deadline(&a, &deadline, &exists) == CNET_SCTP_ASSOC_OK);
+  check(exists && deadline == 103u);
+  check(cnet_sctp_assoc_advance(&a, 103u, repeated, sizeof(repeated), &repeated_n) ==
          CNET_SCTP_ASSOC_OK);
-  assert(repeated_n == echo_n && memcmp(repeated, echo, echo_n) == 0);
-  assert(cnet_sctp_assoc_input(&b, 104u, repeated, repeated_n,
+  check(repeated_n == echo_n && memcmp(repeated, echo, echo_n) == 0);
+  check(cnet_sctp_assoc_input(&b, 104u, repeated, repeated_n,
                                confirm, sizeof(confirm), &confirm_n) == CNET_SCTP_ASSOC_OK);
-  assert(cnet_sctp_assoc_input(&a, 105u, confirm, confirm_n,
+  check(cnet_sctp_assoc_input(&a, 105u, confirm, confirm_n,
                                repeated, sizeof(repeated), &repeated_n) == CNET_SCTP_ASSOC_OK);
-  assert(repeated_n == 0u && cnet_sctp_assoc_state_get(&a) == CNET_SCTP_ASSOC_ESTABLISHED);
-  assert(cnet_sctp_assoc_next_deadline(&a, &deadline, &exists) == CNET_SCTP_ASSOC_OK);
-  assert(!exists);
-  assert(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_OK);
-  assert(cnet_sctp_assoc_stop(&b) == CNET_SCTP_ASSOC_OK);
-  assert(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
-  assert(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
+  check(repeated_n == 0u && cnet_sctp_assoc_state_get(&a) == CNET_SCTP_ASSOC_ESTABLISHED);
+  check(cnet_sctp_assoc_next_deadline(&a, &deadline, &exists) == CNET_SCTP_ASSOC_OK);
+  check(!exists);
+  check(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_OK);
+  check(cnet_sctp_assoc_stop(&b) == CNET_SCTP_ASSOC_OK);
+  check(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
+  check(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
 }
 
 
@@ -492,10 +489,10 @@ static size_t append_parameter_to_sctp_packet(const uint8_t *input, size_t n,
   const size_t length = payload_size + 4u;
   const size_t padded = (length + 3u) & ~(size_t)3u;
   size_t offset;
-  assert(payload_size <= UINT16_MAX - 4u);
-  assert(cnet_sctp_wire_decode(input, n, &header, &decoder) == CNET_SCTP_WIRE_OK);
-  assert(cnet_sctp_wire_next_chunk(&decoder, &chunk) == CNET_SCTP_WIRE_OK);
-  assert(chunk.value_size + padded <= sizeof(value));
+  check(payload_size <= UINT16_MAX - 4u);
+  check(cnet_sctp_wire_decode(input, n, &header, &decoder) == CNET_SCTP_WIRE_OK);
+  check(cnet_sctp_wire_next_chunk(&decoder, &chunk) == CNET_SCTP_WIRE_OK);
+  check(chunk.value_size + padded <= sizeof(value));
   offset = chunk.value_size;
   memcpy(value, chunk.value, offset);
   value[offset] = (uint8_t)(type >> 8);
@@ -506,14 +503,14 @@ static size_t append_parameter_to_sctp_packet(const uint8_t *input, size_t n,
   memset(value + offset + length, 0, padded - length);
   chunk.value = value;
   chunk.value_size = offset + padded;
-  assert(cnet_sctp_wire_encode(header.source_port, header.destination_port,
+  check(cnet_sctp_wire_encode(header.source_port, header.destination_port,
       header.verification_tag, &chunk, 1u, out, cap, &written) == CNET_SCTP_WIRE_OK);
   return written;
 }
 
 static void reseal_sctp_checksum(uint8_t *packet, size_t size) {
   uint32_t crc;
-  assert(packet != NULL && size >= 16u);
+  check(packet != NULL && size >= 16u);
   memset(packet + 8u, 0, 4u);
   crc = cnet_sctp_wire_crc32c(packet, size);
   packet[8] = (uint8_t)crc;
@@ -536,34 +533,34 @@ static void init_tlv_wire_gate(void) {
   /* Unknown 01 on INIT: stop+report inside INIT ACK, then normal
    * COOKIE ECHO/ACK. Capacity refusal must happen before MAC signing. */
   setup(&a, &b, &ca, &cb);
-  assert(cnet_sctp_assoc_start(&a, 1u, init, sizeof(init), &init_n) == CNET_SCTP_ASSOC_OK);
+  check(cnet_sctp_assoc_start(&a, 1u, init, sizeof(init), &init_n) == CNET_SCTP_ASSOC_OK);
   encoded_n = append_parameter_to_sctp_packet(init, init_n, 0x4003u,
                                                NULL, 0u, encoded, sizeof(encoded));
   prior_signs = (unsigned int)cb.mac_calls;
-  assert(cnet_sctp_assoc_input(&b, 2u, encoded, encoded_n, ack, 32u, &ack_n) ==
+  check(cnet_sctp_assoc_input(&b, 2u, encoded, encoded_n, ack, 32u, &ack_n) ==
          CNET_SCTP_ASSOC_CAPACITY);
-  assert(ack_n == 0u && cb.mac_calls == (int)prior_signs);
-  assert(cnet_sctp_assoc_state_get(&b) == CNET_SCTP_ASSOC_CLOSED);
-  assert(cnet_sctp_assoc_input(&b, 2u, encoded, encoded_n, ack,
+  check(ack_n == 0u && cb.mac_calls == (int)prior_signs);
+  check(cnet_sctp_assoc_state_get(&b) == CNET_SCTP_ASSOC_CLOSED);
+  check(cnet_sctp_assoc_input(&b, 2u, encoded, encoded_n, ack,
                                sizeof(ack), &ack_n) == CNET_SCTP_ASSOC_OK);
-  assert(ack_n != 0u && cb.mac_calls == (int)prior_signs + 1);
-  assert(cnet_sctp_wire_decode(ack, ack_n, &header, &decoder) == CNET_SCTP_WIRE_OK);
-  assert(header.chunk_count == 1u && header.verification_tag == a.local_tag);
-  assert(cnet_sctp_wire_next_chunk(&decoder, &chunk) == CNET_SCTP_WIRE_OK);
-  assert(chunk.type == 2u && chunk.value_size >= 128u);
+  check(ack_n != 0u && cb.mac_calls == (int)prior_signs + 1);
+  check(cnet_sctp_wire_decode(ack, ack_n, &header, &decoder) == CNET_SCTP_WIRE_OK);
+  check(header.chunk_count == 1u && header.verification_tag == a.local_tag);
+  check(cnet_sctp_wire_next_chunk(&decoder, &chunk) == CNET_SCTP_WIRE_OK);
+  check(chunk.type == 2u && chunk.value_size >= 128u);
   /* 124 bytes fixed INIT ACK + Cookie + both extension parameters, followed
    * by the required Unrecognized Parameter report. */
-  assert(chunk.value[124u] == 0u && chunk.value[125u] == 8u);
-  assert(chunk.value[126u] == 0u && chunk.value[127u] == 8u);
-  assert(chunk.value[128u] == 0x40u && chunk.value[129u] == 3u);
-  assert(cnet_sctp_assoc_input(&a, 3u, ack, ack_n, echo,
+  check(chunk.value[124u] == 0u && chunk.value[125u] == 8u);
+  check(chunk.value[126u] == 0u && chunk.value[127u] == 8u);
+  check(chunk.value[128u] == 0x40u && chunk.value[129u] == 3u);
+  check(cnet_sctp_assoc_input(&a, 3u, ack, ack_n, echo,
                                sizeof(echo), &echo_n) == CNET_SCTP_ASSOC_OK);
-  assert(cnet_sctp_assoc_input(&b, 4u, echo, echo_n, confirm,
+  check(cnet_sctp_assoc_input(&b, 4u, echo, echo_n, confirm,
                                sizeof(confirm), &confirm_n) == CNET_SCTP_ASSOC_OK);
-  assert(cnet_sctp_assoc_input(&a, 5u, confirm, confirm_n, scratch,
+  check(cnet_sctp_assoc_input(&a, 5u, confirm, confirm_n, scratch,
                                sizeof(scratch), &encoded_n) == CNET_SCTP_ASSOC_OK);
-  assert(cnet_sctp_assoc_state_get(&a) == CNET_SCTP_ASSOC_ESTABLISHED);
-  assert(cnet_sctp_assoc_state_get(&b) == CNET_SCTP_ASSOC_ESTABLISHED);
+  check(cnet_sctp_assoc_state_get(&a) == CNET_SCTP_ASSOC_ESTABLISHED);
+  check(cnet_sctp_assoc_state_get(&b) == CNET_SCTP_ASSOC_ESTABLISHED);
   /* A framed but illegal multi-control bundle must be rejected by full
    * Association preflight before the monotonic watermark or TCB changes. */
   {
@@ -572,40 +569,40 @@ static void init_tlv_wire_gate(void) {
     };
     uint64_t prior_time = a.last_time_ms;
     size_t illegal_n = 0u;
-    assert(cnet_sctp_wire_encode(5001u, 5000u, a.local_tag, illegal, 2u,
+    check(cnet_sctp_wire_encode(5001u, 5000u, a.local_tag, illegal, 2u,
         encoded, sizeof(encoded), &illegal_n) == CNET_SCTP_WIRE_OK);
-    assert(cnet_sctp_assoc_input(&a, 6u, encoded, illegal_n, scratch,
+    check(cnet_sctp_assoc_input(&a, 6u, encoded, illegal_n, scratch,
         sizeof(scratch), &encoded_n) == CNET_SCTP_ASSOC_PROTOCOL);
-    assert(encoded_n == 0u && a.last_time_ms == prior_time);
-    assert(cnet_sctp_assoc_state_get(&a) == CNET_SCTP_ASSOC_ESTABLISHED);
+    check(encoded_n == 0u && a.last_time_ms == prior_time);
+    check(cnet_sctp_assoc_state_get(&a) == CNET_SCTP_ASSOC_ESTABLISHED);
   }
-  assert(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_OK);
-  assert(cnet_sctp_assoc_stop(&b) == CNET_SCTP_ASSOC_OK);
-  assert(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
-  assert(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
+  check(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_OK);
+  check(cnet_sctp_assoc_stop(&b) == CNET_SCTP_ASSOC_OK);
+  check(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
+  check(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
 
   /* Unknown 11 on INIT ACK: COOKIE ECHO and ERROR cause 8 are bundled.
    * Both must be covered by CRC32C and the entire saved T1 retransmission. */
   setup(&a, &b, &ca, &cb);
-  assert(cnet_sctp_assoc_start(&a, 1u, init, sizeof(init), &init_n) == CNET_SCTP_ASSOC_OK);
-  assert(cnet_sctp_assoc_input(&b, 2u, init, init_n, ack,
+  check(cnet_sctp_assoc_start(&a, 1u, init, sizeof(init), &init_n) == CNET_SCTP_ASSOC_OK);
+  check(cnet_sctp_assoc_input(&b, 2u, init, init_n, ack,
                                sizeof(ack), &ack_n) == CNET_SCTP_ASSOC_OK);
   encoded_n = append_parameter_to_sctp_packet(ack, ack_n, 0xc002u,
                                                NULL, 0u, encoded, sizeof(encoded));
-  assert(cnet_sctp_assoc_input(&a, 3u, encoded, encoded_n, echo,
+  check(cnet_sctp_assoc_input(&a, 3u, encoded, encoded_n, echo,
                                16u, &echo_n) == CNET_SCTP_ASSOC_CAPACITY);
-  assert(echo_n == 0u && cnet_sctp_assoc_state_get(&a) == CNET_SCTP_ASSOC_COOKIE_WAIT);
-  assert(cnet_sctp_assoc_input(&a, 3u, encoded, encoded_n, echo,
+  check(echo_n == 0u && cnet_sctp_assoc_state_get(&a) == CNET_SCTP_ASSOC_COOKIE_WAIT);
+  check(cnet_sctp_assoc_input(&a, 3u, encoded, encoded_n, echo,
                                sizeof(echo), &echo_n) == CNET_SCTP_ASSOC_OK);
-  assert(cnet_sctp_wire_decode(echo, echo_n, &header, &decoder) == CNET_SCTP_WIRE_OK);
-  assert(header.chunk_count == 2u && header.verification_tag == b.local_tag);
-  assert(cnet_sctp_wire_next_chunk(&decoder, &chunk) == CNET_SCTP_WIRE_OK);
-  assert(chunk.type == 10u && chunk.value_size == CNET_SCTP_ASSOC_COOKIE_BYTES);
-  assert(cnet_sctp_wire_next_chunk(&decoder, &chunk) == CNET_SCTP_WIRE_OK);
-  assert(chunk.type == 9u && chunk.value_size == 8u);
-  assert(chunk.value[0] == 0u && chunk.value[1] == 8u);
-  assert(chunk.value[2] == 0u && chunk.value[3] == 8u);
-  assert(chunk.value[4] == 0xc0u && chunk.value[5] == 2u);
+  check(cnet_sctp_wire_decode(echo, echo_n, &header, &decoder) == CNET_SCTP_WIRE_OK);
+  check(header.chunk_count == 2u && header.verification_tag == b.local_tag);
+  check(cnet_sctp_wire_next_chunk(&decoder, &chunk) == CNET_SCTP_WIRE_OK);
+  check(chunk.type == 10u && chunk.value_size == CNET_SCTP_ASSOC_COOKIE_BYTES);
+  check(cnet_sctp_wire_next_chunk(&decoder, &chunk) == CNET_SCTP_WIRE_OK);
+  check(chunk.type == 9u && chunk.value_size == 8u);
+  check(chunk.value[0] == 0u && chunk.value[1] == 8u);
+  check(chunk.value[2] == 0u && chunk.value[3] == 8u);
+  check(chunk.value[4] == 0xc0u && chunk.value[5] == 2u);
   /* A syntactically broken advisory ERROR MUST NOT admit the accompanying
    * COOKIE ECHO, even when the outer packet checksum has been recomputed. */
   {
@@ -613,15 +610,15 @@ static void init_tlv_wire_gate(void) {
     memcpy(scratch, echo, echo_n);
     scratch[115u] ^= 1u; /* ERROR cause length 8 -> 9 */
     reseal_sctp_checksum(scratch, echo_n);
-    assert(cnet_sctp_assoc_input(&b, 4u, scratch, echo_n, confirm,
+    check(cnet_sctp_assoc_input(&b, 4u, scratch, echo_n, confirm,
                                  sizeof(confirm), &confirm_n) == CNET_SCTP_ASSOC_PROTOCOL);
-    assert(confirm_n == 0u &&
+    check(confirm_n == 0u &&
            cnet_sctp_assoc_state_get(&b) == CNET_SCTP_ASSOC_CLOSED);
-    assert(b.last_time_ms == prior_time);
+    check(b.last_time_ms == prior_time);
   }
-  assert(cnet_sctp_assoc_advance(&a, 103u, scratch,
+  check(cnet_sctp_assoc_advance(&a, 103u, scratch,
                                  sizeof(scratch), &encoded_n) == CNET_SCTP_ASSOC_OK);
-  assert(encoded_n == echo_n && memcmp(echo, scratch, echo_n) == 0);
+  check(encoded_n == echo_n && memcmp(echo, scratch, echo_n) == 0);
   /* The saved T1 packet remains byte-identical. A separate on-wire copy
    * has ignored flags on both COOKIE ECHO and advisory ERROR. */
   {
@@ -630,92 +627,92 @@ static void init_tlv_wire_gate(void) {
     cnet_sctp_wire_chunk flagged[2];
     uint8_t modified[CNET_SCTP_ASSOC_MAX_PACKET];
     size_t changed = 0u;
-    assert(cnet_sctp_wire_decode(scratch, encoded_n, &framed, &reader) ==
+    check(cnet_sctp_wire_decode(scratch, encoded_n, &framed, &reader) ==
         CNET_SCTP_WIRE_OK && framed.chunk_count == 2u);
-    assert(cnet_sctp_wire_next_chunk(&reader, &flagged[0]) ==
+    check(cnet_sctp_wire_next_chunk(&reader, &flagged[0]) ==
         CNET_SCTP_WIRE_OK);
-    assert(cnet_sctp_wire_next_chunk(&reader, &flagged[1]) ==
+    check(cnet_sctp_wire_next_chunk(&reader, &flagged[1]) ==
         CNET_SCTP_WIRE_OK);
-    assert(flagged[0].type == 10u && flagged[1].type == 9u);
+    check(flagged[0].type == 10u && flagged[1].type == 9u);
     flagged[0].flags = 0xA0u;
     flagged[1].flags = 0xF0u;
-    assert(cnet_sctp_wire_encode(framed.source_port,
+    check(cnet_sctp_wire_encode(framed.source_port,
         framed.destination_port, framed.verification_tag, flagged, 2u,
         modified, sizeof(modified), &changed) == CNET_SCTP_WIRE_OK);
-    assert(changed == encoded_n);
+    check(changed == encoded_n);
     memcpy(scratch, modified, changed);
   }
-  assert(cnet_sctp_assoc_input(&b, 104u, scratch, encoded_n, confirm,
+  check(cnet_sctp_assoc_input(&b, 104u, scratch, encoded_n, confirm,
                                sizeof(confirm), &confirm_n) == CNET_SCTP_ASSOC_OK);
-  assert(cnet_sctp_assoc_input(&a, 105u, confirm, confirm_n, scratch,
+  check(cnet_sctp_assoc_input(&a, 105u, confirm, confirm_n, scratch,
                                sizeof(scratch), &encoded_n) == CNET_SCTP_ASSOC_OK);
-  assert(cnet_sctp_assoc_state_get(&a) == CNET_SCTP_ASSOC_ESTABLISHED);
-  assert(cnet_sctp_assoc_state_get(&b) == CNET_SCTP_ASSOC_ESTABLISHED);
-  assert(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_OK);
-  assert(cnet_sctp_assoc_stop(&b) == CNET_SCTP_ASSOC_OK);
-  assert(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
-  assert(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
+  check(cnet_sctp_assoc_state_get(&a) == CNET_SCTP_ASSOC_ESTABLISHED);
+  check(cnet_sctp_assoc_state_get(&b) == CNET_SCTP_ASSOC_ESTABLISHED);
+  check(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_OK);
+  check(cnet_sctp_assoc_stop(&b) == CNET_SCTP_ASSOC_OK);
+  check(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
+  check(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
 
   /* Known IPv4 address remains explicitly unsupported in this constrained
    * single-path profile, and cannot trigger Cookie signing. */
   setup(&a, &b, &ca, &cb);
-  assert(cnet_sctp_assoc_start(&a, 1u, init, sizeof(init), &init_n) == CNET_SCTP_ASSOC_OK);
+  check(cnet_sctp_assoc_start(&a, 1u, init, sizeof(init), &init_n) == CNET_SCTP_ASSOC_OK);
   encoded_n = append_parameter_to_sctp_packet(init, init_n, 5u,
                    dummy_ipv4, sizeof(dummy_ipv4), encoded, sizeof(encoded));
-  assert(cnet_sctp_assoc_input(&b, 2u, encoded, encoded_n, ack,
+  check(cnet_sctp_assoc_input(&b, 2u, encoded, encoded_n, ack,
                                sizeof(ack), &ack_n) == CNET_SCTP_ASSOC_PROTOCOL);
-  assert(ack_n == 0u && cb.mac_calls == 0);
-  assert(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_OK);
-  assert(cnet_sctp_assoc_stop(&b) == CNET_SCTP_ASSOC_OK);
-  assert(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
-  assert(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
+  check(ack_n == 0u && cb.mac_calls == 0);
+  check(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_OK);
+  check(cnet_sctp_assoc_stop(&b) == CNET_SCTP_ASSOC_OK);
+  check(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
+  check(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
 
   /* Host Name Address in INIT: RFC 9260 requires ABORT with peer's
    * Initiate Tag, without ever constructing a signed State Cookie. */
   setup(&a, &b, &ca, &cb);
-  assert(cnet_sctp_assoc_start(&a, 1u, init, sizeof(init), &init_n) == CNET_SCTP_ASSOC_OK);
+  check(cnet_sctp_assoc_start(&a, 1u, init, sizeof(init), &init_n) == CNET_SCTP_ASSOC_OK);
   encoded_n = append_parameter_to_sctp_packet(init, init_n, 11u,
                         dummy_ipv4, sizeof(dummy_ipv4), encoded, sizeof(encoded));
-  assert(cnet_sctp_assoc_input(&b, 2u, encoded, encoded_n, ack,
+  check(cnet_sctp_assoc_input(&b, 2u, encoded, encoded_n, ack,
                                15u, &ack_n) == CNET_SCTP_ASSOC_CAPACITY);
-  assert(ack_n == 0u && cb.mac_calls == 0);
-  assert(cnet_sctp_assoc_input(&b, 2u, encoded, encoded_n, ack,
+  check(ack_n == 0u && cb.mac_calls == 0);
+  check(cnet_sctp_assoc_input(&b, 2u, encoded, encoded_n, ack,
                                sizeof(ack), &ack_n) == CNET_SCTP_ASSOC_OK);
-  assert(ack_n == 16u && cnet_sctp_assoc_state_get(&b) == CNET_SCTP_ASSOC_CLOSED);
-  assert(cnet_sctp_wire_decode(ack, ack_n, &header, &decoder) == CNET_SCTP_WIRE_OK);
-  assert(header.verification_tag == a.local_tag && header.chunk_count == 1u);
-  assert(cnet_sctp_wire_next_chunk(&decoder, &chunk) == CNET_SCTP_WIRE_OK);
-  assert(chunk.type == 6u && chunk.flags == 0u && chunk.value_size == 0u);
-  assert(cnet_sctp_assoc_input(&a, 3u, ack, ack_n, echo,
+  check(ack_n == 16u && cnet_sctp_assoc_state_get(&b) == CNET_SCTP_ASSOC_CLOSED);
+  check(cnet_sctp_wire_decode(ack, ack_n, &header, &decoder) == CNET_SCTP_WIRE_OK);
+  check(header.verification_tag == a.local_tag && header.chunk_count == 1u);
+  check(cnet_sctp_wire_next_chunk(&decoder, &chunk) == CNET_SCTP_WIRE_OK);
+  check(chunk.type == 6u && chunk.flags == 0u && chunk.value_size == 0u);
+  check(cnet_sctp_assoc_input(&a, 3u, ack, ack_n, echo,
                                sizeof(echo), &echo_n) == CNET_SCTP_ASSOC_OK);
-  assert(cnet_sctp_assoc_state_get(&a) == CNET_SCTP_ASSOC_FAILED);
-  assert(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_OK);
-  assert(cnet_sctp_assoc_stop(&b) == CNET_SCTP_ASSOC_OK);
-  assert(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
-  assert(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
+  check(cnet_sctp_assoc_state_get(&a) == CNET_SCTP_ASSOC_FAILED);
+  check(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_OK);
+  check(cnet_sctp_assoc_stop(&b) == CNET_SCTP_ASSOC_OK);
+  check(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
+  check(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
 
   /* Host Name Address in INIT ACK must also ABORT. Outbound capacity error
    * must leave T1-init and COOKIE-WAIT unchanged until ABORT is emitted. */
   setup(&a, &b, &ca, &cb);
-  assert(cnet_sctp_assoc_start(&a, 1u, init, sizeof(init), &init_n) == CNET_SCTP_ASSOC_OK);
-  assert(cnet_sctp_assoc_input(&b, 2u, init, init_n, ack,
+  check(cnet_sctp_assoc_start(&a, 1u, init, sizeof(init), &init_n) == CNET_SCTP_ASSOC_OK);
+  check(cnet_sctp_assoc_input(&b, 2u, init, init_n, ack,
                                sizeof(ack), &ack_n) == CNET_SCTP_ASSOC_OK);
   encoded_n = append_parameter_to_sctp_packet(ack, ack_n, 11u,
                         dummy_ipv4, sizeof(dummy_ipv4), encoded, sizeof(encoded));
-  assert(cnet_sctp_assoc_input(&a, 3u, encoded, encoded_n, echo,
+  check(cnet_sctp_assoc_input(&a, 3u, encoded, encoded_n, echo,
                                15u, &echo_n) == CNET_SCTP_ASSOC_CAPACITY);
-  assert(cnet_sctp_assoc_state_get(&a) == CNET_SCTP_ASSOC_COOKIE_WAIT);
-  assert(cnet_sctp_assoc_input(&a, 3u, encoded, encoded_n, echo,
+  check(cnet_sctp_assoc_state_get(&a) == CNET_SCTP_ASSOC_COOKIE_WAIT);
+  check(cnet_sctp_assoc_input(&a, 3u, encoded, encoded_n, echo,
                                sizeof(echo), &echo_n) == CNET_SCTP_ASSOC_OK);
-  assert(cnet_sctp_assoc_state_get(&a) == CNET_SCTP_ASSOC_FAILED);
-  assert(cnet_sctp_wire_decode(echo, echo_n, &header, &decoder) == CNET_SCTP_WIRE_OK);
-  assert(header.verification_tag == b.local_tag);
-  assert(cnet_sctp_wire_next_chunk(&decoder, &chunk) == CNET_SCTP_WIRE_OK);
-  assert(chunk.type == 6u && chunk.flags == 0u);
-  assert(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_OK);
-  assert(cnet_sctp_assoc_stop(&b) == CNET_SCTP_ASSOC_OK);
-  assert(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
-  assert(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
+  check(cnet_sctp_assoc_state_get(&a) == CNET_SCTP_ASSOC_FAILED);
+  check(cnet_sctp_wire_decode(echo, echo_n, &header, &decoder) == CNET_SCTP_WIRE_OK);
+  check(header.verification_tag == b.local_tag);
+  check(cnet_sctp_wire_next_chunk(&decoder, &chunk) == CNET_SCTP_WIRE_OK);
+  check(chunk.type == 6u && chunk.flags == 0u);
+  check(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_OK);
+  check(cnet_sctp_assoc_stop(&b) == CNET_SCTP_ASSOC_OK);
+  check(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
+  check(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
 }
 
 /* RFC 9260 5.2.4: a MAC-authenticated duplicate Cookie matching the
@@ -733,54 +730,54 @@ static void established_expired_duplicate_cookie(void) {
   uint32_t original_peer_tag;
   uint32_t original_tsn;
   setup(&a, &b, &ca, &cb);
-  assert(cnet_sctp_assoc_start(&a, 1u, init, sizeof(init), &ni) == CNET_SCTP_ASSOC_OK);
-  assert(cnet_sctp_assoc_input(&b, 2u, init, ni, init_ack,
+  check(cnet_sctp_assoc_start(&a, 1u, init, sizeof(init), &ni) == CNET_SCTP_ASSOC_OK);
+  check(cnet_sctp_assoc_input(&b, 2u, init, ni, init_ack,
                                sizeof(init_ack), &na) == CNET_SCTP_ASSOC_OK);
-  assert(cnet_sctp_assoc_input(&a, 3u, init_ack, na, cookie_echo,
+  check(cnet_sctp_assoc_input(&a, 3u, init_ack, na, cookie_echo,
                                sizeof(cookie_echo), &ne) == CNET_SCTP_ASSOC_OK);
-  assert(cnet_sctp_assoc_input(&b, 4u, cookie_echo, ne, cookie_ack,
+  check(cnet_sctp_assoc_input(&b, 4u, cookie_echo, ne, cookie_ack,
                                sizeof(cookie_ack), &nk) == CNET_SCTP_ASSOC_OK);
-  assert(cnet_sctp_assoc_input(&a, 5u, cookie_ack, nk, reply,
+  check(cnet_sctp_assoc_input(&a, 5u, cookie_ack, nk, reply,
                                sizeof(reply), &nr) == CNET_SCTP_ASSOC_OK);
-  assert(cnet_sctp_assoc_state_get(&b) == CNET_SCTP_ASSOC_ESTABLISHED);
+  check(cnet_sctp_assoc_state_get(&b) == CNET_SCTP_ASSOC_ESTABLISHED);
   original_peer_tag = b.peer_tag;
   original_tsn = b.peer_initial_tsn;
   /* Issued at t=2, lifetime 500; elapsed > 500 on duplicate receipt. */
-  assert(cnet_sctp_assoc_input(&b, 503u, cookie_echo, ne, reply,
+  check(cnet_sctp_assoc_input(&b, 503u, cookie_echo, ne, reply,
                                sizeof(reply), &nr) == CNET_SCTP_ASSOC_OK);
-  assert(nr == nk && memcmp(reply, cookie_ack, nk) == 0);
-  assert(b.peer_tag == original_peer_tag && b.peer_initial_tsn == original_tsn);
-  assert(cnet_sctp_assoc_state_get(&b) == CNET_SCTP_ASSOC_ESTABLISHED);
+  check(nr == nk && memcmp(reply, cookie_ack, nk) == 0);
+  check(b.peer_tag == original_peer_tag && b.peer_initial_tsn == original_tsn);
+  check(cnet_sctp_assoc_state_get(&b) == CNET_SCTP_ASSOC_ESTABLISHED);
 
   memcpy(modified_cookie, cookie_echo + 16u, sizeof(modified_cookie));
   modified_cookie[16u] ^= 1u; /* authenticated Cookie's peer Initiate Tag */
-  assert(fake_mac(&cb, modified_cookie,
+  check(fake_mac(&cb, modified_cookie,
       CNET_SCTP_ASSOC_COOKIE_CLAIMS_BYTES,
       modified_cookie + CNET_SCTP_ASSOC_COOKIE_CLAIMS_BYTES) == 0);
-  assert(cnet_sctp_wire_encode(5000u, 5001u, b.local_tag, &echo_chunk, 1u,
+  check(cnet_sctp_wire_encode(5000u, 5001u, b.local_tag, &echo_chunk, 1u,
                                 forged, sizeof(forged), &nf) == CNET_SCTP_WIRE_OK);
-  assert(cnet_sctp_assoc_input(&b, 504u, forged, nf, reply,
+  check(cnet_sctp_assoc_input(&b, 504u, forged, nf, reply,
                                sizeof(reply), &nr) == CNET_SCTP_ASSOC_EXPIRED);
-  assert(nr == 0u && b.peer_tag == original_peer_tag);
+  check(nr == 0u && b.peer_tag == original_peer_tag);
 
   modified_cookie[16u] ^= 1u;
   modified_cookie[24u] ^= 1u; /* authenticated Cookie's peer TSN */
-  assert(fake_mac(&cb, modified_cookie,
+  check(fake_mac(&cb, modified_cookie,
       CNET_SCTP_ASSOC_COOKIE_CLAIMS_BYTES,
       modified_cookie + CNET_SCTP_ASSOC_COOKIE_CLAIMS_BYTES) == 0);
-  assert(cnet_sctp_wire_encode(5000u, 5001u, b.local_tag, &echo_chunk, 1u,
+  check(cnet_sctp_wire_encode(5000u, 5001u, b.local_tag, &echo_chunk, 1u,
                                 forged, sizeof(forged), &nf) == CNET_SCTP_WIRE_OK);
-  assert(cnet_sctp_assoc_input(&b, 505u, forged, nf, reply,
+  check(cnet_sctp_assoc_input(&b, 505u, forged, nf, reply,
                                sizeof(reply), &nr) == CNET_SCTP_ASSOC_EXPIRED);
-  assert(nr == 0u && b.peer_initial_tsn == original_tsn);
-  assert(cnet_sctp_assoc_state_get(&b) == CNET_SCTP_ASSOC_ESTABLISHED);
+  check(nr == 0u && b.peer_initial_tsn == original_tsn);
+  check(cnet_sctp_assoc_state_get(&b) == CNET_SCTP_ASSOC_ESTABLISHED);
 
-  assert(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_OK);
-  assert(cnet_sctp_assoc_stop(&b) == CNET_SCTP_ASSOC_OK);
-  assert(cnet_sctp_assoc_input(&b, 506u, cookie_echo, ne, reply,
+  check(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_OK);
+  check(cnet_sctp_assoc_stop(&b) == CNET_SCTP_ASSOC_OK);
+  check(cnet_sctp_assoc_input(&b, 506u, cookie_echo, ne, reply,
                                sizeof(reply), &nr) == CNET_SCTP_ASSOC_CLOSED_ERROR);
-  assert(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
-  assert(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
+  check(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
+  check(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
 }
 
 
@@ -803,81 +800,81 @@ static void simultaneous_init_keeps_owner_and_t1(void) {
   setup(&a, &b, &ca, &cb);
   a_tag = a.local_tag;
   b_tag = b.local_tag;
-  assert(cnet_sctp_assoc_start(&a, 1u, a_init, sizeof(a_init), &ai) == CNET_SCTP_ASSOC_OK);
-  assert(cnet_sctp_assoc_start(&b, 1u, b_init, sizeof(b_init), &bi) == CNET_SCTP_ASSOC_OK);
-  assert(cnet_sctp_assoc_input(&b, 2u, a_init, ai, b_ack, 15u, &ba) ==
+  check(cnet_sctp_assoc_start(&a, 1u, a_init, sizeof(a_init), &ai) == CNET_SCTP_ASSOC_OK);
+  check(cnet_sctp_assoc_start(&b, 1u, b_init, sizeof(b_init), &bi) == CNET_SCTP_ASSOC_OK);
+  check(cnet_sctp_assoc_input(&b, 2u, a_init, ai, b_ack, 15u, &ba) ==
          CNET_SCTP_ASSOC_CAPACITY);
-  assert(ba == 0u && cb.mac_calls == 0);
-  assert(b.local_tag == b_tag && b.state == CNET_SCTP_ASSOC_COOKIE_WAIT);
-  assert(b.saved_size == bi && memcmp(b.saved_packet, b_init, bi) == 0);
-  assert(cnet_sctp_assoc_next_deadline(&b, &deadline, &has_deadline) == CNET_SCTP_ASSOC_OK);
-  assert(has_deadline && deadline == 101u);
-  assert(cnet_sctp_assoc_input(&b, 2u, a_init, ai,
+  check(ba == 0u && cb.mac_calls == 0);
+  check(b.local_tag == b_tag && b.state == CNET_SCTP_ASSOC_COOKIE_WAIT);
+  check(b.saved_size == bi && memcmp(b.saved_packet, b_init, bi) == 0);
+  check(cnet_sctp_assoc_next_deadline(&b, &deadline, &has_deadline) == CNET_SCTP_ASSOC_OK);
+  check(has_deadline && deadline == 101u);
+  check(cnet_sctp_assoc_input(&b, 2u, a_init, ai,
                                b_ack, sizeof(b_ack), &ba) == CNET_SCTP_ASSOC_OK);
-  assert(cnet_sctp_assoc_input(&a, 2u, b_init, bi,
+  check(cnet_sctp_assoc_input(&a, 2u, b_init, bi,
                                a_ack, sizeof(a_ack), &aa) == CNET_SCTP_ASSOC_OK);
-  assert(cnet_sctp_assoc_state_get(&a) == CNET_SCTP_ASSOC_COOKIE_WAIT);
-  assert(cnet_sctp_assoc_state_get(&b) == CNET_SCTP_ASSOC_COOKIE_WAIT);
-  assert(a.local_tag == a_tag && b.local_tag == b_tag);
-  assert(a.saved_size == ai && memcmp(a.saved_packet, a_init, ai) == 0);
-  assert(b.saved_size == bi && memcmp(b.saved_packet, b_init, bi) == 0);
-  assert(cnet_sctp_assoc_next_deadline(&a, &deadline, &has_deadline) == CNET_SCTP_ASSOC_OK);
-  assert(has_deadline && deadline == 101u);
-  assert(cnet_sctp_assoc_next_deadline(&b, &deadline, &has_deadline) == CNET_SCTP_ASSOC_OK);
-  assert(has_deadline && deadline == 101u);
-  assert(cnet_sctp_wire_decode(a_ack, aa, &header, &decoder) == CNET_SCTP_WIRE_OK);
-  assert(header.verification_tag == b_tag);
-  assert(cnet_sctp_wire_next_chunk(&decoder, &chunk) == CNET_SCTP_WIRE_OK);
-  assert(chunk.type == 2u && chunk.value[0] == (uint8_t)(a_tag >> 24));
-  assert(cnet_sctp_wire_decode(b_ack, ba, &header, &decoder) == CNET_SCTP_WIRE_OK);
-  assert(header.verification_tag == a_tag);
-  assert(cnet_sctp_wire_next_chunk(&decoder, &chunk) == CNET_SCTP_WIRE_OK);
-  assert(chunk.type == 2u && chunk.value[0] == (uint8_t)(b_tag >> 24));
+  check(cnet_sctp_assoc_state_get(&a) == CNET_SCTP_ASSOC_COOKIE_WAIT);
+  check(cnet_sctp_assoc_state_get(&b) == CNET_SCTP_ASSOC_COOKIE_WAIT);
+  check(a.local_tag == a_tag && b.local_tag == b_tag);
+  check(a.saved_size == ai && memcmp(a.saved_packet, a_init, ai) == 0);
+  check(b.saved_size == bi && memcmp(b.saved_packet, b_init, bi) == 0);
+  check(cnet_sctp_assoc_next_deadline(&a, &deadline, &has_deadline) == CNET_SCTP_ASSOC_OK);
+  check(has_deadline && deadline == 101u);
+  check(cnet_sctp_assoc_next_deadline(&b, &deadline, &has_deadline) == CNET_SCTP_ASSOC_OK);
+  check(has_deadline && deadline == 101u);
+  check(cnet_sctp_wire_decode(a_ack, aa, &header, &decoder) == CNET_SCTP_WIRE_OK);
+  check(header.verification_tag == b_tag);
+  check(cnet_sctp_wire_next_chunk(&decoder, &chunk) == CNET_SCTP_WIRE_OK);
+  check(chunk.type == 2u && chunk.value[0] == (uint8_t)(a_tag >> 24));
+  check(cnet_sctp_wire_decode(b_ack, ba, &header, &decoder) == CNET_SCTP_WIRE_OK);
+  check(header.verification_tag == a_tag);
+  check(cnet_sctp_wire_next_chunk(&decoder, &chunk) == CNET_SCTP_WIRE_OK);
+  check(chunk.type == 2u && chunk.value[0] == (uint8_t)(b_tag >> 24));
 
-  assert(cnet_sctp_assoc_input(&a, 3u, b_ack, ba,
+  check(cnet_sctp_assoc_input(&a, 3u, b_ack, ba,
                                a_echo, sizeof(a_echo), &ae) == CNET_SCTP_ASSOC_OK);
-  assert(cnet_sctp_assoc_input(&b, 3u, a_ack, aa,
+  check(cnet_sctp_assoc_input(&b, 3u, a_ack, aa,
                                b_echo, sizeof(b_echo), &be) == CNET_SCTP_ASSOC_OK);
-  assert(a.state == CNET_SCTP_ASSOC_COOKIE_ECHOED && a.peer_tag == b_tag);
-  assert(b.state == CNET_SCTP_ASSOC_COOKIE_ECHOED && b.peer_tag == a_tag);
-  assert(cnet_sctp_assoc_next_deadline(&a, &deadline, &has_deadline) == CNET_SCTP_ASSOC_OK);
-  assert(has_deadline && deadline == 103u);
+  check(a.state == CNET_SCTP_ASSOC_COOKIE_ECHOED && a.peer_tag == b_tag);
+  check(b.state == CNET_SCTP_ASSOC_COOKIE_ECHOED && b.peer_tag == a_tag);
+  check(cnet_sctp_assoc_next_deadline(&a, &deadline, &has_deadline) == CNET_SCTP_ASSOC_OK);
+  check(has_deadline && deadline == 103u);
   /* Retransmitted simultaneous INIT after COOKIE-ECHOED does not reset T1,
    * replace the saved ECHO packet, switch the peer or change Initiate Tag. */
-  assert(cnet_sctp_assoc_input(&a, 4u, b_init, bi,
+  check(cnet_sctp_assoc_input(&a, 4u, b_init, bi,
                                scratch, sizeof(scratch), &out_n) == CNET_SCTP_ASSOC_OK);
-  assert(out_n > 0u && a.state == CNET_SCTP_ASSOC_COOKIE_ECHOED);
-  assert(a.local_tag == a_tag && a.peer_tag == b_tag);
-  assert(a.saved_size == ae && memcmp(a.saved_packet, a_echo, ae) == 0);
-  assert(cnet_sctp_assoc_next_deadline(&a, &deadline, &has_deadline) == CNET_SCTP_ASSOC_OK);
-  assert(has_deadline && deadline == 103u);
+  check(out_n > 0u && a.state == CNET_SCTP_ASSOC_COOKIE_ECHOED);
+  check(a.local_tag == a_tag && a.peer_tag == b_tag);
+  check(a.saved_size == ae && memcmp(a.saved_packet, a_echo, ae) == 0);
+  check(cnet_sctp_assoc_next_deadline(&a, &deadline, &has_deadline) == CNET_SCTP_ASSOC_OK);
+  check(has_deadline && deadline == 103u);
 
-  assert(cnet_sctp_assoc_input(&a, 5u, b_echo, be,
+  check(cnet_sctp_assoc_input(&a, 5u, b_echo, be,
                                a_cookie_ack, sizeof(a_cookie_ack), &ak) ==
          CNET_SCTP_ASSOC_OK);
-  assert(cnet_sctp_assoc_input(&b, 5u, a_echo, ae,
+  check(cnet_sctp_assoc_input(&b, 5u, a_echo, ae,
                                b_cookie_ack, sizeof(b_cookie_ack), &bk) ==
          CNET_SCTP_ASSOC_OK);
-  assert(ak == 16u && bk == 16u);
-  assert(a.state == CNET_SCTP_ASSOC_ESTABLISHED &&
+  check(ak == 16u && bk == 16u);
+  check(a.state == CNET_SCTP_ASSOC_ESTABLISHED &&
          b.state == CNET_SCTP_ASSOC_ESTABLISHED);
-  assert(a.peer_tag == b_tag && b.peer_tag == a_tag);
-  assert(a.saved_size == 0u && b.saved_size == 0u);
-  assert(cnet_sctp_assoc_next_deadline(&a, &deadline, &has_deadline) == CNET_SCTP_ASSOC_OK);
-  assert(!has_deadline);
-  assert(cnet_sctp_assoc_next_deadline(&b, &deadline, &has_deadline) == CNET_SCTP_ASSOC_OK);
-  assert(!has_deadline);
+  check(a.peer_tag == b_tag && b.peer_tag == a_tag);
+  check(a.saved_size == 0u && b.saved_size == 0u);
+  check(cnet_sctp_assoc_next_deadline(&a, &deadline, &has_deadline) == CNET_SCTP_ASSOC_OK);
+  check(!has_deadline);
+  check(cnet_sctp_assoc_next_deadline(&b, &deadline, &has_deadline) == CNET_SCTP_ASSOC_OK);
+  check(!has_deadline);
   /* Late COOKIE ACK is a harmless no-op, not a new ULP terminal event. */
-  assert(cnet_sctp_assoc_input(&a, 6u, b_cookie_ack, bk,
+  check(cnet_sctp_assoc_input(&a, 6u, b_cookie_ack, bk,
                                scratch, sizeof(scratch), &out_n) == CNET_SCTP_ASSOC_OK);
-  assert(out_n == 0u && a.state == CNET_SCTP_ASSOC_ESTABLISHED);
-  assert(cnet_sctp_assoc_input(&b, 6u, a_cookie_ack, ak,
+  check(out_n == 0u && a.state == CNET_SCTP_ASSOC_ESTABLISHED);
+  check(cnet_sctp_assoc_input(&b, 6u, a_cookie_ack, ak,
                                scratch, sizeof(scratch), &out_n) == CNET_SCTP_ASSOC_OK);
-  assert(out_n == 0u && b.state == CNET_SCTP_ASSOC_ESTABLISHED);
-  assert(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_OK);
-  assert(cnet_sctp_assoc_stop(&b) == CNET_SCTP_ASSOC_OK);
-  assert(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
-  assert(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
+  check(out_n == 0u && b.state == CNET_SCTP_ASSOC_ESTABLISHED);
+  check(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_OK);
+  check(cnet_sctp_assoc_stop(&b) == CNET_SCTP_ASSOC_OK);
+  check(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
+  check(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
 }
 
 /* COOKIE ECHO may win while the local INIT still waits for INIT ACK:
@@ -894,46 +891,46 @@ static void simultaneous_cookie_echo_wins_before_init_ack(void) {
   setup(&a, &b, &ca, &cb);
   a_tag = a.local_tag;
   b_tag = b.local_tag;
-  assert(cnet_sctp_assoc_start(&a, 1u, a_init, sizeof(a_init), &ai) == CNET_SCTP_ASSOC_OK);
-  assert(cnet_sctp_assoc_start(&b, 1u, b_init, sizeof(b_init), &bi) == CNET_SCTP_ASSOC_OK);
-  assert(cnet_sctp_assoc_input(&a, 2u, b_init, bi,
+  check(cnet_sctp_assoc_start(&a, 1u, a_init, sizeof(a_init), &ai) == CNET_SCTP_ASSOC_OK);
+  check(cnet_sctp_assoc_start(&b, 1u, b_init, sizeof(b_init), &bi) == CNET_SCTP_ASSOC_OK);
+  check(cnet_sctp_assoc_input(&a, 2u, b_init, bi,
                                a_init_ack, sizeof(a_init_ack), &na) ==
          CNET_SCTP_ASSOC_OK);
-  assert(a.peer_tag == 0u && a.state == CNET_SCTP_ASSOC_COOKIE_WAIT);
-  assert(cnet_sctp_assoc_input(&b, 3u, a_init_ack, na,
+  check(a.peer_tag == 0u && a.state == CNET_SCTP_ASSOC_COOKIE_WAIT);
+  check(cnet_sctp_assoc_input(&b, 3u, a_init_ack, na,
                                b_cookie_echo, sizeof(b_cookie_echo), &ne) ==
          CNET_SCTP_ASSOC_OK);
-  assert(b.state == CNET_SCTP_ASSOC_COOKIE_ECHOED);
+  check(b.state == CNET_SCTP_ASSOC_COOKIE_ECHOED);
   /* A has not received its INIT ACK. Failed ACK admission must not stop T1. */
-  assert(cnet_sctp_assoc_input(&a, 4u, b_cookie_echo, ne,
+  check(cnet_sctp_assoc_input(&a, 4u, b_cookie_echo, ne,
                                a_cookie_ack, 15u, &nk) == CNET_SCTP_ASSOC_CAPACITY);
-  assert(nk == 0u && a.state == CNET_SCTP_ASSOC_COOKIE_WAIT);
-  assert(a.peer_tag == 0u && a.local_tag == a_tag);
-  assert(a.saved_size == ai && memcmp(a.saved_packet, a_init, ai) == 0);
-  assert(cnet_sctp_assoc_next_deadline(&a, &deadline, &active) == CNET_SCTP_ASSOC_OK);
-  assert(active && deadline == 101u);
-  assert(cnet_sctp_assoc_input(&a, 4u, b_cookie_echo, ne,
+  check(nk == 0u && a.state == CNET_SCTP_ASSOC_COOKIE_WAIT);
+  check(a.peer_tag == 0u && a.local_tag == a_tag);
+  check(a.saved_size == ai && memcmp(a.saved_packet, a_init, ai) == 0);
+  check(cnet_sctp_assoc_next_deadline(&a, &deadline, &active) == CNET_SCTP_ASSOC_OK);
+  check(active && deadline == 101u);
+  check(cnet_sctp_assoc_input(&a, 4u, b_cookie_echo, ne,
                                a_cookie_ack, sizeof(a_cookie_ack), &nk) ==
          CNET_SCTP_ASSOC_OK);
-  assert(nk == 16u && a.state == CNET_SCTP_ASSOC_ESTABLISHED);
-  assert(a.local_tag == a_tag && a.peer_tag == b_tag);
-  assert(a.peer_initial_tsn == b.initial_tsn);
-  assert(a.deadline_ms == 0u && a.saved_size == 0u && a.current_rto_ms == 0u);
-  assert(cnet_sctp_assoc_input(&b, 5u, a_cookie_ack, nk,
+  check(nk == 16u && a.state == CNET_SCTP_ASSOC_ESTABLISHED);
+  check(a.local_tag == a_tag && a.peer_tag == b_tag);
+  check(a.peer_initial_tsn == b.initial_tsn);
+  check(a.deadline_ms == 0u && a.saved_size == 0u && a.current_rto_ms == 0u);
+  check(cnet_sctp_assoc_input(&b, 5u, a_cookie_ack, nk,
                                output, sizeof(output), &no) == CNET_SCTP_ASSOC_OK);
-  assert(no == 0u && b.state == CNET_SCTP_ASSOC_ESTABLISHED);
+  check(no == 0u && b.state == CNET_SCTP_ASSOC_ESTABLISHED);
   /* Established-state INIT is deliberately NOT a live restart. */
   {
     int signed_count = ca.mac_calls;
-    assert(cnet_sctp_assoc_input(&a, 6u, b_init, bi,
+    check(cnet_sctp_assoc_input(&a, 6u, b_init, bi,
                                  output, sizeof(output), &no) == CNET_SCTP_ASSOC_PROTOCOL);
-    assert(no == 0u && ca.mac_calls == signed_count);
-    assert(a.peer_tag == b_tag && a.state == CNET_SCTP_ASSOC_ESTABLISHED);
+    check(no == 0u && ca.mac_calls == signed_count);
+    check(a.peer_tag == b_tag && a.state == CNET_SCTP_ASSOC_ESTABLISHED);
   }
-  assert(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_OK);
-  assert(cnet_sctp_assoc_stop(&b) == CNET_SCTP_ASSOC_OK);
-  assert(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
-  assert(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
+  check(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_OK);
+  check(cnet_sctp_assoc_stop(&b) == CNET_SCTP_ASSOC_OK);
+  check(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
+  check(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
 }
 
 
@@ -955,47 +952,47 @@ static void simultaneous_signed_peer_change_denied(void) {
   uint32_t old_peer;
   int has_deadline = 0;
   setup(&a, &b, &ca, &cb);
-  assert(cnet_sctp_assoc_start(&a, 1u, a_init, sizeof(a_init), &ai) == CNET_SCTP_ASSOC_OK);
-  assert(cnet_sctp_assoc_start(&b, 1u, b_init, sizeof(b_init), &bi) == CNET_SCTP_ASSOC_OK);
-  assert(cnet_sctp_assoc_input(&a, 2u, b_init, bi,
+  check(cnet_sctp_assoc_start(&a, 1u, a_init, sizeof(a_init), &ai) == CNET_SCTP_ASSOC_OK);
+  check(cnet_sctp_assoc_start(&b, 1u, b_init, sizeof(b_init), &bi) == CNET_SCTP_ASSOC_OK);
+  check(cnet_sctp_assoc_input(&a, 2u, b_init, bi,
                                a_ack, sizeof(a_ack), &aa) == CNET_SCTP_ASSOC_OK);
-  assert(cnet_sctp_assoc_input(&b, 2u, a_init, ai,
+  check(cnet_sctp_assoc_input(&b, 2u, a_init, ai,
                                b_ack, sizeof(b_ack), &ba) == CNET_SCTP_ASSOC_OK);
-  assert(cnet_sctp_assoc_input(&a, 3u, b_ack, ba,
+  check(cnet_sctp_assoc_input(&a, 3u, b_ack, ba,
                                a_echo, sizeof(a_echo), &ae) == CNET_SCTP_ASSOC_OK);
-  assert(cnet_sctp_assoc_input(&b, 3u, a_ack, aa,
+  check(cnet_sctp_assoc_input(&b, 3u, a_ack, aa,
                                b_echo, sizeof(b_echo), &be) == CNET_SCTP_ASSOC_OK);
   old_peer = a.peer_tag;
-  assert(old_peer == b.local_tag && a.state == CNET_SCTP_ASSOC_COOKIE_ECHOED);
-  assert(cnet_sctp_wire_decode(b_echo, be, &header, &decoder) == CNET_SCTP_WIRE_OK);
-  assert(cnet_sctp_wire_next_chunk(&decoder, &parsed) == CNET_SCTP_WIRE_OK);
-  assert(parsed.type == 10u && parsed.value_size == sizeof(cookie));
+  check(old_peer == b.local_tag && a.state == CNET_SCTP_ASSOC_COOKIE_ECHOED);
+  check(cnet_sctp_wire_decode(b_echo, be, &header, &decoder) == CNET_SCTP_WIRE_OK);
+  check(cnet_sctp_wire_next_chunk(&decoder, &parsed) == CNET_SCTP_WIRE_OK);
+  check(parsed.type == 10u && parsed.value_size == sizeof(cookie));
   memcpy(cookie, parsed.value, sizeof(cookie));
   cookie[16u] ^= 1u; /* a different peer tag within authenticated claims */
-  assert(fake_mac(&ca, cookie, CNET_SCTP_ASSOC_COOKIE_CLAIMS_BYTES,
+  check(fake_mac(&ca, cookie, CNET_SCTP_ASSOC_COOKIE_CLAIMS_BYTES,
       cookie + CNET_SCTP_ASSOC_COOKIE_CLAIMS_BYTES) == 0);
   counterfeit.type = 10u;
   counterfeit.flags = 0u;
   counterfeit.value = cookie;
   counterfeit.value_size = sizeof(cookie);
-  assert(cnet_sctp_wire_encode(5001u, 5000u, a.local_tag, &counterfeit, 1u,
+  check(cnet_sctp_wire_encode(5001u, 5000u, a.local_tag, &counterfeit, 1u,
                                forged, sizeof(forged), &nf) == CNET_SCTP_WIRE_OK);
-  assert(cnet_sctp_assoc_input(&a, 4u, forged, nf,
+  check(cnet_sctp_assoc_input(&a, 4u, forged, nf,
                                output, sizeof(output), &no) == CNET_SCTP_ASSOC_AUTH);
-  assert(no == 0u && a.state == CNET_SCTP_ASSOC_COOKIE_ECHOED);
-  assert(a.peer_tag == old_peer && a.saved_size == ae);
-  assert(memcmp(a.saved_packet, a_echo, ae) == 0);
-  assert(cnet_sctp_assoc_next_deadline(&a, &deadline, &has_deadline) == CNET_SCTP_ASSOC_OK);
-  assert(has_deadline && deadline == 103u);
+  check(no == 0u && a.state == CNET_SCTP_ASSOC_COOKIE_ECHOED);
+  check(a.peer_tag == old_peer && a.saved_size == ae);
+  check(memcmp(a.saved_packet, a_echo, ae) == 0);
+  check(cnet_sctp_assoc_next_deadline(&a, &deadline, &has_deadline) == CNET_SCTP_ASSOC_OK);
+  check(has_deadline && deadline == 103u);
   /* The legitimate signed Cookie still succeeds after rejecting the rogue. */
-  assert(cnet_sctp_assoc_input(&a, 4u, b_echo, be,
+  check(cnet_sctp_assoc_input(&a, 4u, b_echo, be,
                                output, sizeof(output), &no) == CNET_SCTP_ASSOC_OK);
-  assert(no == 16u && a.state == CNET_SCTP_ASSOC_ESTABLISHED);
-  assert(a.peer_tag == old_peer && a.saved_size == 0u);
-  assert(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_OK);
-  assert(cnet_sctp_assoc_stop(&b) == CNET_SCTP_ASSOC_OK);
-  assert(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
-  assert(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
+  check(no == 16u && a.state == CNET_SCTP_ASSOC_ESTABLISHED);
+  check(a.peer_tag == old_peer && a.saved_size == 0u);
+  check(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_OK);
+  check(cnet_sctp_assoc_stop(&b) == CNET_SCTP_ASSOC_OK);
+  check(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
+  check(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
 }
 
 static void malformed_shutdown_bundle_does_not_preempt_t5(void) {
@@ -1025,15 +1022,15 @@ static void malformed_shutdown_bundle_does_not_preempt_t5(void) {
   chunks[1].flags = 0u;
   chunks[1].value = malformed_sack;
   chunks[1].value_size = sizeof(malformed_sack);
-  assert(cnet_sctp_wire_encode(5001u, 5000u, a.local_tag, chunks, 2u,
+  check(cnet_sctp_wire_encode(5001u, 5000u, a.local_tag, chunks, 2u,
       packet, sizeof(packet), &packet_n) == CNET_SCTP_WIRE_OK);
 
-  assert(cnet_sctp_assoc_input(&a, 1000u, packet, packet_n,
+  check(cnet_sctp_assoc_input(&a, 1000u, packet, packet_n,
       output, sizeof(output), &output_n) == CNET_SCTP_ASSOC_PROTOCOL);
-  assert(output_n == 0u);
-  assert(a.state == CNET_SCTP_ASSOC_SHUTDOWN_SENT);
-  assert(a.t5_shutdown_deadline_ms == 1000u);
-  assert(a.last_time_ms == prior_time);
+  check(output_n == 0u);
+  check(a.state == CNET_SCTP_ASSOC_SHUTDOWN_SENT);
+  check(a.t5_shutdown_deadline_ms == 1000u);
+  check(a.last_time_ms == prior_time);
 
   /* A well-framed SHUTDOWN+SACK bundle rejected by the Association state
    * gate must not commit the provisional packet time either. */
@@ -1045,13 +1042,13 @@ static void malformed_shutdown_bundle_does_not_preempt_t5(void) {
     prior_time = a.last_time_ms;
     chunks[1].value = valid_sack;
     chunks[1].value_size = sizeof(valid_sack);
-    assert(cnet_sctp_wire_encode(5001u, 5000u, a.local_tag, chunks, 2u,
+    check(cnet_sctp_wire_encode(5001u, 5000u, a.local_tag, chunks, 2u,
         packet, sizeof(packet), &packet_n) == CNET_SCTP_WIRE_OK);
-    assert(cnet_sctp_assoc_input(&a, 11u, packet, packet_n,
+    check(cnet_sctp_assoc_input(&a, 11u, packet, packet_n,
         output, sizeof(output), &output_n) == CNET_SCTP_ASSOC_PROTOCOL);
-    assert(output_n == 0u);
-    assert(a.state == CNET_SCTP_ASSOC_CLOSED);
-    assert(a.last_time_ms == prior_time);
+    check(output_n == 0u);
+    check(a.state == CNET_SCTP_ASSOC_CLOSED);
+    check(a.last_time_ms == prior_time);
   }
 
   /* DATA bundles also require syntax validation for every member before
@@ -1071,15 +1068,15 @@ static void malformed_shutdown_bundle_does_not_preempt_t5(void) {
     chunks[1].flags = 3u;
     chunks[1].value = malformed_data;
     chunks[1].value_size = sizeof(malformed_data);
-    assert(cnet_sctp_wire_encode(5001u, 5000u, a.local_tag, chunks, 2u,
+    check(cnet_sctp_wire_encode(5001u, 5000u, a.local_tag, chunks, 2u,
         packet, sizeof(packet), &packet_n) == CNET_SCTP_WIRE_OK);
     memset(output, 0xCC, sizeof(output));
-    assert(cnet_sctp_assoc_input(&a, 1000u, packet, packet_n,
+    check(cnet_sctp_assoc_input(&a, 1000u, packet, packet_n,
         output, sizeof(output), &output_n) == CNET_SCTP_ASSOC_PROTOCOL);
-    assert(output_n == 0u && output[0] == 0xCCu);
-    assert(a.state == CNET_SCTP_ASSOC_SHUTDOWN_SENT);
-    assert(a.t5_shutdown_deadline_ms == 1000u);
-    assert(a.last_time_ms == prior_time);
+    check(output_n == 0u && output[0] == 0xCCu);
+    check(a.state == CNET_SCTP_ASSOC_SHUTDOWN_SENT);
+    check(a.t5_shutdown_deadline_ms == 1000u);
+    check(a.last_time_ms == prior_time);
   }
 
   /* Length >= 12 is not enough: a declared gap block must fit in the SACK
@@ -1099,15 +1096,15 @@ static void malformed_shutdown_bundle_does_not_preempt_t5(void) {
     malformed_full_header_sack[9] = 1u; /* one block, no block bytes */
     chunks[1].value = malformed_full_header_sack;
     chunks[1].value_size = sizeof(malformed_full_header_sack);
-    assert(cnet_sctp_wire_encode(5001u, 5000u, a.local_tag, chunks, 2u,
+    check(cnet_sctp_wire_encode(5001u, 5000u, a.local_tag, chunks, 2u,
         packet, sizeof(packet), &packet_n) == CNET_SCTP_WIRE_OK);
     memset(output, 0xCC, sizeof(output));
-    assert(cnet_sctp_assoc_input(&a, 1000u, packet, packet_n,
+    check(cnet_sctp_assoc_input(&a, 1000u, packet, packet_n,
         output, sizeof(output), &output_n) == CNET_SCTP_ASSOC_PROTOCOL);
-    assert(output_n == 0u && output[0] == 0xCCu);
-    assert(a.state == CNET_SCTP_ASSOC_SHUTDOWN_SENT);
-    assert(a.t5_shutdown_deadline_ms == 1000u);
-    assert(a.last_time_ms == prior_time);
+    check(output_n == 0u && output[0] == 0xCCu);
+    check(a.state == CNET_SCTP_ASSOC_SHUTDOWN_SENT);
+    check(a.t5_shutdown_deadline_ms == 1000u);
+    check(a.last_time_ms == prior_time);
   }
 
   /* ERROR carries one or more causes in this profile. An empty ERROR
@@ -1118,15 +1115,15 @@ static void malformed_shutdown_bundle_does_not_preempt_t5(void) {
     a.t5_shutdown_deadline_ms = 1000u;
     a.deadline_ms = 1000u;
     a.last_time_ms = prior_time;
-    assert(cnet_sctp_wire_encode(5001u, 5000u, a.local_tag, &empty_error, 1u,
+    check(cnet_sctp_wire_encode(5001u, 5000u, a.local_tag, &empty_error, 1u,
         packet, sizeof(packet), &packet_n) == CNET_SCTP_WIRE_OK);
     memset(output, 0xCC, sizeof(output));
-    assert(cnet_sctp_assoc_input(&a, 1000u, packet, packet_n,
+    check(cnet_sctp_assoc_input(&a, 1000u, packet, packet_n,
         output, sizeof(output), &output_n) == CNET_SCTP_ASSOC_PROTOCOL);
-    assert(output_n == 0u && output[0] == 0xCCu);
-    assert(a.state == CNET_SCTP_ASSOC_SHUTDOWN_SENT);
-    assert(a.t5_shutdown_deadline_ms == 1000u);
-    assert(a.last_time_ms == prior_time);
+    check(output_n == 0u && output[0] == 0xCCu);
+    check(a.state == CNET_SCTP_ASSOC_SHUTDOWN_SENT);
+    check(a.t5_shutdown_deadline_ms == 1000u);
+    check(a.last_time_ms == prior_time);
   }
 
   /* A registered control that this profile cannot validate (an empty
@@ -1139,21 +1136,21 @@ static void malformed_shutdown_bundle_does_not_preempt_t5(void) {
     a.t5_shutdown_deadline_ms = 1000u;
     a.deadline_ms = 1000u;
     a.last_time_ms = prior_time;
-    assert(cnet_sctp_wire_encode(5001u, 5000u, a.local_tag, &heartbeat, 1u,
+    check(cnet_sctp_wire_encode(5001u, 5000u, a.local_tag, &heartbeat, 1u,
         packet, sizeof(packet), &packet_n) == CNET_SCTP_WIRE_OK);
     memset(output, 0xCC, sizeof(output));
-    assert(cnet_sctp_assoc_input(&a, 1000u, packet, packet_n,
+    check(cnet_sctp_assoc_input(&a, 1000u, packet, packet_n,
         output, sizeof(output), &output_n) == CNET_SCTP_ASSOC_PROTOCOL);
-    assert(output_n == 0u && output[0] == 0xCCu);
-    assert(a.state == CNET_SCTP_ASSOC_SHUTDOWN_SENT);
-    assert(a.t5_shutdown_deadline_ms == 1000u);
-    assert(a.last_time_ms == prior_time);
+    check(output_n == 0u && output[0] == 0xCCu);
+    check(a.state == CNET_SCTP_ASSOC_SHUTDOWN_SENT);
+    check(a.t5_shutdown_deadline_ms == 1000u);
+    check(a.last_time_ms == prior_time);
   }
 
-  assert(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_OK);
-  assert(cnet_sctp_assoc_stop(&b) == CNET_SCTP_ASSOC_OK);
-  assert(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
-  assert(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
+  check(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_OK);
+  check(cnet_sctp_assoc_stop(&b) == CNET_SCTP_ASSOC_OK);
+  check(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
+  check(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
 }
 
 /* A valid checksum and individually well-formed Chunk payloads must not
@@ -1168,19 +1165,19 @@ static void assert_mixed_bundle_rejected_without_commit(cnet_sctp_assoc *a,
   uint8_t packet[256] = {0}, output[256];
   size_t packet_n = 0u, output_n = 123u, i;
 
-  assert(cnet_sctp_wire_encode(5001u, 5000u, a->local_tag, chunks, count,
+  check(cnet_sctp_wire_encode(5001u, 5000u, a->local_tag, chunks, count,
       packet, sizeof(packet), &packet_n) == CNET_SCTP_WIRE_OK);
-  assert(cnet_sctp_wire_decode(packet, packet_n, &header, &decoder) ==
+  check(cnet_sctp_wire_decode(packet, packet_n, &header, &decoder) ==
       CNET_SCTP_WIRE_OK);
-  assert(header.chunk_count == count);
+  check(header.chunk_count == count);
   memcpy(&before, a, sizeof(before));
   memset(output, 0xCC, sizeof(output));
-  assert(cnet_sctp_assoc_input(a, now, packet, packet_n, output,
+  check(cnet_sctp_assoc_input(a, now, packet, packet_n, output,
       sizeof(output), &output_n) == CNET_SCTP_ASSOC_PROTOCOL);
-  assert(output_n == 0u);
-  assert(memcmp(a, &before, sizeof(before)) == 0);
+  check(output_n == 0u);
+  check(memcmp(a, &before, sizeof(before)) == 0);
   for (i = 0u; i < sizeof(output); ++i)
-    assert(output[i] == 0xCCu);
+    check(output[i] == 0xCCu);
 }
 
 static void mixed_unknown_known_bundles_fail_closed(void) {
@@ -1259,10 +1256,10 @@ static void mixed_unknown_known_bundles_fail_closed(void) {
       }
     }
   }
-  assert(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_OK);
-  assert(cnet_sctp_assoc_stop(&b) == CNET_SCTP_ASSOC_OK);
-  assert(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
-  assert(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
+  check(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_OK);
+  check(cnet_sctp_assoc_stop(&b) == CNET_SCTP_ASSOC_OK);
+  check(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
+  check(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
 }
 
 static void unknown_chunks_do_not_preempt_t5(void) {
@@ -1292,27 +1289,27 @@ static void unknown_chunks_do_not_preempt_t5(void) {
     chunks[1].flags = 0u;
     chunks[1].value = value;
     chunks[1].value_size = sizeof(value);
-    assert(cnet_sctp_wire_encode(5001u, 5000u, a.local_tag, chunks, count,
+    check(cnet_sctp_wire_encode(5001u, 5000u, a.local_tag, chunks, count,
         packet, sizeof(packet), &packet_n) == CNET_SCTP_WIRE_OK);
     memset(output, 0xCC, sizeof(output));
     /* At the absolute T5 deadline, neither single nor multi unknown-Chunk
      * fast paths may postpone publication of the required ABORT. */
-    assert(cnet_sctp_assoc_input(&a, 1000u, packet, packet_n,
+    check(cnet_sctp_assoc_input(&a, 1000u, packet, packet_n,
         output, sizeof(output), &output_n) == CNET_SCTP_ASSOC_OK);
-    assert(output_n >= 16u);
-    assert(a.state == CNET_SCTP_ASSOC_FAILED);
-    assert(a.t5_shutdown_deadline_ms == 0u);
-    assert(a.last_time_ms == 1000u);
-    assert(cnet_sctp_wire_decode(output, output_n, &response_header,
+    check(output_n >= 16u);
+    check(a.state == CNET_SCTP_ASSOC_FAILED);
+    check(a.t5_shutdown_deadline_ms == 0u);
+    check(a.last_time_ms == 1000u);
+    check(cnet_sctp_wire_decode(output, output_n, &response_header,
         &response_decoder) == CNET_SCTP_WIRE_OK);
-    assert(response_header.chunk_count == 1u);
-    assert(cnet_sctp_wire_next_chunk(&response_decoder, &response_chunk) ==
+    check(response_header.chunk_count == 1u);
+    check(cnet_sctp_wire_next_chunk(&response_decoder, &response_chunk) ==
         CNET_SCTP_WIRE_OK);
-    assert(response_chunk.type == 6u && response_chunk.value_size == 0u);
-    assert(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_OK);
-    assert(cnet_sctp_assoc_stop(&b) == CNET_SCTP_ASSOC_OK);
-    assert(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
-    assert(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
+    check(response_chunk.type == 6u && response_chunk.value_size == 0u);
+    check(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_OK);
+    check(cnet_sctp_assoc_stop(&b) == CNET_SCTP_ASSOC_OK);
+    check(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
+    check(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
   }
 }
 
@@ -1348,24 +1345,24 @@ static void unknown_pre_cookie_packets_fail_closed(void) {
         chunks[0].value = value;
         chunks[0].value_size = sizeof(value);
         chunks[1] = chunks[0];
-        assert(cnet_sctp_wire_encode(5001u, 5000u, a.local_tag,
+        check(cnet_sctp_wire_encode(5001u, 5000u, a.local_tag,
             chunks, count, packet, sizeof(packet), &packet_n) ==
             CNET_SCTP_WIRE_OK);
         memcpy(&before, &a, sizeof(before));
         memset(output, 0xCC, sizeof(output));
-        assert(cnet_sctp_assoc_input(&a, a.last_time_ms + 1u,
+        check(cnet_sctp_assoc_input(&a, a.last_time_ms + 1u,
             packet, packet_n, output, sizeof(output), &output_n) ==
             CNET_SCTP_ASSOC_PROTOCOL);
-        assert(output_n == 0u && memcmp(&a, &before, sizeof(before)) == 0);
+        check(output_n == 0u && memcmp(&a, &before, sizeof(before)) == 0);
         for (i = 0u; i < sizeof(output); ++i)
-          assert(output[i] == 0xCCu);
+          check(output[i] == 0xCCu);
       }
     }
   }
-  assert(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_OK);
-  assert(cnet_sctp_assoc_stop(&b) == CNET_SCTP_ASSOC_OK);
-  assert(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
-  assert(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
+  check(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_OK);
+  check(cnet_sctp_assoc_stop(&b) == CNET_SCTP_ASSOC_OK);
+  check(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
+  check(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
 }
 
 static void unknown_chunk_actions_are_bounded_and_exact(void) {
@@ -1387,39 +1384,39 @@ static void unknown_chunk_actions_are_bounded_and_exact(void) {
     uint8_t packet[64] = {0}, output[128], tiny[1] = {0xCCu};
     size_t packet_n = 0u, output_n = 0u;
     uint64_t prior_time = a.last_time_ms;
-    assert(cnet_sctp_wire_encode(5001u, 5000u, a.local_tag, &chunk, 1u,
+    check(cnet_sctp_wire_encode(5001u, 5000u, a.local_tag, &chunk, 1u,
         packet, sizeof(packet), &packet_n) == CNET_SCTP_WIRE_OK);
     memset(output, 0xCC, sizeof(output));
     if (types[i] == 0x61u || types[i] == 0xE3u) {
-      assert(cnet_sctp_assoc_input(&a, prior_time + 1u, packet, packet_n,
+      check(cnet_sctp_assoc_input(&a, prior_time + 1u, packet, packet_n,
           tiny, sizeof(tiny), &output_n) == CNET_SCTP_ASSOC_CAPACITY);
-      assert(output_n == 0u && a.last_time_ms == prior_time);
-      assert(a.state == CNET_SCTP_ASSOC_ESTABLISHED && tiny[0] == 0xCCu);
+      check(output_n == 0u && a.last_time_ms == prior_time);
+      check(a.state == CNET_SCTP_ASSOC_ESTABLISHED && tiny[0] == 0xCCu);
     }
-    assert(cnet_sctp_assoc_input(&a, prior_time + 1u, packet, packet_n,
+    check(cnet_sctp_assoc_input(&a, prior_time + 1u, packet, packet_n,
         output, sizeof(output), &output_n) == CNET_SCTP_ASSOC_OK);
-    assert(a.state == CNET_SCTP_ASSOC_ESTABLISHED);
-    assert(a.last_time_ms == prior_time + 1u);
+    check(a.state == CNET_SCTP_ASSOC_ESTABLISHED);
+    check(a.last_time_ms == prior_time + 1u);
     if (types[i] == 0x20u || types[i] == 0xA2u) {
-      assert(output_n == 0u && output[0] == 0xCCu);
+      check(output_n == 0u && output[0] == 0xCCu);
     } else {
-      assert(output_n >= 24u);
-      assert(cnet_sctp_wire_decode(output, output_n, &h, &d) == CNET_SCTP_WIRE_OK);
-      assert(h.chunk_count == 1u);
-      assert(cnet_sctp_wire_next_chunk(&d, &response_chunk) == CNET_SCTP_WIRE_OK);
-      assert(response_chunk.type == 9u && response_chunk.flags == 0u);
-      assert(response_chunk.value_size == sizeof(value) + 8u);
-      assert(response_chunk.value[0] == 0u && response_chunk.value[1] == 6u);
-      assert(response_chunk.value[2] == 0u &&
+      check(output_n >= 24u);
+      check(cnet_sctp_wire_decode(output, output_n, &h, &d) == CNET_SCTP_WIRE_OK);
+      check(h.chunk_count == 1u);
+      check(cnet_sctp_wire_next_chunk(&d, &response_chunk) == CNET_SCTP_WIRE_OK);
+      check(response_chunk.type == 9u && response_chunk.flags == 0u);
+      check(response_chunk.value_size == sizeof(value) + 8u);
+      check(response_chunk.value[0] == 0u && response_chunk.value[1] == 6u);
+      check(response_chunk.value[2] == 0u &&
              response_chunk.value[3] == (uint8_t)(sizeof(value) + 8u));
-      assert(memcmp(response_chunk.value + 4u, packet + 12u,
+      check(memcmp(response_chunk.value + 4u, packet + 12u,
                     sizeof(value) + 4u) == 0);
     }
   }
-  assert(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_OK);
-  assert(cnet_sctp_assoc_stop(&b) == CNET_SCTP_ASSOC_OK);
-  assert(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
-  assert(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
+  check(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_OK);
+  check(cnet_sctp_assoc_stop(&b) == CNET_SCTP_ASSOC_OK);
+  check(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
+  check(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
 }
 
 /* The public Wire module can parse packets far above the private
@@ -1443,55 +1440,55 @@ static void unknown_single_report_packet_ceiling_is_transactional(void) {
   a.state = CNET_SCTP_ASSOC_ESTABLISHED;
   a.peer_tag = b.local_tag;
   previous_time = a.last_time_ms;
-  assert(cnet_sctp_wire_encode(5001u, 5000u, a.local_tag, &unknown, 1u,
+  check(cnet_sctp_wire_encode(5001u, 5000u, a.local_tag, &unknown, 1u,
       packet, sizeof(packet), &packet_n) == CNET_SCTP_WIRE_OK);
-  assert(packet_n == 1192u);
+  check(packet_n == 1192u);
   memset(output, 0xCC, sizeof(output));
-  assert(cnet_sctp_assoc_input(&a, previous_time + 1u, packet, packet_n,
+  check(cnet_sctp_assoc_input(&a, previous_time + 1u, packet, packet_n,
       output, 1199u, &output_n) == CNET_SCTP_ASSOC_CAPACITY);
-  assert(output_n == 0u && output[0] == 0xCCu &&
+  check(output_n == 0u && output[0] == 0xCCu &&
       output[1198] == 0xCCu && output[1199] == 0xCCu);
-  assert(a.last_time_ms == previous_time &&
+  check(a.last_time_ms == previous_time &&
       a.state == CNET_SCTP_ASSOC_ESTABLISHED);
-  assert(cnet_sctp_assoc_input(&a, previous_time + 1u, packet, packet_n,
+  check(cnet_sctp_assoc_input(&a, previous_time + 1u, packet, packet_n,
       output, 1200u, &output_n) == CNET_SCTP_ASSOC_OK);
-  assert(output_n == 1200u && output[1200] == 0xCCu);
-  assert(a.last_time_ms == previous_time + 1u &&
+  check(output_n == 1200u && output[1200] == 0xCCu);
+  check(a.last_time_ms == previous_time + 1u &&
       a.state == CNET_SCTP_ASSOC_ESTABLISHED);
-  assert(cnet_sctp_wire_decode(output, output_n, &response_header,
+  check(cnet_sctp_wire_decode(output, output_n, &response_header,
       &response_decoder) == CNET_SCTP_WIRE_OK);
-  assert(response_header.chunk_count == 1u &&
+  check(response_header.chunk_count == 1u &&
       response_header.verification_tag == a.peer_tag);
-  assert(cnet_sctp_wire_next_chunk(&response_decoder, &response_chunk) ==
+  check(cnet_sctp_wire_next_chunk(&response_decoder, &response_chunk) ==
       CNET_SCTP_WIRE_OK);
-  assert(response_chunk.type == 9u && response_chunk.flags == 0u &&
+  check(response_chunk.type == 9u && response_chunk.flags == 0u &&
       response_chunk.value_size == 1184u);
-  assert(response_chunk.value[0] == 0u &&
+  check(response_chunk.value[0] == 0u &&
       response_chunk.value[1] == 6u &&
       response_chunk.value[2] == 0x04u &&
       response_chunk.value[3] == 0xA0u);
-  assert(memcmp(response_chunk.value + 4u, packet + 12u,
+  check(memcmp(response_chunk.value + 4u, packet + 12u,
       1180u) == 0);
 
   /* Just one payload byte more would require a 1204-byte ERROR. It must
    * fail even with a 2048-byte destination, without output or clock commit. */
   unknown.value_size = 1177u;
-  assert(cnet_sctp_wire_encode(5001u, 5000u, a.local_tag, &unknown, 1u,
+  check(cnet_sctp_wire_encode(5001u, 5000u, a.local_tag, &unknown, 1u,
       packet, sizeof(packet), &packet_n) == CNET_SCTP_WIRE_OK);
-  assert(packet_n == 1196u);
+  check(packet_n == 1196u);
   previous_time = a.last_time_ms;
   memset(output, 0xCC, sizeof(output));
   output_n = 123u;
-  assert(cnet_sctp_assoc_input(&a, previous_time + 1u, packet, packet_n,
+  check(cnet_sctp_assoc_input(&a, previous_time + 1u, packet, packet_n,
       output, sizeof(output), &output_n) == CNET_SCTP_ASSOC_CAPACITY);
-  assert(output_n == 0u && output[0] == 0xCCu &&
+  check(output_n == 0u && output[0] == 0xCCu &&
       output[1199] == 0xCCu && output[sizeof(output) - 1u] == 0xCCu);
-  assert(a.last_time_ms == previous_time &&
+  check(a.last_time_ms == previous_time &&
       a.state == CNET_SCTP_ASSOC_ESTABLISHED);
-  assert(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_OK);
-  assert(cnet_sctp_assoc_stop(&b) == CNET_SCTP_ASSOC_OK);
-  assert(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
-  assert(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
+  check(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_OK);
+  check(cnet_sctp_assoc_stop(&b) == CNET_SCTP_ASSOC_OK);
+  check(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
+  check(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
 }
 
 static void unknown_multi_chunk_actions_are_transactional(void) {
@@ -1532,58 +1529,58 @@ static void unknown_multi_chunk_actions_are_transactional(void) {
       chunks[i].value = value;
       chunks[i].value_size = sizeof(value);
     }
-    assert(cnet_sctp_wire_encode(5001u, 5000u, a.local_tag, chunks, 3u,
+    check(cnet_sctp_wire_encode(5001u, 5000u, a.local_tag, chunks, 3u,
         packet, sizeof(packet), &packet_n) == CNET_SCTP_WIRE_OK);
     memset(output, 0xCC, sizeof(output));
     if (case_i == 6u) {
       /* An ERROR with two causes cannot fit: no output byte, TCB field or
        * monotonic watermark may be committed; retry at the same time works. */
-      assert(cnet_sctp_assoc_input(&a, now, packet, packet_n,
+      check(cnet_sctp_assoc_input(&a, now, packet, packet_n,
           tiny, sizeof(tiny), &output_n) == CNET_SCTP_ASSOC_CAPACITY);
-      assert(output_n == 0u && tiny[0] == 0xCCu);
-      assert(a.state == CNET_SCTP_ASSOC_ESTABLISHED);
-      assert(a.last_time_ms == prior_time);
+      check(output_n == 0u && tiny[0] == 0xCCu);
+      check(a.state == CNET_SCTP_ASSOC_ESTABLISHED);
+      check(a.last_time_ms == prior_time);
     }
-    assert(cnet_sctp_assoc_input(&a, now, packet, packet_n,
+    check(cnet_sctp_assoc_input(&a, now, packet, packet_n,
         output, sizeof(output), &output_n) == CNET_SCTP_ASSOC_OK);
-    assert(a.state == CNET_SCTP_ASSOC_ESTABLISHED);
-    assert(a.last_time_ms == now);
+    check(a.state == CNET_SCTP_ASSOC_ESTABLISHED);
+    check(a.last_time_ms == now);
     for (i = 0u; i < 3u; ++i)
       if ((report_masks[case_i] & (uint8_t)(1u << i)) != 0u)
         ++report_count;
     if (report_count == 0u) {
-      assert(output_n == 0u && output[0] == 0xCCu);
+      check(output_n == 0u && output[0] == 0xCCu);
       continue;
     }
-    assert(cnet_sctp_wire_decode(output, output_n, &header, &decoder) ==
+    check(cnet_sctp_wire_decode(output, output_n, &header, &decoder) ==
         CNET_SCTP_WIRE_OK);
-    assert(header.chunk_count == 1u);
-    assert(cnet_sctp_wire_next_chunk(&decoder, &response_chunk) ==
+    check(header.chunk_count == 1u);
+    check(cnet_sctp_wire_next_chunk(&decoder, &response_chunk) ==
         CNET_SCTP_WIRE_OK);
-    assert(response_chunk.type == 9u && response_chunk.flags == 0u);
-    assert(response_chunk.value_size == report_count * 12u);
+    check(response_chunk.type == 9u && response_chunk.flags == 0u);
+    check(response_chunk.value_size == report_count * 12u);
     {
       size_t cause_pos = 0u;
       for (i = 0u; i < 3u; ++i) {
         const uint8_t *cause;
         if ((report_masks[case_i] & (uint8_t)(1u << i)) == 0u) continue;
         cause = response_chunk.value + cause_pos;
-        assert(cause[0] == 0u && cause[1] == 6u);
-        assert(cause[2] == 0u && cause[3] == 11u);
-        assert(cause[4] == sequences[case_i][i]);
-        assert(cause[5] == 0x5Au);
-        assert(cause[6] == 0u && cause[7] == 7u);
-        assert(memcmp(cause + 8u, value, sizeof(value)) == 0);
-        assert(cause[11] == 0u); /* cause element padding */
+        check(cause[0] == 0u && cause[1] == 6u);
+        check(cause[2] == 0u && cause[3] == 11u);
+        check(cause[4] == sequences[case_i][i]);
+        check(cause[5] == 0x5Au);
+        check(cause[6] == 0u && cause[7] == 7u);
+        check(memcmp(cause + 8u, value, sizeof(value)) == 0);
+        check(cause[11] == 0u); /* cause element padding */
         cause_pos += 12u;
       }
-      assert(cause_pos == response_chunk.value_size);
+      check(cause_pos == response_chunk.value_size);
     }
   }
-  assert(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_OK);
-  assert(cnet_sctp_assoc_stop(&b) == CNET_SCTP_ASSOC_OK);
-  assert(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
-  assert(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
+  check(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_OK);
+  check(cnet_sctp_assoc_stop(&b) == CNET_SCTP_ASSOC_OK);
+  check(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
+  check(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
 }
 
 static void unknown_report_variable_lengths_preserve_tlv_and_padding(void) {
@@ -1616,18 +1613,18 @@ static void unknown_report_variable_lengths_preserve_tlv_and_padding(void) {
     chunks[i].value = payloads[i];
     chunks[i].value_size = payload_sizes[i];
   }
-  assert(cnet_sctp_wire_encode(5001u, 5000u, a.local_tag, chunks, 3u,
+  check(cnet_sctp_wire_encode(5001u, 5000u, a.local_tag, chunks, 3u,
       packet, sizeof(packet), &packet_n) == CNET_SCTP_WIRE_OK);
   memset(output, 0xCC, sizeof(output));
-  assert(cnet_sctp_assoc_input(&a, now, packet, packet_n, output,
+  check(cnet_sctp_assoc_input(&a, now, packet, packet_n, output,
       sizeof(output), &output_n) == CNET_SCTP_ASSOC_OK);
-  assert(a.state == CNET_SCTP_ASSOC_ESTABLISHED && a.last_time_ms == now);
-  assert(cnet_sctp_wire_decode(output, output_n, &header, &decoder) ==
+  check(a.state == CNET_SCTP_ASSOC_ESTABLISHED && a.last_time_ms == now);
+  check(cnet_sctp_wire_decode(output, output_n, &header, &decoder) ==
       CNET_SCTP_WIRE_OK);
-  assert(header.chunk_count == 1u);
-  assert(cnet_sctp_wire_next_chunk(&decoder, &response) == CNET_SCTP_WIRE_OK);
-  assert(response.type == 9u && response.flags == 0u);
-  assert(response.value_size == padded_sizes[0] + padded_sizes[1] +
+  check(header.chunk_count == 1u);
+  check(cnet_sctp_wire_next_chunk(&decoder, &response) == CNET_SCTP_WIRE_OK);
+  check(response.type == 9u && response.flags == 0u);
+  check(response.value_size == padded_sizes[0] + padded_sizes[1] +
       padded_sizes[2]);
 
   /* Exercise ERROR-cause lengths 9, 12 and 13: the first needs three
@@ -1636,20 +1633,20 @@ static void unknown_report_variable_lengths_preserve_tlv_and_padding(void) {
     const uint8_t *cause = response.value + cause_pos;
     size_t raw_chunk_size = 4u + payload_sizes[i];
     size_t j;
-    assert(cause[0] == 0u && cause[1] == 6u);
-    assert(cause[2] == 0u && cause[3] == cause_sizes[i]);
-    assert(cause[4] == types[i] && cause[5] == flags[i]);
-    assert(cause[6] == 0u && cause[7] == raw_chunk_size);
-    assert(memcmp(cause + 8u, payloads[i], payload_sizes[i]) == 0);
+    check(cause[0] == 0u && cause[1] == 6u);
+    check(cause[2] == 0u && cause[3] == cause_sizes[i]);
+    check(cause[4] == types[i] && cause[5] == flags[i]);
+    check(cause[6] == 0u && cause[7] == raw_chunk_size);
+    check(memcmp(cause + 8u, payloads[i], payload_sizes[i]) == 0);
     for (j = cause_sizes[i]; j < padded_sizes[i]; ++j)
-      assert(cause[j] == 0u);
+      check(cause[j] == 0u);
     cause_pos += padded_sizes[i];
   }
-  assert(cause_pos == response.value_size);
-  assert(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_OK);
-  assert(cnet_sctp_assoc_stop(&b) == CNET_SCTP_ASSOC_OK);
-  assert(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
-  assert(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
+  check(cause_pos == response.value_size);
+  check(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_OK);
+  check(cnet_sctp_assoc_stop(&b) == CNET_SCTP_ASSOC_OK);
+  check(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
+  check(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
 }
 
 /* Wire accepts at most 128 Chunks in this private bounded profile.
@@ -1678,17 +1675,17 @@ static void max_unknown_skip_chunk_count_is_transactional(void) {
     chunks[i].value = NULL;
     chunks[i].value_size = 0u;
   }
-  assert(cnet_sctp_wire_encode(5001u, 5000u, a.local_tag, chunks,
+  check(cnet_sctp_wire_encode(5001u, 5000u, a.local_tag, chunks,
       CNET_SCTP_WIRE_MAX_CHUNKS, packet, sizeof(packet), &packet_n) ==
       CNET_SCTP_WIRE_OK);
-  assert(packet_n == 12u + 4u * CNET_SCTP_WIRE_MAX_CHUNKS);
+  check(packet_n == 12u + 4u * CNET_SCTP_WIRE_MAX_CHUNKS);
   memset(output, 0xCC, sizeof(output));
   previous_time = a.last_time_ms;
-  assert(cnet_sctp_assoc_input(&a, previous_time + 1u, packet, packet_n,
+  check(cnet_sctp_assoc_input(&a, previous_time + 1u, packet, packet_n,
       output, sizeof(output), &output_n) == CNET_SCTP_ASSOC_OK);
-  assert(output_n == 0u && output[0] == 0xCCu &&
+  check(output_n == 0u && output[0] == 0xCCu &&
       output[sizeof(output) - 1u] == 0xCCu);
-  assert(a.state == CNET_SCTP_ASSOC_ESTABLISHED &&
+  check(a.state == CNET_SCTP_ASSOC_ESTABLISHED &&
       a.last_time_ms == previous_time + 1u);
 
   packet[packet_n] = 0xA2u;
@@ -1701,23 +1698,23 @@ static void max_unknown_skip_chunk_count_is_transactional(void) {
   packet[9] = (uint8_t)(checksum >> 8);
   packet[10] = (uint8_t)(checksum >> 16);
   packet[11] = (uint8_t)(checksum >> 24);
-  assert(cnet_sctp_wire_decode(packet, packet_n + 4u,
+  check(cnet_sctp_wire_decode(packet, packet_n + 4u,
       &header, &decoder) == CNET_SCTP_WIRE_CAPACITY);
 
   previous_time = a.last_time_ms;
   output_n = 17u;
   memset(output, 0xCC, sizeof(output));
-  assert(cnet_sctp_assoc_input(&a, previous_time + 1u, packet,
+  check(cnet_sctp_assoc_input(&a, previous_time + 1u, packet,
       packet_n + 4u, output, sizeof(output), &output_n) ==
       CNET_SCTP_ASSOC_PROTOCOL);
-  assert(output_n == 0u && output[0] == 0xCCu &&
+  check(output_n == 0u && output[0] == 0xCCu &&
       output[sizeof(output) - 1u] == 0xCCu);
-  assert(a.state == CNET_SCTP_ASSOC_ESTABLISHED &&
+  check(a.state == CNET_SCTP_ASSOC_ESTABLISHED &&
       a.last_time_ms == previous_time);
-  assert(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_OK);
-  assert(cnet_sctp_assoc_stop(&b) == CNET_SCTP_ASSOC_OK);
-  assert(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
-  assert(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
+  check(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_OK);
+  check(cnet_sctp_assoc_stop(&b) == CNET_SCTP_ASSOC_OK);
+  check(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
+  check(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
 }
 
 /* The Wire limit and private ERROR-cause limit are independent.
@@ -1752,55 +1749,55 @@ static void oversized_input_cannot_preempt_absolute_t5(void) {
   a.deadline_ms = 1000u;
   a.t5_shutdown_deadline_ms = 1000u;
 
-  assert(cnet_sctp_wire_encode(5001u, 5000u, a.local_tag, &unknown,
+  check(cnet_sctp_wire_encode(5001u, 5000u, a.local_tag, &unknown,
       1u, packet, sizeof(packet), &packet_n) == CNET_SCTP_WIRE_OK);
-  assert(packet_n == CNET_SCTP_ASSOC_MAX_PACKET + 4u);
-  assert(cnet_sctp_wire_decode(packet, packet_n, &header, &decoder) ==
+  check(packet_n == CNET_SCTP_ASSOC_MAX_PACKET + 4u);
+  check(cnet_sctp_wire_decode(packet, packet_n, &header, &decoder) ==
       CNET_SCTP_WIRE_OK);
   memcpy(&before, &a, sizeof(before));
   memset(output, 0xCC, sizeof(output));
   /* Admission must reject oversized input before T5 both immediately before
    * and exactly at the absolute deadline; neither call advances Owner time. */
-  assert(cnet_sctp_assoc_input(&a, 999u, packet, packet_n, output,
+  check(cnet_sctp_assoc_input(&a, 999u, packet, packet_n, output,
       sizeof(output), &output_n) == CNET_SCTP_ASSOC_CAPACITY);
-  assert(output_n == 0u && memcmp(&a, &before, sizeof(before)) == 0);
+  check(output_n == 0u && memcmp(&a, &before, sizeof(before)) == 0);
   for (i = 0u; i < sizeof(output); ++i)
-    assert(output[i] == 0xCCu);
+    check(output[i] == 0xCCu);
   output_n = 123u;
-  assert(cnet_sctp_assoc_input(&a, 1000u, packet, packet_n, output,
+  check(cnet_sctp_assoc_input(&a, 1000u, packet, packet_n, output,
       sizeof(output), &output_n) == CNET_SCTP_ASSOC_CAPACITY);
-  assert(output_n == 0u && memcmp(&a, &before, sizeof(before)) == 0);
+  check(output_n == 0u && memcmp(&a, &before, sizeof(before)) == 0);
   for (i = 0u; i < sizeof(output); ++i)
-    assert(output[i] == 0xCCu);
+    check(output[i] == 0xCCu);
 
   /* Shrink only the value; same type/flags/tag and same absolute clock. */
   unknown.value_size = sizeof(value) - 4u;
-  assert(cnet_sctp_wire_encode(5001u, 5000u, a.local_tag, &unknown,
+  check(cnet_sctp_wire_encode(5001u, 5000u, a.local_tag, &unknown,
       1u, packet, sizeof(packet), &packet_n) == CNET_SCTP_WIRE_OK);
-  assert(packet_n == CNET_SCTP_ASSOC_MAX_PACKET);
+  check(packet_n == CNET_SCTP_ASSOC_MAX_PACKET);
   output_n = 123u;
-  assert(cnet_sctp_assoc_input(&a, 1000u, packet, packet_n, output,
+  check(cnet_sctp_assoc_input(&a, 1000u, packet, packet_n, output,
       15u, &output_n) == CNET_SCTP_ASSOC_CAPACITY);
-  assert(output_n == 0u && memcmp(&a, &before, sizeof(before)) == 0);
+  check(output_n == 0u && memcmp(&a, &before, sizeof(before)) == 0);
   for (i = 0u; i < sizeof(output); ++i)
-    assert(output[i] == 0xCCu);
+    check(output[i] == 0xCCu);
 
-  assert(cnet_sctp_assoc_input(&a, 1000u, packet, packet_n, output,
+  check(cnet_sctp_assoc_input(&a, 1000u, packet, packet_n, output,
       sizeof(output), &output_n) == CNET_SCTP_ASSOC_OK);
-  assert(output_n == 16u && a.state == CNET_SCTP_ASSOC_FAILED &&
+  check(output_n == 16u && a.state == CNET_SCTP_ASSOC_FAILED &&
       a.t5_shutdown_deadline_ms == 0u &&
       a.deadline_ms == 0u && a.last_time_ms == 1000u);
-  assert(cnet_sctp_wire_decode(output, output_n, &header, &decoder) ==
+  check(cnet_sctp_wire_decode(output, output_n, &header, &decoder) ==
       CNET_SCTP_WIRE_OK);
-  assert(header.chunk_count == 1u && header.verification_tag == a.peer_tag);
-  assert(cnet_sctp_wire_next_chunk(&decoder, &response_chunk) ==
+  check(header.chunk_count == 1u && header.verification_tag == a.peer_tag);
+  check(cnet_sctp_wire_next_chunk(&decoder, &response_chunk) ==
       CNET_SCTP_WIRE_OK);
-  assert(response_chunk.type == 6u && response_chunk.flags == 0u &&
+  check(response_chunk.type == 6u && response_chunk.flags == 0u &&
       response_chunk.value_size == 0u);
-  assert(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_OK);
-  assert(cnet_sctp_assoc_stop(&b) == CNET_SCTP_ASSOC_OK);
-  assert(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
-  assert(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
+  check(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_OK);
+  check(cnet_sctp_assoc_stop(&b) == CNET_SCTP_ASSOC_OK);
+  check(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
+  check(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
 }
 
 static void oversized_unknown_skip_packet_is_not_admitted(void) {
@@ -1817,37 +1814,37 @@ static void oversized_unknown_skip_packet_is_not_admitted(void) {
   a.state = CNET_SCTP_ASSOC_ESTABLISHED;
   a.peer_tag = b.local_tag;
 
-  assert(cnet_sctp_wire_encode(5001u, 5000u, a.local_tag, &unknown,
+  check(cnet_sctp_wire_encode(5001u, 5000u, a.local_tag, &unknown,
       1u, packet, sizeof(packet), &packet_n) == CNET_SCTP_WIRE_OK);
-  assert(packet_n == CNET_SCTP_ASSOC_MAX_PACKET);
-  assert(cnet_sctp_wire_decode(packet, packet_n, &h, &d) == CNET_SCTP_WIRE_OK);
+  check(packet_n == CNET_SCTP_ASSOC_MAX_PACKET);
+  check(cnet_sctp_wire_decode(packet, packet_n, &h, &d) == CNET_SCTP_WIRE_OK);
   memset(output, 0xCC, sizeof(output));
-  assert(cnet_sctp_assoc_input(&a, a.last_time_ms + 1u,
+  check(cnet_sctp_assoc_input(&a, a.last_time_ms + 1u,
       packet, packet_n, output, sizeof(output), &output_n) ==
       CNET_SCTP_ASSOC_OK);
-  assert(output_n == 0u && a.state == CNET_SCTP_ASSOC_ESTABLISHED &&
+  check(output_n == 0u && a.state == CNET_SCTP_ASSOC_ESTABLISHED &&
       a.last_time_ms == 1u);
-  for (i = 0u; i < sizeof(output); ++i) assert(output[i] == 0xCCu);
+  for (i = 0u; i < sizeof(output); ++i) check(output[i] == 0xCCu);
 
   unknown.value_size = 1188u;
-  assert(cnet_sctp_wire_encode(5001u, 5000u, a.local_tag, &unknown,
+  check(cnet_sctp_wire_encode(5001u, 5000u, a.local_tag, &unknown,
       1u, packet, sizeof(packet), &packet_n) == CNET_SCTP_WIRE_OK);
-  assert(packet_n == CNET_SCTP_ASSOC_MAX_PACKET + 4u);
-  assert(cnet_sctp_wire_decode(packet, packet_n, &h, &d) == CNET_SCTP_WIRE_OK);
+  check(packet_n == CNET_SCTP_ASSOC_MAX_PACKET + 4u);
+  check(cnet_sctp_wire_decode(packet, packet_n, &h, &d) == CNET_SCTP_WIRE_OK);
 
   memcpy(&before, &a, sizeof(before));
   memset(output, 0xCC, sizeof(output));
   output_n = 123u;
-  assert(cnet_sctp_assoc_input(&a, a.last_time_ms + 1u,
+  check(cnet_sctp_assoc_input(&a, a.last_time_ms + 1u,
       packet, packet_n, output, sizeof(output), &output_n) ==
       CNET_SCTP_ASSOC_CAPACITY);
-  assert(output_n == 0u && memcmp(&a, &before, sizeof(before)) == 0);
-  for (i = 0u; i < sizeof(output); ++i) assert(output[i] == 0xCCu);
+  check(output_n == 0u && memcmp(&a, &before, sizeof(before)) == 0);
+  for (i = 0u; i < sizeof(output); ++i) check(output[i] == 0xCCu);
 
-  assert(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_OK);
-  assert(cnet_sctp_assoc_stop(&b) == CNET_SCTP_ASSOC_OK);
-  assert(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
-  assert(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
+  check(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_OK);
+  check(cnet_sctp_assoc_stop(&b) == CNET_SCTP_ASSOC_OK);
+  check(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
+  check(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
 }
 
 static void max_unknown_report_chunk_count_is_transactional(void) {
@@ -1870,44 +1867,44 @@ static void max_unknown_report_chunk_count_is_transactional(void) {
     chunks[i].value = NULL;
     chunks[i].value_size = 0u;
   }
-  assert(cnet_sctp_wire_encode(5001u, 5000u, a.local_tag, chunks,
+  check(cnet_sctp_wire_encode(5001u, 5000u, a.local_tag, chunks,
       CNET_SCTP_WIRE_MAX_CHUNKS, packet, sizeof(packet), &packet_n) ==
       CNET_SCTP_WIRE_OK);
-  assert(packet_n == sizeof(packet));
+  check(packet_n == sizeof(packet));
   prior_time = a.last_time_ms;
   memset(output, 0xCC, sizeof(output));
-  assert(cnet_sctp_assoc_input(&a, prior_time + 1u, packet, packet_n,
+  check(cnet_sctp_assoc_input(&a, prior_time + 1u, packet, packet_n,
       output, 1039u, &output_n) == CNET_SCTP_ASSOC_CAPACITY);
-  assert(output_n == 0u && a.last_time_ms == prior_time &&
+  check(output_n == 0u && a.last_time_ms == prior_time &&
       a.state == CNET_SCTP_ASSOC_ESTABLISHED);
   for (j = 0u; j < sizeof(output); ++j)
-    assert(output[j] == 0xCCu);
-  assert(cnet_sctp_assoc_input(&a, prior_time + 1u, packet, packet_n,
+    check(output[j] == 0xCCu);
+  check(cnet_sctp_assoc_input(&a, prior_time + 1u, packet, packet_n,
       output, 1040u, &output_n) == CNET_SCTP_ASSOC_OK);
-  assert(output_n == 1040u && output[1040] == 0xCCu);
-  assert(a.state == CNET_SCTP_ASSOC_ESTABLISHED &&
+  check(output_n == 1040u && output[1040] == 0xCCu);
+  check(a.state == CNET_SCTP_ASSOC_ESTABLISHED &&
       a.last_time_ms == prior_time + 1u);
-  assert(cnet_sctp_wire_decode(output, output_n, &header, &decoder) ==
+  check(cnet_sctp_wire_decode(output, output_n, &header, &decoder) ==
       CNET_SCTP_WIRE_OK);
-  assert(header.chunk_count == 1u &&
+  check(header.chunk_count == 1u &&
       header.verification_tag == a.peer_tag);
-  assert(cnet_sctp_wire_next_chunk(&decoder, &response_chunk) ==
+  check(cnet_sctp_wire_next_chunk(&decoder, &response_chunk) ==
       CNET_SCTP_WIRE_OK);
-  assert(response_chunk.type == 9u && response_chunk.flags == 0u &&
+  check(response_chunk.type == 9u && response_chunk.flags == 0u &&
       response_chunk.value_size == 8u * CNET_SCTP_WIRE_MAX_CHUNKS);
   for (i = 0u; i < CNET_SCTP_WIRE_MAX_CHUNKS; ++i) {
     const uint8_t *cause = response_chunk.value + 8u * i;
-    assert(cause[0] == 0u && cause[1] == 6u &&
+    check(cause[0] == 0u && cause[1] == 6u &&
         cause[2] == 0u && cause[3] == 8u);
-    assert(cause[4] == 0xE3u && cause[5] == 0x5Au &&
+    check(cause[4] == 0xE3u && cause[5] == 0x5Au &&
         cause[6] == 0u && cause[7] == 4u);
   }
-  assert(cnet_sctp_wire_next_chunk(&decoder, &response_chunk) ==
+  check(cnet_sctp_wire_next_chunk(&decoder, &response_chunk) ==
       CNET_SCTP_WIRE_END);
-  assert(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_OK);
-  assert(cnet_sctp_assoc_stop(&b) == CNET_SCTP_ASSOC_OK);
-  assert(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
-  assert(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
+  check(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_OK);
+  check(cnet_sctp_assoc_stop(&b) == CNET_SCTP_ASSOC_OK);
+  check(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
+  check(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
 }
 
 static void unknown_report_dense_capacity_boundary(void) {
@@ -1940,58 +1937,58 @@ static void unknown_report_dense_capacity_boundary(void) {
 
     /* 101 valid input Chunks occupy only 820 bytes; their report causes
      * exceed the bounded 1200-byte ERROR staging buffer. */
-    assert(cnet_sctp_wire_encode(5001u, 5000u, a.local_tag, chunks,
+    check(cnet_sctp_wire_encode(5001u, 5000u, a.local_tag, chunks,
         count, packet, sizeof(packet), &packet_n) == CNET_SCTP_WIRE_OK);
-    assert(packet_n == 12u + count * 8u);
+    check(packet_n == 12u + count * 8u);
     memset(output, 0xCC, sizeof(output));
 
     if (count == 98u) {
       const size_t response_size = 12u + 4u + 98u * 12u;
       /* The generated ERROR is 1192 bytes: reject 1191 without touching
        * output or association, then admit exactly 1192 on the same clock. */
-      assert(response_size == 1192u);
-      assert(cnet_sctp_assoc_input(&a, now, packet, packet_n,
+      check(response_size == 1192u);
+      check(cnet_sctp_assoc_input(&a, now, packet, packet_n,
           output, response_size - 1u, &output_n) == CNET_SCTP_ASSOC_CAPACITY);
-      assert(output_n == 0u && output[0] == 0xCCu &&
+      check(output_n == 0u && output[0] == 0xCCu &&
           output[response_size - 2u] == 0xCCu);
-      assert(a.state == CNET_SCTP_ASSOC_ESTABLISHED &&
+      check(a.state == CNET_SCTP_ASSOC_ESTABLISHED &&
           a.last_time_ms == prior_time);
-      assert(cnet_sctp_assoc_input(&a, now, packet, packet_n,
+      check(cnet_sctp_assoc_input(&a, now, packet, packet_n,
           output, response_size, &output_n) == CNET_SCTP_ASSOC_OK);
-      assert(output_n == response_size && output[response_size] == 0xCCu);
-      assert(a.state == CNET_SCTP_ASSOC_ESTABLISHED &&
+      check(output_n == response_size && output[response_size] == 0xCCu);
+      check(a.state == CNET_SCTP_ASSOC_ESTABLISHED &&
           a.last_time_ms == now);
-      assert(cnet_sctp_wire_decode(output, output_n, &header, &decoder) ==
+      check(cnet_sctp_wire_decode(output, output_n, &header, &decoder) ==
           CNET_SCTP_WIRE_OK);
-      assert(header.chunk_count == 1u);
-      assert(cnet_sctp_wire_next_chunk(&decoder, &response) ==
+      check(header.chunk_count == 1u);
+      check(cnet_sctp_wire_next_chunk(&decoder, &response) ==
           CNET_SCTP_WIRE_OK);
-      assert(response.type == 9u && response.flags == 0u);
-      assert(response.value_size == 98u * 12u);
+      check(response.type == 9u && response.flags == 0u);
+      check(response.value_size == 98u * 12u);
       for (i = 0u; i < 98u; ++i) {
         const uint8_t *cause = response.value + i * 12u;
-        assert(cause[0] == 0u && cause[1] == 6u &&
+        check(cause[0] == 0u && cause[1] == 6u &&
             cause[2] == 0u && cause[3] == 12u);
-        assert(cause[4] == 0xE3u && cause[5] == 0x5Au &&
+        check(cause[4] == 0xE3u && cause[5] == 0x5Au &&
             cause[6] == 0u && cause[7] == 8u);
-        assert(memcmp(cause + 8u, value, sizeof(value)) == 0);
+        check(memcmp(cause + 8u, value, sizeof(value)) == 0);
       }
     } else {
       /* 99/100 reports fit the causes array but exceed the response
        * packet; 101 exceeds the causes array itself. All fail closed. */
-      assert(cnet_sctp_assoc_input(&a, now, packet, packet_n,
+      check(cnet_sctp_assoc_input(&a, now, packet, packet_n,
           output, sizeof(output), &output_n) == CNET_SCTP_ASSOC_CAPACITY);
-      assert(output_n == 0u && output[0] == 0xCCu &&
+      check(output_n == 0u && output[0] == 0xCCu &&
           output[sizeof(output) - 1u] == 0xCCu);
-      assert(a.state == CNET_SCTP_ASSOC_ESTABLISHED &&
+      check(a.state == CNET_SCTP_ASSOC_ESTABLISHED &&
           a.last_time_ms == prior_time);
     }
   }
 
-  assert(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_OK);
-  assert(cnet_sctp_assoc_stop(&b) == CNET_SCTP_ASSOC_OK);
-  assert(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
-  assert(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
+  check(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_OK);
+  check(cnet_sctp_assoc_stop(&b) == CNET_SCTP_ASSOC_OK);
+  check(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
+  check(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
 }
 
 /* RFC 9260 9.1: an incoming ABORT must NEVER provoke an ABORT response,
@@ -2017,44 +2014,44 @@ static void incoming_abort_wins_over_absolute_t5(void) {
       /* An invalid T bit and a wrong-tag ABORT also may not trigger T5
        * during rejected input; both preserve every byte of TCB/output. */
       chunk.flags = 1u;
-      assert(cnet_sctp_wire_encode(5001u, 5000u, a.local_tag, &chunk,
+      check(cnet_sctp_wire_encode(5001u, 5000u, a.local_tag, &chunk,
           1u, packet, sizeof(packet), &packet_n) == CNET_SCTP_WIRE_OK);
       memcpy(&before, &a, sizeof(before));
       memset(output, 0xCC, sizeof(output));
-      assert(cnet_sctp_assoc_input(&a, 1000u, packet, packet_n,
+      check(cnet_sctp_assoc_input(&a, 1000u, packet, packet_n,
           output, sizeof(output), &output_n) == CNET_SCTP_ASSOC_PROTOCOL);
-      assert(output_n == 0u && memcmp(&a, &before, sizeof(before)) == 0);
-      for (i = 0u; i < sizeof(output); ++i) assert(output[i] == 0xCCu);
+      check(output_n == 0u && memcmp(&a, &before, sizeof(before)) == 0);
+      for (i = 0u; i < sizeof(output); ++i) check(output[i] == 0xCCu);
 
       chunk.flags = 0u;
-      assert(cnet_sctp_wire_encode(5001u, 5000u, b.local_tag, &chunk,
+      check(cnet_sctp_wire_encode(5001u, 5000u, b.local_tag, &chunk,
           1u, packet, sizeof(packet), &packet_n) == CNET_SCTP_WIRE_OK);
       output_n = 123u;
-      assert(cnet_sctp_assoc_input(&a, 1000u, packet, packet_n,
+      check(cnet_sctp_assoc_input(&a, 1000u, packet, packet_n,
           output, sizeof(output), &output_n) == CNET_SCTP_ASSOC_PROTOCOL);
-      assert(output_n == 0u && memcmp(&a, &before, sizeof(before)) == 0);
-      for (i = 0u; i < sizeof(output); ++i) assert(output[i] == 0xCCu);
+      check(output_n == 0u && memcmp(&a, &before, sizeof(before)) == 0);
+      for (i = 0u; i < sizeof(output); ++i) check(output[i] == 0xCCu);
     }
 
     chunk.flags = 0x80u; /* reserved bits are ignored, T=0 */
-    assert(cnet_sctp_wire_encode(5001u, 5000u, a.local_tag, &chunk,
+    check(cnet_sctp_wire_encode(5001u, 5000u, a.local_tag, &chunk,
         1u, packet, sizeof(packet), &packet_n) == CNET_SCTP_WIRE_OK);
     output_n = 123u;
     memset(output, 0xCC, sizeof(output));
-    assert(cnet_sctp_assoc_input(&a, times[case_i], packet, packet_n,
+    check(cnet_sctp_assoc_input(&a, times[case_i], packet, packet_n,
         output, sizeof(output), &output_n) == CNET_SCTP_ASSOC_OK);
-    assert(output_n == 0u && a.state == CNET_SCTP_ASSOC_FAILED);
-    assert(a.t5_shutdown_deadline_ms == 0u && a.deadline_ms == 0u &&
+    check(output_n == 0u && a.state == CNET_SCTP_ASSOC_FAILED);
+    check(a.t5_shutdown_deadline_ms == 0u && a.deadline_ms == 0u &&
         a.last_time_ms == times[case_i]);
-    for (i = 0u; i < sizeof(output); ++i) assert(output[i] == 0xCCu);
+    for (i = 0u; i < sizeof(output); ++i) check(output[i] == 0xCCu);
     output_n = 123u;
-    assert(cnet_sctp_assoc_advance(&a, times[case_i],
+    check(cnet_sctp_assoc_advance(&a, times[case_i],
         output, sizeof(output), &output_n) == CNET_SCTP_ASSOC_CLOSED_ERROR);
-    assert(output_n == 0u);
-    assert(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_OK);
-    assert(cnet_sctp_assoc_stop(&b) == CNET_SCTP_ASSOC_OK);
-    assert(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
-    assert(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
+    check(output_n == 0u);
+    check(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_OK);
+    check(cnet_sctp_assoc_stop(&b) == CNET_SCTP_ASSOC_OK);
+    check(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
+    check(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
   }
 }
 
@@ -2080,39 +2077,39 @@ static void reflected_tag_abort_is_accepted_without_reply(void) {
 
     /* T=0 with the reflected peer tag is not authenticated. */
     abort_chunk.flags = 0x80u;
-    assert(cnet_sctp_wire_encode(5001u, 5000u, a.peer_tag, &abort_chunk,
+    check(cnet_sctp_wire_encode(5001u, 5000u, a.peer_tag, &abort_chunk,
         1u, packet, sizeof(packet), &packet_n) == CNET_SCTP_WIRE_OK);
     memcpy(&before, &a, sizeof(before));
     memset(output, 0xCC, sizeof(output));
-    assert(cnet_sctp_assoc_input(&a, now, packet, packet_n, output,
+    check(cnet_sctp_assoc_input(&a, now, packet, packet_n, output,
         sizeof(output), &output_n) == CNET_SCTP_ASSOC_PROTOCOL);
-    assert(output_n == 0u && memcmp(&a, &before, sizeof(before)) == 0);
-    for (i = 0u; i < sizeof(output); ++i) assert(output[i] == 0xCCu);
+    check(output_n == 0u && memcmp(&a, &before, sizeof(before)) == 0);
+    for (i = 0u; i < sizeof(output); ++i) check(output[i] == 0xCCu);
 
     /* T=1 with the local tag is also invalid. */
     abort_chunk.flags = 0x81u;
-    assert(cnet_sctp_wire_encode(5001u, 5000u, a.local_tag, &abort_chunk,
+    check(cnet_sctp_wire_encode(5001u, 5000u, a.local_tag, &abort_chunk,
         1u, packet, sizeof(packet), &packet_n) == CNET_SCTP_WIRE_OK);
     output_n = 123u;
-    assert(cnet_sctp_assoc_input(&a, now, packet, packet_n, output,
+    check(cnet_sctp_assoc_input(&a, now, packet, packet_n, output,
         sizeof(output), &output_n) == CNET_SCTP_ASSOC_PROTOCOL);
-    assert(output_n == 0u && memcmp(&a, &before, sizeof(before)) == 0);
-    for (i = 0u; i < sizeof(output); ++i) assert(output[i] == 0xCCu);
+    check(output_n == 0u && memcmp(&a, &before, sizeof(before)) == 0);
+    for (i = 0u; i < sizeof(output); ++i) check(output[i] == 0xCCu);
 
     /* Correct reflected tag: single silent local teardown. */
-    assert(cnet_sctp_wire_encode(5001u, 5000u, a.peer_tag, &abort_chunk,
+    check(cnet_sctp_wire_encode(5001u, 5000u, a.peer_tag, &abort_chunk,
         1u, packet, sizeof(packet), &packet_n) == CNET_SCTP_WIRE_OK);
     output_n = 123u;
-    assert(cnet_sctp_assoc_input(&a, now, packet, packet_n, output,
+    check(cnet_sctp_assoc_input(&a, now, packet, packet_n, output,
         sizeof(output), &output_n) == CNET_SCTP_ASSOC_OK);
-    assert(output_n == 0u && a.state == CNET_SCTP_ASSOC_FAILED);
-    assert(a.t5_shutdown_deadline_ms == 0u && a.deadline_ms == 0u &&
+    check(output_n == 0u && a.state == CNET_SCTP_ASSOC_FAILED);
+    check(a.t5_shutdown_deadline_ms == 0u && a.deadline_ms == 0u &&
         a.last_time_ms == now);
-    for (i = 0u; i < sizeof(output); ++i) assert(output[i] == 0xCCu);
-    assert(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_OK);
-    assert(cnet_sctp_assoc_stop(&b) == CNET_SCTP_ASSOC_OK);
-    assert(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
-    assert(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
+    for (i = 0u; i < sizeof(output); ++i) check(output[i] == 0xCCu);
+    check(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_OK);
+    check(cnet_sctp_assoc_stop(&b) == CNET_SCTP_ASSOC_OK);
+    check(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
+    check(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
   }
 
   /* Pre-cookie state has no admitted peer Verification Tag. Reject any
@@ -2124,20 +2121,20 @@ static void reflected_tag_abort_is_accepted_without_reply(void) {
     uint8_t packet[64], output[64];
     size_t packet_n = 0u, output_n = 123u;
     setup(&a, &b, &ca, &cb);
-    assert(a.peer_tag == 0u);
-    assert(cnet_sctp_wire_encode(5001u, 5000u, 0u, &abort_chunk,
+    check(a.peer_tag == 0u);
+    check(cnet_sctp_wire_encode(5001u, 5000u, 0u, &abort_chunk,
         1u, packet, sizeof(packet), &packet_n) == CNET_SCTP_WIRE_OK);
     memcpy(&before, &a, sizeof(before));
     memset(output, 0xCC, sizeof(output));
-    assert(cnet_sctp_assoc_input(&a, a.last_time_ms + 1u,
+    check(cnet_sctp_assoc_input(&a, a.last_time_ms + 1u,
         packet, packet_n, output, sizeof(output), &output_n) ==
         CNET_SCTP_ASSOC_PROTOCOL);
-    assert(output_n == 0u && output[0] == 0xCCu &&
+    check(output_n == 0u && output[0] == 0xCCu &&
         memcmp(&a, &before, sizeof(before)) == 0);
-    assert(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_OK);
-    assert(cnet_sctp_assoc_stop(&b) == CNET_SCTP_ASSOC_OK);
-    assert(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
-    assert(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
+    check(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_OK);
+    check(cnet_sctp_assoc_stop(&b) == CNET_SCTP_ASSOC_OK);
+    check(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
+    check(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
   }
 }
 
@@ -2186,20 +2183,20 @@ static void abort_optional_error_causes_are_transactional(void) {
     a.t5_shutdown_deadline_ms = 1000u;
     a.deadline_ms = 1000u;
     a.last_time_ms = 10u;
-    assert(cnet_sctp_wire_encode(5001u, 5000u,
+    check(cnet_sctp_wire_encode(5001u, 5000u,
         (chunk.flags & 1u) ? a.peer_tag : a.local_tag, &chunk, 1u,
         packet, sizeof(packet), &packet_n) == CNET_SCTP_WIRE_OK);
     memset(output, 0xCC, sizeof(output));
-    assert(cnet_sctp_assoc_input(&a, 1000u, packet, packet_n, output,
+    check(cnet_sctp_assoc_input(&a, 1000u, packet, packet_n, output,
         sizeof(output), &output_n) == CNET_SCTP_ASSOC_OK);
-    assert(output_n == 0u && a.state == CNET_SCTP_ASSOC_FAILED &&
+    check(output_n == 0u && a.state == CNET_SCTP_ASSOC_FAILED &&
         a.deadline_ms == 0u && a.t5_shutdown_deadline_ms == 0u &&
         a.last_time_ms == 1000u);
-    for (j = 0u; j < sizeof(output); ++j) assert(output[j] == 0xCCu);
-    assert(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_OK);
-    assert(cnet_sctp_assoc_stop(&b) == CNET_SCTP_ASSOC_OK);
-    assert(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
-    assert(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
+    for (j = 0u; j < sizeof(output); ++j) check(output[j] == 0xCCu);
+    check(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_OK);
+    check(cnet_sctp_assoc_stop(&b) == CNET_SCTP_ASSOC_OK);
+    check(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
+    check(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
   }
 
   for (i = 0u; i < sizeof(invalid) / sizeof(invalid[0]); ++i) {
@@ -2215,18 +2212,18 @@ static void abort_optional_error_causes_are_transactional(void) {
     a.t5_shutdown_deadline_ms = 1000u;
     a.deadline_ms = 1000u;
     a.last_time_ms = 10u;
-    assert(cnet_sctp_wire_encode(5001u, 5000u, a.local_tag, &chunk,
+    check(cnet_sctp_wire_encode(5001u, 5000u, a.local_tag, &chunk,
         1u, packet, sizeof(packet), &packet_n) == CNET_SCTP_WIRE_OK);
     memcpy(&before, &a, sizeof(before));
     memset(output, 0xCC, sizeof(output));
-    assert(cnet_sctp_assoc_input(&a, 1000u, packet, packet_n, output,
+    check(cnet_sctp_assoc_input(&a, 1000u, packet, packet_n, output,
         sizeof(output), &output_n) == CNET_SCTP_ASSOC_PROTOCOL);
-    assert(output_n == 0u && memcmp(&a, &before, sizeof(before)) == 0);
-    for (k = 0u; k < sizeof(output); ++k) assert(output[k] == 0xCCu);
-    assert(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_OK);
-    assert(cnet_sctp_assoc_stop(&b) == CNET_SCTP_ASSOC_OK);
-    assert(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
-    assert(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
+    check(output_n == 0u && memcmp(&a, &before, sizeof(before)) == 0);
+    for (k = 0u; k < sizeof(output); ++k) check(output[k] == 0xCCu);
+    check(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_OK);
+    check(cnet_sctp_assoc_stop(&b) == CNET_SCTP_ASSOC_OK);
+    check(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
+    check(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
   }
 }
 
@@ -2265,32 +2262,32 @@ static void control_before_abort_is_silent_and_transactional(void) {
 
         /* Correct CRC but mismatched tag/T pair: the entire TCB, including
          * the due T5 deadline, must remain byte-for-byte unchanged. */
-        assert(cnet_sctp_wire_encode(5001u, 5000u,
+        check(cnet_sctp_wire_encode(5001u, 5000u,
             reflected ? a.local_tag : a.peer_tag, chunks, 2u,
             packet, sizeof(packet), &packet_n) == CNET_SCTP_WIRE_OK);
         memcpy(&before, &a, sizeof(before));
         memset(output, 0xCC, sizeof(output));
-        assert(cnet_sctp_assoc_input(&a, now, packet, packet_n,
+        check(cnet_sctp_assoc_input(&a, now, packet, packet_n,
             output, sizeof(output), &output_n) == CNET_SCTP_ASSOC_PROTOCOL);
-        assert(output_n == 0u && memcmp(&a, &before, sizeof(before)) == 0);
-        for (i = 0u; i < sizeof(output); ++i) assert(output[i] == 0xCCu);
+        check(output_n == 0u && memcmp(&a, &before, sizeof(before)) == 0);
+        for (i = 0u; i < sizeof(output); ++i) check(output[i] == 0xCCu);
 
-        assert(cnet_sctp_wire_encode(5001u, 5000u,
+        check(cnet_sctp_wire_encode(5001u, 5000u,
             reflected ? a.peer_tag : a.local_tag, chunks, 2u,
             packet, sizeof(packet), &packet_n) == CNET_SCTP_WIRE_OK);
         output_n = 123u;
         /* An ABORT-containing packet MUST NOT elicit any response. It must
          * still commit correctly with zero bytes of output capacity. */
-        assert(cnet_sctp_assoc_input(&a, now, packet, packet_n,
+        check(cnet_sctp_assoc_input(&a, now, packet, packet_n,
             output, 0u, &output_n) == CNET_SCTP_ASSOC_OK);
-        assert(output_n == 0u && a.state == CNET_SCTP_ASSOC_FAILED &&
+        check(output_n == 0u && a.state == CNET_SCTP_ASSOC_FAILED &&
             a.last_time_ms == now && a.deadline_ms == 0u &&
             a.t5_shutdown_deadline_ms == 0u);
-        for (i = 0u; i < sizeof(output); ++i) assert(output[i] == 0xCCu);
-        assert(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_OK);
-        assert(cnet_sctp_assoc_stop(&b) == CNET_SCTP_ASSOC_OK);
-        assert(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
-        assert(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
+        for (i = 0u; i < sizeof(output); ++i) check(output[i] == 0xCCu);
+        check(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_OK);
+        check(cnet_sctp_assoc_stop(&b) == CNET_SCTP_ASSOC_OK);
+        check(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
+        check(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
       }
     }
   }
@@ -2325,20 +2322,20 @@ static void malformed_control_abort_bundle_preserves_owner(void) {
     chunks[1].flags = 0u;
     chunks[1].value = case_i == 2u ? bad_abort_cause : NULL;
     chunks[1].value_size = case_i == 2u ? sizeof(bad_abort_cause) : 0u;
-    assert(cnet_sctp_wire_encode(5001u, 5000u, a.local_tag,
+    check(cnet_sctp_wire_encode(5001u, 5000u, a.local_tag,
         chunks, 2u, packet, sizeof(packet), &packet_n) == CNET_SCTP_WIRE_OK);
     memcpy(&before, &a, sizeof(before));
     memset(output, 0xCC, sizeof(output));
     output_n = 123u;
-    assert(cnet_sctp_assoc_input(&a, 1000u, packet, packet_n,
+    check(cnet_sctp_assoc_input(&a, 1000u, packet, packet_n,
         output, sizeof(output), &output_n) == CNET_SCTP_ASSOC_PROTOCOL);
-    assert(output_n == 0u && memcmp(&a, &before, sizeof(before)) == 0);
-    for (i = 0u; i < sizeof(output); ++i) assert(output[i] == 0xCCu);
+    check(output_n == 0u && memcmp(&a, &before, sizeof(before)) == 0);
+    for (i = 0u; i < sizeof(output); ++i) check(output[i] == 0xCCu);
   }
-  assert(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_OK);
-  assert(cnet_sctp_assoc_stop(&b) == CNET_SCTP_ASSOC_OK);
-  assert(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
-  assert(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
+  check(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_OK);
+  check(cnet_sctp_assoc_stop(&b) == CNET_SCTP_ASSOC_OK);
+  check(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
+  check(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
 }
 
 /* RFC 9260 §3.3.7: the first valid ABORT is terminal. Semantic fields in
@@ -2366,20 +2363,20 @@ static void chunks_after_abort_are_ignored(void) {
   a.last_time_ms = 10u;
   a.t5_shutdown_deadline_ms = 1000u;
   a.deadline_ms = 1000u;
-  assert(cnet_sctp_wire_encode(5001u, 5000u, a.local_tag,
+  check(cnet_sctp_wire_encode(5001u, 5000u, a.local_tag,
       chunks, 5u, packet, sizeof(packet), &packet_n) == CNET_SCTP_WIRE_OK);
   memset(output, 0xCC, sizeof(output));
   /* No response capacity is needed for a received ABORT, even exactly at T5. */
-  assert(cnet_sctp_assoc_input(&a, 1000u, packet, packet_n,
+  check(cnet_sctp_assoc_input(&a, 1000u, packet, packet_n,
       output, 0u, &output_n) == CNET_SCTP_ASSOC_OK);
-  assert(output_n == 0u && a.state == CNET_SCTP_ASSOC_FAILED &&
+  check(output_n == 0u && a.state == CNET_SCTP_ASSOC_FAILED &&
       a.last_time_ms == 1000u && a.deadline_ms == 0u &&
       a.t5_shutdown_deadline_ms == 0u);
-  for (i = 0u; i < sizeof(output); ++i) assert(output[i] == 0xCCu);
-  assert(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_OK);
-  assert(cnet_sctp_assoc_stop(&b) == CNET_SCTP_ASSOC_OK);
-  assert(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
-  assert(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
+  for (i = 0u; i < sizeof(output); ++i) check(output[i] == 0xCCu);
+  check(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_OK);
+  check(cnet_sctp_assoc_stop(&b) == CNET_SCTP_ASSOC_OK);
+  check(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
+  check(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
 }
 
 /* Unknown STOP actions before ABORT stop packet processing; unknown SKIP
@@ -2409,13 +2406,13 @@ static void malformed_wire_tail_after_abort_preserves_owner(void) {
   a.last_time_ms = 10u;
   a.t5_shutdown_deadline_ms = 1000u;
   a.deadline_ms = 1000u;
-  assert(cnet_sctp_wire_encode(5001u, 5000u, a.local_tag,
+  check(cnet_sctp_wire_encode(5001u, 5000u, a.local_tag,
       chunks, 3u, packet, sizeof(packet), &packet_n) == CNET_SCTP_WIRE_OK);
-  assert(cnet_sctp_wire_decode(packet, packet_n, &header, &decoder) ==
+  check(cnet_sctp_wire_decode(packet, packet_n, &header, &decoder) ==
       CNET_SCTP_WIRE_OK && header.chunk_count == 3u);
-  assert(cnet_sctp_wire_next_chunk(&decoder, &tail) == CNET_SCTP_WIRE_OK);
-  assert(cnet_sctp_wire_next_chunk(&decoder, &tail) == CNET_SCTP_WIRE_OK);
-  assert(cnet_sctp_wire_next_chunk(&decoder, &tail) == CNET_SCTP_WIRE_OK &&
+  check(cnet_sctp_wire_next_chunk(&decoder, &tail) == CNET_SCTP_WIRE_OK);
+  check(cnet_sctp_wire_next_chunk(&decoder, &tail) == CNET_SCTP_WIRE_OK);
+  check(cnet_sctp_wire_next_chunk(&decoder, &tail) == CNET_SCTP_WIRE_OK &&
       tail.type == 4u);
   tail_offset = (size_t)((tail.value - 4u) - packet);
   packet[tail_offset + 2u] = 0u;
@@ -2423,14 +2420,14 @@ static void malformed_wire_tail_after_abort_preserves_owner(void) {
   reseal_sctp_checksum(packet, packet_n);
   memcpy(&before, &a, sizeof(before));
   memset(output, 0xCC, sizeof(output));
-  assert(cnet_sctp_assoc_input(&a, 1000u, packet, packet_n,
+  check(cnet_sctp_assoc_input(&a, 1000u, packet, packet_n,
       output, sizeof(output), &output_n) == CNET_SCTP_ASSOC_PROTOCOL);
-  assert(output_n == 0u && memcmp(&a, &before, sizeof(before)) == 0);
-  for (i = 0u; i < sizeof(output); ++i) assert(output[i] == 0xCCu);
-  assert(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_OK);
-  assert(cnet_sctp_assoc_stop(&b) == CNET_SCTP_ASSOC_OK);
-  assert(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
-  assert(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
+  check(output_n == 0u && memcmp(&a, &before, sizeof(before)) == 0);
+  for (i = 0u; i < sizeof(output); ++i) check(output[i] == 0xCCu);
+  check(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_OK);
+  check(cnet_sctp_assoc_stop(&b) == CNET_SCTP_ASSOC_OK);
+  check(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
+  check(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
 }
 
 static void unknown_chunk_actions_before_abort_are_respected(void) {
@@ -2452,25 +2449,25 @@ static void unknown_chunk_actions_before_abort_are_respected(void) {
     a.peer_tag = b.local_tag;
     a.last_time_ms = 10u;
     chunks[0].type = types[k];
-    assert(cnet_sctp_wire_encode(5001u, 5000u, a.local_tag,
+    check(cnet_sctp_wire_encode(5001u, 5000u, a.local_tag,
         chunks, 2u, packet, sizeof(packet), &packet_n) == CNET_SCTP_WIRE_OK);
     memcpy(&before, &a, sizeof(before));
     memset(output, 0xCC, sizeof(output));
     if (k < 2u) {
-      assert(cnet_sctp_assoc_input(&a, 11u, packet, packet_n,
+      check(cnet_sctp_assoc_input(&a, 11u, packet, packet_n,
           output, sizeof(output), &output_n) == CNET_SCTP_ASSOC_PROTOCOL);
-      assert(output_n == 0u && memcmp(&a, &before, sizeof(before)) == 0);
+      check(output_n == 0u && memcmp(&a, &before, sizeof(before)) == 0);
     } else {
-      assert(cnet_sctp_assoc_input(&a, 11u, packet, packet_n,
+      check(cnet_sctp_assoc_input(&a, 11u, packet, packet_n,
           output, 0u, &output_n) == CNET_SCTP_ASSOC_OK);
-      assert(output_n == 0u && a.state == CNET_SCTP_ASSOC_FAILED &&
+      check(output_n == 0u && a.state == CNET_SCTP_ASSOC_FAILED &&
           a.last_time_ms == 11u);
     }
-    for (i = 0u; i < sizeof(output); ++i) assert(output[i] == 0xCCu);
-    assert(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_OK);
-    assert(cnet_sctp_assoc_stop(&b) == CNET_SCTP_ASSOC_OK);
-    assert(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
-    assert(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
+    for (i = 0u; i < sizeof(output); ++i) check(output[i] == 0xCCu);
+    check(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_OK);
+    check(cnet_sctp_assoc_stop(&b) == CNET_SCTP_ASSOC_OK);
+    check(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
+    check(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
   }
 }
 
@@ -2502,18 +2499,18 @@ static void heartbeat_before_abort_requires_valid_info_tlv(void) {
     a.t5_shutdown_deadline_ms = 1000u;
     a.deadline_ms = 1000u;
     chunks[0].type = heartbeat_types[type_i];
-    assert(cnet_sctp_wire_encode(5001u, 5000u, a.local_tag,
+    check(cnet_sctp_wire_encode(5001u, 5000u, a.local_tag,
         chunks, 2u, packet, sizeof(packet), &packet_n) == CNET_SCTP_WIRE_OK);
     memset(output, 0xCC, sizeof(output));
-    assert(cnet_sctp_assoc_input(&a, 1000u, packet, packet_n,
+    check(cnet_sctp_assoc_input(&a, 1000u, packet, packet_n,
         output, 0u, &output_n) == CNET_SCTP_ASSOC_OK);
-    assert(output_n == 0u && a.state == CNET_SCTP_ASSOC_FAILED &&
+    check(output_n == 0u && a.state == CNET_SCTP_ASSOC_FAILED &&
         a.last_time_ms == 1000u && a.t5_shutdown_deadline_ms == 0u);
-    for (i = 0u; i < sizeof(output); ++i) assert(output[i] == 0xCCu);
-    assert(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_OK);
-    assert(cnet_sctp_assoc_stop(&b) == CNET_SCTP_ASSOC_OK);
-    assert(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
-    assert(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
+    for (i = 0u; i < sizeof(output); ++i) check(output[i] == 0xCCu);
+    check(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_OK);
+    check(cnet_sctp_assoc_stop(&b) == CNET_SCTP_ASSOC_OK);
+    check(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
+    check(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
   }
 
   for (type_i = 0u; type_i < 2u; ++type_i) {
@@ -2533,18 +2530,18 @@ static void heartbeat_before_abort_requires_valid_info_tlv(void) {
       a.t5_shutdown_deadline_ms = 1000u;
       a.deadline_ms = 1000u;
       chunks[0].type = heartbeat_types[type_i];
-      assert(cnet_sctp_wire_encode(5001u, 5000u, a.local_tag,
+      check(cnet_sctp_wire_encode(5001u, 5000u, a.local_tag,
           chunks, 2u, packet, sizeof(packet), &packet_n) == CNET_SCTP_WIRE_OK);
       memcpy(&before, &a, sizeof(before));
       memset(output, 0xCC, sizeof(output));
-      assert(cnet_sctp_assoc_input(&a, 1000u, packet, packet_n,
+      check(cnet_sctp_assoc_input(&a, 1000u, packet, packet_n,
           output, sizeof(output), &output_n) == CNET_SCTP_ASSOC_PROTOCOL);
-      assert(output_n == 0u && memcmp(&a, &before, sizeof(before)) == 0);
-      for (i = 0u; i < sizeof(output); ++i) assert(output[i] == 0xCCu);
-      assert(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_OK);
-      assert(cnet_sctp_assoc_stop(&b) == CNET_SCTP_ASSOC_OK);
-      assert(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
-      assert(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
+      check(output_n == 0u && memcmp(&a, &before, sizeof(before)) == 0);
+      for (i = 0u; i < sizeof(output); ++i) check(output[i] == 0xCCu);
+      check(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_OK);
+      check(cnet_sctp_assoc_stop(&b) == CNET_SCTP_ASSOC_OK);
+      check(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
+      check(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
     }
   }
 }
@@ -2569,37 +2566,37 @@ static void peer_abort_reason_owner_pull_is_bounded(void) {
   a.last_time_ms = 10u;
   a.t5_shutdown_deadline_ms = 1000u;
   a.deadline_ms = 1000u;
-  assert(cnet_sctp_wire_encode(5001u, 5000u, a.peer_tag, &chunk, 1u,
+  check(cnet_sctp_wire_encode(5001u, 5000u, a.peer_tag, &chunk, 1u,
       wire, sizeof(wire), &wire_n) == CNET_SCTP_WIRE_OK);
   memset(output, 0xCC, sizeof(output));
-  assert(cnet_sctp_assoc_input(&a, 1000u, wire, wire_n, output, 0u,
+  check(cnet_sctp_assoc_input(&a, 1000u, wire, wire_n, output, 0u,
       &output_n) == CNET_SCTP_ASSOC_OK);
-  assert(a.state == CNET_SCTP_ASSOC_FAILED && output_n == 0u &&
+  check(a.state == CNET_SCTP_ASSOC_FAILED && output_n == 0u &&
       a.peer_abort_pending && a.peer_abort_reason_size == 3u);
 
   memset(&info, 0xCC, sizeof(info));
   before_info = info;
   memset(reason, 0xCC, sizeof(reason));
-  assert(cnet_sctp_assoc_take_peer_abort(&a, &info, reason, 2u, &n) ==
+  check(cnet_sctp_assoc_take_peer_abort(&a, &info, reason, 2u, &n) ==
       CNET_SCTP_ASSOC_CAPACITY);
-  assert(n == 0u && memcmp(&info, &before_info, sizeof(info)) == 0);
-  for (i = 0u; i < sizeof(reason); ++i) assert(reason[i] == 0xCCu);
-  assert(a.peer_abort_pending && a.peer_abort_reason_size == 3u);
+  check(n == 0u && memcmp(&info, &before_info, sizeof(info)) == 0);
+  for (i = 0u; i < sizeof(reason); ++i) check(reason[i] == 0xCCu);
+  check(a.peer_abort_pending && a.peer_abort_reason_size == 3u);
 
-  assert(cnet_sctp_assoc_take_peer_abort(&a, &info, reason, sizeof(reason),
+  check(cnet_sctp_assoc_take_peer_abort(&a, &info, reason, sizeof(reason),
       &n) == CNET_SCTP_ASSOC_OK);
-  assert(n == 3u && memcmp(reason, "bye", 3u) == 0);
-  assert(info.has_user_reason == 1u && info.has_tsn == 0u);
-  assert(!a.peer_abort_pending && a.peer_abort_reason_size == 0u);
+  check(n == 3u && memcmp(reason, "bye", 3u) == 0);
+  check(info.has_user_reason == 1u && info.has_tsn == 0u);
+  check(!a.peer_abort_pending && a.peer_abort_reason_size == 0u);
   for (i = 0u; i < sizeof(a.peer_abort_reason); ++i)
-    assert(a.peer_abort_reason[i] == 0u);
-  assert(cnet_sctp_assoc_take_peer_abort(&a, &info, reason, sizeof(reason),
+    check(a.peer_abort_reason[i] == 0u);
+  check(cnet_sctp_assoc_take_peer_abort(&a, &info, reason, sizeof(reason),
       &n) == CNET_SCTP_ASSOC_EMPTY);
-  assert(n == 0u);
-  assert(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_OK);
-  assert(cnet_sctp_assoc_stop(&b) == CNET_SCTP_ASSOC_OK);
-  assert(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
-  assert(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
+  check(n == 0u);
+  check(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_OK);
+  check(cnet_sctp_assoc_stop(&b) == CNET_SCTP_ASSOC_OK);
+  check(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
+  check(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
 }
 
 /* No Cause 12 still produces an owned peer-ABORT event with zero reason
@@ -2620,28 +2617,28 @@ static void peer_abort_event_without_reason_and_stop_discard(void) {
     setup(&a, &b, &ca, &cb);
     a.state = CNET_SCTP_ASSOC_ESTABLISHED;
     a.peer_tag = b.local_tag;
-    assert(cnet_sctp_wire_encode(5001u, 5000u, a.local_tag, &chunk, 1u,
+    check(cnet_sctp_wire_encode(5001u, 5000u, a.local_tag, &chunk, 1u,
         wire, sizeof(wire), &wire_n) == CNET_SCTP_WIRE_OK);
-    assert(cnet_sctp_assoc_input(&a, a.last_time_ms + 1u, wire, wire_n,
+    check(cnet_sctp_assoc_input(&a, a.last_time_ms + 1u, wire, wire_n,
         output, 0u, &output_n) == CNET_SCTP_ASSOC_OK);
-    assert(output_n == 0u && a.peer_abort_pending);
+    check(output_n == 0u && a.peer_abort_pending);
     if (mode == 0u) {
-      assert(cnet_sctp_assoc_take_peer_abort(&a, &info, NULL, 0u,
+      check(cnet_sctp_assoc_take_peer_abort(&a, &info, NULL, 0u,
           &reason_n) == CNET_SCTP_ASSOC_OK);
-      assert(reason_n == 0u && !info.has_user_reason && !info.has_tsn);
+      check(reason_n == 0u && !info.has_user_reason && !info.has_tsn);
     } else {
-      assert(a.peer_abort_reason_size == 3u);
-      assert(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_OK);
-      assert(!a.peer_abort_pending && a.peer_abort_reason_size == 0u);
+      check(a.peer_abort_reason_size == 3u);
+      check(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_OK);
+      check(!a.peer_abort_pending && a.peer_abort_reason_size == 0u);
       for (i = 0u; i < sizeof(a.peer_abort_reason); ++i)
-        assert(a.peer_abort_reason[i] == 0u);
-      assert(cnet_sctp_assoc_take_peer_abort(&a, &info, NULL, 0u,
+        check(a.peer_abort_reason[i] == 0u);
+      check(cnet_sctp_assoc_take_peer_abort(&a, &info, NULL, 0u,
           &reason_n) == CNET_SCTP_ASSOC_EMPTY);
     }
-    assert(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_OK);
-    assert(cnet_sctp_assoc_stop(&b) == CNET_SCTP_ASSOC_OK);
-    assert(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
-    assert(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
+    check(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_OK);
+    check(cnet_sctp_assoc_stop(&b) == CNET_SCTP_ASSOC_OK);
+    check(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
+    check(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
   }
 }
 
@@ -2666,36 +2663,36 @@ static void peer_abort_max_reason_exact_capacity(void) {
   cause[3] = (uint8_t)(sizeof(cause) & 0xffu);
   for (i = 0u; i < CNET_SCTP_ASSOC_MAX_ABORT_REASON; ++i)
     cause[i + 4u] = (uint8_t)(i ^ 0xA5u);
-  assert(cnet_sctp_wire_encode(5001u, 5000u, a.local_tag,
+  check(cnet_sctp_wire_encode(5001u, 5000u, a.local_tag,
       &chunk, 1u, packet, sizeof(packet), &packet_n) == CNET_SCTP_WIRE_OK);
-  assert(packet_n == CNET_SCTP_ASSOC_MAX_PACKET);
+  check(packet_n == CNET_SCTP_ASSOC_MAX_PACKET);
   memset(output, 0xCC, sizeof(output));
-  assert(cnet_sctp_assoc_input(&a, a.last_time_ms + 1u,
+  check(cnet_sctp_assoc_input(&a, a.last_time_ms + 1u,
       packet, packet_n, output, 0u, &output_n) == CNET_SCTP_ASSOC_OK);
-  assert(output_n == 0u && a.state == CNET_SCTP_ASSOC_FAILED &&
+  check(output_n == 0u && a.state == CNET_SCTP_ASSOC_FAILED &&
       a.peer_abort_pending &&
       a.peer_abort_reason_size == CNET_SCTP_ASSOC_MAX_ABORT_REASON);
-  for (i = 0u; i < sizeof(output); ++i) assert(output[i] == 0xCCu);
+  for (i = 0u; i < sizeof(output); ++i) check(output[i] == 0xCCu);
 
   memset(&info, 0xCC, sizeof(info));
   before_info = info;
   memset(reason, 0xCC, sizeof(reason));
-  assert(cnet_sctp_assoc_take_peer_abort(&a, &info, reason,
+  check(cnet_sctp_assoc_take_peer_abort(&a, &info, reason,
       sizeof(reason) - 1u, &reason_n) == CNET_SCTP_ASSOC_CAPACITY);
-  assert(reason_n == 0u && a.peer_abort_pending &&
+  check(reason_n == 0u && a.peer_abort_pending &&
       memcmp(&info, &before_info, sizeof(info)) == 0);
-  for (i = 0u; i < sizeof(reason); ++i) assert(reason[i] == 0xCCu);
-  assert(cnet_sctp_assoc_take_peer_abort(&a, &info, reason,
+  for (i = 0u; i < sizeof(reason); ++i) check(reason[i] == 0xCCu);
+  check(cnet_sctp_assoc_take_peer_abort(&a, &info, reason,
       sizeof(reason), &reason_n) == CNET_SCTP_ASSOC_OK);
-  assert(reason_n == sizeof(reason) && info.has_user_reason);
-  assert(memcmp(reason, cause + 4u, sizeof(reason)) == 0);
-  assert(!a.peer_abort_pending && a.peer_abort_reason_size == 0u);
+  check(reason_n == sizeof(reason) && info.has_user_reason);
+  check(memcmp(reason, cause + 4u, sizeof(reason)) == 0);
+  check(!a.peer_abort_pending && a.peer_abort_reason_size == 0u);
   for (i = 0u; i < sizeof(a.peer_abort_reason); ++i)
-    assert(a.peer_abort_reason[i] == 0u);
-  assert(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_OK);
-  assert(cnet_sctp_assoc_stop(&b) == CNET_SCTP_ASSOC_OK);
-  assert(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
-  assert(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
+    check(a.peer_abort_reason[i] == 0u);
+  check(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_OK);
+  check(cnet_sctp_assoc_stop(&b) == CNET_SCTP_ASSOC_OK);
+  check(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
+  check(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
 }
 
 /* M5 negative-admission contract: a peer-ABORT event is owned by the
@@ -2717,15 +2714,15 @@ static void peer_abort_event_rejects_non_owner_and_reentry(void) {
   setup(&a, &b, &ca, &cb);
   a.state = CNET_SCTP_ASSOC_ESTABLISHED;
   a.peer_tag = b.local_tag;
-  assert(cnet_sctp_wire_encode(5001u, 5000u, a.local_tag,
+  check(cnet_sctp_wire_encode(5001u, 5000u, a.local_tag,
       &abort_chunk, 1u, packet, sizeof(packet), &packet_n) ==
       CNET_SCTP_WIRE_OK);
   memset(output, 0xCC, sizeof(output));
-  assert(cnet_sctp_assoc_input(&a, 1u, packet, packet_n,
+  check(cnet_sctp_assoc_input(&a, 1u, packet, packet_n,
       output, 0u, &output_n) == CNET_SCTP_ASSOC_OK);
-  assert(output_n == 0u && a.peer_abort_pending &&
+  check(output_n == 0u && a.peer_abort_pending &&
       a.peer_abort_reason_size == 4u);
-  assert(!cnet_sctp_assoc_drained(&a));
+  check(!cnet_sctp_assoc_drained(&a));
 
   memset(&info, 0xCC, sizeof(info));
   before_info = info;
@@ -2734,60 +2731,60 @@ static void peer_abort_event_rejects_non_owner_and_reentry(void) {
   /* A caller outside the Owner must not drain or stop the event. */
   ca.on_owner = 0;
   memcpy(&before, &a, sizeof(before));
-  assert(cnet_sctp_assoc_take_peer_abort(&a, &info, reason,
+  check(cnet_sctp_assoc_take_peer_abort(&a, &info, reason,
       sizeof(reason), &reason_n) == CNET_SCTP_ASSOC_OWNER);
-  assert(reason_n == 0u && memcmp(&info, &before_info, sizeof(info)) == 0);
-  assert(memcmp(&a, &before, sizeof(a)) == 0);
-  for (i = 0u; i < sizeof(reason); ++i) assert(reason[i] == 0xCCu);
-  assert(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_OWNER);
-  assert(memcmp(&a, &before, sizeof(a)) == 0);
+  check(reason_n == 0u && memcmp(&info, &before_info, sizeof(info)) == 0);
+  check(memcmp(&a, &before, sizeof(a)) == 0);
+  for (i = 0u; i < sizeof(reason); ++i) check(reason[i] == 0xCCu);
+  check(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_OWNER);
+  check(memcmp(&a, &before, sizeof(a)) == 0);
   ca.on_owner = 1;
 
   /* Provider callback reentry is rejected before event consumption. */
   a.in_progress = 1u;
   memcpy(&before, &a, sizeof(before));
   reason_n = 123u;
-  assert(cnet_sctp_assoc_take_peer_abort(&a, &info, reason,
+  check(cnet_sctp_assoc_take_peer_abort(&a, &info, reason,
       sizeof(reason), &reason_n) == CNET_SCTP_ASSOC_BUSY);
-  assert(reason_n == 0u && memcmp(&info, &before_info, sizeof(info)) == 0);
-  assert(memcmp(&a, &before, sizeof(a)) == 0);
-  assert(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_BUSY);
-  assert(memcmp(&a, &before, sizeof(a)) == 0);
+  check(reason_n == 0u && memcmp(&info, &before_info, sizeof(info)) == 0);
+  check(memcmp(&a, &before, sizeof(a)) == 0);
+  check(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_BUSY);
+  check(memcmp(&a, &before, sizeof(a)) == 0);
   a.in_progress = 0u;
 
   /* Invalid API arguments leave the event intact and retryable. */
   memcpy(&before, &a, sizeof(before));
   reason_n = 123u;
-  assert(cnet_sctp_assoc_take_peer_abort(&a, NULL, reason,
+  check(cnet_sctp_assoc_take_peer_abort(&a, NULL, reason,
       sizeof(reason), &reason_n) == CNET_SCTP_ASSOC_INVALID);
-  assert(reason_n == 0u && memcmp(&a, &before, sizeof(a)) == 0);
-  assert(cnet_sctp_assoc_take_peer_abort(&a, &info, reason,
+  check(reason_n == 0u && memcmp(&a, &before, sizeof(a)) == 0);
+  check(cnet_sctp_assoc_take_peer_abort(&a, &info, reason,
       sizeof(reason), NULL) == CNET_SCTP_ASSOC_INVALID);
-  assert(memcmp(&a, &before, sizeof(a)) == 0);
+  check(memcmp(&a, &before, sizeof(a)) == 0);
 
   reason_n = 123u;
-  assert(cnet_sctp_assoc_take_peer_abort(&a, &info, NULL,
+  check(cnet_sctp_assoc_take_peer_abort(&a, &info, NULL,
       sizeof(reason), &reason_n) == CNET_SCTP_ASSOC_INVALID);
-  assert(reason_n == 0u && memcmp(&a, &before, sizeof(a)) == 0);
-  assert(memcmp(&info, &before_info, sizeof(info)) == 0);
+  check(reason_n == 0u && memcmp(&a, &before, sizeof(a)) == 0);
+  check(memcmp(&info, &before_info, sizeof(info)) == 0);
 
   /* The rightful Owner can take once, and stop/destroy are fully drained. */
-  assert(cnet_sctp_assoc_take_peer_abort(&a, &info, reason,
+  check(cnet_sctp_assoc_take_peer_abort(&a, &info, reason,
       sizeof(reason), &reason_n) == CNET_SCTP_ASSOC_OK);
-  assert(reason_n == 4u && info.has_user_reason &&
+  check(reason_n == 4u && info.has_user_reason &&
       memcmp(reason, "ownr", 4u) == 0);
-  assert(!a.peer_abort_pending && a.peer_abort_reason_size == 0u);
-  assert(cnet_sctp_assoc_take_peer_abort(&a, &info, reason,
+  check(!a.peer_abort_pending && a.peer_abort_reason_size == 0u);
+  check(cnet_sctp_assoc_take_peer_abort(&a, &info, reason,
       sizeof(reason), &reason_n) == CNET_SCTP_ASSOC_EMPTY);
-  assert(reason_n == 0u);
-  assert(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_OK);
-  assert(cnet_sctp_assoc_drained(&a));
-  assert(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
-  assert(a.magic == 0u && a.peer_abort_pending == 0u);
+  check(reason_n == 0u);
+  check(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_OK);
+  check(cnet_sctp_assoc_drained(&a));
+  check(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
+  check(a.magic == 0u && a.peer_abort_pending == 0u);
   for (i = 0u; i < sizeof(a.peer_abort_reason); ++i)
-    assert(a.peer_abort_reason[i] == 0u);
-  assert(cnet_sctp_assoc_stop(&b) == CNET_SCTP_ASSOC_OK);
-  assert(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
+    check(a.peer_abort_reason[i] == 0u);
+  check(cnet_sctp_assoc_stop(&b) == CNET_SCTP_ASSOC_OK);
+  check(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
 }
 
 /* M5 deterministic race-order test, not a concurrent TSan proof:
@@ -2818,7 +2815,7 @@ static void peer_abort_and_absolute_t5_orders_are_terminal_once(void) {
     a.last_time_ms = 10u;
     a.deadline_ms = 1000u;
     a.t5_shutdown_deadline_ms = 1000u;
-    assert(cnet_sctp_wire_encode(5001u, 5000u, a.local_tag,
+    check(cnet_sctp_wire_encode(5001u, 5000u, a.local_tag,
         &abort_chunk, 1u, abort_packet, sizeof(abort_packet),
         &abort_n) == CNET_SCTP_WIRE_OK);
 
@@ -2827,58 +2824,58 @@ static void peer_abort_and_absolute_t5_orders_are_terminal_once(void) {
       /* An unpublishable local T5 ABORT must not consume state or suppress
        * a valid peer ABORT that arrives at the same absolute timestamp. */
       memcpy(&before, &a, sizeof(before));
-      assert(cnet_sctp_assoc_advance(&a, 1000u, output, 15u,
+      check(cnet_sctp_assoc_advance(&a, 1000u, output, 15u,
           &output_n) == CNET_SCTP_ASSOC_CAPACITY);
-      assert(output_n == 0u && memcmp(&a, &before, sizeof(before)) == 0);
-      for (i = 0u; i < sizeof(output); ++i) assert(output[i] == 0xCCu);
+      check(output_n == 0u && memcmp(&a, &before, sizeof(before)) == 0);
+      for (i = 0u; i < sizeof(output); ++i) check(output[i] == 0xCCu);
     } else if (order == 2u) {
       /* Local T5 publishes once. A subsequently arriving peer ABORT cannot
        * change terminal origin or install a spurious ULP reason. */
-      assert(cnet_sctp_assoc_advance(&a, 1000u, output, sizeof(output),
+      check(cnet_sctp_assoc_advance(&a, 1000u, output, sizeof(output),
           &output_n) == CNET_SCTP_ASSOC_OK);
-      assert(output_n == 16u && a.state == CNET_SCTP_ASSOC_FAILED);
-      assert(cnet_sctp_wire_decode(output, output_n, &h, &decoder) ==
+      check(output_n == 16u && a.state == CNET_SCTP_ASSOC_FAILED);
+      check(cnet_sctp_wire_decode(output, output_n, &h, &decoder) ==
           CNET_SCTP_WIRE_OK);
-      assert(h.chunk_count == 1u && h.verification_tag == a.peer_tag);
-      assert(cnet_sctp_wire_next_chunk(&decoder, &received) ==
+      check(h.chunk_count == 1u && h.verification_tag == a.peer_tag);
+      check(cnet_sctp_wire_next_chunk(&decoder, &received) ==
           CNET_SCTP_WIRE_OK && received.type == 6u);
-      assert(!a.peer_abort_pending);
+      check(!a.peer_abort_pending);
       memset(output, 0xCC, sizeof(output));
       output_n = 123u;
-      assert(cnet_sctp_assoc_input(&a, 1000u, abort_packet, abort_n,
+      check(cnet_sctp_assoc_input(&a, 1000u, abort_packet, abort_n,
           output, 0u, &output_n) == CNET_SCTP_ASSOC_CLOSED_ERROR);
-      assert(output_n == 0u && !a.peer_abort_pending);
-      for (i = 0u; i < sizeof(output); ++i) assert(output[i] == 0xCCu);
+      check(output_n == 0u && !a.peer_abort_pending);
+      for (i = 0u; i < sizeof(output); ++i) check(output[i] == 0xCCu);
     }
 
     if (order != 2u) {
       /* Incoming ABORT wins: no outgoing ABORT and one owned reason event. */
       output_n = 123u;
-      assert(cnet_sctp_assoc_input(&a, 1000u, abort_packet, abort_n,
+      check(cnet_sctp_assoc_input(&a, 1000u, abort_packet, abort_n,
           output, 0u, &output_n) == CNET_SCTP_ASSOC_OK);
-      assert(output_n == 0u && a.state == CNET_SCTP_ASSOC_FAILED &&
+      check(output_n == 0u && a.state == CNET_SCTP_ASSOC_FAILED &&
           a.peer_abort_pending && a.t5_shutdown_deadline_ms == 0u);
-      for (i = 0u; i < sizeof(output); ++i) assert(output[i] == 0xCCu);
+      for (i = 0u; i < sizeof(output); ++i) check(output[i] == 0xCCu);
       output_n = 123u;
-      assert(cnet_sctp_assoc_advance(&a, 1000u, output,
+      check(cnet_sctp_assoc_advance(&a, 1000u, output,
           sizeof(output), &output_n) == CNET_SCTP_ASSOC_CLOSED_ERROR);
-      assert(output_n == 0u && a.peer_abort_pending);
-      assert(cnet_sctp_assoc_take_peer_abort(&a, &info, reason,
+      check(output_n == 0u && a.peer_abort_pending);
+      check(cnet_sctp_assoc_take_peer_abort(&a, &info, reason,
           sizeof(reason), &reason_n) == CNET_SCTP_ASSOC_OK);
-      assert(reason_n == 4u && info.has_user_reason &&
+      check(reason_n == 4u && info.has_user_reason &&
           memcmp(reason, "race", 4u) == 0);
-      assert(cnet_sctp_assoc_take_peer_abort(&a, &info, reason,
+      check(cnet_sctp_assoc_take_peer_abort(&a, &info, reason,
           sizeof(reason), &reason_n) == CNET_SCTP_ASSOC_EMPTY);
-      assert(reason_n == 0u);
+      check(reason_n == 0u);
     } else {
-      assert(cnet_sctp_assoc_take_peer_abort(&a, &info, reason,
+      check(cnet_sctp_assoc_take_peer_abort(&a, &info, reason,
           sizeof(reason), &reason_n) == CNET_SCTP_ASSOC_EMPTY);
-      assert(reason_n == 0u);
+      check(reason_n == 0u);
     }
-    assert(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_OK);
-    assert(cnet_sctp_assoc_stop(&b) == CNET_SCTP_ASSOC_OK);
-    assert(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
-    assert(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
+    check(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_OK);
+    check(cnet_sctp_assoc_stop(&b) == CNET_SCTP_ASSOC_OK);
+    check(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
+    check(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
   }
 }
 
@@ -2899,42 +2896,42 @@ static void error_and_abort_never_create_response_loops(void) {
   chunk.type = 0u;
   chunk.value = data_value;
   chunk.value_size = sizeof(data_value);
-  assert(cnet_sctp_wire_encode(5001u, 5000u, a.local_tag, &chunk, 1u,
+  check(cnet_sctp_wire_encode(5001u, 5000u, a.local_tag, &chunk, 1u,
       packet, sizeof(packet), &packet_n) == CNET_SCTP_WIRE_OK);
   memset(output, 0xCC, sizeof(output));
-  assert(cnet_sctp_assoc_input(&a, prior_time + 1u, packet, packet_n,
+  check(cnet_sctp_assoc_input(&a, prior_time + 1u, packet, packet_n,
       output, sizeof(output), &output_n) == CNET_SCTP_ASSOC_PROTOCOL);
-  assert(output_n == 0u && output[0] == 0xCCu);
-  assert(a.state == CNET_SCTP_ASSOC_CLOSED);
-  assert(a.last_time_ms == prior_time);
+  check(output_n == 0u && output[0] == 0xCCu);
+  check(a.state == CNET_SCTP_ASSOC_CLOSED);
+  check(a.last_time_ms == prior_time);
 
   /* SHUTDOWN COMPLETE is valid only in SHUTDOWN-ACK-SENT. A rejected
    * control in any other state must not commit the provisional watermark. */
   chunk.type = 14u;
   chunk.value = NULL;
   chunk.value_size = 0u;
-  assert(cnet_sctp_wire_encode(5001u, 5000u, a.local_tag, &chunk, 1u,
+  check(cnet_sctp_wire_encode(5001u, 5000u, a.local_tag, &chunk, 1u,
       packet, sizeof(packet), &packet_n) == CNET_SCTP_WIRE_OK);
   memset(output, 0xCC, sizeof(output));
-  assert(cnet_sctp_assoc_input(&a, prior_time + 1u, packet, packet_n,
+  check(cnet_sctp_assoc_input(&a, prior_time + 1u, packet, packet_n,
       output, sizeof(output), &output_n) == CNET_SCTP_ASSOC_PROTOCOL);
-  assert(output_n == 0u && output[0] == 0xCCu);
-  assert(a.state == CNET_SCTP_ASSOC_CLOSED);
-  assert(a.last_time_ms == prior_time);
+  check(output_n == 0u && output[0] == 0xCCu);
+  check(a.state == CNET_SCTP_ASSOC_CLOSED);
+  check(a.last_time_ms == prior_time);
 
   /* Wrong-state COOKIE ACK reaches a handler after provisional dispatch
    * time is set; rejection must restore the original watermark. */
   chunk.type = 11u;
   chunk.value = NULL;
   chunk.value_size = 0u;
-  assert(cnet_sctp_wire_encode(5001u, 5000u, a.local_tag, &chunk, 1u,
+  check(cnet_sctp_wire_encode(5001u, 5000u, a.local_tag, &chunk, 1u,
       packet, sizeof(packet), &packet_n) == CNET_SCTP_WIRE_OK);
   memset(output, 0xCC, sizeof(output));
-  assert(cnet_sctp_assoc_input(&a, prior_time + 1u, packet, packet_n,
+  check(cnet_sctp_assoc_input(&a, prior_time + 1u, packet, packet_n,
       output, sizeof(output), &output_n) == CNET_SCTP_ASSOC_PROTOCOL);
-  assert(output_n == 0u && output[0] == 0xCCu);
-  assert(a.state == CNET_SCTP_ASSOC_CLOSED);
-  assert(a.last_time_ms == prior_time);
+  check(output_n == 0u && output[0] == 0xCCu);
+  check(a.state == CNET_SCTP_ASSOC_CLOSED);
+  check(a.last_time_ms == prior_time);
 
   a.state = CNET_SCTP_ASSOC_ESTABLISHED;
   a.peer_tag = b.local_tag;
@@ -2944,57 +2941,57 @@ static void error_and_abort_never_create_response_loops(void) {
 
   /* ERROR is recognized but not implemented by this profile. Reject it
    * without replying with another ERROR or mutating the association. */
-  assert(cnet_sctp_wire_encode(5001u, 5000u, a.local_tag, &chunk, 1u,
+  check(cnet_sctp_wire_encode(5001u, 5000u, a.local_tag, &chunk, 1u,
       packet, sizeof(packet), &packet_n) == CNET_SCTP_WIRE_OK);
   memset(output, 0xCC, sizeof(output));
-  assert(cnet_sctp_assoc_input(&a, prior_time + 1u, packet, packet_n,
+  check(cnet_sctp_assoc_input(&a, prior_time + 1u, packet, packet_n,
       output, sizeof(output), &output_n) == CNET_SCTP_ASSOC_PROTOCOL);
-  assert(output_n == 0u && output[0] == 0xCCu);
-  assert(a.state == CNET_SCTP_ASSOC_ESTABLISHED);
-  assert(a.last_time_ms == prior_time);
+  check(output_n == 0u && output[0] == 0xCCu);
+  check(a.state == CNET_SCTP_ASSOC_ESTABLISHED);
+  check(a.last_time_ms == prior_time);
 
   /* An ABORT with a non-matching Verification Tag and T=0 must not
    * terminate the association or commit the monotonic time watermark. */
   chunk.type = 6u;
   chunk.value = NULL;
   chunk.value_size = 0u;
-  assert(cnet_sctp_wire_encode(5001u, 5000u, UINT32_C(0xDEADBEEF), &chunk, 1u,
+  check(cnet_sctp_wire_encode(5001u, 5000u, UINT32_C(0xDEADBEEF), &chunk, 1u,
       packet, sizeof(packet), &packet_n) == CNET_SCTP_WIRE_OK);
   memset(output, 0xCC, sizeof(output));
-  assert(cnet_sctp_assoc_input(&a, prior_time + 1u, packet, packet_n,
+  check(cnet_sctp_assoc_input(&a, prior_time + 1u, packet, packet_n,
       output, sizeof(output), &output_n) == CNET_SCTP_ASSOC_PROTOCOL);
-  assert(output_n == 0u && output[0] == 0xCCu);
-  assert(a.state == CNET_SCTP_ASSOC_ESTABLISHED);
-  assert(a.last_time_ms == prior_time);
+  check(output_n == 0u && output[0] == 0xCCu);
+  check(a.state == CNET_SCTP_ASSOC_ESTABLISHED);
+  check(a.last_time_ms == prior_time);
 
   /* T=1 with the LOCAL tag is invalid: only the reflected PEER tag
    * may pass RFC 9260 §8.5.1. Rejection remains transactional. */
   chunk.flags = 1u;
-  assert(cnet_sctp_wire_encode(5001u, 5000u, a.local_tag, &chunk, 1u,
+  check(cnet_sctp_wire_encode(5001u, 5000u, a.local_tag, &chunk, 1u,
       packet, sizeof(packet), &packet_n) == CNET_SCTP_WIRE_OK);
   memset(output, 0xCC, sizeof(output));
-  assert(cnet_sctp_assoc_input(&a, prior_time + 1u, packet, packet_n,
+  check(cnet_sctp_assoc_input(&a, prior_time + 1u, packet, packet_n,
       output, sizeof(output), &output_n) == CNET_SCTP_ASSOC_PROTOCOL);
-  assert(output_n == 0u && output[0] == 0xCCu);
-  assert(a.state == CNET_SCTP_ASSOC_ESTABLISHED);
-  assert(a.last_time_ms == prior_time);
+  check(output_n == 0u && output[0] == 0xCCu);
+  check(a.state == CNET_SCTP_ASSOC_ESTABLISHED);
+  check(a.last_time_ms == prior_time);
 
   /* A valid plain T=0 ABORT with ignored reserved flags terminates locally
    * without an ABORT response. Valid reflected-tag T=1 is tested separately. */
   chunk.flags = 0x80u;
-  assert(cnet_sctp_wire_encode(5001u, 5000u, a.local_tag, &chunk, 1u,
+  check(cnet_sctp_wire_encode(5001u, 5000u, a.local_tag, &chunk, 1u,
       packet, sizeof(packet), &packet_n) == CNET_SCTP_WIRE_OK);
   memset(output, 0xCC, sizeof(output));
-  assert(cnet_sctp_assoc_input(&a, prior_time + 1u, packet, packet_n,
+  check(cnet_sctp_assoc_input(&a, prior_time + 1u, packet, packet_n,
       output, sizeof(output), &output_n) == CNET_SCTP_ASSOC_OK);
-  assert(output_n == 0u && output[0] == 0xCCu);
-  assert(a.state == CNET_SCTP_ASSOC_FAILED);
-  assert(a.last_time_ms == prior_time + 1u);
+  check(output_n == 0u && output[0] == 0xCCu);
+  check(a.state == CNET_SCTP_ASSOC_FAILED);
+  check(a.last_time_ms == prior_time + 1u);
 
-  assert(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_OK);
-  assert(cnet_sctp_assoc_stop(&b) == CNET_SCTP_ASSOC_OK);
-  assert(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
-  assert(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
+  check(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_OK);
+  check(cnet_sctp_assoc_stop(&b) == CNET_SCTP_ASSOC_OK);
+  check(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
+  check(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
 }
 
 static void unsupported_control_preserves_time_watermark(void) {
@@ -3014,19 +3011,19 @@ static void unsupported_control_preserves_time_watermark(void) {
     size_t packet_n = 0u, output_n = 0u;
     uint64_t prior_time = a.last_time_ms;
     memset(output, 0xCC, sizeof(output));
-    assert(cnet_sctp_wire_encode(5001u, 5000u, a.local_tag, &chunk, 1u,
+    check(cnet_sctp_wire_encode(5001u, 5000u, a.local_tag, &chunk, 1u,
         packet, sizeof(packet), &packet_n) == CNET_SCTP_WIRE_OK);
-    assert(cnet_sctp_assoc_input(&a, prior_time + 1u, packet, packet_n,
+    check(cnet_sctp_assoc_input(&a, prior_time + 1u, packet, packet_n,
         output, sizeof(output), &output_n) == CNET_SCTP_ASSOC_PROTOCOL);
-    assert(output_n == 0u);
-    assert(a.state == CNET_SCTP_ASSOC_CLOSED);
-    assert(a.last_time_ms == prior_time);
-    assert(output[0] == 0xCCu);
+    check(output_n == 0u);
+    check(a.state == CNET_SCTP_ASSOC_CLOSED);
+    check(a.last_time_ms == prior_time);
+    check(output[0] == 0xCCu);
   }
-  assert(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_OK);
-  assert(cnet_sctp_assoc_stop(&b) == CNET_SCTP_ASSOC_OK);
-  assert(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
-  assert(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
+  check(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_OK);
+  check(cnet_sctp_assoc_stop(&b) == CNET_SCTP_ASSOC_OK);
+  check(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
+  check(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
 }
 
 static void shutdown_capacity_retries_are_transactional(void) {
@@ -3040,32 +3037,32 @@ static void shutdown_capacity_retries_are_transactional(void) {
   uint64_t prior_deadline;
 
   setup(&a, &b, &ca, &cb);
-  assert(cnet_sctp_assoc_start(&a, 1u, init, sizeof(init), &init_n) ==
+  check(cnet_sctp_assoc_start(&a, 1u, init, sizeof(init), &init_n) ==
       CNET_SCTP_ASSOC_OK);
-  assert(cnet_sctp_assoc_input(&b, 2u, init, init_n, init_ack,
+  check(cnet_sctp_assoc_input(&b, 2u, init, init_n, init_ack,
       sizeof(init_ack), &init_ack_n) == CNET_SCTP_ASSOC_OK);
-  assert(cnet_sctp_assoc_input(&a, 3u, init_ack, init_ack_n, echo,
+  check(cnet_sctp_assoc_input(&a, 3u, init_ack, init_ack_n, echo,
       sizeof(echo), &echo_n) == CNET_SCTP_ASSOC_OK);
-  assert(cnet_sctp_assoc_input(&b, 4u, echo, echo_n, cookie_ack,
+  check(cnet_sctp_assoc_input(&b, 4u, echo, echo_n, cookie_ack,
       sizeof(cookie_ack), &cookie_ack_n) == CNET_SCTP_ASSOC_OK);
-  assert(cnet_sctp_assoc_input(&a, 5u, cookie_ack, cookie_ack_n, ack_packet,
+  check(cnet_sctp_assoc_input(&a, 5u, cookie_ack, cookie_ack_n, ack_packet,
       sizeof(ack_packet), &ack_n) == CNET_SCTP_ASSOC_OK);
   /* COOKIE-ACK completes the active side locally; this M2 path emits no
    * fourth handshake packet. The passive side was established on COOKIE-ECHO. */
-  assert(ack_n == 0u);
-  assert(a.state == CNET_SCTP_ASSOC_ESTABLISHED);
-  assert(b.state == CNET_SCTP_ASSOC_ESTABLISHED);
+  check(ack_n == 0u);
+  check(a.state == CNET_SCTP_ASSOC_ESTABLISHED);
+  check(b.state == CNET_SCTP_ASSOC_ESTABLISHED);
 
   /* Leave one outbound DATA TSN retained at b, while a has received it and
    * generated (but not delivered) the SACK. The later SHUTDOWN cumulative TSN
    * therefore drains b's TX ticket only if the input transaction commits. */
-  assert(cnet_sctp_assoc_send_message(&b, 6u, 0u, 51u, 0,
+  check(cnet_sctp_assoc_send_message(&b, 6u, 0u, 51u, 0,
       "x", 1u, data_packet, sizeof(data_packet), &data_n) ==
       CNET_SCTP_ASSOC_OK);
-  assert(data_n > 0u && b.data.tx[0].used);
-  assert(cnet_sctp_assoc_input(&a, 6u, data_packet, data_n,
+  check(data_n > 0u && b.data.tx[0].used);
+  check(cnet_sctp_assoc_input(&a, 6u, data_packet, data_n,
       data_ack, sizeof(data_ack), &data_ack_n) == CNET_SCTP_ASSOC_OK);
-  assert(data_ack_n > 0u && a.data.buffered_rx == 1u);
+  check(data_ack_n > 0u && a.data.buffered_rx == 1u);
   /* Deliberately do not deliver data_ack to b: SHUTDOWN will cumulatively
    * acknowledge this retained TSN on b, exercising candidate DATA-state
    * rollback when SHUTDOWN-ACK cannot be published. */
@@ -3074,10 +3071,10 @@ static void shutdown_capacity_retries_are_transactional(void) {
    * so the same timestamp can be retried. */
   before = a;
   tiny[0] = 0xCCu;
-  assert(cnet_sctp_assoc_shutdown(&a, 7u, tiny, sizeof(tiny), &shutdown_n) ==
+  check(cnet_sctp_assoc_shutdown(&a, 7u, tiny, sizeof(tiny), &shutdown_n) ==
       CNET_SCTP_ASSOC_CAPACITY);
-  assert(shutdown_n == 0u && tiny[0] == 0xCCu);
-  assert(a.state == before.state && a.last_time_ms == before.last_time_ms &&
+  check(shutdown_n == 0u && tiny[0] == 0xCCu);
+  check(a.state == before.state && a.last_time_ms == before.last_time_ms &&
       a.deadline_ms == before.deadline_ms &&
       a.t5_shutdown_deadline_ms == before.t5_shutdown_deadline_ms &&
       a.current_rto_ms == before.current_rto_ms && a.local_tag == before.local_tag &&
@@ -3086,21 +3083,21 @@ static void shutdown_capacity_retries_are_transactional(void) {
       a.saved_size == before.saved_size && a.retransmits == before.retransmits &&
       a.in_progress == before.in_progress && a.data_ready == before.data_ready &&
       memcmp(a.saved_packet, before.saved_packet, sizeof(a.saved_packet)) == 0);
-  assert(cnet_sctp_assoc_shutdown(&a, 7u, shutdown_packet,
+  check(cnet_sctp_assoc_shutdown(&a, 7u, shutdown_packet,
       sizeof(shutdown_packet), &shutdown_n) == CNET_SCTP_ASSOC_OK);
-  assert(shutdown_n > 0u && a.state == CNET_SCTP_ASSOC_SHUTDOWN_SENT);
+  check(shutdown_n > 0u && a.state == CNET_SCTP_ASSOC_SHUTDOWN_SENT);
 
   /* Inbound SHUTDOWN needs to publish SHUTDOWN-ACK before committing the
    * candidate cumulative-ACK/data state, state transition, or T2 deadline. */
   before = b;
   tiny[0] = 0xCCu;
-  assert(cnet_sctp_assoc_input(&b, 8u, shutdown_packet, shutdown_n,
+  check(cnet_sctp_assoc_input(&b, 8u, shutdown_packet, shutdown_n,
       tiny, sizeof(tiny), &ack_n) == CNET_SCTP_ASSOC_CAPACITY);
-  assert(ack_n == 0u && tiny[0] == 0xCCu);
+  check(ack_n == 0u && tiny[0] == 0xCCu);
   /* A capacity refusal has not accepted this SHUTDOWN or published its
    * ACK. The full protocol/clock transaction must remain retryable. */
-  assert(b.last_time_ms == before.last_time_ms);
-  assert(b.state == before.state &&
+  check(b.last_time_ms == before.last_time_ms);
+  check(b.state == before.state &&
       b.deadline_ms == before.deadline_ms &&
       b.t5_shutdown_deadline_ms == before.t5_shutdown_deadline_ms &&
       b.current_rto_ms == before.current_rto_ms && b.local_tag == before.local_tag &&
@@ -3109,7 +3106,7 @@ static void shutdown_capacity_retries_are_transactional(void) {
       b.saved_size == before.saved_size && b.retransmits == before.retransmits &&
       b.in_progress == before.in_progress && b.data_ready == before.data_ready &&
       memcmp(b.saved_packet, before.saved_packet, sizeof(b.saved_packet)) == 0);
-  assert(b.data.tx[0].used == before.data.tx[0].used &&
+  check(b.data.tx[0].used == before.data.tx[0].used &&
       b.data.tx[0].tsn == before.data.tx[0].tsn &&
       b.data.tx[0].packet_size == before.data.tx[0].packet_size &&
       memcmp(b.data.tx[0].packet, before.data.tx[0].packet,
@@ -3119,9 +3116,9 @@ static void shutdown_capacity_retries_are_transactional(void) {
       b.data.last_ack == before.data.last_ack &&
       b.data.cumulative_rx == before.data.cumulative_rx &&
       b.data.buffered_rx == before.data.buffered_rx);
-  assert(cnet_sctp_assoc_input(&b, 8u, shutdown_packet, shutdown_n,
+  check(cnet_sctp_assoc_input(&b, 8u, shutdown_packet, shutdown_n,
       ack_packet, sizeof(ack_packet), &ack_n) == CNET_SCTP_ASSOC_OK);
-  assert(ack_n > 0u && b.state == CNET_SCTP_ASSOC_SHUTDOWN_ACK_SENT &&
+  check(ack_n > 0u && b.state == CNET_SCTP_ASSOC_SHUTDOWN_ACK_SENT &&
       b.last_time_ms == 8u);
   prior_deadline = b.deadline_ms;
 
@@ -3129,10 +3126,10 @@ static void shutdown_capacity_retries_are_transactional(void) {
    * its saved ACK has been admitted to the caller's output buffer. */
   before = b;
   tiny[0] = 0xCCu;
-  assert(cnet_sctp_assoc_input(&b, 8u, shutdown_packet, shutdown_n,
+  check(cnet_sctp_assoc_input(&b, 8u, shutdown_packet, shutdown_n,
       tiny, sizeof(tiny), &ack_n) == CNET_SCTP_ASSOC_CAPACITY);
-  assert(ack_n == 0u && tiny[0] == 0xCCu);
-  assert(b.state == before.state && b.last_time_ms == before.last_time_ms &&
+  check(ack_n == 0u && tiny[0] == 0xCCu);
+  check(b.state == before.state && b.last_time_ms == before.last_time_ms &&
       b.deadline_ms == before.deadline_ms &&
       b.t5_shutdown_deadline_ms == before.t5_shutdown_deadline_ms &&
       b.current_rto_ms == before.current_rto_ms && b.local_tag == before.local_tag &&
@@ -3141,16 +3138,16 @@ static void shutdown_capacity_retries_are_transactional(void) {
       b.saved_size == before.saved_size && b.retransmits == before.retransmits &&
       b.in_progress == before.in_progress && b.data_ready == before.data_ready &&
       memcmp(b.saved_packet, before.saved_packet, sizeof(b.saved_packet)) == 0);
-  assert(b.deadline_ms == prior_deadline);
-  assert(cnet_sctp_assoc_input(&b, 8u, shutdown_packet, shutdown_n,
+  check(b.deadline_ms == prior_deadline);
+  check(cnet_sctp_assoc_input(&b, 8u, shutdown_packet, shutdown_n,
       ack_packet, sizeof(ack_packet), &ack_n) == CNET_SCTP_ASSOC_OK);
-  assert(ack_n > 0u && b.state == CNET_SCTP_ASSOC_SHUTDOWN_ACK_SENT);
-  assert(b.deadline_ms == 108u);
+  check(ack_n > 0u && b.state == CNET_SCTP_ASSOC_SHUTDOWN_ACK_SENT);
+  check(b.deadline_ms == 108u);
 
-  assert(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_OK);
-  assert(cnet_sctp_assoc_stop(&b) == CNET_SCTP_ASSOC_OK);
-  assert(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
-  assert(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
+  check(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_OK);
+  check(cnet_sctp_assoc_stop(&b) == CNET_SCTP_ASSOC_OK);
+  check(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
+  check(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
 }
 
 static void output_count_zeroed_before_owner_guard(void) {
@@ -3163,57 +3160,58 @@ static void output_count_zeroed_before_owner_guard(void) {
   setup(&a, &b, &ca, &cb);
   ca.on_owner = 0;
   written = 99u;
-  assert(cnet_sctp_assoc_start(&a, 1u, packet, sizeof(packet), &written) ==
+  check(cnet_sctp_assoc_start(&a, 1u, packet, sizeof(packet), &written) ==
       CNET_SCTP_ASSOC_OWNER);
-  assert(written == 0u);
+  check(written == 0u);
   written = 99u;
-  assert(cnet_sctp_assoc_input(&a, 1u, packet, sizeof(packet), packet,
+  check(cnet_sctp_assoc_input(&a, 1u, packet, sizeof(packet), packet,
       sizeof(packet), &written) == CNET_SCTP_ASSOC_OWNER);
-  assert(written == 0u);
+  check(written == 0u);
   written = 99u;
-  assert(cnet_sctp_assoc_advance(&a, 1u, packet, sizeof(packet), &written) ==
+  check(cnet_sctp_assoc_advance(&a, 1u, packet, sizeof(packet), &written) ==
       CNET_SCTP_ASSOC_OWNER);
-  assert(written == 0u);
+  check(written == 0u);
   written = 99u;
-  assert(cnet_sctp_assoc_send_message(&a, 1u, 0u, 51u, 0, payload,
+  check(cnet_sctp_assoc_send_message(&a, 1u, 0u, 51u, 0, payload,
       sizeof(payload), packet, sizeof(packet), &written) == CNET_SCTP_ASSOC_OWNER);
-  assert(written == 0u);
+  check(written == 0u);
   written = 99u;
-  assert(cnet_sctp_assoc_take_message(&a, &message, payload, sizeof(payload),
+  check(cnet_sctp_assoc_take_message(&a, &message, payload, sizeof(payload),
       &written) == CNET_SCTP_ASSOC_OWNER);
-  assert(written == 0u);
+  check(written == 0u);
   written = 99u;
-  assert(cnet_sctp_assoc_send_bundle(&a, 1u, &item, 1u, packet,
+  check(cnet_sctp_assoc_send_bundle(&a, 1u, &item, 1u, packet,
       sizeof(packet), &written) == CNET_SCTP_ASSOC_OWNER);
-  assert(written == 0u);
+  check(written == 0u);
   written = 99u;
-  assert(cnet_sctp_assoc_pump_message(&a, 1u, packet, sizeof(packet),
+  check(cnet_sctp_assoc_pump_message(&a, 1u, packet, sizeof(packet),
       &written) == CNET_SCTP_ASSOC_OWNER);
-  assert(written == 0u);
+  check(written == 0u);
   written = 99u;
-  assert(cnet_sctp_assoc_shutdown(&a, 1u, packet, sizeof(packet), &written) ==
+  check(cnet_sctp_assoc_shutdown(&a, 1u, packet, sizeof(packet), &written) ==
       CNET_SCTP_ASSOC_OWNER);
-  assert(written == 0u);
+  check(written == 0u);
   written = 99u;
-  assert(cnet_sctp_assoc_window_update(&a, 1u, packet, sizeof(packet), &written) ==
+  check(cnet_sctp_assoc_window_update(&a, 1u, packet, sizeof(packet), &written) ==
       CNET_SCTP_ASSOC_OWNER);
-  assert(written == 0u);
+  check(written == 0u);
   ca.on_owner = 1;
   written = 99u;
-  assert(cnet_sctp_assoc_start(&a, 1u, packet, 8u, &written) ==
+  check(cnet_sctp_assoc_start(&a, 1u, packet, 8u, &written) ==
       CNET_SCTP_ASSOC_CAPACITY);
-  assert(written == 0u);
+  check(written == 0u);
   written = 99u;
-  assert(cnet_sctp_assoc_input(&a, 1u, NULL, 0u, packet,
+  check(cnet_sctp_assoc_input(&a, 1u, NULL, 0u, packet,
       sizeof(packet), &written) != CNET_SCTP_ASSOC_OK);
-  assert(written == 0u);
-  assert(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_OK);
-  assert(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
-  assert(cnet_sctp_assoc_stop(&b) == CNET_SCTP_ASSOC_OK);
-  assert(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
+  check(written == 0u);
+  check(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_OK);
+  check(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
+  check(cnet_sctp_assoc_stop(&b) == CNET_SCTP_ASSOC_OK);
+  check(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
 }
 
-int main(void) {
+spec("SCTP native assoc contract") {
+  it("preserves all original RFC, boundary and negative-path assertions") {
   output_count_zeroed_before_owner_guard();
   init_ack_capacity_preserves_input_watermark();
   shutdown_capacity_retries_are_transactional();
@@ -3258,5 +3256,5 @@ int main(void) {
   binding_vtag_and_invalid_input();
   cookie_echo_t1_retransmission();
   puts("C11 SCTP owner-local INIT/COOKIE research gates PASS (test-only MAC)");
-  return 0;
+  }
 }

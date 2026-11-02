@@ -1,3 +1,5 @@
+#define TINYTEST_NO_MAIN
+#include <tinytest.h>
 #include <process.h>
 #include <error_codes.h>
 #include <clock.h>
@@ -89,7 +91,7 @@ static int test_native_retainer(const char *self) {
   return 0;
 }
 
-int main(int argc, char **argv) {
+static int saltscore_legacy_process_entry(int argc, char **argv) {
   salts_process_options_t opts;
   salts_process_result_t result;
   salts_process_t *child = NULL;
@@ -131,4 +133,31 @@ int main(int argc, char **argv) {
 
   puts("Salts::Process real child, exit and bounded retainer PASS");
   return 0;
+}
+
+/* Child modes are not TinyTest tests: the parent verifies exact stdout and
+ * the deliberate exit code 19. Keep their process contract byte-identical. */
+static int saltscore_process_argc;
+static char **saltscore_process_argv;
+
+spec("Core native Process spawn and retainer") {
+  it("verifies real child exit, bounded output, cancel and retainer lifetime") {
+    const int result = saltscore_legacy_process_entry(
+        saltscore_process_argc, saltscore_process_argv);
+    check(result == 0, "original Process contract returned %d", result);
+  }
+}
+
+int main(int argc, char **argv) {
+  if (argc > 1 && argv && argv[1] &&
+      (strcmp(argv[1], "--core-child") == 0 ||
+       strcmp(argv[1], "--core-child-sleep") == 0)) {
+    return saltscore_legacy_process_entry(argc, argv);
+  }
+  saltscore_process_argc = argc;
+  saltscore_process_argv = argv;
+  char *runner_argv[] = {argv[0]};
+  return ttest_main__(1, runner_argv, TTEST_INVOKE_SPEC_ADAPTER__,
+                      TT_USE_COLOR != 0, TT_USE_TAP != 0,
+                      TTEST_IS_ATTY__() != 0, TTEST_PRINT_TRACE_DEFAULT__);
 }

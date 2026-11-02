@@ -3,6 +3,8 @@
  * Certificate fixtures are exact copies of original Salts TLS conformance
  * corpus. No TLS implementation/type is accessed directly in this file.
  */
+#define TINYTEST_NO_MAIN
+#include <tinytest.h>
 #include <cnet/cnet.h>
 #include <clock.h>
 #include <error_codes.h>
@@ -712,7 +714,7 @@ cleanup:
   return result;
 }
 
-int main(int argc, char **argv) {
+static int saltscore_original_entry_test_cnet_tls_ca_san_c(int argc, char **argv) {
   if (argc == 9 && strcmp(argv[1], "--python-ssl-client") == 0)
     return run_python_ssl_client(
         argv[2], argv[3], argv[4], argv[5], argv[6], argv[7], argv[8]);
@@ -766,4 +768,25 @@ int main(int argc, char **argv) {
       .ca_file = CORE_TLS_TEST_P384_CA,
       .verified_hostname = "wrong.example"};
   return run_case(&wrong_san);
+}
+
+/* Preserve original real peer / module argument delivery and all cleanup.
+ * TinyTest owns the process result, while the original integration executes. */
+static int saltscore_original_argc;
+static char **saltscore_original_argv;
+
+spec("CNet real TLS CA SAN mTLS Python peer interoperability") {
+  it("preserves the real native integration and external peer contract") {
+    const int result = saltscore_original_entry_test_cnet_tls_ca_san_c(saltscore_original_argc, saltscore_original_argv);
+    check(result == 0, "native integration returned %d", result);
+  }
+}
+
+int main(int argc, char **argv) {
+  saltscore_original_argc = argc;
+  saltscore_original_argv = argv;
+  char *runner_argv[] = {argv[0]};
+  return ttest_main__(1, runner_argv, TTEST_INVOKE_SPEC_ADAPTER__,
+                      TT_USE_COLOR != 0, TT_USE_TAP != 0,
+                      TTEST_IS_ATTY__() != 0, TTEST_PRINT_TRACE_DEFAULT__);
 }

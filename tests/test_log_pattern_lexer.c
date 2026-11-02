@@ -1,7 +1,8 @@
 #include <log_pattern_lexer.h>
 #include <string.h>
-#define CHECK(x) do {if(!(x))return __LINE__;}while(0)
-int main(void) {
+#include <tinytest.h>
+spec("Original log-pattern lexer") {
+  it("preserves tokens, unknown placeholders and bounded input") {
   const char *src="[{time_ms}] {level} {component}: {message} {bogus}";
   const char *cursor=src,*start=0;
   size_t n=0;
@@ -12,24 +13,24 @@ int main(void) {
     LOG_TOKEN_UNKNOWN, LOG_TOKEN_END
   };
   for(size_t i=0;i<sizeof(tokens)/sizeof(tokens[0]);++i) {
-    CHECK(log_pattern_scan(&cursor,&start,&n)==tokens[i]);
+    check(log_pattern_scan(&cursor,&start,&n)==tokens[i]);
     if(tokens[i]==LOG_TOKEN_UNKNOWN)
-      CHECK(n==7 && memcmp(start,"{bogus}",7)==0);
+      check(n==7 && memcmp(start,"{bogus}",7)==0);
     if(tokens[i]==LOG_TOKEN_TIME_MS)
-      CHECK(n==0);
+      check(n==0);
   }
   const char raw[]={'a','{','f','i','l','e','}','{','x'};
   cursor=raw;
-  CHECK(log_pattern_scan_n(&cursor,raw+sizeof(raw),&start,&n)==LOG_TOKEN_TEXT);
-  CHECK(n==1 && start==raw);
-  CHECK(log_pattern_scan_n(&cursor,raw+sizeof(raw),&start,&n)==LOG_TOKEN_FILE);
-  CHECK(log_pattern_scan_n(&cursor,raw+sizeof(raw),&start,&n)==LOG_TOKEN_TEXT);
-  CHECK(n==1 && *start=='{');
-  CHECK(log_pattern_scan_n(&cursor,raw+sizeof(raw),&start,&n)==LOG_TOKEN_TEXT);
-  CHECK(n==1 && *start=='x');
-  CHECK(log_pattern_scan_n(&cursor,raw+sizeof(raw),&start,&n)==LOG_TOKEN_END);
+  check(log_pattern_scan_n(&cursor,raw+sizeof(raw),&start,&n)==LOG_TOKEN_TEXT);
+  check(n==1 && start==raw);
+  check(log_pattern_scan_n(&cursor,raw+sizeof(raw),&start,&n)==LOG_TOKEN_FILE);
+  check(log_pattern_scan_n(&cursor,raw+sizeof(raw),&start,&n)==LOG_TOKEN_TEXT);
+  check(n==1 && *start=='{');
+  check(log_pattern_scan_n(&cursor,raw+sizeof(raw),&start,&n)==LOG_TOKEN_TEXT);
+  check(n==1 && *start=='x');
+  check(log_pattern_scan_n(&cursor,raw+sizeof(raw),&start,&n)==LOG_TOKEN_END);
   cursor="{x{y}";
-  CHECK(log_pattern_scan(&cursor,&start,&n)==LOG_TOKEN_UNKNOWN);
-  CHECK(n==5 && memcmp(start,"{x{y}",5)==0);
-  return 0;
+  check(log_pattern_scan(&cursor,&start,&n)==LOG_TOKEN_UNKNOWN);
+  check(n==5 && memcmp(start,"{x{y}",5)==0);
+  }
 }

@@ -88,6 +88,25 @@ cmake --build build-cnet --parallel
 ctest --test-dir build-cnet --output-on-failure
 ```
 
+### Mandatory native unit test framework
+
+When `BUILD_TESTING=ON`, the source graph requires
+`SALTSCORE_BUILD_TINYTEST=ON` and fails configuration if it is disabled.
+C11 native test suites include `tinytest.h`; C++17 suites include
+`tinytest.hpp`; their executables link `Salts::TinyTest` and register
+real `spec/it/check` cases. CTest remains the sole runner for timeouts,
+sanitizers and platform test selection. No private `spec/it` facade or
+separate unit-test harness is permitted; empty suites and missing case
+filters must return failure.
+
+The existing Linux native and TSan LLVM jobs enable
+`CNET_SCTP_TEST_OWNER_THREADS=ON` to run the actual POSIX Owner,
+Provider DSO and opaque Session DSO lifecycle tests. Worker-thread
+fatal invariants remain process-fail-closed; TinyTest checks joined
+owner/post-unload state from the main test thread. These are not
+synthetic consumer or installer projects. With `BUILD_TESTING=OFF`,
+production-only consumers may explicitly disable the TinyTest library.
+
 The checked-in vcpkg manifest declares GmSSL and CNet dependencies directly.
 The shared cache Actions use published `qigao/vcpkg-cache@v0.1.0` and the
 custom registry selects `reference: v0.1.0`. vcpkg requires a 40-hex Git
@@ -124,6 +143,11 @@ The standalone install exports `Salts::Core` through
 only when their independent implementations and platform gates are qualified.
 
 ## Native LLVM thread and scheduler contract
+
+The mandatory TinyTest / CTest division, exact native module ownership,
+worker-thread failure rules, and opt-in original CNet Crypto test admission are
+documented in [Native Test Ownership](docs/NATIVE-TESTING.md).
+
 
 The unified CI workflow uses the shared vcpkg-cache compiler setup on
 Linux/macOS x64 and ARM64 (runner-native Clang), and Windows x64 and ARM64

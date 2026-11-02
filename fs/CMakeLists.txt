@@ -30,7 +30,7 @@ if(BUILD_TESTING)
   target_compile_features(saltscore_fs_test PRIVATE c_std_11)
   set_target_properties(saltscore_fs_test PROPERTIES
     C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
-  target_link_libraries(saltscore_fs_test PRIVATE Salts::FS)
+  target_link_libraries(saltscore_fs_test PRIVATE Salts::FS Salts::TinyTest)
   add_test(NAME saltscore.fs_owner_and_root COMMAND saltscore_fs_test)
   set_tests_properties(saltscore.fs_owner_and_root PROPERTIES TIMEOUT 25)
 endif()

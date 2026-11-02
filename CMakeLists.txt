@@ -25,6 +25,15 @@ if(BUILD_TESTING)
 endif()
 find_package(Threads REQUIRED)
 
+# TinyTest is the canonical native C11/C++17 test framework.
+# Make it available before source-owned module test declarations.
+if(BUILD_TESTING AND NOT SALTSCORE_BUILD_TINYTEST)
+  message(FATAL_ERROR "BUILD_TESTING=ON requires SALTSCORE_BUILD_TINYTEST=ON")
+endif()
+if(SALTSCORE_BUILD_TINYTEST)
+  add_subdirectory(tinytest)
+endif()
+
 # Package root assembles canonical modules; modules own sources and installs.
 # Original logging uses existing FS and Concurrency implementations;
 # compile those single owners first, without a second logger provider.
@@ -81,9 +90,6 @@ endif()
 
 if(SALTSCORE_BUILD_CSERDE)
   add_subdirectory(cserde)
-endif()
-if(SALTSCORE_BUILD_TINYTEST)
-  add_subdirectory(tinytest)
 endif()
 if(SALTSCORE_BUILD_USB)
   add_subdirectory(usb)
@@ -144,15 +150,9 @@ install(EXPORT SaltsCoreTargets FILE SaltsCoreTargets.cmake
   NAMESPACE Salts:: DESTINATION "${_saltscore_package_dir}")
 
 if(BUILD_TESTING)
+  # TinyTest is already required at the package root; never silently omit
+  # real native modules or framework regression coverage.
   add_subdirectory(tests)
-  if(TARGET Salts::TinyTest)
-    add_subdirectory(concurrency/tests)
-  endif()
-  if(SALTSCORE_BUILD_UNICODE OR SALTSCORE_BUILD_IDNA OR
-     SALTSCORE_BUILD_CSERDE OR SALTSCORE_BUILD_TINYTEST)
-    if(NOT SALTSCORE_BUILD_TINYTEST)
-      message(FATAL_ERROR "Native conformance requires SALTSCORE_BUILD_TINYTEST=ON")
-    endif()
-    add_subdirectory(tests/native-modules)
-  endif()
+  add_subdirectory(concurrency/tests)
+  add_subdirectory(tests/native-modules)
 endif()

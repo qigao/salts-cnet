@@ -1,4 +1,5 @@
 #include <platform_thread.h>
+#include <tinytest.h>
 #include <stdint.h>
 #include <stdio.h>
 enum { N=6 };
@@ -26,7 +27,7 @@ static int worker(void *opaque) {
     if (salts_platform_mutex_unlock(gate)) return -7;
     return *(int *)opaque;
 }
-int main(void) {
+static int saltscore_legacy_entry_test_portable_tss_c(void) {
     salts_platform_thread *threads[N] = {0};
     uint32_t destructors=0;
     int i, result=0, local=7;
@@ -56,4 +57,13 @@ int main(void) {
     if (salts_platform_condition_destroy(&cv) || salts_platform_mutex_destroy(&gate)) return 16;
     puts("portable TSS destructor/owner lifecycle PASS");
     return 0;
+}
+
+/* Keep the native contract's original exit codes and cleanup paths intact;
+ * surface its exact nonzero result as one registered TinyTest failure. */
+spec("Portable TSS ownership and destruction") {
+  it("preserves the original native exit and lifetime contract") {
+    const int result = saltscore_legacy_entry_test_portable_tss_c();
+    check(result == 0, "original native contract returned %d", result);
+  }
 }

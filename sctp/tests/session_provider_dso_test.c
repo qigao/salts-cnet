@@ -5,6 +5,8 @@
 #undef NDEBUG
 #endif
 #include <assert.h>
+#define TINYTEST_NO_MAIN
+#include <tinytest.h>
 #include <dlfcn.h>
 #include <pthread.h>
 #include <stdint.h>
@@ -241,7 +243,7 @@ static void *canceller_main(void *context) {
   assert(dlclose(old_handle) == 0);
   return NULL;
 }
-static void run_generation(const char *path, uint32_t generation) {
+static int run_generation(const char *path, uint32_t generation) {
   session_provider_fixture f = {0};
   pthread_t owner, canceller;
   const cnet_sctp_test_dso_api *stale_api = NULL;
@@ -273,13 +275,34 @@ static void run_generation(const char *path, uint32_t generation) {
   assert(f.active_calls == 0u && f.handle == NULL && f.api == NULL);
   assert(unload_admission(&f) == PROVIDER_BUSY);
   assert(pthread_cond_destroy(&f.changed) == 0);
+  const int verified = (f.cancel_requested && f.created &&
+      f.revoked_checked && f.allow_cleanup && f.owner_destroyed &&
+      f.unloaded && f.active_calls == 0u && f.handle == NULL &&
+      f.api == NULL && f.session == NULL);
   assert(pthread_mutex_destroy(&f.mutex) == 0);
+  return verified;
 }
+static const char *sctp_test_provider_path;
+
+spec("SCTP opaque Session real DSO drain and cancellation") {
+  for (uint32_t generation = 1u; generation <= SESSION_DSO_ROUNDS; ++generation) {
+    it("real DSO generation %u", (unsigned)generation) {
+      check(run_generation(sctp_test_provider_path, generation), "DSO generation %u did not drain and unload",
+            (unsigned)generation);
+    }
+  }
+}
+
+/* CTest must still supply the built provider DSO path. An invalid host
+ * invocation never becomes an empty or falsely successful TinyTest run. */
 int main(int argc, char **argv) {
-  uint32_t generation;
-  assert(argc == 2 && argv[1] != NULL);
-  for (generation = 1u; generation <= SESSION_DSO_ROUNDS; ++generation)
-    run_generation(argv[1], generation);
-  puts("CNet SCTP opaque Session real DSO cancel/Owner drain/dlclose: PASS");
-  return 0;
+  if (argc != 2 || argv[1] == NULL || argv[1][0] == '\0') {
+    fprintf(stderr, "expected one real SCTP Provider DSO path\n");
+    return 2;
+  }
+  sctp_test_provider_path = argv[1];
+  char *native_argv[] = {argv[0]};
+  return ttest_main__(1, native_argv, TTEST_INVOKE_SPEC_ADAPTER__,
+                      TT_USE_COLOR != 0, TT_USE_TAP != 0,
+                      TTEST_IS_ATTY__() != 0, TTEST_PRINT_TRACE_DEFAULT__);
 }
