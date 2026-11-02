@@ -213,27 +213,35 @@ Core or CMeta. Do not mistake this sketch for a compiled drop-in example.
  *   salts_service_host_generation_build(...)      // N+1 built off-line
  *   salts_service_host_runtime_publish(...)       // new Scopes -> N+1
  */
+typedef bool (*copy_admitted_policy_fn)(
+    const salts_configurator_service *borrowed, void *out_owned_plan);
+
 static int bind_policy_from_published_host(
     salts_service_host_runtime *runtime,
-    const cmeta_interface_desc *required_interface)
+    const cmeta_interface_desc *required_interface,
+    copy_admitted_policy_fn copy_and_validate, void *out_owned_plan)
 {
     salts_service_host_scope scope = SALTS_SERVICE_HOST_SCOPE_INIT;
     salts_configurator_service view = {0};
+    bool copied = false;
+    if (!runtime || !required_interface || !copy_and_validate || !out_owned_plan)
+        return -1;
     if (salts_service_host_scope_acquire(runtime, &scope)
         != SALTS_SERVICE_HOST_OK) return -1;
     const salts_service_host_status result =
         salts_service_host_scope_find_service_from(
             &scope, "app.network.policy", required_interface, &view);
     if (result == SALTS_SERVICE_HOST_OK) {
-        /* Application must admit the actual typed Interface/FunctionAbi,
-         * then build a self-contained immutable CNet plan from view.
-         * NEVER pass view.object, provider vtable or Plugin pointers to CNet.
-         * NEVER interpret returned service as a native socket owner.
+        /* Application-owned callback MUST validate actual typed Interface and
+         * FunctionAbi and copy all used configuration bytes. It returns false
+         * on any mismatch; it cannot retain pointers borrowed from this Scope.
+         * out_owned_plan must be cleared by the caller on any failure.
          */
+        copied = copy_and_validate(&view, out_owned_plan);
     }
     if (salts_service_host_scope_release(&scope)
         != SALTS_SERVICE_HOST_OK) return -1;
-    return result == SALTS_SERVICE_HOST_OK ? 0 : -1;
+    return result == SALTS_SERVICE_HOST_OK && copied ? 0 : -1;
 }
 ```
 
