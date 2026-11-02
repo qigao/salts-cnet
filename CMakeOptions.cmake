@@ -15,6 +15,8 @@ option(SALTSCORE_CNET_OWNER_SOURCE_TESTS
 option(SALTSCORE_BUILD_SCTP "Build standalone C11 SCTP Wire and Session" OFF)
 option(SALTSCORE_TEST_CNET_CRYPTO_QUALIFICATION
   "Run additional test-only Crypto facade and original Owner qualification" OFF)
+option(SALTSCORE_CNET_PRODUCTION_REQUIRED_MTLS_TEST
+  "Exercise public NativeIO CNet REQUIRED client-certificate auth" OFF)
 option(SALTSCORE_BUILD_USB "Build the native libusb USB owner" OFF)
 option(SALTSCORE_BUILD_PLAYBACK "Build the native PCM Playback owner" OFF)
 option(SALTSCORE_BUILD_SERIAL "Build the native Serial owner" OFF)

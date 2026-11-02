@@ -20,9 +20,9 @@ REGISTRY = ROOT / "vcpkg-configuration.json"
 CRYPTO_CMAKE = ROOT / "crypto/CMakeLists.txt"
 LOCAL_NATIVE = ROOT / "crypto/native/gmssl"
 EXPECTED_SOURCE_SHA = "720abc55eca41cc7f676d0b5dbb38e8605d091b9"
-EXPECTED_PORT_TREE = "9eee73ae12ad32e499425f8cc28b740c5f84d89e"
-EXPECTED_REGISTRY = "05a10d73a5b1d01598e59d8cf34074513bd49df4"
-EXPECTED_REGISTRY_VERSION = "v0.1.0"
+EXPECTED_PORT_TREE = "3b06c785649c2cd632c319375e9bc08e53296b39"
+EXPECTED_REGISTRY = "7b1dcbe9415f43802209bb6507e57710e9f9bbfa"
+EXPECTED_REGISTRY_VERSION = 'fix/gmssl-tls12-negotiation'
 EXPECTED_UPSTREAM = "7c9f02904ef33e59c87b4f16621cc8fd434e7579"
 
 
@@ -39,7 +39,7 @@ def verify_lock(lock: dict) -> int:
             "noncanonical GmSSL package owner")
     package = lock["package"]
     require((package.get("name"), package.get("version"), package.get("port_version")) ==
-            ("gmssl", "3.2.0", 17), "wrong pinned GmSSL vcpkg version")
+            ("gmssl", "3.2.0", 18), "wrong pinned GmSSL vcpkg version")
     require(package.get("port_tree") == EXPECTED_PORT_TREE
             and package.get("registry_commit") == EXPECTED_REGISTRY
             and package.get("registry_reference") == EXPECTED_REGISTRY_VERSION,
@@ -119,7 +119,7 @@ def main() -> int:
     except (OSError, KeyError, ValueError, json.JSONDecodeError) as error:
         print("FAIL pinned GmSSL vcpkg source: " + str(error), file=sys.stderr)
         return 1
-    print(f"PASS: {count} immutable Crypto extension inputs; gmssl 3.2.0#17 from vcpkg registry")
+    print(f"PASS: {count} immutable Crypto extension inputs; gmssl 3.2.0#18 from vcpkg registry")
     return 0
 
 

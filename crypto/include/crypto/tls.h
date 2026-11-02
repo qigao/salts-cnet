@@ -31,6 +31,11 @@ typedef enum crypto_tls_result {
     CRYPTO_TLS_CLOSED = -6
 } crypto_tls_result;
 
+/* CLOSED alone does not authenticate a peer close_notify; use tls_close.h.
+ * A fatal record error or transport EOF remains terminal across subsequent
+ * send/receive/shutdown calls. A verified peer alert still permits sending
+ * the reciprocal alert through shutdown. */
+
 typedef enum crypto_tls_role {
     CRYPTO_TLS_SERVER = 0,
     CRYPTO_TLS_CLIENT = 1

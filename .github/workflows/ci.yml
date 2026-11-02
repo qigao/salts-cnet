@@ -55,6 +55,8 @@ on:
       - "CMakeLists.txt"
       - "CMakeOptions.cmake"
       - "CMakePresets.json"
+      - "vcpkg.json"
+      - "vcpkg-configuration.json"
       - ".github/workflows/ci.yml"
       - "tests/**"
       - "**/tests/**"
@@ -115,12 +117,13 @@ on:
       - "CMakeLists.txt"
       - "CMakeOptions.cmake"
       - "CMakePresets.json"
+      - "vcpkg.json"
+      - "vcpkg-configuration.json"
       - ".github/workflows/ci.yml"
       - "tests/**"
       - "**/tests/**"
       - "tinytest/test/**"
   workflow_dispatch:
-    inputs:
 
 permissions:
   contents: read
@@ -172,7 +175,7 @@ jobs:
       - name: Set up shared dependency contract
         id: vcpkg
         # Includes the pinned native Windows pkg-config; avoid MSYS2 for pkg-config.
-        uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-cache@2913c530b8f12ae411e3c180e898fb6c7783462f
+        uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-cache@7b1dcbe9415f43802209bb6507e57710e9f9bbfa
         with:
           mode: read
           token: ${{ github.token }}
@@ -181,6 +184,15 @@ jobs:
         uses: qigao/vcpkg-cache/.github/actions/setup-re2c-tools@v0.1.0
         with:
           token: ${{ github.token }}
+
+      - uses: actions/setup-python@v5
+        if: matrix.preset != 'ci-android'
+        with:
+          python-version: '3.12'
+
+      - name: Install formal TLS test fixture dependency
+        if: matrix.preset != 'ci-android'
+        run: python -m pip install cryptography
 
       - name: Install macOS native autotools
         if: runner.os == 'macOS'
@@ -235,22 +247,23 @@ jobs:
       - name: Configure full graph
         shell: bash
         run: |
-          # Mandatory real Crypto/CNet M5 TLS1.2/1.3 + M6 DSO lifetime
-          # regression in the EXISTING Linux x64 native CTest job.
-          # Never count TinyTest-only results as real peer-alert evidence.
-          # Other native and TSan lanes retain their original Owner tests.
-          if [[ "${{ matrix.rid }}" == "linux-x64" ]]; then
-            cmake --preset "${{ matrix.preset }}" \
-              -DCNET_SCTP_TEST_OWNER_THREADS=ON \
-              -DSALTSCORE_TEST_CNET_CRYPTO_QUALIFICATION=ON \
-              -DSALTSCORE_CNET_M6_SHARED_DSO_TEST=ON \
+          set -euo pipefail
+          tls_options=()
+          if [[ "${{ matrix.preset }}" != "ci-android" ]]; then
+            tls_options+=(
+              -DSALTSCORE_CNET_PRODUCTION_REQUIRED_MTLS_TEST=ON
+              -DSALTSCORE_TEST_CNET_CRYPTO_QUALIFICATION=ON
+              -DSALTSCORE_CNET_M6_SHARED_DSO_TEST=ON
               "-DSALTSCORE_CRYPTO_TEST_FIXTURES=${GITHUB_WORKSPACE}/crypto/tests/fixtures"
-          elif [[ "${{ matrix.rid }}" == "linux-x64" ||
-                  "${{ matrix.rid }}" == "linux-x64-tsan" ]]; then
-            cmake --preset "${{ matrix.preset }}" -DCNET_SCTP_TEST_OWNER_THREADS=ON
-          else
-            cmake --preset "${{ matrix.preset }}"
+            )
           fi
+          # Existing formal M5/M6 and independent TLS peer tests run on
+          # every native backend and sanitizer lane. Android is build-only.
+          if [[ "${{ matrix.rid }}" == "linux-x64" ||
+                "${{ matrix.rid }}" == "linux-x64-tsan" ]]; then
+            tls_options+=(-DCNET_SCTP_TEST_OWNER_THREADS=ON)
+          fi
+          cmake --preset "${{ matrix.preset }}" "${tls_options[@]}"
 
       - name: Build full graph
         shell: bash

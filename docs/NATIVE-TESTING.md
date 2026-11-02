@@ -47,12 +47,13 @@ per-assertion diagnostic migration requires a synchronized failure recorder
 that cannot strand a mutex, leave callback code in-flight, or mask the
 original process-failure contract.
 
-## Original CNet Crypto opt-in qualification
+## Original CNet Crypto qualification
 
 The existing `tests/cnet-crypto-static` graph remains **test-only**. Its
 independent M5 static Crypto Owner TLS1.2/1.3 and M6 two-plugin shared DSO
 cases do **not** establish that production CNet has fully switched to
-Crypto TLS/TLCP. That is tracked separately in Issue #81.
+Crypto TLS/TLCP. The current architecture remains tracked in Issue #147;
+historical Issue #81's closure does not certify that cutover.
 
 The additive opaque Crypto TLS v1.4 `crypto/tls_close.h` provides a
 read-only, authenticated reciprocal peer `close_notify` signal. The private
@@ -70,21 +71,29 @@ after setting the required vcpkg/LLVM environment used by the CI presets:
 ```sh
 cmake --preset ci-native \
   -DSALTSCORE_TEST_CNET_CRYPTO_QUALIFICATION=ON \
+  -DSALTSCORE_CNET_PRODUCTION_REQUIRED_MTLS_TEST=ON \
   -DSALTSCORE_CNET_M6_SHARED_DSO_TEST=ON \
   -DSALTSCORE_CRYPTO_TEST_FIXTURES="$PWD/crypto/tests/fixtures"
 cmake --build --preset ci-native
 ctest --preset ci-native --output-on-failure
 ```
 
-The existing Linux x64 native CI now enables the real M5/M6 tests **on every
-PR/push** using the committed certificate fixtures; there is no new workflow,
-probe job, test harness or fake-green skip. Every original CNet Owner and
-two-plugin DSO CTest remains active and must pass. The native LLVM matrix,
-sanitizers and per-platform tests are otherwise unchanged. Keep the semantic
-negative alert/EOF/cancellation acceptance in Issue #152 until separately
-proved, not inferred from a default CI success.
-Python independent-peer mTLS/SAN options still require their own exact-head
-acceptance and are not production correctness claims.
+All existing native CI lanes, including sanitizers, enable M5/M6 and the
+production Python TLS/mTLS/SAN tests. Android remains compile-only. The
+existing provider TinyTest suite also establishes real TLS1.2/1.3 CipherBIO
+pairs and checks reciprocal alerts, EOF, truncated/corrupt records, cancelled
+sessions, and sticky terminal errors. Production Python peers independently
+exercise valid mTLS, raw half-close, truncated/corrupt close_notify, encrypted
+fatal alerts, and reciprocal application/final-send closure for both versions.
+Each native failure must publish one terminal and drain before destruction.
+
+Python server-process diagnostics go to private temporary files: an unread
+stderr pipe can block certificate rejection before the TLS alert is sent,
+making a valid negative test look like an IOCP protocol hang. Failure reports
+include bounded phase/status and source-line metadata rather than certificate
+dumps. All these cases remain inside the existing formal CMake/CTest graph.
+Issue #152 still requires exact-head platform CI acceptance; local success
+alone does not close it or qualify the complete production provider cutover.
 
 The standalone `sctp/tests/independent/dtls` and
 `crypto/tests/x509/standalone` CMake projects predate this migration and

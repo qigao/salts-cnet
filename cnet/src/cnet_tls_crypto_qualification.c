@@ -640,10 +640,8 @@ static int refill_plaintext(cnet_tls_state *state, cnet_crypto_state *eng)
     result = crypto_tls_session_receive(
         eng->session, eng->plaintext, eng->plaintext_capacity, &received);
     if (result == CRYPTO_TLS_AGAIN) return SALTS_ENOENT;
-    /* GmSSL returns 0 for a successfully decrypted peer close_notify,
-     * which the v1.0 Crypto wrapper maps to BACKEND_ERROR. The transport
-     * can separately yield raw TCP EOF / CLOSED. Query authenticated
-     * evidence in BOTH cases; only the real validated alert is accepted.
+    /* Both a verified alert and transport EOF can report CLOSED. Query
+     * authenticated evidence before accepting an orderly terminal.
      */
     if (result == CRYPTO_TLS_CLOSED ||
         result == CRYPTO_TLS_BACKEND_ERROR) {

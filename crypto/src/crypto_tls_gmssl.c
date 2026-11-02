@@ -35,6 +35,7 @@ struct crypto_tls_session {
     int auth_verified;
     uint32_t auth_protocol;
     crypto_tls_result terminal_handshake_error;
+    crypto_tls_result terminal_io_error;
     int alpn_configured;
     size_t alpn_count;
     char alpn_storage[CRYPTO_TLS_ALPN_MAX_PROTOCOLS][
@@ -98,6 +99,23 @@ static crypto_tls_result map_backend_result(int result)
         return CRYPTO_TLS_AGAIN;
     if (result == TLS_ERROR_TCP_CLOSED) return CRYPTO_TLS_CLOSED;
     return CRYPTO_TLS_BACKEND_ERROR;
+}
+
+/* A record/transport failure is terminal even if a later backend shutdown
+ * would report local completion. Authenticated peer close remains readable
+ * while permitting the one reciprocal outbound alert. */
+static crypto_tls_result record_io_result(crypto_tls_session *s, int result)
+{
+    crypto_tls_result status = map_backend_result(result);
+    int received = 0;
+    if (result == 0 || result == TLS_ERROR_TCP_CLOSED) {
+        if (tls_get_peer_close_notify(&s->connection, &received) != 1)
+            status = CRYPTO_TLS_BACKEND_ERROR;
+        else if (received == 1)
+            return CRYPTO_TLS_CLOSED;
+    }
+    if (status < CRYPTO_TLS_OK) s->terminal_io_error = status;
+    return status;
 }
 
 #ifdef CRYPTO_TLS_PRIVATE_TEST_HANDSHAKE_TRACE
@@ -530,10 +548,13 @@ crypto_tls_result crypto_tls_session_send(
     if (status != CRYPTO_TLS_OK) return status;
     if (atomic_load_explicit(&s->cancelled, memory_order_acquire))
         status = CRYPTO_TLS_CANCELLED;
+    else if (s->terminal_io_error != CRYPTO_TLS_OK)
+        status = s->terminal_io_error;
     else if ((status = completed_handshake(s)) == CRYPTO_TLS_OK) {
-        status = map_backend_result(tls_send(&s->connection, data, len, &n));
+        status = record_io_result(s, tls_send(&s->connection, data, len, &n));
         if (status == CRYPTO_TLS_OK) {
-            if (!n || n > len) status = CRYPTO_TLS_BACKEND_ERROR;
+            if (!n || n > len)
+                status = s->terminal_io_error = CRYPTO_TLS_BACKEND_ERROR;
             else *out_sent = n;
         }
         if (atomic_load_explicit(&s->cancelled, memory_order_acquire))
@@ -556,10 +577,19 @@ crypto_tls_result crypto_tls_session_receive(
     if (status != CRYPTO_TLS_OK) return status;
     if (atomic_load_explicit(&s->cancelled, memory_order_acquire))
         status = CRYPTO_TLS_CANCELLED;
+    else if (s->terminal_io_error != CRYPTO_TLS_OK)
+        status = s->terminal_io_error;
     else if ((status = completed_handshake(s)) == CRYPTO_TLS_OK) {
-        status = map_backend_result(tls_recv(&s->connection, data, capacity, &n));
+        int peer_closed = 0;
+        if (tls_get_peer_close_notify(&s->connection, &peer_closed) != 1)
+            status = s->terminal_io_error = CRYPTO_TLS_BACKEND_ERROR;
+        else if (peer_closed == 1)
+            status = CRYPTO_TLS_CLOSED;
+        else
+            status = record_io_result(s, tls_recv(&s->connection, data, capacity, &n));
         if (status == CRYPTO_TLS_OK) {
-            if (!n || n > capacity) status = CRYPTO_TLS_BACKEND_ERROR;
+            if (!n || n > capacity)
+                status = s->terminal_io_error = CRYPTO_TLS_BACKEND_ERROR;
             else *out_received = n;
         }
         if (atomic_load_explicit(&s->cancelled, memory_order_acquire))
@@ -575,11 +605,13 @@ crypto_tls_result crypto_tls_session_shutdown(crypto_tls_session *s)
     if (status != CRYPTO_TLS_OK) return status;
     if (atomic_load_explicit(&s->cancelled, memory_order_acquire))
         status = CRYPTO_TLS_CANCELLED;
+    else if (s->terminal_io_error != CRYPTO_TLS_OK)
+        status = s->terminal_io_error;
     else if (s->auth_configured &&
         s->terminal_handshake_error != CRYPTO_TLS_OK)
         status = s->terminal_handshake_error;
     else {
-        status = map_backend_result(tls_shutdown(&s->connection));
+        status = record_io_result(s, tls_shutdown(&s->connection));
         if (atomic_load_explicit(&s->cancelled, memory_order_acquire))
             status = CRYPTO_TLS_CANCELLED;
     }
@@ -609,7 +641,13 @@ crypto_tls_result crypto_tls_session_peer_close_notify_v1_4(
          */
         status = completed_handshake(s);
         if (status == CRYPTO_TLS_OK) {
-            *out_received = s->connection.close_notify_received == 1 ? 1u : 0u;
+            int received = 0;
+            if (tls_get_peer_close_notify(&s->connection, &received) != 1)
+                status = CRYPTO_TLS_BACKEND_ERROR;
+            else if (atomic_load_explicit(&s->cancelled, memory_order_acquire))
+                status = CRYPTO_TLS_CANCELLED;
+            else
+                *out_received = received == 1 ? 1u : 0u;
         }
     }
     unlock_session(s);

@@ -1,8 +1,9 @@
-/* Provider-only ABI / external I/O contract.
- * This is not a network handshake, peer auth or CNet runtime conformance.
- * The test links the actual pinned GmSSL provider from the CNet feature. */
+/* Provider ABI and real paired CipherBIO TLS close semantics.
+ * CNet/NativeIO and independent-peer conformance have separate formal tests.
+ * This executable links the actual pinned GmSSL provider. */
 #include <tinytest.h>
 #include <crypto/tls_close.h>
+#include <crypto/cipher_bio.h>
 #include <gmssl/tls.h>
 #include <stdint.h>
 #include <stddef.h>
@@ -152,6 +153,134 @@ spec("Crypto close_notify read-only ownership") {
       check(crypto_tls_provider_destroy(&provider) == CRYPTO_TLS_OK
             && provider == NULL,
             "provider cleanup failed after session teardown");
+    }
+  }
+}
+
+static crypto_tls_provider *close_provider;
+static crypto_tls_session *close_session[2];
+static crypto_tls_cipher_bio *close_bio[2];
+static bool close_io_leased[2];
+
+static void transfer_close_cipher(unsigned from, unsigned to) {
+  uint8_t wire[32768];
+  size_t size = 0u;
+  crypto_tls_result result = crypto_tls_cipher_bio_take_cipher(
+      close_bio[from], wire, sizeof(wire), &size);
+  check(result == CRYPTO_TLS_OK || result == CRYPTO_TLS_AGAIN);
+  if (size != 0u)
+    check_equal(crypto_tls_cipher_bio_feed_cipher(close_bio[to], wire, size),
+                CRYPTO_TLS_OK);
+}
+
+static void establish_close_pair(crypto_tls_protocol protocol) {
+  bool complete[2] = {false, false};
+  for (unsigned i = 0u; i < 2u; ++i) {
+    crypto_tls_session_options options = {0};
+    crypto_tls_io io = {0};
+    options.struct_size = sizeof(options);
+    options.protocol = protocol;
+    options.role = i == 0u ? CRYPTO_TLS_CLIENT : CRYPTO_TLS_SERVER;
+    if (i == 0u) {
+      options.hostname = "localhost";
+      options.ca_file = CRYPTO_CLOSE_TEST_CA;
+    } else {
+      options.certificate_file = CRYPTO_CLOSE_TEST_SERVER_CERT;
+      options.private_key_file = CRYPTO_CLOSE_TEST_SERVER_KEY;
+    }
+    check_equal(crypto_tls_cipher_bio_create(32768u, &close_bio[i]), CRYPTO_TLS_OK);
+    io.struct_size = sizeof(io);
+    check_equal(crypto_tls_cipher_bio_acquire_io(close_bio[i], &io), CRYPTO_TLS_OK);
+    close_io_leased[i] = true;
+    check_equal(crypto_tls_session_create(close_provider, &options, &io,
+                                         &close_session[i]), CRYPTO_TLS_OK);
+  }
+  for (unsigned step = 0u; step < 128u && !(complete[0] && complete[1]); ++step) {
+    for (unsigned i = 0u; i < 2u; ++i) {
+      if (!complete[i]) {
+        crypto_tls_result result = crypto_tls_session_handshake(close_session[i]);
+        check(result == CRYPTO_TLS_OK || result == CRYPTO_TLS_AGAIN);
+        complete[i] = result == CRYPTO_TLS_OK;
+      }
+      transfer_close_cipher(i, 1u - i);
+    }
+  }
+  check(complete[0] && complete[1], "real paired TLS handshake must finish");
+}
+
+spec("Crypto authenticated close evidence after real handshake") {
+  before_each() {
+    close_provider = NULL;
+    memset(close_session, 0, sizeof(close_session));
+    memset(close_bio, 0, sizeof(close_bio));
+    memset(close_io_leased, 0, sizeof(close_io_leased));
+    check_equal(crypto_tls_provider_create(CRYPTO_TLS_ABI_VERSION,
+                                          &close_provider), CRYPTO_TLS_OK);
+  }
+  after_each() {
+    for (unsigned i = 0u; i < 2u; ++i) {
+      if (close_session[i])
+        check_equal(crypto_tls_session_destroy(&close_session[i]), CRYPTO_TLS_OK);
+      if (close_io_leased[i])
+        check_equal(crypto_tls_cipher_bio_release_io(close_bio[i]), CRYPTO_TLS_OK);
+      if (close_bio[i])
+        check_equal(crypto_tls_cipher_bio_destroy(&close_bio[i]), CRYPTO_TLS_OK);
+    }
+    if (close_provider)
+      check_equal(crypto_tls_provider_destroy(&close_provider), CRYPTO_TLS_OK);
+  }
+  for (unsigned version = 0u; version < 2u; ++version) {
+    const crypto_tls_protocol protocol = version ? CRYPTO_TLS_1_3 : CRYPTO_TLS_1_2;
+    const char *modes[] = {"reciprocal", "EOF", "truncated", "corrupted", "cancelled"};
+    for (unsigned mode = 0u; mode < 5u; ++mode) {
+      it("TLS1.%u %s cannot forge peer consent", version + 2u, modes[mode]) {
+        uint8_t wire[32768], plaintext[32];
+        size_t wire_size = 0u, size = 0u;
+        uint32_t received = 99u;
+        crypto_tls_result result;
+        establish_close_pair(protocol);
+        result = crypto_tls_session_shutdown(close_session[0]);
+        check(result == CRYPTO_TLS_OK || result == CRYPTO_TLS_AGAIN);
+        check_equal(crypto_tls_session_peer_close_notify_v1_4(
+                        close_session[0], &received), CRYPTO_TLS_OK);
+        check_equal(received, 0u); /* Local alert is not peer evidence. */
+        check_equal(crypto_tls_cipher_bio_take_cipher(
+                        close_bio[0], wire, sizeof(wire), &wire_size), CRYPTO_TLS_OK);
+        check(wire_size > 5u);
+        if (mode != 1u) {
+          if (mode == 2u) --wire_size;
+          if (mode == 3u) wire[wire_size - 1u] ^= 1u;
+          check_equal(crypto_tls_cipher_bio_feed_cipher(
+                          close_bio[1], wire, wire_size), CRYPTO_TLS_OK);
+        }
+        if (mode == 1u || mode == 2u)
+          check_equal(crypto_tls_cipher_bio_end_input(close_bio[1]), CRYPTO_TLS_OK);
+        if (mode == 4u)
+          check_equal(crypto_tls_session_cancel(close_session[1]), CRYPTO_TLS_OK);
+        result = crypto_tls_session_receive(close_session[1], plaintext,
+                                             sizeof(plaintext), &size);
+        check_equal(size, 0u);
+        received = 99u;
+        check_equal(crypto_tls_session_peer_close_notify_v1_4(
+                        close_session[1], &received),
+                    mode == 4u ? CRYPTO_TLS_CANCELLED : CRYPTO_TLS_OK);
+        check_equal(received, mode == 4u ? 99u : mode == 0u ? 1u : 0u);
+        if (mode == 0u) {
+          result = crypto_tls_session_shutdown(close_session[1]);
+          check(result == CRYPTO_TLS_OK || result == CRYPTO_TLS_AGAIN);
+          transfer_close_cipher(1u, 0u);
+          result = crypto_tls_session_shutdown(close_session[0]);
+          check_equal(result, CRYPTO_TLS_OK);
+          check_equal(crypto_tls_session_peer_close_notify_v1_4(
+                          close_session[0], &received), CRYPTO_TLS_OK);
+          check_equal(received, 1u);
+        } else {
+          check(result < CRYPTO_TLS_OK, "invalid closure must terminate");
+          check_equal(crypto_tls_session_receive(close_session[1], plaintext,
+                          sizeof(plaintext), &size), result);
+          check_equal(crypto_tls_session_shutdown(close_session[1]), result);
+        }
+      }
     }
   }
 }

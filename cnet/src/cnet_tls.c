@@ -1355,6 +1355,31 @@ cleanup:
 }
 #endif
 
+/* GmSSL TLS1.2 stores a server's authenticated client chain separately
+ * from TLS1.3 and from the client-side peer chain. Keep that distinction
+ * inside this backend adapter for verification and public metadata alike. */
+static int cnet_tls_peer_chain(const TLS_CONNECT *connection,
+                                const uint8_t **chain, size_t *size) {
+  int complete = 0;
+  if (tls_get_handshake_complete(connection, &complete) != 1) return -1;
+  if (!complete) return 0;
+  if (!connection->is_client && connection->protocol == TLS_protocol_tls12) {
+    *chain = connection->client_certs;
+    *size = connection->client_certs_len;
+    return *size != 0u ? 1 : 0;
+  }
+  return tls_get_peer_certificate_chain(connection, chain, size);
+}
+
+static int cnet_tls_peer_leaf(const TLS_CONNECT *connection,
+                               const uint8_t **certificate, size_t *size) {
+  const uint8_t *chain = NULL;
+  size_t chain_size = 0u;
+  int result = cnet_tls_peer_chain(connection, &chain, &chain_size);
+  if (result != 1) return result;
+  return x509_certs_get_cert_by_index(chain, chain_size, 0, certificate, size);
+}
+
 static int cnet_tls_finish_handshake(cnet_tls_state *state,
                                      bool *out_complete) {
   cnet_tls_gmssl_state *engine = CNET_TLS_ENGINE(state);
@@ -1386,7 +1411,7 @@ static int cnet_tls_finish_handshake(cnet_tls_state *state,
        * client certs separately from TLS1.3; the canonical getter covers both. */
       const uint8_t *peer_cert = NULL;
       size_t peer_cert_size = 0u;
-      result = tls_get_peer_certificate(
+      result = cnet_tls_peer_leaf(
           &engine->connection, &peer_cert, &peer_cert_size);
       if (result != 1 || peer_cert == NULL || peer_cert_size == 0u)
         return SALTS_ECONNABORTED;
@@ -1689,6 +1714,10 @@ int cnet_tls_read(cnet_tls_state *state, void *buffer, size_t capacity,
     return SALTS_OK;
   }
   if (result == 0 || result == TLS_ERROR_TCP_CLOSED) {
+    int received = 0;
+    if (tls_get_peer_close_notify(&engine->connection, &received) != 1)
+      return SALTS_EIO;
+    if (received != 1) return SALTS_ECONNABORTED;
     state->peer_close_notify = true;
     *out_peer_closed = true;
     return SALTS_OK;
@@ -1737,6 +1766,9 @@ int cnet_tls_probe_peer_close(cnet_tls_state *state, bool *out_peer_closed,
     return SALTS_OK;
   }
   if (result == 0 || result == TLS_ERROR_TCP_CLOSED) {
+    if (tls_get_peer_close_notify(&engine->connection, &received) != 1)
+      return SALTS_EIO;
+    if (received != 1) return SALTS_ECONNABORTED;
     state->peer_close_notify = true;
     *out_peer_closed = true;
     return SALTS_OK;
@@ -1871,7 +1903,9 @@ int cnet_tls_state_peer_certificate_sha256(
     const cnet_tls_state *state,
     char buffer[CNET_TLS_PEER_CERTIFICATE_SHA256_CAPACITY]) {
   static const char hex[] = "0123456789abcdef";
-  uint8_t digest[32];
+  uint8_t digest_bytes[32];
+  const uint8_t *certificate = NULL;
+  size_t certificate_size = 0u, digest_size = 0u;
   size_t index;
   int result;
 
@@ -1879,15 +1913,18 @@ int cnet_tls_state_peer_certificate_sha256(
   buffer[0] = '\0';
   if (CNET_TLS_ENGINE(state) == NULL || !state->handshake_complete)
     return SALTS_ENOTCONN;
-  result = tls_get_peer_certificate_sha256(
-      &CNET_TLS_ENGINE(state)->connection, digest);
+  result = cnet_tls_peer_leaf(
+      &CNET_TLS_ENGINE(state)->connection, &certificate, &certificate_size);
   if (result < 0) return SALTS_EIO;
   if (result == 0) return SALTS_ENOENT;
-  for (index = 0u; index < sizeof(digest); ++index) {
-    buffer[index * 2u] = hex[digest[index] >> 4u];
-    buffer[index * 2u + 1u] = hex[digest[index] & 0x0fu];
+  if (digest(DIGEST_sha256(), certificate, certificate_size, digest_bytes,
+             &digest_size) != 1 || digest_size != sizeof(digest_bytes))
+    return SALTS_EIO;
+  for (index = 0u; index < sizeof(digest_bytes); ++index) {
+    buffer[index * 2u] = hex[digest_bytes[index] >> 4u];
+    buffer[index * 2u + 1u] = hex[digest_bytes[index] & 0x0fu];
   }
-  buffer[sizeof(digest) * 2u] = '\0';
+  buffer[sizeof(digest_bytes) * 2u] = '\0';
   return SALTS_OK;
 }
 
@@ -1974,7 +2011,7 @@ int cnet_tls_state_server_end_point_binding(
       !state->handshake_complete)
     return SALTS_ENOTCONN;
 
-  result = tls_get_peer_certificate(&CNET_TLS_ENGINE(state)->connection,
+  result = cnet_tls_peer_leaf(&CNET_TLS_ENGINE(state)->connection,
                                     &certificate, &certificate_size);
   if (result < 0) return SALTS_EIO;
   if (result == 0) return SALTS_ENOENT;
@@ -2029,20 +2066,21 @@ int cnet_tls_state_peer_certificate_chain(
     const cnet_tls_state *state,
     cnet_tls_peer_certificate_chain *out_chain) {
   const cnet_tls_gmssl_state *engine;
+  const uint8_t *chain = NULL;
+  size_t chain_size = 0u;
+  int result;
   if (out_chain == NULL) return SALTS_EINVAL;
   memset(out_chain, 0, sizeof(*out_chain));
   if (state == NULL || (engine = CNET_TLS_ENGINE(state)) == NULL)
     return SALTS_EINVAL;
   if (!state->handshake_complete) return SALTS_ENOTCONN;
-  if (engine->connection.peer_cert_chain_len == 0u)
-    return SALTS_ENOENT;
-  if (engine->connection.peer_cert_chain_len >
-      CNET_TLS_PEER_CHAIN_MAX_BYTES)
+  result = cnet_tls_peer_chain(&engine->connection, &chain, &chain_size);
+  if (result < 0) return SALTS_EIO;
+  if (result == 0) return SALTS_ENOENT;
+  if (chain_size > CNET_TLS_PEER_CHAIN_MAX_BYTES)
     return SALTS_ERANGE;
   return cnet_tls_peer_certificate_chain_parse(
-      engine->connection.peer_cert_chain,
-      engine->connection.peer_cert_chain_len,
-      out_chain);
+      chain, chain_size, out_chain);
 }
 
 int cnet_tls_state_export_channel_binding(
