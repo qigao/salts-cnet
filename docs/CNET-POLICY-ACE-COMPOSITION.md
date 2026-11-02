@@ -2,8 +2,8 @@
 
 **Status:** RFC / design only. Tracking [SaltsCore #156](https://github.com/qigao/salts-core/issues/156).
 
-**Grounded source baselines:** SaltsCore master \`bc070affca0afbc5cad6e060b9c60a7a22abad10\`;
-CMeta master \`5d1845373f4aa7df721882324a11e93365356be0\`. This RFC
+**Grounded source baselines:** SaltsCore master `bc070affca0afbc5cad6e060b9c60a7a22abad10`;
+CMeta master `5d1845373f4aa7df721882324a11e93365356be0`. This RFC
 does not modify either installed ABI, network runtime, Plugin lifecycle,
 native backend, or SDK release.
 
@@ -21,7 +21,7 @@ to assemble policy providers and validate immutable typed configuration.
 It MUST use the existing CNet and NativeIO as the **only** connection,
 resource-credit, send/receive, completion and terminal authorities.
 
-~~~text
+```text
 Application / CHttp / FlowMQ / Orbit
   optional CMeta DataDesc + Component descriptors
    -> CMeta::Configurator: explicit choice and dependency/lifecycle graph
@@ -73,8 +73,8 @@ separately tested.
 
 ## Transport capability and policy scope
 
-Key: \`D\` = direct existing transport/config API; \`H\` = only external
-host composition of existing decision APIs; \`-\` = invalid/not provided.
+Key: `D` = direct existing transport/config API; `H` = only external
+host composition of existing decision APIs; `-` = invalid/not provided.
 
 | Surface | TCP | UDP | IPC | Pipe |
 | --- | :---: | :---: | :---: | :---: |
@@ -91,12 +91,12 @@ host composition of existing decision APIs; \`-\` = invalid/not provided.
 
 *IPC/Pipe names are exact local resource identities. Selecting among
 different names is only valid if the application explicitly supplies a
-trusted, authorized candidate set. NEVER turn a failed \`ipc://\` or
-\`pipe://\` attempt into a fallback TCP connection or another path.
+trusted, authorized candidate set. NEVER turn a failed `ipc://` or
+`pipe://` attempt into a fallback TCP connection or another path.
 
-**The existing \`cnet_client_config\` budgets/deadlines are **Owner/client
-configuration**, not independently settable on every \`cnet_connect()\`.
-The dedicated \`cnet_datagram_config\` and \`cnet_ipc_listener_config\`
+**The existing `cnet_client_config` budgets/deadlines are **Owner/client
+configuration**, not independently settable on every `cnet_connect()`.
+The dedicated `cnet_datagram_config` and `cnet_ipc_listener_config`
 own their own budgets. Pipe open on a native handle may complete/fail
 immediately: an Owner connect timeout does not create a portable asynchronous
 open-time deadline. Do not advertise per-connection deadline override or
@@ -117,9 +117,9 @@ The selected transport and trust authority are immutable for that admission.
 UDP datagram option get/set, send/receive demand and bounded progress may
 change. TCP half-close is TCP-only; no Owner relocation, implicit DNS/IPC
 fallback, transparent credential update or reinterpreting a live session's
-\`STRICT_KEY\` placement.
+`STRICT_KEY` placement.
 
-**Application logical request scope:** \`cnet_retry_evaluate\` is just the
+**Application logical request scope:** `cnet_retry_evaluate` is just the
 authorization decision. The caller proves body ownership, idempotency or
 non-execution, bytes, budget and deadline, and performs any actual replay.
 A reconnect does not prove prior request non-execution.
@@ -127,10 +127,10 @@ A reconnect does not prove prior request non-execution.
 ## Reference C11 usage: existing APIs, no new CNet facade
 
 The following is **existing real API** policy selection code. It deliberately
-does not call a fictitious \`cnet_connection_set_policy()\` or claim that
+does not call a fictitious `cnet_connection_set_policy()` or claim that
 selection reserves transport capacity.
 
-~~~c
+```c
 #include <cnet/destination_policy.h>
 #include <cnet/owner_placement.h>
 #include <error_codes.h>
@@ -179,15 +179,15 @@ int choose_new_tcp_admission(
 
 **Host's next step, not performed by that function:**
 check that selected remote is still authorized, reserve final-Owner
-credits through \`cnet_manager_reserve\` / optional
-\`cnet_handoff_reserve\`, or owner-local \`cnet_pool_reserve_connecting\`
+credits through `cnet_manager_reserve` / optional
+`cnet_handoff_reserve`, or owner-local `cnet_pool_reserve_connecting`
 for client dial. Only after actual reservation should it call existing
-\`cnet_connect\` / \`cnet_manager_connect\` or its transport-specific
+`cnet_connect` / `cnet_manager_connect` or its transport-specific
 equivalent. Rejection/failure settles every accepted credit according
-to its own authoritative contract. \`STRICT_KEY\` FULL fails rather than
+to its own authoritative contract. `STRICT_KEY` FULL fails rather than
 silently selecting another endpoint/Owner. Note destination STRICT_KEY uses
 stable-ID **rendezvous hashing** while Owner STRICT_KEY uses
-\`key_hash % owner_count\`; changing Owner count may change placement
+`key_hash % owner_count`; changing Owner count may change placement
 for *new* connections, never migrate existing ones.
 
 ## Optional ACE usage — control plane only
@@ -196,7 +196,7 @@ These are **existing API names**; the exact component/provider type for a
 host's network-policy contract is application-owned and not yet declared in
 Core or CMeta. Do not mistake this sketch for a compiled drop-in example.
 
-~~~c
+```c
 #include <cmeta/configurator.h>
 #include <cmeta/service_host.h>
 
@@ -250,7 +250,7 @@ For ordinary fixed configurations, **do not require CMeta at all**:
 construct typed CNet policy inputs statically and call its functions.
 CMeta/ACE is an opt-in service-host composition dependency.
 
-~~~cmake
+```cmake
 find_package(SaltsCore CONFIG REQUIRED)
 find_package(CMeta CONFIG REQUIRED)  # No version in CMeta find_package.
 target_link_libraries(my_service PRIVATE Salts::CNet CMeta::ServiceHost)
@@ -261,7 +261,7 @@ must NOT link to CMeta::ServiceHost or CMeta::Configurator.
 
 ## Admission transaction and failure semantics
 
-~~~text
+```text
 validate schema/version/transport + identity/security snapshot
  -> optional admission interceptors BEFORE side effects
  -> choose remote endpoint (if explicitly configured)
@@ -275,7 +275,7 @@ validate schema/version/transport + identity/security snapshot
  -> ServiceHost Scope release / Plugin lease drain if any
 ~~~
 
-Each \`reserve\` succeeds exactly once or leaves no credit, and each
+Each `reserve` succeeds exactly once or leaves no credit, and each
 successful reserve is eventually committed or released. A callback error,
 capacity FULL, wrong/stale generation, cancel, partial I/O or wake failure
 must not trigger a fresh allocation or second application replay.
@@ -283,7 +283,7 @@ An accepted cross-Owner Handoff publish transfers descriptor ownership even
 if the subsequent wake fails; producers MUST NOT republish the same ticket.
 
 Accepted send completion proves local transport settlement, not application
-exactly-once delivery. TLS or HTTP2/WS/FM Q protocol readiness and replay
+exactly-once delivery. TLS or HTTP2/WS/FlowMQ protocol readiness and replay
 classification remain the higher layer's responsibility.
 
 ## Optional policies NOT yet first-class in CNet
@@ -301,7 +301,7 @@ until a real consumer, exact ABI and negative acceptance exist.
 | Gate | Evidence |
 | --- | --- |
 | M0: design | This RFC and [#156](https://github.com/qigao/salts-core/issues/156); existing policy/API behavior remains unchanged |
-| M1: static typed plan | Existing \`tests/test_cnet_policy.c\` TinyTest plus new focused cases within existing native test target: wrong kind/version, TCP-only option on UDP/IPC/Pipe, outdated endpoint snapshot, STRICT_KEY/FULL and zeroed outputs |
+| M1: static typed plan | Existing `tests/test_cnet_policy.c` TinyTest plus new focused cases within existing native test target: wrong kind/version, TCP-only option on UDP/IPC/Pipe, outdated endpoint snapshot, STRICT_KEY/FULL and zeroed outputs |
 | M2: real owner integration | Existing native CNet/Manager/Handoff/Pool/ManagedDial/NativeIO tests for 1/2/4 Owners; actual TCP, UDP peer, IPC accepted-child and Pipe path negative cases |
 | M3: optional CMeta/ACE | Existing ACE Configurator/ServiceHost TinyTest for explicit policy selection, exact Interface/FunctionAbi, two generations, Scope/Plugin lease and DSO quiescence; CNet raw users still work with no CMeta |
 | M4: platform and performance | Existing Linux/macOS/Windows LLVM CTest x64+ARM64 and ASan/UBSan/TSan, Android build-only, no new installer/consumer/probe CI; opt-in paired raw-vs-policy throughput/latency and retained-credit measurements |
@@ -311,4 +311,4 @@ new public CNet API or release. Preserve real terminal, cancellation,
 TSan and security negative tests. If multiple genuine application
 consumers later require a shared per-connection admission facade, propose
 a **separate narrow additive C ABI**; do not silently mutate
-\`cnet_connect_options\`, \`cnet_client_config\`, or the existing SDK ABI.
+`cnet_connect_options`, `cnet_client_config`, or the existing SDK ABI.
