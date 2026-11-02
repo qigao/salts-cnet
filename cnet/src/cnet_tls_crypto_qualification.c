@@ -13,6 +13,7 @@
 #include <crypto/tls_ext.h>
 #include <crypto/tls_auth.h>
 #include <crypto/tls_peer.h>
+#include <crypto/tls_close.h>
 #include <error_codes.h>
 
 #include <stdatomic.h>
@@ -685,13 +686,19 @@ int cnet_tls_shutdown(cnet_tls_state *state, bool *out_notify_generated,
         out_peer_notify_received == NULL || eng == NULL)
         return SALTS_EINVAL;
     *out_notify_generated = state->close_notify_started;
-    /* This test-only Crypto v1.0 TLS API has no authenticated
-     * peer-close-notify inspection. Do not convert CRYPTO_TLS_CLOSED,
-     * transport EOF, or a locally queued shutdown into peer consent.
-     * Production CNet's direct TLS owner uses tls_get_peer_close_notify().
-     * The deferred capability gap belongs to production Provider #81.
-     */
+    /* Read only backend-verified peer alert evidence. The query cannot
+     * drive input, and a local shutdown or raw EOF never counts. */
     *out_peer_notify_received = false;
+    {
+        uint32_t observed = 0u;
+        crypto_tls_result observed_status =
+            crypto_tls_session_peer_close_notify_v1_4(
+                eng->session, &observed);
+        if (observed_status == CRYPTO_TLS_OK)
+            *out_peer_notify_received = observed != 0u;
+        else if (observed_status != CRYPTO_TLS_AGAIN)
+            return crypto_error(observed_status);
+    }
     if (!state->handshake_complete) return SALTS_ENOTCONN;
     if (eng->write_source != NULL) return SALTS_EBUSY;
 

@@ -5,6 +5,7 @@
 #include <crypto/tls_ext.h>
 #include <crypto/tls_peer.h>
 #include <crypto/tls_auth.h>
+#include <crypto/tls_close.h>
 #include <gmssl/tls.h>
 #include <gmssl/x509_cer.h>
 
@@ -563,6 +564,38 @@ crypto_tls_result crypto_tls_session_receive(
         }
         if (atomic_load_explicit(&s->cancelled, memory_order_acquire))
             status = CRYPTO_TLS_CANCELLED;
+    }
+    unlock_session(s);
+    return status;
+}
+
+/* Versioned, read-only authenticated peer-close evidence from the TLS
+ * record owner. Only GmSSL may set this bit after decrypted alert admission;
+ * transport EOF and our own shutdown are not evidence of peer consent.
+ */
+uint32_t crypto_tls_close_abi_version(void)
+{
+    return CRYPTO_TLS_CLOSE_ABI_VERSION;
+}
+
+crypto_tls_result crypto_tls_session_peer_close_notify_v1_4(
+    crypto_tls_session *s, uint32_t *out_received)
+{
+    crypto_tls_result status;
+    int received = 0;
+    if (!out_received) return CRYPTO_TLS_INVALID_ARGUMENT;
+    status = lock_session(s);
+    if (status != CRYPTO_TLS_OK) return status;
+    if (atomic_load_explicit(&s->cancelled, memory_order_acquire)) {
+        status = CRYPTO_TLS_CANCELLED;
+    } else {
+        status = completed_handshake(s);
+        if (status == CRYPTO_TLS_OK) {
+            if (tls_get_peer_close_notify(&s->connection, &received) != 1)
+                status = CRYPTO_TLS_BACKEND_ERROR;
+            else
+                *out_received = received != 0 ? 1u : 0u;
+        }
     }
     unlock_session(s);
     return status;
