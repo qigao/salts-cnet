@@ -6,6 +6,7 @@
 #define TINYTEST_NO_MAIN
 #include <tinytest.h>
 #include <cnet/cnet.h>
+#include <cnet/client_pool.h>
 #include <clock.h>
 #include <error_codes.h>
 #include <cmeta_buffer.h>
@@ -56,6 +57,8 @@ typedef struct tls_probe {
   unsigned received_count;
   unsigned char received_byte;
   bool stream_transfer;
+  bool pool_reuse;
+  unsigned recycled_count;
   const unsigned char *expected_stream;
   size_t expected_stream_size;
   size_t stream_received;
@@ -112,7 +115,9 @@ static void receive_callback(void *user, cnet_connection connection,
   tls_probe *p = (tls_probe *)user;
   (void)connection;
   if (view == NULL || view->kind != CNET_MESSAGE_BYTES ||
-      view->data == NULL || (!p->stream_transfer && p->received_count != 0u)) {
+      view->data == NULL ||
+      (!p->stream_transfer && !p->pool_reuse && p->received_count != 0u) ||
+      (p->pool_reuse && (p->terminal_count != 0u || p->received_count >= 3u))) {
     ++p->failed;
     return;
   }
@@ -155,6 +160,32 @@ static void send_callback(void *user, cnet_connection connection, size_t size) {
       p->send_sizes[p->sent_count] = size;
   } else if (size != 1u) ++p->failed;
   ++p->sent_count;
+}
+static void recycle_callback(void *user) {
+  ++((tls_probe *)user)->recycled_count;
+}
+
+static int send_byte(cnet_client *client, cnet_connection connection, unsigned char value) {
+  mem_buffer_t *buffer = mem_get_buffer(mem_global(), 1u);
+  int status;
+  if (buffer == NULL) return SALTS_ENOMEM;
+  *mem_buffer_data(buffer) = (char)value;
+  mem_set_used(buffer, 1u);
+  status = cnet_send_buffer(client, connection, buffer);
+  mem_buffer_release(buffer);
+  return status;
+}
+
+static int tls_pool_acquire_rejected(cnet_client_pool *pool, const cnet_pool_key *key) {
+  cnet_pool_lease lease = {UINTPTR_MAX, UINT64_MAX, UINT64_MAX, SIZE_MAX};
+  cnet_managed_connection managed = {UINTPTR_MAX, UINT64_MAX, UINT64_MAX, SIZE_MAX};
+  const int status = cnet_pool_try_acquire(pool, key, NULL, &lease, &managed);
+  const int rejected = status == SALTS_ENOBUFS &&
+      lease.pool == 0u && lease.incarnation == 0u && lease.generation == 0u && lease.slot == 0u &&
+      managed.manager == 0u && managed.incarnation == 0u &&
+      managed.generation == 0u && managed.slot == 0u;
+  if (status == SALTS_OK) (void)cnet_pool_release(pool, lease);
+  return rejected;
 }
 
 static cnet_client_config config(void) {
@@ -224,6 +255,7 @@ typedef struct tls_case_options {
   const char *client_cert_file;
   const char *client_key_file;
   bool stream_transfer;
+  bool pool_reuse;
 } tls_case_options;
 
 static int run_case(const tls_case_options *options) {
@@ -233,6 +265,20 @@ static int run_case(const tls_case_options *options) {
   cnet_client server = {0};
   cnet_listener listener = {0};
   cnet_tls_server tls_server = {0};
+  cnet_manager manager = {0};
+  cnet_client_pool pool = {0};
+  cnet_managed_connection managed = {0}, leased = {0};
+  cnet_pool_connection physical = {0};
+  cnet_pool_lease lease = {0}, stale_lease = {0};
+  cnet_pool_key pool_key = {
+      .size = sizeof(cnet_pool_key), .version = CNET_CLIENT_POOL_VERSION,
+      .runtime_id = 1u, .owner_id = 11u, .peer_generation = 1u,
+      .authority_id = 17u, .transport_id = 2u, .tls_trust_id = 19u,
+      .tls_sni_id = 23u, .protocol_id = 29u, .session_id = 31u};
+  const cnet_manager_config manager_cfg = {
+      sizeof(cnet_manager_config), CNET_MANAGER_VERSION, &client, 1u, 1u};
+  const cnet_pool_config pool_cfg = {
+      sizeof(cnet_pool_config), CNET_CLIENT_POOL_VERSION, &manager, 11u, 1u, 1u, 2u};
   cnet_client_config client_cfg = config();
   const cnet_client_config server_cfg = config();
   const cnet_listener_config listener_cfg = {
@@ -258,6 +304,7 @@ static int run_case(const tls_case_options *options) {
   cnet_connection outbound = {0};
   bool tls_live = false, client_live = false;
   bool server_live = false, listener_live = false, accepted = false;
+  bool manager_live = false, pool_live = false;
   char uri[80] = {0};
   uint16_t port = 0u;
   uint64_t deadline;
@@ -267,9 +314,12 @@ static int run_case(const tls_case_options *options) {
   mem_slice_t ranges[TLS_STREAM_SEGMENTS] = {{0}};
   size_t range_count = 0u;
   unsigned char expected_stream[TLS_STREAM_TOTAL_BYTES];
+  size_t management_work = 0u;
 
   client_probe.client = &client;
   server_probe.client = &server;
+  client_probe.pool_reuse = options->pool_reuse;
+  server_probe.pool_reuse = options->pool_reuse;
   if (options->stream_transfer) {
     client_cfg.max_send_bytes = TLS_STREAM_BULK_BYTES;
     client_probe.stream_transfer = true;
@@ -298,7 +348,22 @@ static int run_case(const tls_case_options *options) {
       .uri = uri,
       .observer = {state_callback, receive_callback, &client_probe, send_callback},
       .tls = &client_tls_cfg};
-  REQUIRE(cnet_connect(&client, &connect_options, &outbound) == SALTS_OK);
+  if (options->pool_reuse) {
+    const cnet_manager_attachment attachment = {
+        {state_callback, receive_callback, &client_probe, send_callback},
+        recycle_callback, false};
+    pool_key.endpoint_id = port;
+    REQUIRE(cnet_manager_init(&manager, &manager_cfg) == SALTS_OK);
+    manager_live = true;
+    REQUIRE(cnet_pool_init(&pool, &pool_cfg) == SALTS_OK);
+    pool_live = true;
+    REQUIRE(cnet_pool_reserve_connecting(&pool, &pool_key, &physical) == SALTS_OK);
+    REQUIRE(cnet_manager_reserve(&manager, &attachment, &managed) == SALTS_OK);
+    REQUIRE(tls_pool_acquire_rejected(&pool, &pool_key));
+    REQUIRE(cnet_manager_connect(&manager, managed, &connect_options, &outbound) == SALTS_OK);
+  } else {
+    REQUIRE(cnet_connect(&client, &connect_options, &outbound) == SALTS_OK);
+  }
   if (options->stream_transfer) {
     outgoing = mem_get_buffer(mem_global(), TLS_STREAM_CONTROL_BYTES);
     REQUIRE(outgoing != NULL);
@@ -363,7 +428,94 @@ static int run_case(const tls_case_options *options) {
           &server, server_probe.connection, client_certificate_hash) == SALTS_OK);
       REQUIRE(strlen(client_certificate_hash) == 64u);
     }
-    if (options->stream_transfer) {
+    if (options->pool_reuse) {
+      cnet_pool_snapshot snapshot = {0};
+      cnet_pool_key incompatible = {0};
+      uint64_t *security_fields[] = {
+          &incompatible.tls_trust_id, &incompatible.tls_sni_id,
+          &incompatible.client_identity_id, &incompatible.alpn_id,
+          &incompatible.protocol_id, &incompatible.session_id};
+      /* TLS trust/DNS verification is complete, but the host has not yet
+       * observed this application's READY greeting. Pool does not infer it. */
+      REQUIRE(tls_pool_acquire_rejected(&pool, &pool_key));
+      REQUIRE(cnet_pool_get_snapshot(&pool, &snapshot) == SALTS_OK);
+      REQUIRE(snapshot.connecting == 1u && snapshot.ready == 0u);
+      REQUIRE(cnet_receive(&client, outbound, 1u) == SALTS_OK);
+      REQUIRE(send_byte(&server, server_probe.connection, 0x52u) == SALTS_OK);
+      deadline = cmeta_monotonic_ms() + 7000u;
+      while ((client_probe.received_count < 1u || server_probe.sent_count < 1u) &&
+             !client_probe.terminal_count && !server_probe.terminal_count &&
+             cmeta_monotonic_ms() < deadline)
+        REQUIRE(drive(&client, &server, &listener, &tls_server,
+                      &server_probe, &accepted) == SALTS_OK);
+      REQUIRE(client_probe.received_count == 1u && client_probe.received_byte == 0x52u);
+      REQUIRE(server_probe.sent_count == 1u);
+      REQUIRE(client_probe.failed == 0u && server_probe.failed == 0u);
+      REQUIRE(cnet_pool_bind_ready(&pool, physical, managed, 1u) == SALTS_OK);
+      for (size_t i = 0u; i < sizeof(security_fields) / sizeof(security_fields[0]); ++i) {
+        incompatible = pool_key;
+        ++*security_fields[i];
+        REQUIRE(tls_pool_acquire_rejected(&pool, &incompatible));
+      }
+      /* One Owner thread progresses both real TLS endpoints. A lease reserves
+       * one application request slot and is released only after its peer reply.
+       * All buffers are released by the caller immediately after admission. */
+      for (unsigned exchange = 0u; exchange < 2u; ++exchange) {
+        cnet_manager_entry entry = {0};
+        char current_fingerprint[CNET_TLS_PEER_CERTIFICATE_SHA256_CAPACITY] = {0};
+        REQUIRE(cnet_pool_try_acquire(&pool, &pool_key, NULL, &lease, &leased) == SALTS_OK);
+        REQUIRE(leased.manager == managed.manager && leased.incarnation == managed.incarnation &&
+                leased.generation == managed.generation && leased.slot == managed.slot);
+        REQUIRE(cnet_manager_lookup(&manager, leased, &entry) == SALTS_OK);
+        REQUIRE(entry.state == CNET_MANAGER_BOUND && entry.connection.slot == outbound.slot &&
+                entry.connection.generation == outbound.generation);
+        REQUIRE(tls_pool_acquire_rejected(&pool, &pool_key));
+        if (exchange != 0u) {
+          REQUIRE(lease.slot == stale_lease.slot && lease.generation > stale_lease.generation);
+          REQUIRE(cnet_pool_release(&pool, stale_lease) == SALTS_ENOENT);
+        }
+        REQUIRE(cnet_receive(&server, server_probe.connection, 1u) == SALTS_OK);
+        REQUIRE(send_byte(&client, entry.connection, (unsigned char)(0x41u + exchange)) == SALTS_OK);
+        deadline = cmeta_monotonic_ms() + 7000u;
+        while ((server_probe.received_count < exchange + 1u ||
+                client_probe.sent_count < exchange + 1u) &&
+               !client_probe.terminal_count && !server_probe.terminal_count &&
+               cmeta_monotonic_ms() < deadline)
+          REQUIRE(drive(&client, &server, &listener, &tls_server,
+                        &server_probe, &accepted) == SALTS_OK);
+        REQUIRE(server_probe.received_count == exchange + 1u &&
+                server_probe.received_byte == 0x41u + exchange);
+        REQUIRE(client_probe.sent_count == exchange + 1u);
+        REQUIRE(cnet_pool_get_snapshot(&pool, &snapshot) == SALTS_OK);
+        REQUIRE(snapshot.active_leases == 1u && snapshot.physical_in_use == 1u);
+        REQUIRE(tls_pool_acquire_rejected(&pool, &pool_key));
+        REQUIRE(cnet_receive(&client, entry.connection, 1u) == SALTS_OK);
+        REQUIRE(send_byte(&server, server_probe.connection, (unsigned char)(0x61u + exchange)) == SALTS_OK);
+        deadline = cmeta_monotonic_ms() + 7000u;
+        while ((client_probe.received_count < exchange + 2u ||
+                server_probe.sent_count < exchange + 2u) &&
+               !client_probe.terminal_count && !server_probe.terminal_count &&
+               cmeta_monotonic_ms() < deadline)
+          REQUIRE(drive(&client, &server, &listener, &tls_server,
+                        &server_probe, &accepted) == SALTS_OK);
+        REQUIRE(client_probe.received_count == exchange + 2u &&
+                client_probe.received_byte == 0x61u + exchange);
+        REQUIRE(server_probe.sent_count == exchange + 2u);
+        REQUIRE(client_probe.connected_count == 1u && server_probe.connected_count == 1u &&
+                client_probe.terminal_count == 0u && server_probe.terminal_count == 0u &&
+                client_probe.failed == 0u && server_probe.failed == 0u);
+        REQUIRE(cnet_tls_peer_certificate_sha256(&client, entry.connection,
+                                                 current_fingerprint) == SALTS_OK);
+        REQUIRE(strcmp(current_fingerprint, fingerprint) == 0);
+        stale_lease = lease;
+        REQUIRE(cnet_pool_release(&pool, lease) == SALTS_OK);
+        lease = (cnet_pool_lease){0};
+      }
+      REQUIRE(cnet_pool_terminal(&pool, physical) == SALTS_EBUSY);
+      REQUIRE(cnet_pool_begin_drain(&pool, physical) == SALTS_OK);
+      REQUIRE(tls_pool_acquire_rejected(&pool, &pool_key));
+      REQUIRE(cnet_close(&client, outbound) == SALTS_OK);
+    } else if (options->stream_transfer) {
       /* Two Owners progress on this one issuing thread. Each accepted logical
        * write retains immutable backing until its terminal. The receiver checks
        * all plaintext independently of local send completion. One demand per
@@ -469,6 +621,32 @@ static int run_case(const tls_case_options *options) {
     REQUIRE(client_probe.terminal_count == 1u);
     REQUIRE(server_probe.terminal_count == 1u);
     REQUIRE(client_probe.failed == 0u && server_probe.failed == 0u);
+    if (options->pool_reuse) {
+      cnet_pool_snapshot pool_snapshot = {0};
+      cnet_manager_snapshot manager_snapshot = {0};
+      REQUIRE(client_probe.sent_count == 2u && server_probe.sent_count == 3u);
+      REQUIRE(client_probe.received_count == 3u && server_probe.received_count == 2u);
+      REQUIRE(client_probe.sends_at_terminal == 2u && server_probe.sends_at_terminal == 3u);
+      REQUIRE(client_probe.last_connection_state == CNET_CONNECTION_CLOSED &&
+              server_probe.last_connection_state == CNET_CONNECTION_CLOSED);
+      REQUIRE(drive(&client, &server, &listener, &tls_server,
+                    &server_probe, &accepted) == SALTS_OK);
+      REQUIRE(client_probe.terminal_count == 1u && server_probe.terminal_count == 1u &&
+              client_probe.connected_count == 1u && server_probe.connected_count == 1u &&
+              client_probe.sent_count == 2u && server_probe.sent_count == 3u &&
+              client_probe.failed == 0u && server_probe.failed == 0u);
+      REQUIRE(cnet_pool_terminal(&pool, physical) == SALTS_OK);
+      REQUIRE(cnet_pool_get_snapshot(&pool, &pool_snapshot) == SALTS_OK);
+      REQUIRE(pool_snapshot.drained && pool_snapshot.active_leases == 0u);
+      REQUIRE(cnet_pool_destroy(&pool) == SALTS_OK);
+      pool_live = false;
+      REQUIRE(cnet_manager_advance(&manager, 1u, &management_work) == SALTS_OK);
+      REQUIRE(client_probe.recycled_count == 1u);
+      REQUIRE(cnet_manager_get_snapshot(&manager, &manager_snapshot) == SALTS_OK);
+      REQUIRE(manager_snapshot.drained);
+      REQUIRE(cnet_manager_destroy(&manager) == SALTS_OK);
+      manager_live = false;
+    }
     if (options->stream_transfer) {
       REQUIRE(client_probe.sent_count == 3u && client_probe.sends_at_terminal == 3u);
       REQUIRE(client_probe.send_sizes[2] == TLS_STREAM_FINAL_BYTES);
@@ -482,6 +660,8 @@ static int run_case(const tls_case_options *options) {
               server_probe.terminal_count == 1u &&
               client_probe.connected_count == 1u && server_probe.connected_count == 1u &&
               client_probe.failed == 0u && server_probe.failed == 0u);
+    }
+    if (options->stream_transfer || options->pool_reuse) {
       REQUIRE(cnet_client_stop(&client, 5000u) == SALTS_OK);
       REQUIRE(cnet_client_destroy(&client) == SALTS_OK);
       client_live = false;
@@ -506,8 +686,23 @@ cleanup:
     (void)cnet_listener_close(&listener);
     (void)cnet_listener_destroy(&listener);
   }
+  if (manager_live) {
+    (void)cnet_manager_request_close(&manager);
+    (void)cnet_manager_advance(&manager, 1u, &management_work);
+  }
   if (client_live) {
     (void)cnet_client_stop(&client, 5000u);
+  }
+  if (pool_live) {
+    if (lease.slot != 0u) (void)cnet_pool_release(&pool, lease);
+    if (physical.slot != 0u) (void)cnet_pool_terminal(&pool, physical);
+    (void)cnet_pool_destroy(&pool);
+  }
+  if (manager_live) {
+    (void)cnet_manager_advance(&manager, 1u, &management_work);
+    (void)cnet_manager_destroy(&manager);
+  }
+  if (client_live) {
     (void)cnet_client_destroy(&client);
   }
   if (server_live) {
@@ -960,6 +1155,16 @@ spec("CNet real TLS CA SAN mTLS Python peer interoperability") {
           .stream_transfer = true};
       const int result = run_case(&stream);
       check(result == 0, "native TLS stream transfer returned %d", result);
+    }
+    it("reuses verified TLS only after protocol READY with an exact security key") {
+      const tls_case_options pooled = {
+          .label = "TLS protocol READY and exact security-key pool reuse",
+          .ca_file = CORE_TLS_TEST_P384_CA,
+          .verified_hostname = "localhost",
+          .expect_success = true,
+          .pool_reuse = true};
+      const int result = run_case(&pooled);
+      check(result == 0, "native TLS pool reuse returned %d", result);
     }
   }
 }
