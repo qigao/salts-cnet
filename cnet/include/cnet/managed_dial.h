@@ -30,6 +30,7 @@ typedef struct cnet_managed_dial_config {
   uint64_t recovery_episode_ms; /* New absolute budget after a READY peer is lost. */
   cnet_dial_failure_classify_fn classify;
   void *classify_user;
+  cnet_allocator storage;
 } cnet_managed_dial_config;
 
 typedef struct cnet_managed_dial_snapshot {

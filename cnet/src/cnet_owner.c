@@ -1,4 +1,5 @@
 #include "cnet_owner.h"
+#include "cnet_resources.h"
 
 #include <clock.h>
 #include <deadline_queue.h>
@@ -99,6 +100,7 @@ enum {
 };
 
 struct cnet_owner_impl {
+  cnet_resources resources;
   native_io_backend backend;
   bool backend_borrowed;
   cnet_resolver resolver;
@@ -365,8 +367,8 @@ static int cnet_owner_ensure_receive_buffer(cnet_owner_impl *impl,
     session->receive_spare = NULL;
   }
 
-  session->receive_buffer = mem_get_buffer(mem_global(), impl->receive_buffer_bytes);
-  return session->receive_buffer != NULL ? SALTS_OK : SALTS_ENOMEM;
+  return cnet_buffer_acquire(&impl->resources.receive, impl->receive_buffer_bytes,
+                             &session->receive_buffer);
 }
 
 static void cnet_owner_finish_receive_publication(cnet_owner_impl *impl,
@@ -406,7 +408,7 @@ static void cnet_owner_finish_receive_publication(cnet_owner_impl *impl,
     session->receive_spare = NULL;
   }
   if (replacement == NULL)
-    replacement = mem_get_buffer(mem_global(), impl->receive_buffer_bytes);
+    (void)cnet_buffer_acquire(&impl->resources.receive, impl->receive_buffer_bytes, &replacement);
 
   /*
    * Move, rather than release, the session's reference to the published buffer
@@ -2034,12 +2036,13 @@ static int cnet_owner_connect(cnet_owner_impl *impl, cnet_command_view *command)
   if (session->peer.socket_options.size == 0u)
     session->peer.socket_options =
         (cnet_stream_socket_options)CNET_STREAM_SOCKET_OPTIONS_INIT;
-  session->receive_buffer = mem_get_buffer(mem_global(), impl->receive_buffer_bytes);
+  status = cnet_buffer_acquire(&impl->resources.receive, impl->receive_buffer_bytes,
+                               &session->receive_buffer);
   session->transport.native_handle = UINTPTR_MAX;
   session->occupied = true;
   ++impl->occupied_sessions;
   if (session->receive_buffer == NULL)
-    return cnet_owner_fail_accepted_command(impl, session, command, SALTS_ENOMEM,
+    return cnet_owner_fail_accepted_command(impl, session, command, status,
                                             CNET_SESSION_STAGE_CONNECT);
   if (session->peer.connect_timeout_ms != 0u) {
     status = cmeta_deadline_queue_schedule(
@@ -2852,29 +2855,29 @@ int cnet_owner_init(cnet_owner *owner, const cnet_owner_config *config) {
       config->completion_batch_capacity > SIZE_MAX / sizeof(native_io_completion) ||
       config->completion_batch_capacity + 2u > SIZE_MAX / sizeof(cnet_owner_pending_event))
     return SALTS_ERANGE;
-  impl = (cnet_owner_impl *)calloc(1u, sizeof(*impl));
+  impl = (cnet_owner_impl *)cnet_storage_alloc(&config->resources.storage, 1u, sizeof(*impl));
   if (impl == NULL) return SALTS_ENOMEM;
   impl->session_records =
-      (cnet_owner_session *)calloc(config->connection_capacity, sizeof(*impl->session_records));
+      (cnet_owner_session *)cnet_storage_alloc(&config->resources.storage, config->connection_capacity, sizeof(*impl->session_records));
   impl->request_records =
-      (cnet_owner_request *)calloc(config->request_capacity, sizeof(*impl->request_records));
-  impl->free_requests = (uint32_t *)calloc(config->request_capacity, sizeof(*impl->free_requests));
+      (cnet_owner_request *)cnet_storage_alloc(&config->resources.storage, config->request_capacity, sizeof(*impl->request_records));
+  impl->free_requests = (uint32_t *)cnet_storage_alloc(&config->resources.storage, config->request_capacity, sizeof(*impl->free_requests));
   impl->session_work =
-      (cnet_session_handle *)calloc(config->connection_capacity, sizeof(*impl->session_work));
-  impl->pending_events = (cnet_owner_pending_event *)calloc(config->completion_batch_capacity + 2u,
+      (cnet_session_handle *)cnet_storage_alloc(&config->resources.storage, config->connection_capacity, sizeof(*impl->session_work));
+  impl->pending_events = (cnet_owner_pending_event *)cnet_storage_alloc(&config->resources.storage, config->completion_batch_capacity + 2u,
                                                             sizeof(*impl->pending_events));
   impl->completions =
-      (native_io_completion *)calloc(config->completion_batch_capacity, sizeof(*impl->completions));
+      (native_io_completion *)cnet_storage_alloc(&config->resources.storage, config->completion_batch_capacity, sizeof(*impl->completions));
   if (impl->session_records == NULL || impl->request_records == NULL ||
       impl->free_requests == NULL || impl->session_work == NULL || impl->pending_events == NULL ||
       impl->completions == NULL) {
-    free(impl->completions);
-    free(impl->pending_events);
-    free(impl->session_work);
-    free(impl->free_requests);
-    free(impl->request_records);
-    free(impl->session_records);
-    free(impl);
+    cnet_storage_free(impl->completions);
+    cnet_storage_free(impl->pending_events);
+    cnet_storage_free(impl->session_work);
+    cnet_storage_free(impl->free_requests);
+    cnet_storage_free(impl->request_records);
+    cnet_storage_free(impl->session_records);
+    cnet_storage_free(impl);
     return SALTS_ENOMEM;
   }
   backend_config =
@@ -2888,26 +2891,26 @@ int cnet_owner_init(cnet_owner *owner, const cnet_owner_config *config) {
     status = native_io_backend_init(&impl->backend, &backend_config);
   }
   if (status != SALTS_OK) {
-    free(impl->completions);
-    free(impl->pending_events);
-    free(impl->session_work);
-    free(impl->free_requests);
-    free(impl->request_records);
-    free(impl->session_records);
-    free(impl);
+    cnet_storage_free(impl->completions);
+    cnet_storage_free(impl->pending_events);
+    cnet_storage_free(impl->session_work);
+    cnet_storage_free(impl->free_requests);
+    cnet_storage_free(impl->request_records);
+    cnet_storage_free(impl->session_records);
+    cnet_storage_free(impl);
     return status;
   }
   resolver_config = (cnet_resolver_config){config->connection_capacity};
   status = cnet_resolver_init(&impl->resolver, &resolver_config);
   if (status != SALTS_OK) {
     cnet_owner_discard_backend(impl);
-    free(impl->completions);
-    free(impl->pending_events);
-    free(impl->session_work);
-    free(impl->free_requests);
-    free(impl->request_records);
-    free(impl->session_records);
-    free(impl);
+    cnet_storage_free(impl->completions);
+    cnet_storage_free(impl->pending_events);
+    cnet_storage_free(impl->session_work);
+    cnet_storage_free(impl->free_requests);
+    cnet_storage_free(impl->request_records);
+    cnet_storage_free(impl->session_records);
+    cnet_storage_free(impl);
     return status;
   }
   status = cmeta_deadline_queue_init(&impl->deadlines,
@@ -2916,37 +2919,37 @@ int cnet_owner_init(cnet_owner *owner, const cnet_owner_config *config) {
     (void)cnet_resolver_close(&impl->resolver, 0u);
     (void)cnet_resolver_destroy(&impl->resolver);
     cnet_owner_discard_backend(impl);
-    free(impl->completions);
-    free(impl->pending_events);
-    free(impl->session_work);
-    free(impl->free_requests);
-    free(impl->request_records);
-    free(impl->session_records);
-    free(impl);
+    cnet_storage_free(impl->completions);
+    cnet_storage_free(impl->pending_events);
+    cnet_storage_free(impl->session_work);
+    cnet_storage_free(impl->free_requests);
+    cnet_storage_free(impl->request_records);
+    cnet_storage_free(impl->session_records);
+    cnet_storage_free(impl);
     return status;
   }
   {
     const cnet_write_queue_config write_config = {
         .connection_capacity = config->connection_capacity,
         .capacity = config->write_capacity,
-        .max_payload_bytes = config->max_write_bytes};
+        .max_payload_bytes = config->max_write_bytes, .storage = config->resources.storage};
     status = cnet_write_queue_init(&impl->writes, &write_config);
     if (status != SALTS_OK) {
       (void)cmeta_deadline_queue_destroy(&impl->deadlines);
       (void)cnet_resolver_close(&impl->resolver, 0u);
       (void)cnet_resolver_destroy(&impl->resolver);
-      (void)native_io_backend_close(&impl->backend);
-      (void)native_io_backend_destroy(&impl->backend);
-      free(impl->completions);
-      free(impl->pending_events);
-      free(impl->session_work);
-      free(impl->free_requests);
-      free(impl->request_records);
-      free(impl->session_records);
-      free(impl);
+      cnet_owner_discard_backend(impl);
+      cnet_storage_free(impl->completions);
+      cnet_storage_free(impl->pending_events);
+      cnet_storage_free(impl->session_work);
+      cnet_storage_free(impl->free_requests);
+      cnet_storage_free(impl->request_records);
+      cnet_storage_free(impl->session_records);
+      cnet_storage_free(impl);
       return status;
     }
   }
+  impl->resources = config->resources;
   impl->backend_kind = config->backend_kind;
   impl->sessions = config->sessions;
   impl->commands = config->commands;
@@ -3985,13 +3988,13 @@ int cnet_owner_destroy(cnet_owner *owner) {
   if (status != SALTS_OK) return status;
   status = cnet_write_queue_destroy(&impl->writes);
   if (status != SALTS_OK) return status;
-  free(impl->completions);
-  free(impl->pending_events);
-  free(impl->session_work);
-  free(impl->free_requests);
-  free(impl->request_records);
-  free(impl->session_records);
-  free(impl);
+  cnet_storage_free(impl->completions);
+  cnet_storage_free(impl->pending_events);
+  cnet_storage_free(impl->session_work);
+  cnet_storage_free(impl->free_requests);
+  cnet_storage_free(impl->request_records);
+  cnet_storage_free(impl->session_records);
+  cnet_storage_free(impl);
   owner->impl = NULL;
   return SALTS_OK;
 }

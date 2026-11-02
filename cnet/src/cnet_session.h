@@ -1,5 +1,6 @@
 #ifndef CNET_SESSION_H
 #define CNET_SESSION_H
+#include <cnet/resources.h>
 
 #include <error_codes.h>
 
@@ -54,6 +55,7 @@ typedef struct cnet_session_terminal {
 bool cnet_session_handle_valid(cnet_session_handle handle);
 
 int cnet_session_table_init(cnet_session_table *table, size_t capacity);
+int cnet_session_table_init_with_storage(cnet_session_table *table, size_t capacity, const cnet_allocator *storage);
 int cnet_session_table_destroy(cnet_session_table *table);
 
 /**

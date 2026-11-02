@@ -20,6 +20,7 @@ typedef struct cnet_event_queue_config {
   size_t data_capacity;
   size_t max_payload_bytes;
   size_t payload_capacity_bytes;
+  cnet_allocator storage;
 } cnet_event_queue_config;
 
 typedef struct cnet_event_queue_stats {

@@ -17,6 +17,9 @@ typedef struct cnet_client_pool {
   void *impl;
 } cnet_client_pool;
 
+/* Stable host-assigned identities, never raw credential pointers or secrets.
+ * All fields participate in exact compatibility. Optional fields may be zero,
+ * but runtime, owner, endpoint, authority, transport and protocol must not. */
 typedef struct cnet_pool_key {
   size_t size;
   uint32_t version;
@@ -34,9 +37,27 @@ typedef struct cnet_pool_key {
   uint64_t session_id;
 } cnet_pool_key;
 
-/* Stable host-assigned identities, never raw credential pointers or secrets.
- * All fields participate in exact compatibility. Optional fields may be zero,
- * but runtime, owner, endpoint, authority, transport and protocol must not. */
+/* Borrowed callback-local snapshot. Selection must not change Manager/CNet or
+ * protocol state; only the core reserves a token after validating the choice. */
+typedef struct cnet_pool_candidate {
+  cnet_managed_connection managed;
+  size_t leases;
+  size_t capacity;
+  bool eligible;
+} cnet_pool_candidate;
+typedef int (*cnet_pool_select_fn)(void *user, const cnet_pool_candidate *candidates,
+                                   size_t count, uint64_t sequence, size_t *out_index);
+typedef struct cnet_pool_selection_policy { cnet_pool_select_fn select; void *user; } cnet_pool_selection_policy;
+/* Built-ins and custom callbacks share the same contract. Core filters exact
+ * compatibility/READY first, then validates the returned eligible index and
+ * reserves the real protocol token. Callbacks cannot mutate/reenter the pool. */
+int cnet_pool_select_first(void *user, const cnet_pool_candidate *candidates,
+                            size_t count, uint64_t sequence, size_t *out_index);
+int cnet_pool_select_least_used(void *user, const cnet_pool_candidate *candidates,
+                                 size_t count, uint64_t sequence, size_t *out_index);
+int cnet_pool_select_round_robin(void *user, const cnet_pool_candidate *candidates,
+                                  size_t count, uint64_t sequence, size_t *out_index);
+
 typedef struct cnet_pool_config {
   size_t size;
   uint32_t version;
@@ -45,6 +66,8 @@ typedef struct cnet_pool_config {
   size_t max_connections;
   size_t max_connecting;
   size_t max_leases;
+  cnet_allocator storage;
+  cnet_pool_selection_policy selection;
 } cnet_pool_config;
 
 typedef struct cnet_pool_connection {
@@ -112,6 +135,10 @@ int cnet_pool_try_acquire(cnet_client_pool *pool, const cnet_pool_key *key,
                           const cnet_pool_protocol_ops *protocol,
                           cnet_pool_lease *out_lease,
                           cnet_managed_connection *out_managed);
+/* Copied on the owner outside callbacks; takes effect on the next acquire.
+ * Existing leases keep their original protocol release authority. The old
+ * selection user can be released after replacement returns. */
+int cnet_pool_set_selection(cnet_client_pool *pool, const cnet_pool_selection_policy *policy);
 int cnet_pool_release(cnet_client_pool *pool, cnet_pool_lease lease);
 
 /* Disable future acquisition (including when currently leased), but neither

@@ -1,4 +1,5 @@
 #include <cnet/client_pool.h>
+#include "cnet_resources.h"
 #include <thread.h>
 
 #include <stdatomic.h>
@@ -24,6 +25,9 @@ typedef struct pool_lease_record {
 typedef struct pool_impl {
   cnet_manager *manager;
   const void *thread;
+  cnet_pool_selection_policy selection;
+  cnet_pool_candidate *candidates;
+  uint64_t sequence;
   pool_physical *physical;
   pool_lease_record *leases;
   size_t max_physical, max_connecting, max_leases;
@@ -89,8 +93,9 @@ int cnet_pool_init(cnet_client_pool *pool, const cnet_pool_config *config) {
   cnet_manager_snapshot manager_snapshot;
   uint_fast64_t incarnation;
   if (pool == NULL || config == NULL || pool->impl != NULL ||
-      config->size != sizeof(*config) || config->version != CNET_CLIENT_POOL_VERSION ||
+      !cnet_allocator_valid(&config->storage) || config->size != sizeof(*config) || config->version != CNET_CLIENT_POOL_VERSION ||
       config->manager == NULL || config->owner_id == 0u ||
+      (config->selection.select == NULL && config->selection.user != NULL) ||
       config->max_connections == 0u || config->max_connecting == 0u ||
       config->max_connecting > config->max_connections || config->max_leases == 0u)
     return SALTS_EINVAL;
@@ -99,18 +104,20 @@ int cnet_pool_init(cnet_client_pool *pool, const cnet_pool_config *config) {
   if (cnet_manager_get_snapshot(config->manager, &manager_snapshot) != SALTS_OK ||
       manager_snapshot.sealed || config->max_connections > manager_snapshot.connection_capacity)
     return SALTS_EINVAL;
-  impl = (pool_impl *)calloc(1u, sizeof(*impl));
+  impl = (pool_impl *)cnet_storage_alloc(&config->storage, 1u, sizeof(*impl));
   if (impl == NULL) return SALTS_ENOMEM;
-  impl->physical = (pool_physical *)calloc(config->max_connections, sizeof(*impl->physical));
-  impl->leases = (pool_lease_record *)calloc(config->max_leases, sizeof(*impl->leases));
-  if (impl->physical == NULL || impl->leases == NULL) {
-    free(impl->physical); free(impl->leases); free(impl);
+  impl->physical = (pool_physical *)cnet_storage_alloc(&config->storage, config->max_connections, sizeof(*impl->physical));
+  impl->leases = (pool_lease_record *)cnet_storage_alloc(&config->storage, config->max_leases, sizeof(*impl->leases));
+  impl->selection = config->selection;
+  impl->candidates = cnet_storage_alloc(&config->storage, config->max_connections, sizeof(*impl->candidates));
+  if (impl->physical == NULL || impl->leases == NULL || impl->candidates == NULL) {
+    cnet_storage_free(impl->physical); cnet_storage_free(impl->leases); cnet_storage_free(impl->candidates); cnet_storage_free(impl);
     return SALTS_ENOMEM;
   }
   incarnation = atomic_load_explicit(&pool_incarnation_source, memory_order_relaxed);
   do {
     if (incarnation == UINT64_MAX) {
-      free(impl->physical); free(impl->leases); free(impl);
+      cnet_storage_free(impl->physical); cnet_storage_free(impl->leases); cnet_storage_free(impl->candidates); cnet_storage_free(impl);
       return SALTS_ERANGE;
     }
   } while (!atomic_compare_exchange_weak_explicit(
@@ -181,6 +188,41 @@ int cnet_pool_bind_ready(cnet_client_pool *pool, cnet_pool_connection connection
   return SALTS_OK;
 }
 
+int cnet_pool_select_first(void *user, const cnet_pool_candidate *c, size_t n,
+                            uint64_t sequence, size_t *out) {
+  (void)user; (void)sequence;
+  if (out == NULL || c == NULL || n == 0u) return SALTS_EINVAL;
+  *out = SIZE_MAX;
+  for (size_t i = 0; i < n; ++i) if (c[i].eligible) { *out = i; return SALTS_OK; }
+  return SALTS_ENOBUFS;
+}
+int cnet_pool_select_round_robin(void *user, const cnet_pool_candidate *c, size_t n,
+                                  uint64_t sequence, size_t *out) {
+  (void)user;
+  if (out == NULL || c == NULL || n == 0u) return SALTS_EINVAL;
+  *out = SIZE_MAX;
+  for (size_t j = 0, i = (size_t)(sequence % n); j < n; ++j, i = i + 1u == n ? 0u : i + 1u)
+    if (c[i].eligible) { *out = i; return SALTS_OK; }
+  return SALTS_ENOBUFS;
+}
+int cnet_pool_select_least_used(void *user, const cnet_pool_candidate *c, size_t n,
+                                 uint64_t sequence, size_t *out) {
+  int status = cnet_pool_select_round_robin(user, c, n, sequence, out);
+  if (status != SALTS_OK) return status;
+  for (size_t i = 0; i < n; ++i)
+    if (c[i].eligible && c[i].leases < c[*out].leases) *out = i;
+  return SALTS_OK;
+}
+int cnet_pool_set_selection(cnet_client_pool *pool, const cnet_pool_selection_policy *policy) {
+  pool_impl *impl;
+  int status = pool_owner(pool, &impl);
+  if (status != SALTS_OK) return status;
+  if (policy == NULL || (policy->select == NULL && policy->user != NULL)) return SALTS_EINVAL;
+  if (impl->sealed) return SALTS_ESHUTDOWN;
+  impl->selection = *policy;
+  return SALTS_OK;
+}
+
 int cnet_pool_try_acquire(cnet_client_pool *pool, const cnet_pool_key *key,
                           const cnet_pool_protocol_ops *protocol,
                           cnet_pool_lease *out_lease, cnet_managed_connection *out_managed) {
@@ -206,27 +248,33 @@ int cnet_pool_try_acquire(cnet_client_pool *pool, const cnet_pool_key *key,
   if (free_lease == SIZE_MAX) return SALTS_ENOBUFS;
   for (size_t i = 0u; i < impl->max_physical; ++i) {
     pool_physical *entry = &impl->physical[i];
+    cnet_pool_candidate *candidate = &impl->candidates[i];
+    *candidate = (cnet_pool_candidate){.managed = entry->managed,
+        .leases = entry->leases, .capacity = entry->protocol_capacity};
+    if (entry->state != POOL_READY || entry->draining || !key_equal(&entry->key, key) ||
+        entry->leases >= entry->protocol_capacity) continue;
+    cnet_manager_entry managed_entry = {0};
+    status = cnet_manager_lookup(impl->manager, entry->managed, &managed_entry);
+    if (status == SALTS_ENOENT || (status == SALTS_OK && managed_entry.state != CNET_MANAGER_BOUND)) {
+      entry->draining = true; continue;
+    }
+    if (status != SALTS_OK) return status;
+    candidate->eligible = true;
+  }
+  const uint64_t sequence = impl->sequence++;
+  for (size_t attempt = 0u; attempt < impl->max_physical; ++attempt) {
+    size_t i = SIZE_MAX;
+    cnet_pool_select_fn select = impl->selection.select != NULL
+        ? impl->selection.select : cnet_pool_select_first;
+    impl->in_callback = true;
+    status = select(impl->selection.user, impl->candidates, impl->max_physical, sequence, &i);
+    impl->in_callback = false;
+    if (status != SALTS_OK) return status;
+    if (i >= impl->max_physical || !impl->candidates[i].eligible) return SALTS_EINVAL;
+    impl->candidates[i].eligible = false;
+    pool_physical *entry = &impl->physical[i];
     pool_lease_record *lease;
     uint64_t token = 0u;
-    if (entry->state != POOL_READY || entry->draining ||
-        !key_equal(&entry->key, key) || entry->leases >= entry->protocol_capacity)
-      continue;
-    /* A once-READY protocol pipe may have reached Manager terminal before
-     * its upper-layer observer has marked this pool entry draining. Never
-     * grant another lease from that stale eligibility snapshot. */
-    {
-      cnet_manager_entry managed_entry = {0};
-      status = cnet_manager_lookup(impl->manager, entry->managed, &managed_entry);
-      if (status == SALTS_ENOENT) {
-        entry->draining = true;
-        continue;
-      }
-      if (status != SALTS_OK) return status;
-      if (managed_entry.state != CNET_MANAGER_BOUND) {
-        entry->draining = true;
-        continue;
-      }
-    }
     if (entry->protocol_capacity != 1u && protocol == NULL) return SALTS_ENOTSUP;
     if (protocol != NULL) {
       impl->in_callback = true;
@@ -351,9 +399,9 @@ int cnet_pool_destroy(cnet_client_pool *pool) {
   int status = pool_owner(pool, &impl);
   if (status != SALTS_OK) return status;
   if (impl->in_use != 0u || impl->active_leases != 0u) return SALTS_EBUSY;
-  free(impl->physical);
-  free(impl->leases);
-  free(impl);
+  cnet_storage_free(impl->physical);
+  cnet_storage_free(impl->leases);
+  cnet_storage_free(impl->candidates); cnet_storage_free(impl);
   pool->impl = NULL;
   return SALTS_OK;
 }

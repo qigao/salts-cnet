@@ -28,7 +28,8 @@ typedef enum cnet_owner_placement_kind {
   CNET_OWNER_PLACE_EXPLICIT = 1,
   CNET_OWNER_PLACE_ROUND_ROBIN = 2,
   CNET_OWNER_PLACE_LOWEST_PRESSURE = 3,
-  CNET_OWNER_PLACE_STRICT_KEY = 4
+  CNET_OWNER_PLACE_STRICT_KEY = 4,
+  CNET_OWNER_PLACE_CUSTOM
 } cnet_owner_placement_kind;
 
 typedef struct cnet_owner_placement_hint {
@@ -38,6 +39,11 @@ typedef struct cnet_owner_placement_hint {
   uint64_t pressure;
 } cnet_owner_placement_hint;
 
+/* Custom selection is evaluated synchronously against the same validated
+ * immutable snapshot as built-ins. It creates no reservation or I/O. Returned
+ * indices are checked for range and eligibility before publishing a result. */
+struct cnet_owner_placement_input;
+typedef int (*cnet_owner_placement_input_fn)(void *user, const struct cnet_owner_placement_input *input, size_t *out_index);
 typedef struct cnet_owner_placement_input {
   size_t size;
   uint32_t version;
@@ -52,6 +58,8 @@ typedef struct cnet_owner_placement_input {
   /* STRICT_KEY uses key_hash % owner_count; no implicit fallback on FULL. */
   uint64_t key_hash;
   bool key_known;
+  cnet_owner_placement_input_fn choose;
+  void *choose_user;
 } cnet_owner_placement_input;
 
 /*

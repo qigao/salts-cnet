@@ -18,6 +18,17 @@ int cnet_owner_placement_choose(const cnet_owner_placement_input *input,
     return SALTS_EINVAL;
 
   switch (input->kind) {
+    case CNET_OWNER_PLACE_CUSTOM: {
+      if (input->choose == NULL) return SALTS_EINVAL;
+      index = SIZE_MAX;
+      int status = input->choose(input->choose_user, input, &index);
+      if (status != SALTS_OK) return status;
+      if (index >= input->owner_count) return SALTS_EINVAL;
+      if (!input->owners[index].eligible) return SALTS_ENOBUFS;
+      *out_owner = index;
+      return SALTS_OK;
+    }
+
     case CNET_OWNER_PLACE_EXPLICIT:
       if (input->explicit_owner >= input->owner_count) return SALTS_EINVAL;
       index = input->explicit_owner;

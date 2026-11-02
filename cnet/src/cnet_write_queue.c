@@ -1,3 +1,4 @@
+#include "cnet_resources.h"
 #include "cnet_write_queue.h"
 
 #include <error_codes.h>
@@ -180,21 +181,21 @@ int cnet_write_queue_init(cnet_write_queue *queue, const cnet_write_queue_config
       config->connection_capacity > SIZE_MAX / sizeof(size_t))
     return SALTS_ERANGE;
 
-  impl = (cnet_write_queue_impl *)calloc(1u, sizeof(*impl));
+  impl = (cnet_write_queue_impl *)cnet_storage_alloc(&config->storage, 1u, sizeof(*impl));
   if (impl == NULL) return SALTS_ENOMEM;
-  impl->entries = (cnet_write_entry *)calloc(config->capacity, sizeof(*impl->entries));
-  impl->free_slots = (uint32_t *)calloc(config->capacity, sizeof(*impl->free_slots));
-  impl->heads = (uint32_t *)malloc(config->connection_capacity * sizeof(*impl->heads));
-  impl->tails = (uint32_t *)malloc(config->connection_capacity * sizeof(*impl->tails));
-  impl->counts = (size_t *)calloc(config->connection_capacity, sizeof(*impl->counts));
+  impl->entries = (cnet_write_entry *)cnet_storage_alloc(&config->storage, config->capacity, sizeof(*impl->entries));
+  impl->free_slots = (uint32_t *)cnet_storage_alloc(&config->storage, config->capacity, sizeof(*impl->free_slots));
+  impl->heads = (uint32_t *)cnet_storage_alloc(&config->storage, config->connection_capacity, sizeof(*impl->heads));
+  impl->tails = (uint32_t *)cnet_storage_alloc(&config->storage, config->connection_capacity, sizeof(*impl->tails));
+  impl->counts = (size_t *)cnet_storage_alloc(&config->storage, config->connection_capacity, sizeof(*impl->counts));
   if (impl->entries == NULL || impl->free_slots == NULL || impl->heads == NULL ||
       impl->tails == NULL || impl->counts == NULL) {
-    free(impl->counts);
-    free(impl->tails);
-    free(impl->heads);
-    free(impl->free_slots);
-    free(impl->entries);
-    free(impl);
+    cnet_storage_free(impl->counts);
+    cnet_storage_free(impl->tails);
+    cnet_storage_free(impl->heads);
+    cnet_storage_free(impl->free_slots);
+    cnet_storage_free(impl->entries);
+    cnet_storage_free(impl);
     return SALTS_ENOMEM;
   }
 
@@ -775,12 +776,12 @@ int cnet_write_queue_destroy(cnet_write_queue *queue) {
   if (impl->admission_open || impl->live_writes != 0u || impl->free_count != impl->capacity)
     return SALTS_EBUSY;
 
-  free(impl->counts);
-  free(impl->tails);
-  free(impl->heads);
-  free(impl->free_slots);
-  free(impl->entries);
-  free(impl);
+  cnet_storage_free(impl->counts);
+  cnet_storage_free(impl->tails);
+  cnet_storage_free(impl->heads);
+  cnet_storage_free(impl->free_slots);
+  cnet_storage_free(impl->entries);
+  cnet_storage_free(impl);
   queue->impl = NULL;
   return SALTS_OK;
 }

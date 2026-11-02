@@ -15,8 +15,123 @@ The rest of M2 and M3 remain open in
 [SaltsCore #156](https://github.com/qigao/salts-core/issues/156).
 Baseline: SaltsCore master bc070affca0afbc5cad6e060b9c60a7a22abad10,
 reconciled with the native-testing merge. This RFC supersedes the earlier
-ACE/Configurator-oriented draft in PR #157. **No CMeta, ACE, reflection,
-plugin, Actor, second event loop, generic strategy registry, or new runtime.**
+ACE/Configurator-oriented draft in PR #157. **Core has no CMeta/ACE dependency,
+second event loop, generic strategy registry, or new runtime.** Optional
+reflection and lexical cleanup adapters belong to `qigao/cmeta`, above Core.
+
+## Implemented resource and policy contracts
+
+The `refactor/cnet-policy-contracts` change introduces the following native
+contracts. This is a source/ABI change: rebuild CNet and its consumers together.
+The tests described below are local Windows LLVM evidence, not multi-OS CI
+qualification. The historical milestones above retain their own evidence.
+
+| Concern | Configuration / API | Authority that cannot be overridden |
+| --- | --- | --- |
+| Control storage | `cnet_resources.storage`; separate `storage` bindings on Manager, Handoff, ManagedDial and Pool | Original provider receives every allocation back, including init rollback |
+| Receive payloads | `cnet_resources.receive` returning canonical `mem_buffer_t` | Buffer owns its release authority through the last reference, even after client destruction |
+| Send admission | `cnet_send_limits`, `cnet_send_admission_policy`, `cnet_client_set_send_admission` | Aggregate and per-connection operation, logical-byte and backing-capacity limits; actual WriteQueue/NativeIO admission |
+| Logical send completion | `cnet_send`, `cnet_operation`, `cnet_send_result`, `cnet_client_send_usage` | One terminal per accepted operation, no terminal or lasting retain on rejection |
+| Destination / Owner choice | Existing built-ins or `CUSTOM` callback in the typed selection input | Snapshot freshness, eligibility and index validation; actual resource reservation follows selection |
+| Connection reuse | `cnet_pool_selection_policy`, first / round-robin / least-used, `cnet_pool_set_selection` | Exact pool key, Manager BOUND, protocol READY, physical capacity and real protocol-token reservation |
+| Recovery delay | `cnet_backoff_policy`, fixed / exponential jitter / custom delay | Attempt budget, maximum delay, absolute deadline, generation and security sealing |
+
+Providers acquire resources. Policies make bounded decisions from borrowed
+snapshots. The existing Owner performs state transitions, retains buffers and
+routes NativeIO terminals. Policy callbacks must not block, retain snapshot
+pointers, perform I/O, or mutate/reenter their owning objects. A custom choice
+never grants permission to bypass a hard bound or security identity.
+
+### Applying a policy by phase
+
+Initialize storage providers, hard limits and progress ownership once. On the
+Owner thread, outside poll/stop/callback execution, replace the send admission
+binding with `cnet_client_set_send_admission` or the reuse selector with
+`cnet_pool_set_selection`. Bindings are copied; callback user storage is
+borrowed. An old policy user may be released once replacement returns. Existing
+sends and pool leases keep their original completion/release obligations.
+
+For example, an HTTP server can use an admission gate with a small byte window
+while reading/authenticating a request, then change the gate for streaming the
+response. An HTTP client can choose least-used READY connections for normal
+traffic, then reject new acquisitions during explicit drain. MQTT/FlowMQ
+handshake, READY, application ACK, QoS and replay authorization remain with
+their protocol/session layer. A transport write terminal cannot establish
+those facts. The host chooses the phase; CNet does not infer it from payload
+size or install a second application queue.
+
+```c
+/* config is a fully populated cnet_client_config before init. */
+config.send_limits.operations = 64u; /* must fit command_capacity */
+config.send_limits.bytes = 4u * 1024u * 1024u;
+config.send_limits.backing_bytes = 8u * 1024u * 1024u;
+config.send_limits.connection_operations = 8u;
+config.send_limits.connection_bytes = 256u * 1024u;
+config.send_limits.connection_backing_bytes = 512u * 1024u;
+config.send_admission = handshake_gate; /* callback + borrowed user */
+
+/* Later, after returning from protocol callbacks to the Owner loop: */
+int status = cnet_client_set_send_admission(&client, &streaming_gate);
+/* Check status before submitting new work. Resources and limits stay fixed. */
+```
+
+The gates in this example are application-supplied `cnet_send_admission_policy`
+values. Resource provider replacement, live Owner migration and arbitrary
+live trust/protocol mutation are not supported. A different resource lifetime
+or hard budget requires a new owner/client and explicit drain of the old one.
+Recovery backoff is bound at state initialization; destination and placement
+inputs are supplied per decision.
+
+### Memory and terminal accounting
+
+`storage` covers CNet client/Owner/session/dispatcher/command/event/write
+records and the WebSocket transport bridge, plus explicitly configured
+Manager/Handoff/ManagedDial/Pool objects. It does not replace dependency-owned
+NativeIO, resolver, deadline queue, Disruptor, command/event payload-pool or
+TLS allocations. Standalone listener/datagram/packet endpoint allocators are
+unchanged. This contract is not a promise of process-wide heap-free operation.
+No provider failure silently falls back to malloc or another buffer pool.
+
+Receive providers return an owned reference with refcount one and sufficient
+capacity. The backing's final-release authority must survive client shutdown
+and permit release on the consumer thread. A stack arena or a pool destroyed
+with the client cannot back a retained receive slice. Send backing still comes
+from the caller's canonical buffers; CNet retains only after admission.
+
+Send logical bytes and backing capacity remain charged until terminal,
+including partial writes and pending cancellation. Distinct buffers within
+one vector are charged once each; sharing one backing between operations
+charges it once per operation. This conservative measure is not RSS. Zero
+operation/byte limits derive from bounded write capacity and maximum send size;
+zero backing-byte limits mean `SIZE_MAX`, so set explicit limits for isolation.
+
+`cnet_send` requires a completion callback and returns a correlation identity,
+not a cancel/ownership handle. Success completion means the logical write
+completed locally. A failed write may have delivered a prefix to the peer.
+Completion runs on the progress owner; failure completions precede connection
+terminal notification. The existing successful `observer.on_send` notification
+still runs after the operation completion. Convenience sends share the same
+admission ledger. Release of caller references is independent of CNet's
+retained operation references.
+
+The existing formal policy/TCP tests cover each limit axis, phase replacement
+with a live send, invalid custom selection, recovery caps/security sealing,
+allocation failure at every injected init allocation, borrowed backend
+survival, cross-DSO release after client destruction, and real NativeIO prefix
+completion held across close. Pool reuse and protocol reservation are exercised
+against real TCP connections. TLS and original Owner tests remain separate
+regression gates. No new standalone test target or runtime is introduced.
+
+### CMeta integration above Core
+
+`qigao/cmeta` supplies the optional `<cmeta/cnet_policy.h>` adapter. It exposes
+read-only data descriptors for limits, usage, backoff input and pool snapshots,
+and cleanup obligations for caller-owned buffers/slices. C uses
+`cmeta_with_cleanups`; C++ uses `cmeta::cleanup_scope`, including exception
+unwinding. Native CNet keeps its own admitted references. Fallible
+`stop`/`drain`/`destroy` remain explicit; a lexical destructor cannot discard
+their errors or destroy an owner with live I/O. Live clients, function pointers
+and provider authority are not constructible from reflected data.
 
 ## Principle: independent axes, immutable admission
 

@@ -1,4 +1,6 @@
 #include <cnet/cnet.h>
+#include <cnet/client_pool.h>
+#include <stdlib.h>
 #include <clock.h>
 #include <cnet/destination_policy.h>
 #include <cnet/owner_placement.h>
@@ -632,7 +634,130 @@ cleanup:
   return failure;
 }
 
+static int select_destination_index(void *user, const cnet_destination_selection *input, size_t *out) {
+  (void)input; *out = *(size_t *)user; return SALTS_OK;
+}
+static int select_owner_index(void *user, const cnet_owner_placement_input *input, size_t *out) {
+  (void)input; *out = *(size_t *)user; return SALTS_OK;
+}
+static void custom_selection_contract(void) {
+  size_t chosen = 1u, out = 0u;
+  cnet_destination_hint endpoints[] = {{1u,1u,0u,true}, {2u,1u,0u,false}};
+  cnet_destination_selection selection = {.size = sizeof(selection),
+      .version = CNET_DESTINATION_POLICY_VERSION, .kind = CNET_DESTINATION_CUSTOM,
+      .endpoints = endpoints, .endpoint_count = 2u, .snapshot_generation = 1u,
+      .expires_at_ms = UINT64_MAX, .choose = select_destination_index, .choose_user = &chosen};
+  cnet_destination_result result;
+  check_equal(cnet_destination_choose(&selection, &result), SALTS_ENOBUFS);
+  check_equal(result.index, SIZE_MAX);
+  chosen = 2u;
+  check_equal(cnet_destination_choose(&selection, &result), SALTS_EINVAL);
+  chosen = 0u;
+  check_equal(cnet_destination_choose(&selection, &result), SALTS_OK);
+  check_equal(result.endpoint_id, (uint64_t)1u);
+  cnet_owner_placement_hint owners[] = {{true,0u},{false,0u}};
+  cnet_owner_placement_input placement = {.size = sizeof(placement),
+      .version = CNET_OWNER_PLACEMENT_VERSION, .kind = CNET_OWNER_PLACE_CUSTOM,
+      .owners = owners, .owner_count = 2u, .choose = select_owner_index, .choose_user = &chosen};
+  check_equal(cnet_owner_placement_choose(&placement, &out), SALTS_OK);
+  chosen = 1u;
+  check_equal(cnet_owner_placement_choose(&placement, &out), SALTS_ENOBUFS);
+  check_equal(out, SIZE_MAX);
+  chosen = SIZE_MAX;
+  check_equal(cnet_owner_placement_choose(&placement, &out), SALTS_EINVAL);
+}
+static int excessive_backoff(void *user, const cnet_backoff_input *input, uint64_t *delay) {
+  (void)user; *delay = input->maximum_ms + 1u; return SALTS_OK;
+}
+static void replaceable_backoff_contract(void) {
+  for (unsigned invalid = 0; invalid < 2; ++invalid) {
+    cnet_reconnect_state state = {0};
+    cnet_reconnect_ticket ticket = {0};
+    uint64_t wait = 0u;
+    cnet_reconnect_config config = {.size = sizeof(config), .version = CNET_RECOVERY_POLICY_VERSION,
+        .max_attempts = 3u, .deadline_ms = 1000u, .initial_backoff_ms = 10u,
+        .maximum_backoff_ms = 100u, .backoff = {invalid ? excessive_backoff : cnet_backoff_fixed, NULL}};
+    check_equal(cnet_reconnect_init(&state, &config), SALTS_OK);
+    check_equal(cnet_reconnect_begin(&state, 1u, &ticket, &wait), SALTS_OK);
+    check_equal(cnet_reconnect_failed(&state, ticket, CNET_RECONNECT_TRANSIENT, 2u),
+                invalid ? SALTS_EINVAL : SALTS_OK);
+    if (invalid) check_equal(cnet_reconnect_begin(&state, 20u, &ticket, &wait), SALTS_ESHUTDOWN);
+    else {
+      check_equal(cnet_reconnect_begin(&state, 3u, &ticket, &wait), SALTS_EBUSY);
+      check_equal(wait, (uint64_t)9u);
+      check_equal(cnet_reconnect_begin(&state, 12u, &ticket, &wait), SALTS_OK);
+      check_equal(cnet_reconnect_failed(&state, ticket, CNET_RECONNECT_SECURITY, 13u), SALTS_OK);
+      check_equal(cnet_reconnect_begin(&state, 30u, &ticket, &wait), SALTS_ESHUTDOWN);
+    }
+  }
+}
+typedef struct failed_storage { size_t calls, fail_at, live; } failed_storage;
+static void *fail_allocate(void *user, size_t bytes) {
+  failed_storage *s = user;
+  if (++s->calls == s->fail_at) return NULL;
+  void *result = malloc(bytes);
+  if (result != NULL) ++s->live;
+  return result;
+}
+static void fail_free(void *user, void *memory, size_t bytes) {
+  (void)bytes; --((failed_storage *)user)->live; free(memory);
+}
+static void allocation_rollback_contract(bool external) {
+  bool completed = false;
+  for (size_t failure = 1u; failure < 128u; ++failure) {
+    cnet_client client = {0};
+    cnet_client_config config = policy_client_config();
+    native_io_backend backend = {0};
+    if (external) {
+      const native_io_backend_config native_config = {config.backend,
+          config.connection_capacity * 2u, config.request_capacity, config.completion_batch_capacity};
+      check_equal(native_io_backend_init(&backend, &native_config), SALTS_OK);
+    }
+    failed_storage storage = {0, failure, 0};
+    config.resources.storage = (cnet_allocator){fail_allocate, fail_free, &storage};
+    int status = external ? cnet_client_init_external(&client, &config, &backend)
+                          : cnet_client_init(&client, &config);
+    if (status == SALTS_OK) {
+      status = external ? cnet_client_stop_external(&client) : cnet_client_stop(&client, 2000u);
+      if (status == SALTS_OK) status = cnet_client_destroy(&client);
+      completed = true;
+    }
+    check(status == SALTS_OK || status == SALTS_ENOMEM,
+          "allocation failure %zu, external %d: status %d", failure, (int)external, status);
+    check_null(client.impl);
+    check_equal(storage.live, (size_t)0u);
+    if (external) {
+      /* Failure rollback must not close or destroy the host's backend. */
+      check_equal(native_io_backend_wake(&backend), SALTS_OK);
+      check_equal(native_io_backend_close(&backend), SALTS_OK);
+      check_equal(native_io_backend_destroy(&backend), SALTS_OK);
+    }
+    if (completed) break;
+  }
+  check_true(completed);
+}
+static void pool_selection_contract(void) {
+  cnet_pool_candidate candidates[3] = {{0}};
+  size_t selected = SIZE_MAX;
+  candidates[0].eligible = candidates[1].eligible = true;
+  candidates[0].leases = 4u; candidates[1].leases = 1u;
+  check_equal(cnet_pool_select_first(NULL, candidates, 3u, 1u, &selected), SALTS_OK);
+  check_equal(selected, (size_t)0u);
+  check_equal(cnet_pool_select_round_robin(NULL, candidates, 3u, 1u, &selected), SALTS_OK);
+  check_equal(selected, (size_t)1u);
+  check_equal(cnet_pool_select_least_used(NULL, candidates, 3u, 0u, &selected), SALTS_OK);
+  check_equal(selected, (size_t)1u);
+  candidates[0].eligible = candidates[1].eligible = false;
+  check_equal(cnet_pool_select_least_used(NULL, candidates, 3u, 0u, &selected), SALTS_ENOBUFS);
+  check_equal(selected, SIZE_MAX);
+}
+
 spec("CNet native policy and channel admission") {
+  it("validates custom destination and Owner choices against authoritative eligibility") { custom_selection_contract(); }
+  it("replaces recovery backoff without bypassing bounds or security sealing") { replaceable_backoff_contract(); }
+  it("returns every provider allocation after each initialization failure") { allocation_rollback_contract(false); }
+  it("preserves the borrowed backend after every initialization failure") { allocation_rollback_contract(true); }
+  it("selects pool candidates through interchangeable bounded strategies") { pool_selection_contract(); }
   it("preserves destination policy validation and strict-key no-downgrade") {
     destination_contract();
   }

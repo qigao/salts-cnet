@@ -1,3 +1,4 @@
+#include "cnet_resources.h"
 #include <cnet/handoff.h>
 #include <ring_buffer.h>
 #include <thread.h>
@@ -39,28 +40,28 @@ int cnet_handoff_init(cnet_handoff *handoff, const cnet_handoff_config *config) 
   uint_fast64_t incarnation;
   if (handoff == NULL || config == NULL) return SALTS_EINVAL;
   if (handoff->impl != NULL) return SALTS_EALREADY;
-  if (config->size != sizeof(*config) || config->version != CNET_HANDOFF_VERSION ||
+  if (!cnet_allocator_valid(&config->storage) || config->size != sizeof(*config) || config->version != CNET_HANDOFF_VERSION ||
       config->connection_capacity == 0u || config->queue_capacity == 0u ||
       config->queue_capacity > config->connection_capacity) return SALTS_EINVAL;
   /* One unused ring entry distinguishes full from empty. */
   if (config->connection_capacity > SIZE_MAX / sizeof(handoff_record) ||
       config->queue_capacity >= SIZE_MAX / sizeof(size_t)) return SALTS_ERANGE;
-  impl = calloc(1u, sizeof(*impl));
+  impl = cnet_storage_alloc(&config->storage, 1u, sizeof(*impl));
   if (impl == NULL) return SALTS_ENOMEM;
-  impl->records = calloc(config->connection_capacity, sizeof(*impl->records));
-  impl->queue.data = malloc((config->queue_capacity + 1u) * sizeof(size_t));
+  impl->records = cnet_storage_alloc(&config->storage, config->connection_capacity, sizeof(*impl->records));
+  impl->queue.data = cnet_storage_alloc(&config->storage, config->queue_capacity + 1u, sizeof(size_t));
   if (impl->records == NULL || impl->queue.data == NULL) {
-    free(impl->queue.data);
-    free(impl->records);
-    free(impl);
+    cnet_storage_free(impl->queue.data);
+    cnet_storage_free(impl->records);
+    cnet_storage_free(impl);
     return SALTS_ENOMEM;
   }
   incarnation = atomic_load_explicit(&handoff_incarnation, memory_order_relaxed);
   do {
     if (incarnation >= UINT64_MAX) {
-      free(impl->queue.data);
-      free(impl->records);
-      free(impl);
+      cnet_storage_free(impl->queue.data);
+      cnet_storage_free(impl->records);
+      cnet_storage_free(impl);
       return SALTS_ERANGE;
     }
   } while (!atomic_compare_exchange_weak_explicit(&handoff_incarnation, &incarnation,
@@ -72,9 +73,9 @@ int cnet_handoff_init(cnet_handoff *handoff, const cnet_handoff_config *config) 
   ring_init(&impl->queue, impl->queue.data, (config->queue_capacity + 1u) * sizeof(size_t));
   cmeta_mutex_init(&impl->mutex);
   if (impl->mutex == NULL) {
-    free(impl->queue.data);
-    free(impl->records);
-    free(impl);
+    cnet_storage_free(impl->queue.data);
+    cnet_storage_free(impl->records);
+    cnet_storage_free(impl);
     return SALTS_ENOMEM;
   }
   handoff->impl = impl;
@@ -212,9 +213,9 @@ int cnet_handoff_destroy(cnet_handoff *handoff) {
    * empty queue. In particular a producer may still be about to wake a backend. */
   if (impl->reserved != 0u || impl->queued != 0u || impl->taken != 0u) return SALTS_EBUSY;
   cmeta_mutex_destroy(&impl->mutex);
-  free(impl->queue.data);
-  free(impl->records);
-  free(impl);
+  cnet_storage_free(impl->queue.data);
+  cnet_storage_free(impl->records);
+  cnet_storage_free(impl);
   handoff->impl = NULL;
   return SALTS_OK;
 }

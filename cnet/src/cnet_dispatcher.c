@@ -1,3 +1,4 @@
+#include "cnet_resources.h"
 #include "cnet_dispatcher.h"
 
 #include <clock.h>
@@ -221,6 +222,9 @@ static int cnet_dispatcher_invoke(cnet_dispatcher_impl *impl, const cnet_dispatc
 }
 
 int cnet_dispatcher_init(cnet_dispatcher *dispatcher, cnet_shards *shards) {
+  return cnet_dispatcher_init_with_storage(dispatcher, shards, NULL);
+}
+int cnet_dispatcher_init_with_storage(cnet_dispatcher *dispatcher, cnet_shards *shards, const cnet_allocator *storage) {
   cnet_dispatcher_impl *impl;
   cnet_shards_layout layout = {0};
   size_t entry_count;
@@ -237,14 +241,14 @@ int cnet_dispatcher_init(cnet_dispatcher *dispatcher, cnet_shards *shards) {
       layout.shard_count > SIZE_MAX / sizeof(cnet_dispatch_lane))
     return SALTS_ERANGE;
 
-  impl = (cnet_dispatcher_impl *)calloc(1u, sizeof(*impl));
+  impl = (cnet_dispatcher_impl *)cnet_storage_alloc(storage, 1u, sizeof(*impl));
   if (impl == NULL) return SALTS_ENOMEM;
-  impl->entries = (cnet_dispatch_entry *)calloc(entry_count, sizeof(*impl->entries));
-  impl->lanes = (cnet_dispatch_lane *)calloc(layout.shard_count, sizeof(*impl->lanes));
+  impl->entries = (cnet_dispatch_entry *)cnet_storage_alloc(storage, entry_count, sizeof(*impl->entries));
+  impl->lanes = (cnet_dispatch_lane *)cnet_storage_alloc(storage, layout.shard_count, sizeof(*impl->lanes));
   if (impl->entries == NULL || impl->lanes == NULL) {
-    free(impl->lanes);
-    free(impl->entries);
-    free(impl);
+    cnet_storage_free(impl->lanes);
+    cnet_storage_free(impl->entries);
+    cnet_storage_free(impl);
     return SALTS_ENOMEM;
   }
   impl->shards = shards;
@@ -476,9 +480,9 @@ int cnet_dispatcher_destroy(cnet_dispatcher *dispatcher) {
       return SALTS_EBUSY;
     }
   }
-  free(impl->lanes);
-  free(impl->entries);
-  free(impl);
+  cnet_storage_free(impl->lanes);
+  cnet_storage_free(impl->entries);
+  cnet_storage_free(impl);
   dispatcher->impl = NULL;
   return SALTS_OK;
 }

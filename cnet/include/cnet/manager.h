@@ -34,6 +34,7 @@ typedef struct cnet_manager_config {
   cnet_client *client;
   size_t record_capacity;
   size_t connection_capacity;
+  cnet_allocator storage;
 } cnet_manager_config;
 
 typedef struct cnet_manager_attachment {

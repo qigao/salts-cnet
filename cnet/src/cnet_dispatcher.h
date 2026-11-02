@@ -1,5 +1,6 @@
 #ifndef CNET_DISPATCHER_H
 #define CNET_DISPATCHER_H
+#include <cnet/resources.h>
 
 #include "cnet_shards.h"
 
@@ -27,6 +28,7 @@ typedef struct cnet_dispatch_view {
 typedef void (*cnet_dispatch_fn)(void *context, const cnet_dispatch_view *view);
 
 int cnet_dispatcher_init(cnet_dispatcher *dispatcher, cnet_shards *shards);
+int cnet_dispatcher_init_with_storage(cnet_dispatcher *dispatcher, cnet_shards *shards, const cnet_allocator *storage);
 
 /** Registers immutable callback ownership for one generation-checked connection. */
 int cnet_dispatcher_register(cnet_dispatcher *dispatcher, cnet_shard_connection connection,

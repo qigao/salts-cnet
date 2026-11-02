@@ -58,6 +58,7 @@ endif()
 # Salts source at refactor/cnet-ipc-name-native: native C11 FIFO, indexed peers,
 # and caller-owned IPC path. Keep the entire CNet DSO in one ownership domain.
 set(_saltscore_cnet_sources
+  cnet/src/cnet_resources.c
   cnet/src/cnet_client.c
   cnet/src/cnet_command.c
   cnet/src/cnet_datagram.c
