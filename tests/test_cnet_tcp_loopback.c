@@ -656,6 +656,145 @@ cleanup:
   return result;
 }
 
+/* Saturate the production retained-write admission bound before progressing
+ * NativeIO. This is queue-capacity backpressure, not a forced partial kernel
+ * write. A rejected FINAL must not retain backing or seal send/receive admission.
+ * After real terminals return credits, retry that same immutable final buffer.
+ * Repeat on the only connection slot to exercise stale public generations. */
+static int saltscore_native_entry_test_cnet_send_backpressure(void) {
+  cnet_client client = {0};
+  cnet_listener listener = {0};
+  cnet_client_config config = client_config();
+  const cnet_listener_config listener_config = {
+      backend_kind(), "127.0.0.1", 0u, 2u};
+  tcp_probe probe = {0};
+  const cnet_observer observer = {on_state, on_borrowed, &probe, on_sent};
+  cnet_connection connection = {0}, stale_connection = {0};
+  test_socket peer = TEST_INVALID_SOCKET;
+  struct sockaddr_in remote = {0};
+  mem_buffer_t *pending = NULL, *late = NULL;
+  uint16_t port = 0u;
+  int client_live = 0, listener_live = 0;
+  int ready = 0, result = 0;
+
+  config.connection_capacity = 1u;
+  config.command_capacity = 2u; /* Also the retained write-slot capacity. */
+  VERIFY(cnet_listener_init(&listener, &listener_config) == SALTS_OK);
+  listener_live = 1;
+  VERIFY(cnet_listener_port(&listener, &port) == SALTS_OK && port != 0u);
+  VERIFY(cnet_client_init(&client, &config) == SALTS_OK);
+  client_live = 1;
+  remote.sin_family = AF_INET;
+  remote.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+  remote.sin_port = htons(port);
+
+  for (unsigned round = 0u; round < 2u; ++round) {
+    const unsigned char expected[] = {
+        'A', (unsigned char)('0' + round), 'B', 'b', '2', 'F', 'I', 'N', '!'};
+    unsigned char received[sizeof(expected)] = {0};
+    unsigned char incoming = (unsigned char)(0x70u + round);
+    size_t events = 0u;
+    probe = (tcp_probe){0};
+    peer = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    VERIFY(peer != TEST_INVALID_SOCKET);
+    VERIFY(test_recv_timeout(peer) == 0);
+    VERIFY(connect(peer, (const struct sockaddr *)&remote, (int)sizeof(remote)) == 0);
+    VERIFY(cnet_listener_wait(&listener, 5000u, &ready) == SALTS_OK && ready == 1);
+    VERIFY(cnet_listener_accept(&listener, &client, &observer, &connection) == SALTS_OK);
+    VERIFY(poll_until(&client, &probe.connected, 1u) == SALTS_OK);
+    VERIFY(probe.connected == 1u && probe.terminal == 0u && probe.failed == 0u);
+    if (round != 0u)
+      VERIFY(connection.slot == stale_connection.slot &&
+             connection.generation != stale_connection.generation);
+
+    for (size_t write = 0u; write < 2u; ++write) {
+      const size_t bytes = write == 0u ? 2u : 3u;
+      const size_t offset = write == 0u ? 0u : 2u;
+      pending = mem_get_buffer(mem_global(), bytes);
+      VERIFY(pending != NULL);
+      memcpy(mem_buffer_data(pending), expected + offset, bytes);
+      mem_set_used(pending, bytes);
+      if (round != 0u) {
+        VERIFY(cnet_send_buffer(&client, stale_connection, pending) == SALTS_ENOENT);
+        VERIFY(mem_buffer_ref_count(pending) == 1u);
+      }
+      VERIFY(cnet_send_buffer(&client, connection, pending) == SALTS_OK);
+      VERIFY(mem_buffer_ref_count(pending) == 2u);
+      mem_buffer_release(pending);
+      pending = NULL;
+    }
+    VERIFY(probe.sent == 0u); /* Admission is not a NativeIO send terminal. */
+    pending = mem_get_buffer(mem_global(), 4u);
+    VERIFY(pending != NULL);
+    memcpy(mem_buffer_data(pending), expected + 5u, 4u);
+    mem_set_used(pending, 4u);
+    VERIFY(cnet_send_buffer(&client, connection, pending) == SALTS_ENOBUFS);
+    VERIFY(mem_buffer_ref_count(pending) == 1u);
+    VERIFY(cnet_send_buffer_and_close(&client, connection, pending) == SALTS_ENOBUFS);
+    VERIFY(mem_buffer_ref_count(pending) == 1u);
+    VERIFY(probe.sent == 0u && probe.terminal == 0u && probe.failed == 0u);
+
+    /* Rejected FINAL leaves the connection open, including receive admission. */
+    VERIFY(cnet_receive(&client, connection, 1u) == SALTS_OK);
+    VERIFY(send(peer, (const char *)&incoming, 1, 0) == 1);
+    VERIFY(poll_until(&client, &probe.sent, 2u) == SALTS_OK);
+    VERIFY(poll_until(&client, &probe.borrowed_bytes, 1u) == SALTS_OK);
+    VERIFY(probe.sent == 2u && probe.send_sizes[0] == 2u && probe.send_sizes[1] == 3u);
+    VERIFY(probe.borrowed_bytes == 1u && probe.borrowed_data[0] == incoming);
+    VERIFY(probe.failed == 0u && probe.terminal == 0u);
+    VERIFY(test_recv_exact(peer, received, 5u) == 0);
+    VERIFY(memcmp(received, expected, 5u) == 0);
+
+    VERIFY(cnet_send_buffer_and_close(&client, connection, pending) == SALTS_OK);
+    VERIFY(mem_buffer_ref_count(pending) == 2u);
+    mem_buffer_release(pending);
+    pending = NULL;
+    late = mem_get_buffer(mem_global(), 1u);
+    VERIFY(late != NULL);
+    *mem_buffer_data(late) = 0xee;
+    mem_set_used(late, 1u);
+    VERIFY(cnet_send_buffer(&client, connection, late) == SALTS_EBUSY);
+    VERIFY(mem_buffer_ref_count(late) == 1u);
+    VERIFY(cnet_receive(&client, connection, 1u) == SALTS_EBUSY);
+    VERIFY(poll_until(&client, &probe.terminal, 1u) == SALTS_OK);
+    VERIFY(probe.sent == 3u && probe.send_sizes[2] == 4u &&
+           probe.terminal == 1u && probe.failed == 0u);
+    VERIFY(test_recv_exact(peer, received + 5u, 4u) == 0);
+    VERIFY(memcmp(received, expected, sizeof(expected)) == 0);
+    VERIFY(recv(peer, (char *)&incoming, 1, 0) == 0);
+    VERIFY(cnet_send_buffer(&client, connection, late) == SALTS_ENOENT);
+    VERIFY(mem_buffer_ref_count(late) == 1u);
+    mem_buffer_release(late);
+    late = NULL;
+    VERIFY(cnet_client_poll(&client, 0u, &events) == SALTS_OK);
+    VERIFY(probe.connected == 1u && probe.sent == 3u &&
+           probe.terminal == 1u && probe.failed == 0u);
+    stale_connection = connection;
+    test_close_socket(peer);
+    peer = TEST_INVALID_SOCKET;
+  }
+  VERIFY(cnet_client_stop(&client, 5000u) == SALTS_OK);
+  VERIFY(cnet_client_destroy(&client) == SALTS_OK);
+  client_live = 0;
+  VERIFY(cnet_listener_close(&listener) == SALTS_OK);
+  VERIFY(cnet_listener_destroy(&listener) == SALTS_OK);
+  listener_live = 0;
+
+cleanup:
+  if (pending) mem_buffer_release(pending);
+  if (late) mem_buffer_release(late);
+  test_close_socket(peer);
+  if (client_live) {
+    (void)cnet_client_stop(&client, 3000u);
+    (void)cnet_client_destroy(&client);
+  }
+  if (listener_live) {
+    (void)cnet_listener_close(&listener);
+    (void)cnet_listener_destroy(&listener);
+  }
+  return result;
+}
+
 spec("CNet real TCP loopback and retained slice") {
   it("preserves the real owner lifecycle and original failure code") {
     const int result = saltscore_original_entry_test_cnet_tcp_loopback_c();
@@ -668,5 +807,9 @@ spec("CNet real TCP loopback and retained slice") {
   it("leases one exact-key TCP connection only after protocol READY and drains retained leases") {
     const int result = saltscore_native_entry_test_cnet_pool_reuse();
     check(result == 0, "native pool reuse returned %d", result);
+  }
+  it("recovers bounded send credits after rejected FINAL and rejects stale connection generations") {
+    const int result = saltscore_native_entry_test_cnet_send_backpressure();
+    check(result == 0, "native send backpressure returned %d", result);
   }
 }

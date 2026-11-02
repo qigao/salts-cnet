@@ -2,8 +2,9 @@
 
 **Status:** M0/M1 and the M2 packet subset merged in PR #157; persistent TCP
 and TLS retained-transfer slices merged in PRs #159 and #160 after their
-exact-head LLVM CI passed. Pool READY/reuse tests are source changes pending
-their own exact-head CI. The rest of M2 and M3 remain open in
+exact-head LLVM CI passed. TCP pool READY/reuse merged in PR #161 after CI #160.
+Bounded send-credit exhaustion/recovery tests are source changes pending their
+own exact-head CI. The rest of M2 and M3 remain open in
 [SaltsCore #156](https://github.com/qigao/salts-core/issues/156).
 Baseline: SaltsCore master bc070affca0afbc5cad6e060b9c60a7a22abad10,
 reconciled with the native-testing merge. This RFC supersedes the earlier
@@ -434,19 +435,29 @@ write amplification, retained bytes and fair shutdown evidence.
 | M1 admission and M2 UDP/KCP/secure-KCP loopback | #157 `a2cb4fe520845f73ba3abc8d08f90144c70dc2a8` | [CI #153](https://github.com/qigao/salts-core/actions/runs/41388112357), ten LLVM jobs passed |
 | Persistent TCP small/bulk retained vector, FIFO, final send/FIN | #159 `859cd6975a95679954309e88eacbc75ce321d8d6` | [CI #156](https://github.com/qigao/salts-core/actions/runs/41392374952), ten LLVM jobs passed |
 | Verified TLS small/bulk noncontiguous retained vector, FIFO, final send/close | #160 `9be95670a5588a8aed033a8597c342c2dd3db61a` | [CI #158](https://github.com/qigao/salts-core/actions/runs/41394653685), ten LLVM jobs passed |
+| TCP protocol READY, exact-key pool reuse, lease/context drain and stale identities | #161 `df14a884033c951fb45bb24f11d420d541213f7f` | [CI #160](https://github.com/qigao/salts-core/actions/runs/41396782017), ten LLVM jobs passed |
 
-The next source slice extends the existing `saltscore.cnet_tcp_loopback`
+PR #161 extends the existing `saltscore.cnet_tcp_loopback`
 TinyTest/CTest against production `Salts::CNet`: one Manager/Pool connection
 is unleaseable before a real peer's protocol READY greeting, then carries two
 leased request/reply exchanges on the same TCP generation. Every pool-key
 identity participates in reuse rejection. A local send terminal does not
 release the request lease; transport terminal does not release an outstanding
 lease or the Manager context hold. Pool/lease generations reject stale handles.
-These new checks remain pending exact-head cross-platform CI. The host chooses
-when to call `bind_ready`; the Pool does not parse or infer application READY.
+The host chooses when to call `bind_ready`; the Pool does not parse or infer
+application READY.
+
+The next source slice saturates the production Owner's two retained write
+slots before polling. Ordinary and final-send admission both return ENOBUFS
+without retaining the rejected buffer or sealing receive admission. Real FIFO
+terminals return credits, after which the same final buffer is admitted and
+delivered before remote FIN. A second cycle reuses the sole connection slot
+and checks that its previous public generation cannot send on the new stream.
+These checks remain pending exact-head cross-platform CI and qualify bounded
+admission backpressure, not forced partial writes or kernel send-buffer pressure.
 
 **Nonclaim:** each successful matrix qualifies only its tested slice. Android
 x64/ARM64 jobs build the SDK without device runtime tests. Pool reuse over TLS,
-forced partial writes, backpressure exhaustion, cancellation overlap, IPC/Pipe,
+forced partial writes, kernel backpressure, cancellation overlap, IPC/Pipe,
 fixed SG multi-Owner fairness, DTLS/SCTP, adaptive batching and per-connection
 stream deadlines retain separate gates. Keep M2/M3 independent. Track exact HEAD.
