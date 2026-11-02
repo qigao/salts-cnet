@@ -3,8 +3,9 @@
 **Status:** M0/M1 and the M2 packet subset merged in PR #157; persistent TCP
 and TLS retained-transfer slices merged in PRs #159 and #160 after their
 exact-head LLVM CI passed. TCP pool READY/reuse merged in PR #161 after CI #160.
-Bounded send-credit exhaustion/recovery tests are source changes pending their
-own exact-head CI. The rest of M2 and M3 remain open in
+Bounded send-credit recovery and TLS pool READY/reuse merged in PRs #162/#163
+after CI #163/#164. External close/completion routing has a regression fix
+pending its own exact-head CI. The rest of M2 and M3 remain open in
 [SaltsCore #156](https://github.com/qigao/salts-core/issues/156).
 Baseline: SaltsCore master bc070affca0afbc5cad6e060b9c60a7a22abad10,
 reconciled with the native-testing merge. This RFC supersedes the earlier
@@ -436,6 +437,8 @@ write amplification, retained bytes and fair shutdown evidence.
 | Persistent TCP small/bulk retained vector, FIFO, final send/FIN | #159 `859cd6975a95679954309e88eacbc75ce321d8d6` | [CI #156](https://github.com/qigao/salts-core/actions/runs/41392374952), ten LLVM jobs passed |
 | Verified TLS small/bulk noncontiguous retained vector, FIFO, final send/close | #160 `9be95670a5588a8aed033a8597c342c2dd3db61a` | [CI #158](https://github.com/qigao/salts-core/actions/runs/41394653685), ten LLVM jobs passed |
 | TCP protocol READY, exact-key pool reuse, lease/context drain and stale identities | #161 `df14a884033c951fb45bb24f11d420d541213f7f` | [CI #160](https://github.com/qigao/salts-core/actions/runs/41396782017), ten LLVM jobs passed |
+| Bounded send-credit recovery, rejected final-send ownership and stale TCP handles | #162 `6f0183c66737c3a33257145528ddb10c836c45a4` | [CI #163](https://github.com/qigao/salts-core/actions/runs/41398654219), ten LLVM jobs passed |
+| Verified TLS protocol READY, exact security-key reuse and lease/Manager drain | #163 `aeb12701a76c519e3185b4375541126cb7de3d37` | [CI #164](https://github.com/qigao/salts-core/actions/runs/41399822641), ten LLVM jobs passed |
 
 PR #161 extends the existing `saltscore.cnet_tcp_loopback`
 TinyTest/CTest against production `Salts::CNet`: one Manager/Pool connection
@@ -447,17 +450,29 @@ lease or the Manager context hold. Pool/lease generations reject stale handles.
 The host chooses when to call `bind_ready`; the Pool does not parse or infer
 application READY.
 
-The next source slice saturates the production Owner's two retained write
+PR #162 saturates the production Owner's two retained write
 slots before polling. Ordinary and final-send admission both return ENOBUFS
 without retaining the rejected buffer or sealing receive admission. Real FIFO
 terminals return credits, after which the same final buffer is admitted and
 delivered before remote FIN. A second cycle reuses the sole connection slot
 and checks that its previous public generation cannot send on the new stream.
-These checks remain pending exact-head cross-platform CI and qualify bounded
-admission backpressure, not forced partial writes or kernel send-buffer pressure.
+These checks qualify bounded admission backpressure, not forced partial writes
+or kernel send-buffer pressure. PR #163 separately checks application READY and
+two request/reply leases over one verified TLS connection, with stable peer
+fingerprint, exact security-key rejection and clean terminal/recycle.
+
+The next regression holds a real NativeIO send completion across CNet close,
+then cancels a pending receive and holds that real cancellation completion.
+One host thread observes; CNet must retain each request/backing and reject
+stop/destroy until the matching completion is routed. Replayed completions
+cannot settle a reused connection/request, and CNet must leave the borrowed
+backend open after its own destroy. NativeIO cancellation ENOENT on a borrowed
+backend can mean the host already observed the terminal; it must not turn a
+clean close into FAILED or release storage before routing. This fix and its
+production-loopback regression remain pending exact-head cross-platform CI.
 
 **Nonclaim:** each successful matrix qualifies only its tested slice. Android
-x64/ARM64 jobs build the SDK without device runtime tests. Pool reuse over TLS,
-forced partial writes, kernel backpressure, cancellation overlap, IPC/Pipe,
+x64/ARM64 jobs build the SDK without device runtime tests. Forced partial writes,
+kernel backpressure, other cancellation orderings, IPC/Pipe,
 fixed SG multi-Owner fairness, DTLS/SCTP, adaptive batching and per-connection
 stream deadlines retain separate gates. Keep M2/M3 independent. Track exact HEAD.

@@ -1082,6 +1082,9 @@ int cnet_client_advance_external(cnet_client *client, size_t *out_events);
  * Routes one terminal completion already observed by the embedding runtime.
  * A completion not owned by this client returns SALTS_OK with
  * *out_consumed == false and is not modified.
+ * The host must route every observed owned completion even after requesting
+ * close. NativeIO observation invalidates its request identity before CNet
+ * settles the request/backing; stop/destroy remain busy until routing drains it.
  */
 int cnet_client_route_external_completion(
     cnet_client *client,
