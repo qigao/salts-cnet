@@ -722,7 +722,7 @@ int cnet_tls_shutdown(cnet_tls_state *state, bool *out_notify_generated,
 {
     cnet_crypto_state *eng = get_engine(state);
     crypto_tls_cipher_bio_snapshot before = {0}, after = {0};
-    crypto_tls_result result;
+    crypto_tls_result result = CRYPTO_TLS_AGAIN;
     if (state == NULL || out_notify_generated == NULL ||
         out_peer_notify_received == NULL || eng == NULL)
         return SALTS_EINVAL;
