@@ -1,5 +1,5 @@
-# Original CNet tests use the same local native Crypto implementation as
-# production, in a separate executable that never loads Salts::CNet.
+# Original CNet tests use the same pinned vcpkg GmSSL/Crypto dependency
+# graph as production, in a separate executable that never loads Salts::CNet.
 # Discover only the transport dependencies in this sibling CMake scope.
 find_package(c-ares CONFIG REQUIRED)
 find_package(kcp CONFIG REQUIRED)
@@ -11,10 +11,10 @@ if(NOT TARGET saltscore_cnet OR NOT TARGET Salts::TinyTest OR
    NOT TARGET salts_crypto OR NOT TARGET Salts::Crypto)
   message(FATAL_ERROR "Need actual CNet, local Crypto and native TinyTest")
 endif()
-get_target_property(_core_owner_native_include salts_crypto SALTS_CRYPTO_NATIVE_INCLUDE_DIR)
+get_target_property(_core_owner_native_include GmSSL::GmSSL INTERFACE_INCLUDE_DIRECTORIES)
 if(NOT _core_owner_native_include OR
    NOT EXISTS "${_core_owner_native_include}/gmssl/tls.h")
-  message(FATAL_ERROR "Original CNet Owner requires local Crypto native headers")
+  message(FATAL_ERROR "Original CNet Owner requires installed vcpkg GmSSL native headers")
 endif()
 # _saltscore_cnet_sources is declared by Core at the repository root.
 # Relative entries must not be interpreted relative to tests/cnet-owner;
@@ -51,8 +51,8 @@ target_include_directories(saltscore_cnet_original_test_owner
     "${PROJECT_SOURCE_DIR}/cnet/src"
     "${PROJECT_SOURCE_DIR}/cnet/src/wsparser"
     "${PROJECT_SOURCE_DIR}/native-io/src"
-    "${PROJECT_SOURCE_DIR}/vendor/cnet/monocypher"
-    "${PROJECT_SOURCE_DIR}/vendor/cnet/reed"
+    "${PROJECT_SOURCE_DIR}/vendor/monocypher"
+    "${PROJECT_SOURCE_DIR}/vendor/reed"
     "${_core_owner_native_include}")
 target_link_libraries(saltscore_cnet_original_test_owner
   PUBLIC Salts::Core Salts::NativeIO Salts::Concurrency

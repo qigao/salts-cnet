@@ -65,6 +65,13 @@ endif()
 if(TARGET Salts::Crypto)
   message(FATAL_ERROR "Duplicate Crypto owner: use exactly one static archive")
 endif()
+# Imported CMake targets are directory-scoped unless made GLOBAL. Both the
+# sibling crypto/ and cnet/ modules consume this exact vcpkg static provider.
+# Resolve it at the common parent so they see the *same* GmSSL::GmSSL target.
+find_package(GmSSL CONFIG REQUIRED)
+if(NOT TARGET GmSSL::GmSSL)
+  message(FATAL_ERROR "Canonical vcpkg GmSSL::GmSSL import is required")
+endif()
 add_subdirectory(crypto)
 # Keep explicit URI=ON callers compatible; disabling a mandatory dependency
 # must fail rather than omit source or silently change parsing behavior.

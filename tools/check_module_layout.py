@@ -113,14 +113,14 @@ for retired in ("SALTSCORE_BUILD_ASN1", "SALTSCORE_BUILD_CRYPTO", "SALTSCORE_BUI
 crypto_cmake = (ROOT / "crypto/CMakeLists.txt").read_text(encoding="utf-8")
 cnet_cmake = (ROOT / "cnet/CMakeLists.txt").read_text(encoding="utf-8")
 for name, cmake in (("Crypto", crypto_cmake), ("CNet", cnet_cmake)):
-    if re.search(r"(?mi)^\s*find_package\s*\(\s*(?:GmSSL|Crypto)\b", cmake):
-        raise SystemExit(f"{name} still imports an external TLS owner")
     if "${CRYPTO_GMSSL_ROOT}" in cmake:
-        raise SystemExit(f"{name} still consumes the retired external prefix")
-if not (ROOT / "crypto/native/gmssl/CMakeLists.txt").is_file():
-    raise SystemExit("missing private local native Crypto implementation")
-if "Salts::Crypto" not in cnet_cmake or "GmSSL::GmSSL" in cnet_cmake:
-    raise SystemExit("production CNet must link the sole local Salts::Crypto owner")
+        raise SystemExit(f"{name} consumes retired external GmSSL prefix")
+if "find_package(GmSSL CONFIG REQUIRED)" not in crypto_cmake:
+    raise SystemExit("Crypto must resolve versioned GmSSL through vcpkg")
+if (ROOT / "crypto/native/gmssl").exists():
+    raise SystemExit("mirrored full GmSSL native source is forbidden")
+if "Salts::Crypto" not in cnet_cmake or "GmSSL::GmSSL" not in cnet_cmake:
+    raise SystemExit("CNet must link Crypto and its pinned native GmSSL dependency")
 
 for module in MODULES:
     # Only package assembly belongs to the root; no module binary is made

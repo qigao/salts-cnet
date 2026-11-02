@@ -49,7 +49,9 @@ on:
       - "serial/*.c"
       - "serial/*.h"
       - "verification/*.pml"
-      - "vendor/cnet/**"
+      - "vendor/reed/**"
+      - "vendor/monocypher/**"
+      - "crypto/gmssl-extensions/**"
       - "CMakeLists.txt"
       - "CMakeOptions.cmake"
       - "CMakePresets.json"
@@ -107,7 +109,9 @@ on:
       - "serial/*.c"
       - "serial/*.h"
       - "verification/*.pml"
-      - "vendor/cnet/**"
+      - "vendor/reed/**"
+      - "vendor/monocypher/**"
+      - "crypto/gmssl-extensions/**"
       - "CMakeLists.txt"
       - "CMakeOptions.cmake"
       - "CMakePresets.json"
@@ -157,14 +161,14 @@ jobs:
 
       - name: Set up native LLVM
         if: runner.os != 'Windows'
-        uses: qigao/vcpkg-cache/.github/actions/setup-llvm-native@529019437597fa71f7d8dcc561d26fc7b0603ae6
+        uses: qigao/vcpkg-cache/.github/actions/setup-llvm-native@v0.1.0
         with:
           build-type: toolchain-only
           obfuscator: "false"
 
       - name: Set up Windows LLVM-MinGW
         if: runner.os == 'Windows'
-        uses: qigao/vcpkg-cache/.github/actions/setup-llvm-mingw@529019437597fa71f7d8dcc561d26fc7b0603ae6
+        uses: qigao/vcpkg-cache/.github/actions/setup-llvm-mingw@v0.1.0
         with:
           target: ${{ matrix.target }}
           build-type: toolchain-only
@@ -172,13 +176,15 @@ jobs:
 
       - name: Set up shared dependency contract
         id: vcpkg
-        uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-cache@529019437597fa71f7d8dcc561d26fc7b0603ae6
+        # The PR #263 port overlay must match the manifest's pinned registry
+        # GmSSL 3.2.0#17; the older shared action injects #16/#15.
+        uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-cache@v0.1.0
         with:
           mode: read
           token: ${{ github.token }}
 
       - name: Restore re2c and Unicode host data
-        uses: qigao/vcpkg-cache/.github/actions/setup-re2c-tools@529019437597fa71f7d8dcc561d26fc7b0603ae6
+        uses: qigao/vcpkg-cache/.github/actions/setup-re2c-tools@v0.1.0
         with:
           token: ${{ github.token }}
 
@@ -281,7 +287,7 @@ jobs:
             throw 'SaltsCore SDK installation is missing'
           }
           @(
-            'release=0.1.001'
+            'release=0.1.002'
             'package=0.1.2'
             "commit=$env:GITHUB_SHA"
             'rid=${{ matrix.rid }}'
@@ -373,7 +379,7 @@ jobs:
           gh release create v0.1.002 \
             dist/SaltsCore.Native.0.1.2.nupkg dist/SHA256SUMS \
             --repo "$GITHUB_REPOSITORY" --verify-tag --target "$GITHUB_SHA" \
-            --title 'SaltsCore 0.1.001' --generate-notes --latest
+            --title 'SaltsCore 0.1.002' --generate-notes --latest
 
   result:
     name: CI result

@@ -1,10 +1,8 @@
 #!/usr/bin/env python3
-"""Verify local Crypto inputs; optionally reproduce them from the pinned source.
+"""Verify pinned GmSSL vcpkg provider and exact extension blobs.
 
-Normal builds never download, patch or import a provider. --upstream is a
-maintainer-only check against an already obtained pristine GmSSL checkout.
-It applies the recorded derivation in a temporary directory, never to the
-supplied checkout or to the checked-in local implementation.
+This is the existing source-admission gate, repurposed for the externally
+installed GmSSL provider. It never downloads, builds or patches a provider.
 """
 from __future__ import annotations
 
@@ -12,122 +10,116 @@ import argparse
 import hashlib
 import json
 from pathlib import Path
-import re
-import subprocess
-import tempfile
+import sys
 
 ROOT = Path(__file__).resolve().parents[2]
-NATIVE = ROOT / "crypto/native/gmssl"
-REVIEWED_NATIVE_CMAKE_BLOB = "0498c615298938e36ac222637d94a2960202a731"
+NATIVE = ROOT / "crypto/gmssl-extensions"
+LOCK = NATIVE / "source-lock.json"
+VCPKG_MANIFEST = ROOT / "vcpkg.json"
+REGISTRY = ROOT / "vcpkg-configuration.json"
+CRYPTO_CMAKE = ROOT / "crypto/CMakeLists.txt"
+LOCAL_NATIVE = ROOT / "crypto/native/gmssl"
+EXPECTED_SOURCE_SHA = "720abc55eca41cc7f676d0b5dbb38e8605d091b9"
+EXPECTED_PORT_TREE = "9eee73ae12ad32e499425f8cc28b740c5f84d89e"
+EXPECTED_REGISTRY = "05a10d73a5b1d01598e59d8cf34074513bd49df4"
+EXPECTED_REGISTRY_VERSION = "v0.1.0"
+EXPECTED_UPSTREAM = "7c9f02904ef33e59c87b4f16621cc8fd434e7579"
 
 
 def git_blob(data: bytes) -> str:
-    return hashlib.sha1(b"blob " + str(len(data)).encode("ascii") + b"\0" + data).hexdigest()
+    return hashlib.sha1(
+        b"blob " + str(len(data)).encode("ascii") + b"\0" + data
+    ).hexdigest()
 
 
-def relative_file(root: Path, relative: str) -> Path:
-    path = root / relative
-    if Path(relative).is_absolute() or ".." in Path(relative).parts:
-        raise ValueError("nonlocal native source path: " + relative)
-    return path
+def verify_lock(lock: dict) -> int:
+    require = lambda condition, message: condition or (_fail(message))
+    require(lock.get("schema") == 2 and lock.get("owner") == "Salts::Crypto"
+            and lock.get("provider") == "GmSSL::GmSSL",
+            "noncanonical GmSSL package owner")
+    package = lock["package"]
+    require((package.get("name"), package.get("version"), package.get("port_version")) ==
+            ("gmssl", "3.2.0", 17), "wrong pinned GmSSL vcpkg version")
+    require(package.get("port_tree") == EXPECTED_PORT_TREE
+            and package.get("registry_commit") == EXPECTED_REGISTRY
+            and package.get("registry_reference") == EXPECTED_REGISTRY_VERSION,
+            "unreviewed GmSSL port revision or registry")
+    require(lock["upstream"].get("commit") == EXPECTED_UPSTREAM,
+            "unpinned GmSSL upstream source")
+    require(lock["source_checkout"].get("commit") == EXPECTED_SOURCE_SHA
+            and lock["source_checkout"].get("directory") == "crypto/gmssl-extensions",
+            "unpinned extension checkout")
+    files = lock["original_inputs"]
+    require(len(files) == 15, "incomplete original extension inventory")
+    paths = [entry["path"] for entry in files]
+    require(len(set(paths)) == len(paths), "duplicate extension input")
+    require(all(path.startswith(("src/", "include/gmssl/", "patches/"))
+                and not Path(path).is_absolute() and ".." not in Path(path).parts
+                and Path(path).suffix in (".c", ".h", ".cmake")
+                for path in paths), "unsafe or unexpected extension path")
+    require(sum(Path(p).suffix == ".c" for p in paths) == 6,
+            "missing original extension C implementation")
+    return len(files)
 
 
-def verify_build_recipe(lock: dict) -> None:
-    recipe = lock["build_recipe"]
-    if recipe["path"] != "CMakeLists.txt" or recipe["git_blob"] != REVIEWED_NATIVE_CMAKE_BLOB:
-        raise ValueError("native build recipe has no reviewed identity")
-    data = (NATIVE / "CMakeLists.txt").read_bytes()
-    if git_blob(data) != REVIEWED_NATIVE_CMAKE_BLOB:
-        raise ValueError("changed reviewed native OBJECT build recipe")
-    text = data.decode("utf-8")
-    common = re.search(r"add_library\(salts_crypto_native_objects OBJECT\s+(.*?)\)", text, re.S)
-    definitions = re.search(
-        r"target_compile_definitions\(salts_crypto_native_objects PRIVATE\s+(ENABLE_.*?)\)",
-        text, re.S)
-    if common is None or common.group(1).split() != lock["common_sources"]:
-        raise ValueError("native common source profile differs from the real OBJECT recipe")
-    if definitions is None or definitions.group(1).split() != lock["compile_definitions"]:
-        raise ValueError("native feature profile differs from the real OBJECT recipe")
-    platforms = [match.split() for match in re.findall(
-        r"target_sources\(salts_crypto_native_objects PRIVATE\s+(.*?)\)", text)]
-    expected = [lock["platform_sources"][name]
-                for name in ("windows", "apple", "getentropy", "portable")]
-    if platforms != expected:
-        raise ValueError("native platform source selection differs from the real OBJECT recipe")
+def _fail(message: str) -> bool:
+    raise ValueError(message)
 
 
-def verify(upstream: Path | None = None) -> int:
-    lock = json.loads((NATIVE / "source-lock.json").read_text(encoding="utf-8"))
-    if lock["owner"] != "Salts::Crypto" or lock["upstream"]["commit"] != (
-            "7c9f02904ef33e59c87b4f16621cc8fd434e7579"):
-        raise ValueError("unexpected local native source identity")
-    verify_build_recipe(lock)
-    entries = lock["files"]
-    names = [entry["path"] for entry in entries]
-    if len(names) != len(set(names)):
-        raise ValueError("duplicate native input")
-    actual = {path.relative_to(NATIVE).as_posix()
-              for directory in (NATIVE / "src", NATIVE / "include")
-              for path in directory.rglob("*") if path.is_file()}
-    if actual != set(names) - {"LICENSE"}:
-        raise ValueError("untracked or missing local native source/header")
-    for entry in entries:
-        path = relative_file(NATIVE, entry["path"])
-        if git_blob(path.read_bytes()) != entry["local_git_blob"]:
-            raise ValueError("changed local native input: " + entry["path"])
-    for entry in lock["core_adaptations"]:
-        path = relative_file(ROOT, entry["path"])
-        if git_blob(path.read_bytes()) != entry["git_blob"]:
-            raise ValueError("changed original Core adaptation: " + entry["path"])
-    derivation = lock["derivation_patch"]
-    patch = relative_file(NATIVE, derivation["path"])
-    if git_blob(patch.read_bytes()) != derivation["git_blob"]:
-        raise ValueError("changed native source derivation patch")
-    source_sets = [lock["common_sources"], *lock["platform_sources"].values()]
-    for sources in source_sets:
-        if len(sources) != len(set(sources)) or not set(sources).issubset(names):
-            raise ValueError("invalid or duplicated native translation unit")
-    if set(lock["common_sources"]) & set().union(*(
-            set(items) for items in lock["platform_sources"].values())):
-        raise ValueError("platform source compiled twice")
-    if upstream is not None:
-        upstream = upstream.resolve(strict=True)
-        with tempfile.TemporaryDirectory(prefix="saltscore-native-reproduce-") as temporary:
-            staged = Path(temporary)
-            for entry in entries:
-                expected = entry["upstream_git_blob"]
-                if expected is None:
-                    continue
-                data = relative_file(upstream, entry["path"]).read_bytes()
-                if git_blob(data) != expected:
-                    raise ValueError("upstream source identity mismatch: " + entry["path"])
-                target = relative_file(staged, entry["path"])
-                target.parent.mkdir(parents=True, exist_ok=True)
-                target.write_bytes(data)
-            for options in (("--check",), ()):
-                subprocess.run(["git", "apply", *options, str(patch)], cwd=staged,
-                               capture_output=True, text=True, check=True)
-            for entry in entries:
-                data = relative_file(staged, entry["path"]).read_bytes()
-                if git_blob(data) != entry["local_git_blob"]:
-                    raise ValueError("source derivation mismatch: " + entry["path"])
-    return len(entries)
+def verify_manifest(lock: dict) -> None:
+    package = lock["package"]
+    manifest = json.loads(VCPKG_MANIFEST.read_text(encoding="utf-8"))
+    registry = json.loads(REGISTRY.read_text(encoding="utf-8"))
+    if "gmssl" not in manifest.get("dependencies", []):
+        raise ValueError("GmSSL must be declared in root vcpkg.json")
+    matches = [item for item in registry.get("registries", [])
+               if "gmssl" in item.get("packages", [])]
+    if (len(matches) != 1
+        or matches[0].get("repository") != package.get("registry_repository")
+        or matches[0].get("reference") != EXPECTED_REGISTRY_VERSION
+        or matches[0].get("baseline") != EXPECTED_REGISTRY):
+        raise ValueError("GmSSL registry must be immutable and unique")
+    cmake = CRYPTO_CMAKE.read_text(encoding="utf-8")
+    if ("find_package(GmSSL CONFIG REQUIRED)" not in cmake
+        or "GmSSL::GmSSL" not in cmake
+        or "salts_crypto_native_objects" in cmake
+        or "add_subdirectory(native/gmssl)" in cmake):
+        raise ValueError("Crypto must import one vcpkg GmSSL target, not compile a mirror")
+    if LOCAL_NATIVE.exists() and any(
+        p.is_file() and p.suffix in (".c", ".h")
+        for p in LOCAL_NATIVE.rglob("*")
+    ):
+        raise ValueError("mirrored native GmSSL C/H tree is still present")
+    if package.get("port_tree") != EXPECTED_PORT_TREE:
+        raise ValueError("unexpected GmSSL package tree")
+
+
+def verify() -> int:
+    lock = json.loads(LOCK.read_text(encoding="utf-8"))
+    count = verify_lock(lock)
+    expected = set(item["path"] for item in lock["original_inputs"])
+    actual = set(path.relative_to(NATIVE).as_posix()
+                 for path in NATIVE.rglob("*") if path.is_file()
+                 and path.name not in ("README.md", "source-lock.json"))
+    if actual != expected:
+        raise ValueError("extension files missing or added: " + str(sorted(actual ^ expected)))
+    for entry in lock["original_inputs"]:
+        p = NATIVE / entry["path"]
+        if git_blob(p.read_bytes()) != entry["git_blob"]:
+            raise ValueError("modified original extension bytes: " + entry["path"])
+    verify_manifest(lock)
+    return count
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--upstream", type=Path,
-                        help="verify derivation from the pristine pinned upstream source")
-    args = parser.parse_args()
+    parser.parse_args()
     try:
-        count = verify(args.upstream)
-    except (OSError, ValueError, KeyError, subprocess.CalledProcessError) as error:
-        print("FAIL: local Crypto source: " + str(error))
-        if isinstance(error, subprocess.CalledProcessError):
-            print(error.stderr)
+        count = verify()
+    except (OSError, KeyError, ValueError, json.JSONDecodeError) as error:
+        print("FAIL pinned GmSSL vcpkg source: " + str(error), file=sys.stderr)
         return 1
-    print(f"PASS: {count} pinned local Crypto source/header/license inputs" +
-          ("; upstream derivation reproduced byte-for-byte" if args.upstream else ""))
+    print(f"PASS: {count} immutable Crypto extension inputs; gmssl 3.2.0#17 from vcpkg registry")
     return 0
 
 

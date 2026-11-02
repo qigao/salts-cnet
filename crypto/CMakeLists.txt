@@ -1,17 +1,24 @@
 cmake_minimum_required(VERSION 3.21)
 project(SaltsCrypto VERSION 0.1.0 LANGUAGES C)
 
-# One source-owned static Crypto archive. Native TLS/algorithms and libecc
-# compile locally as private OBJECT targets and are archived exactly once.
-# The local native input is pinned by native/gmssl/source-lock.json.
+# One Crypto API archive links the pinned vcpkg GmSSL static dependency.
+# GmSSL native C/H sources belong to the external package, not a local mirror.
+# Original Ed448 libecc sources remain private first-party objects.
 if(DEFINED CRYPTO_GMSSL_ROOT)
-  message(FATAL_ERROR "CRYPTO_GMSSL_ROOT was removed; Crypto builds its local implementation")
+  message(FATAL_ERROR "CRYPTO_GMSSL_ROOT was removed; Crypto imports pinned vcpkg GmSSL::GmSSL")
 endif()
-if(TARGET GmSSL::GmSSL OR TARGET gmssl OR TARGET salts_crypto)
-  message(FATAL_ERROR "Duplicate Crypto implementation owner: use only local Salts::Crypto")
+if(TARGET gmssl OR TARGET salts_crypto)
+  message(FATAL_ERROR "Duplicate in-tree Crypto/GmSSL implementation")
 endif()
-set(_crypto_native_include "${CMAKE_CURRENT_SOURCE_DIR}/native/gmssl/include")
-add_subdirectory(native/gmssl)
+find_package(GmSSL CONFIG REQUIRED)
+if(NOT TARGET GmSSL::GmSSL)
+  message(FATAL_ERROR "Pinned vcpkg GmSSL target not available")
+endif()
+get_target_property(_crypto_native_include GmSSL::GmSSL INTERFACE_INCLUDE_DIRECTORIES)
+if(NOT _crypto_native_include OR
+    NOT EXISTS "${_crypto_native_include}/gmssl/tls.h")
+  message(FATAL_ERROR "Pinned vcpkg GmSSL TLS headers unavailable")
+endif()
 if(NOT CMAKE_SIZEOF_VOID_P EQUAL 8)
   message(FATAL_ERROR "Ed448 libecc source uses the reviewed 64-bit WORDSIZE ABI")
 endif()
@@ -45,16 +52,15 @@ add_library(salts_crypto STATIC
   src/crypto_random.c
   src/asn1/crypto.c
   src/crypto_x509_der.c
-  $<TARGET_OBJECTS:crypto_libecc_ed448_objects>
-  $<TARGET_OBJECTS:salts_crypto_native_objects>)
+  $<TARGET_OBJECTS:crypto_libecc_ed448_objects>)
 add_library(Salts::Crypto ALIAS salts_crypto)
 set_target_properties(salts_crypto PROPERTIES
   OUTPUT_NAME salts_crypto EXPORT_NAME Crypto
   C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF
-  POSITION_INDEPENDENT_CODE ON C_VISIBILITY_PRESET hidden
-  SALTS_CRYPTO_NATIVE_INCLUDE_DIR "${_crypto_native_include}")
+  POSITION_INDEPENDENT_CODE ON C_VISIBILITY_PRESET hidden)
 target_compile_features(salts_crypto PUBLIC c_std_11)
-target_link_libraries(salts_crypto PUBLIC Threads::Threads Salts::ASN1)
+target_link_libraries(salts_crypto PUBLIC Threads::Threads Salts::ASN1
+  PRIVATE GmSSL::GmSSL)
 target_include_directories(salts_crypto
   PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
          $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
@@ -89,20 +95,16 @@ elseif(UNIX)
   target_link_libraries(salts_crypto PUBLIC m "${CMAKE_DL_LIBS}")
 endif()
 
-# No imported provider archive, post-build archive merge, or second native
-# library. CNet privately consumes this same source-built static archive.
+# GmSSL's vcpkg archive is an explicit imported, transitive dependency.
+# Never duplicate its implementation objects into Salts::Crypto.
 
 install(TARGETS salts_crypto EXPORT SaltsCryptoTargets
   ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR})
 install(DIRECTORY include/crypto
   DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
   FILES_MATCHING PATTERN "*.h")
-# Preserve the existing SM3 public C API from the same locally built archive.
-# Native TLS and algorithm headers stay build-private.
-install(FILES "${_crypto_native_include}/gmssl/sm3.h"
-  DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}/gmssl")
-install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/native/gmssl/LICENSE"
-  DESTINATION "${CMAKE_INSTALL_DATADIR}/licenses/Crypto/GmSSL")
+# GmSSL headers and Apache-2.0 copyright are owned by its pinned vcpkg SDK;
+# do not install a second private copy into the Salts::Crypto SDK.
 install(FILES "${_libecc}/LICENSE"
   DESTINATION ${CMAKE_INSTALL_DATADIR}/licenses/Crypto/libecc)
 

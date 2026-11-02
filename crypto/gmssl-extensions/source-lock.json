@@ -1,0 +1,85 @@
+{
+  "schema": 2,
+  "owner": "Salts::Crypto",
+  "provider": "GmSSL::GmSSL",
+  "upstream": {
+    "repository": "https://github.com/guanzhi/GmSSL",
+    "commit": "7c9f02904ef33e59c87b4f16621cc8fd434e7579"
+  },
+  "package": {
+    "registry_repository": "https://github.com/qigao/vcpkg-cache",
+    "registry_commit": "05a10d73a5b1d01598e59d8cf34074513bd49df4",
+    "port_tree": "9eee73ae12ad32e499425f8cc28b740c5f84d89e",
+    "name": "gmssl",
+    "version": "3.2.0",
+    "port_version": 17,
+    "registry_reference": "v0.1.0"
+  },
+  "source_checkout": {
+    "repository": "https://github.com/qigao/salts-core",
+    "commit": "720abc55eca41cc7f676d0b5dbb38e8605d091b9",
+    "directory": "crypto/gmssl-extensions"
+  },
+  "original_inputs": [
+    {
+      "path": "include/gmssl/aes_key_wrap.h",
+      "git_blob": "dd56d8980910e09343d9b322ca9f86e0753f2468"
+    },
+    {
+      "path": "include/gmssl/des.h",
+      "git_blob": "5d4086051de7acca9b571fa6a74db04b45b7dda7"
+    },
+    {
+      "path": "include/gmssl/md5.h",
+      "git_blob": "5e41fe208915b81010d2dbff3e9eeb6dda1bcf92"
+    },
+    {
+      "path": "include/gmssl/rsa_components.h",
+      "git_blob": "a41af8102297162df16a610a95ea801bcc0fdafc"
+    },
+    {
+      "path": "include/gmssl/rsa_ext.h",
+      "git_blob": "ac54d7656c0db908dfa669c43e144a3e7746f430"
+    },
+    {
+      "path": "include/gmssl/secp384r1_verify.h",
+      "git_blob": "8b1103ab75b887b5fdec0b3029e558c087aefadb"
+    },
+    {
+      "path": "patches/tls12-empty-authorities.cmake",
+      "git_blob": "d73ee3dd980e42c092feed23b011232e2b3c82cd"
+    },
+    {
+      "path": "patches/tls13-session-ticket-bounds.cmake",
+      "git_blob": "45e841be6bdf1071edf91382ed5ba0f9546dadb4"
+    },
+    {
+      "path": "src/aes_key_wrap.c",
+      "git_blob": "79a9bc134ca4e868c1d20b71a14aaa7b8ba78508"
+    },
+    {
+      "path": "src/des.c",
+      "git_blob": "806f7d4486671d832202fabfaea4ecf1758edd49"
+    },
+    {
+      "path": "src/md5.c",
+      "git_blob": "c50d43a99ec8371f2ecda975f67bace72e4a87f3"
+    },
+    {
+      "path": "src/rsa_ext.c",
+      "git_blob": "0d255b36a280a09ff81ed3a9e5b76378023cb9b6"
+    },
+    {
+      "path": "src/rsa_private_op.c",
+      "git_blob": "08c9893575de26f3714bb001add13118f19d68ca"
+    },
+    {
+      "path": "src/secp384r1_verify.c",
+      "git_blob": "aa990aed950fb5f16587cc6eb55d31bffa41b7a9"
+    },
+    {
+      "path": "src/tls13-handshake-reader.h",
+      "git_blob": "00ca0ca13a7666834908e02a56c4afc99cc1f4a9"
+    }
+  ]
+}

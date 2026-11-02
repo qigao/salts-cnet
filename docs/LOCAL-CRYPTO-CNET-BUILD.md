@@ -1,4 +1,14 @@
-# Default local Crypto and CNet build
+# Historical local Crypto and CNet build (2026-10-29)
+
+> **Historical snapshot only, NOT the current vcpkg migration architecture or
+> current CI qualification evidence.** The archived measurements below were
+> made while GmSSL native sources were locally compiled into Crypto.
+> Current PR #149 instead imports a separate **GmSSL 3.2.0#17** static archive,
+> retains first-party `Salts::Crypto`, and audits both physical archives and
+> production CNet plugin/DSO ownership. See
+> [current ownership contract](../crypto/docs/STATIC-SINGLE-OWNER.md).
+>
+> Do not reuse any success figures below to qualify the current HEAD.
 
 Date: 2026-10-29. Status: Draft source/build repair, not release admission.
 
@@ -13,7 +23,7 @@ There is no replacement external TLS prefix or provider selection flag.
 `Salts::Crypto` is the single public static Crypto archive. It contains its
 seven existing facade translation units, the existing 33-unit private
 libecc Ed448 subset, and 84 locally compiled native units. The native source,
-headers and license live in `crypto/native/gmssl`; its OBJECT target is not
+headers and license come from pinned vcpkg GmSSL; its imported STATIC target is not
 exported or installed independently. No GmSSL package lookup, imported native
 archive, post-build archive merge, provider DSO or duplicate public target is
 part of this build.

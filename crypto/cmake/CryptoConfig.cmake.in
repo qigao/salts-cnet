@@ -1,6 +1,10 @@
 @PACKAGE_INIT@
 include(CMakeFindDependencyMacro)
 find_dependency(Threads)
+find_dependency(GmSSL CONFIG REQUIRED)
+if(NOT TARGET GmSSL::GmSSL)
+  message(FATAL_ERROR "Installed Crypto requires the pinned GmSSL::GmSSL provider")
+endif()
 find_dependency(ASN1 0.1 CONFIG REQUIRED)
 if(NOT TARGET Salts::ASN1)
   message(FATAL_ERROR "Installed Crypto requires standalone Salts::ASN1")

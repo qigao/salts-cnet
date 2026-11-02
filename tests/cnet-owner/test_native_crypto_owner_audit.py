@@ -30,11 +30,12 @@ class NativeCryptoOwnerAudit(unittest.TestCase):
                 table = audit.archive_definitions(text, system)
                 self.assertEqual(table["tls_init"], 2)
                 self.assertNotIn("tls_send", table)
-        table = Counter({name: 1 for name in audit.ARCHIVE_SYMBOLS})
-        audit.validate_archive(table)
-        table["tls_init"] = 2
+        native = Counter({name: 1 for name in audit.NATIVE_SYMBOLS})
+        facade = Counter({name: 1 for name in audit.FACADE_SYMBOLS})
+        audit.validate_archives(native, facade)
+        native["tls_init"] = 2
         with self.assertRaisesRegex(ValueError, "duplicated"):
-            audit.validate_archive(table)
+            audit.validate_archives(native, facade)
 
     def test_llvm_nm_windows_archive_members_are_retained(self):
         text = (
@@ -49,30 +50,42 @@ class NativeCryptoOwnerAudit(unittest.TestCase):
                          {"tls.c.obj"})
 
     def test_coff_mergeable_crt_and_strings_are_classified_by_section(self):
-        # Include unfamiliar names as well as the actual Windows failure names:
-        # this must follow section metadata, never a CRT/string-name allowlist.
+        # COMDAT mergeable CRT/string definitions do not count as duplicate
+        # strong symbols in either physical archive.
         names = ("_vfprintf_l", "fprintf", "vsnprintf", "snprintf", "ctime", "time",
                  "_Atomic_load32", "??_C@_03ICHNJLJF@key@", "unlisted_inline")
         for selection in (2, 3, 4, 6):
             with self.subTest(selection=selection):
-                text = coff_member(audit.ARCHIVE_SYMBOLS)
-                text += coff_member(names, selection, "first.obj")
-                text += coff_member(names, selection, "second.obj")
-                table = audit.archive_definitions(text, "Windows")
-                self.assertEqual(table, Counter({name: 1 for name in audit.ARCHIVE_SYMBOLS}))
-                audit.validate_archive(table)
+                gmssl_text = coff_member(audit.NATIVE_SYMBOLS)
+                gmssl_text += coff_member(names, selection, "gmssl-first.obj")
+                gmssl_text += coff_member(names, selection, "gmssl-second.obj")
+                crypto_text = coff_member(audit.FACADE_SYMBOLS)
+                crypto_text += coff_member(names, selection, "crypto-first.obj")
+                crypto_text += coff_member(names, selection, "crypto-second.obj")
+                gmssl = audit.archive_definitions(gmssl_text, "Windows")
+                crypto = audit.archive_definitions(crypto_text, "Windows")
+                audit.validate_archives(gmssl, crypto)
 
     def test_coff_required_entries_remain_physical_in_every_comdat_kind(self):
         for selection in (1, 2, 3, 4, 5, 6):
             with self.subTest(selection=selection):
-                text = coff_member(audit.ARCHIVE_SYMBOLS, selection)
-                table = audit.archive_definitions(text, "Windows")
-                self.assertEqual(table, Counter({name: 1 for name in audit.ARCHIVE_SYMBOLS}))
-                audit.validate_archive(table)
-                for name in ("tls_init", "crypto_tls_session_handshake", "salts_crypto_ed448_sign"):
-                    duplicated = text + coff_member((name,), selection, "duplicate.obj")
+                gmssl_text = coff_member(audit.NATIVE_SYMBOLS, selection)
+                crypto_text = coff_member(audit.FACADE_SYMBOLS, selection)
+                gmssl = audit.archive_definitions(gmssl_text, "Windows")
+                crypto = audit.archive_definitions(crypto_text, "Windows")
+                audit.validate_archives(gmssl, crypto)
+                for name in audit.NATIVE_SYMBOLS:
+                    bad = audit.archive_definitions(
+                        gmssl_text + coff_member((name,), selection, "duplicate.obj"),
+                        "Windows")
                     with self.subTest(symbol=name), self.assertRaisesRegex(ValueError, "duplicated"):
-                        audit.validate_archive(audit.archive_definitions(duplicated, "Windows"))
+                        audit.validate_archives(bad, crypto)
+                for name in audit.FACADE_SYMBOLS:
+                    bad = audit.archive_definitions(
+                        crypto_text + coff_member((name,), selection, "duplicate.obj"),
+                        "Windows")
+                    with self.subTest(symbol=name), self.assertRaisesRegex(ValueError, "duplicated"):
+                        audit.validate_archives(gmssl, bad)
 
     def test_coff_noduplicates_and_ordinary_sections_stay_strong(self):
         for selection in (None, 0, 1, 5):
@@ -86,7 +99,7 @@ class NativeCryptoOwnerAudit(unittest.TestCase):
                     self.assertEqual(table[name], 2)
                     table.update({symbol: 1 for symbol in audit.ARCHIVE_SYMBOLS if symbol != name})
                     with self.assertRaises(ValueError):
-                        audit.validate_archive(table)
+                        audit.validate_archive(table, audit.ARCHIVE_SYMBOLS, "synthetic")
 
     def test_coff_section_numbers_are_local_to_each_member(self):
         text = coff_member(("inline_helper",), 2, "first.obj")
@@ -116,27 +129,27 @@ class NativeCryptoOwnerAudit(unittest.TestCase):
     def test_real_member_required_in_all_link_map_formats(self):
         for system in ("Linux", "Darwin", "Windows"):
             if system == "Darwin":
-                prefix = "[ 1] /build/crypto/libsalts_crypto.a(tls.c.o)\n"
+                prefix = "[ 1] /vcpkg/lib/libgmssl.a(tls.c.o)\n"
                 text = prefix + "\n".join(
                     f"0x1000 0x10 [ 1] _{name}" for name in audit.NATIVE_SYMBOLS)
             elif system == "Windows":
                 text = "\n".join(
-                    f" 0001:00000010 {name} 0000000140001000 f salts_crypto:tls.c.obj"
+                    f" 0001:00000010 {name} 0000000140001000 f gmssl:tls.c.obj"
                     for name in audit.NATIVE_SYMBOLS)
             else:
-                prefix = " .text 0x1000 0x100 /build/crypto/libsalts_crypto.a(tls.c.o)\n"
+                prefix = " .text 0x1000 0x100 /vcpkg/lib/libgmssl.a(tls.c.o)\n"
                 text = prefix + "\n".join(
                     f" 0x00001000 {name}" for name in audit.NATIVE_SYMBOLS)
             with self.subTest(system=system):
                 audit.validate_runtime_map(text, system)
                 with self.assertRaises(ValueError):
-                    audit.validate_runtime_map(text.replace("salts_crypto", "gmssl"), system)
+                    audit.validate_runtime_map(text.replace("gmssl", "salts_crypto"), system)
                 with self.assertRaises(ValueError):
                     audit.validate_runtime_map(text + "\n" + text, system)
                 with self.assertRaises(ValueError):
                     audit.validate_runtime_map("", system)
 
-    def test_llvm_mingw_map_member_must_match_crypto_archive(self):
+    def test_llvm_mingw_map_member_must_match_gmssl_archive(self):
         symbols = "\n".join(
             f"00001000 00000000 0                 {name}"
             for name in audit.NATIVE_SYMBOLS)
@@ -147,6 +160,43 @@ class NativeCryptoOwnerAudit(unittest.TestCase):
         members["tls_init"] = {"foreign_tls.c.obj"}
         with self.assertRaises(ValueError):
             audit.validate_runtime_map(text, "Windows", members)
+
+    def test_cross_archive_duplicates_and_embedded_second_tls_rejected(self):
+        gmssl = Counter({name: 1 for name in audit.NATIVE_SYMBOLS})
+        crypto = Counter({name: 1 for name in audit.FACADE_SYMBOLS})
+        audit.validate_archives(gmssl, crypto)
+        with self.assertRaisesRegex(ValueError, "cross-archive"):
+            audit.validate_archives(gmssl | Counter({"salts_crypto_sha256": 1}), crypto)
+        with self.assertRaisesRegex(ValueError, "cross-archive"):
+            audit.validate_archives(gmssl, crypto | Counter({"tls_set_io": 1}))
+        with self.assertRaisesRegex(ValueError, "embeds native TLS"):
+            audit.validate_archives(gmssl, crypto | Counter({"tlcp_second_engine": 1}))
+
+    def test_facade_link_map_is_optional_but_must_be_crypto_owned(self):
+        native = (" .text 0x1000 0x100 /vcpkg/lib/libgmssl.a(tls.c.o)\n" +
+                  "\n".join(f" 0x00001000 {name}" for name in audit.NATIVE_SYMBOLS))
+        facade = ("\n .text 0x2000 0x100 /sdk/lib/libsalts_crypto.a(crypto_tls.c.o)\n"
+                  " 0x00002000 crypto_tls_session_handshake\n")
+        audit.validate_runtime_map(native, "Linux")
+        audit.validate_runtime_map(native + facade, "Linux")
+        with self.assertRaisesRegex(ValueError, "facade"):
+            audit.validate_runtime_map(native + facade.replace("libsalts_crypto", "libgmssl"),
+                                       "Linux")
+
+    def test_windows_llvm_mingw_facade_member_is_separately_verified(self):
+        names = "\n".join(f"00001000 00000000 0                 {name}"
+                          for name in audit.NATIVE_SYMBOLS)
+        text = ("Address  Size     Align Out     In      Symbol\n"
+                "00001000 00001000 16         tls.c.obj:(.text)\n" + names + "\n"
+                "00002000 00001000 16         crypto_tls.c.obj:(.text)\n"
+                "00002010 00000000 0                 crypto_tls_session_handshake\n")
+        gmssl = {name: {"tls.c.obj"} for name in audit.NATIVE_SYMBOLS}
+        crypto = {"crypto_tls_session_handshake": {"crypto_tls.c.obj"}}
+        audit.validate_runtime_map(text, "Windows", gmssl, crypto)
+        with self.assertRaisesRegex(ValueError, "facade"):
+            audit.validate_runtime_map(
+                text, "Windows", gmssl,
+                {"crypto_tls_session_handshake": {"other_crypto_tls.c.obj"}})
 
     def test_consumers_cannot_hide_a_second_archive(self):
         audit.validate_peer_map("LOAD libcnet.so\n0x1000 cnet_client_init\n")

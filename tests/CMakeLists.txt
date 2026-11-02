@@ -247,7 +247,7 @@ if(TARGET Salts::CNet)
     C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
   target_link_libraries(saltscore_gmssl_tls_io_abi_test PRIVATE Salts::Crypto Salts::TinyTest)
   target_include_directories(saltscore_gmssl_tls_io_abi_test PRIVATE
-    "$<TARGET_PROPERTY:salts_crypto,SALTS_CRYPTO_NATIVE_INCLUDE_DIR>")
+    "$<TARGET_PROPERTY:GmSSL::GmSSL,INTERFACE_INCLUDE_DIRECTORIES>")
   target_compile_definitions(saltscore_gmssl_tls_io_abi_test PRIVATE
     ENABLE_TLS ENABLE_SECP256R1 ENABLE_SECP384R1 ENABLE_SHA1 ENABLE_SHA2 ENABLE_AES)
   add_test(NAME saltscore.gmssl_tls_io_abi COMMAND saltscore_gmssl_tls_io_abi_test)
@@ -259,7 +259,7 @@ if(TARGET Salts::CNet)
     C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
   target_link_libraries(saltscore_gmssl_shangmi_provider_test PRIVATE Salts::Crypto Salts::TinyTest)
   target_include_directories(saltscore_gmssl_shangmi_provider_test PRIVATE
-    "$<TARGET_PROPERTY:salts_crypto,SALTS_CRYPTO_NATIVE_INCLUDE_DIR>")
+    "$<TARGET_PROPERTY:GmSSL::GmSSL,INTERFACE_INCLUDE_DIRECTORIES>")
   target_compile_definitions(saltscore_gmssl_shangmi_provider_test PRIVATE
     ENABLE_TLS ENABLE_SECP256R1 ENABLE_SECP384R1 ENABLE_SHA1 ENABLE_SHA2 ENABLE_AES)
   add_test(NAME saltscore.gmssl_shangmi_provider

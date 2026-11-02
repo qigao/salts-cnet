@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Audit the real production CNet link, including hidden static TLS symbols.
+"""Audit the real CNet link against two separately owned static archives.
 
-The Crypto archive is allowed in the production CNet image only. The existing
-two plugins and their loader must import that shared owner, never extract
-another Crypto archive. Link maps are mandatory evidence on every platform.
+GmSSL::GmSSL supplies native TLS/algorithm definitions from libgmssl.a;
+Salts::Crypto supplies first-party facade definitions from libsalts_crypto.a.
+CNet may extract both into the single production DSO. Neither plugin nor its
+loader may extract either archive. Link maps remain mandatory on every OS.
 """
 from __future__ import annotations
 
@@ -23,19 +24,24 @@ NATIVE_SYMBOLS = (
     "tls_get_peer_certificate", "tls_get_peer_certificate_sha256",
     "tls_export_keying_material",
 )
-ARCHIVE_SYMBOLS = NATIVE_SYMBOLS + (
+FACADE_SYMBOLS = (
     "crypto_tls_session_handshake", "crypto_tls_session_create_auth_v1_3",
     "crypto_tls_cipher_bio_create", "salts_crypto_sha256",
     "salts_crypto_ed448_sign",
 )
+ARCHIVE_SYMBOLS = NATIVE_SYMBOLS + FACADE_SYMBOLS
 CRYPTO_MEMBER = re.compile(
     r"(?:^|[/\\\s])(?:lib)?salts_crypto(?:[.](?:a|lib))?(?:\(|:)", re.I)
+GMSSL_MEMBER = re.compile(
+    r"(?:^|[/\\\s])(?:lib)?gmssl(?:[.](?:a|lib))?(?:\(|:)", re.I)
+GMSSL_ARCHIVE = re.compile(
+    r"(?:^|[/\\\s])(?:lib)?gmssl(?:[.](?:a|lib))?(?:\(|:|[\s]|$)", re.I)
 CRYPTO_ARCHIVE = re.compile(
     r"(?:^|[/\\\s])(?:lib)?salts_crypto(?:[.](?:a|lib))?(?:\(|:|[\s]|$)", re.I)
 EXTERNAL_CRYPTO = re.compile(
     r"^(?:lib)?(?:gmssl|ssl|crypto|salts_crypto)(?:[-.]|$)", re.I)
 EXTERNAL_ARCHIVE = re.compile(
-    r"(?:^|[/\\\s])(?:lib)?(?:gmssl|ssl|crypto)[.](?:a|lib)(?:[\s(:]|$)",
+    r"(?:^|[/\\\s])(?:lib)?(?:ssl|crypto)[.](?:a|lib)(?:[\s(:]|$)",
     re.I | re.M)
 
 
@@ -168,13 +174,30 @@ def nm_archive_members(output, system):
     return result
 
 
-def validate_archive(definitions):
-    missing = {name: definitions[name] for name in ARCHIVE_SYMBOLS
+def validate_archive(definitions, required, label):
+    missing = {name: definitions[name] for name in required
                if definitions[name] != 1}
-    require(not missing, "native/facade definitions missing or duplicated: " + str(missing))
+    require(not missing, label + " required definitions missing or duplicated: " + str(missing))
     duplicates = {name: count for name, count in definitions.items() if count > 1}
-    require(not duplicates, "duplicate strong Crypto archive definitions: " + str(duplicates))
+    require(not duplicates, "duplicate strong " + label + " archive definitions: " +
+            str(duplicates))
 
+
+def validate_archives(gmssl_definitions, crypto_definitions):
+    validate_archive(gmssl_definitions, NATIVE_SYMBOLS, "GmSSL")
+    validate_archive(crypto_definitions, FACADE_SYMBOLS, "Crypto")
+    collisions = sorted(set(gmssl_definitions) & set(crypto_definitions))
+    require(not collisions, "cross-archive duplicate strong definitions: " + str(collisions))
+    # A local second TLS protocol engine is forbidden, even if a particular
+    # symbol was not part of our mandatory native ABI sampling list.
+    embedded_tls = sorted(name for name in crypto_definitions
+                          if name.startswith(("tls_", "tlcp_")))
+    require(not embedded_tls, "Crypto embeds native TLS/TLCP implementation: " +
+            str(embedded_tls))
+    foreign_facade = sorted(name for name in gmssl_definitions
+                            if name.startswith(("crypto_tls_", "salts_crypto_")))
+    require(not foreign_facade, "GmSSL embeds the first-party Crypto facade: " +
+            str(foreign_facade))
 
 def map_definitions(text, system):
     """Read the selected physical member for each required native TLS symbol."""
@@ -190,7 +213,7 @@ def map_definitions(text, system):
                 line)
             if match:
                 name = normalized(match[2], system)
-                if name in NATIVE_SYMBOLS:
+                if name in ARCHIVE_SYMBOLS:
                     result[name].append(objects.get(match[1], "unidentified object"))
     elif system == "Windows":
         if re.search(r"(?m)^Address\s+Size\s+Align\s+Out\s+In\s+Symbol\s*$", text):
@@ -204,7 +227,7 @@ def map_definitions(text, system):
                 symbol_match = re.match(
                     r"^\s*[0-9a-fA-F]+\s+[0-9a-fA-F]+\s+\d+\s+"
                     r"([A-Za-z_][A-Za-z_0-9]*)\s*$", line)
-                if (symbol_match and symbol_match[1] in NATIVE_SYMBOLS and owner and
+                if (symbol_match and symbol_match[1] in ARCHIVE_SYMBOLS and owner and
                         owner not in result[symbol_match[1]]):
                     result[symbol_match[1]].append(owner)
         else:
@@ -212,7 +235,7 @@ def map_definitions(text, system):
                 match = re.match(
                     r"^\s*[0-9a-fA-F]+:[0-9a-fA-F]+\s+(\S+)\s+[0-9a-fA-F]+"
                     r"(?:\s+[fi])*\s+(\S+)\s*$", line)
-                if match and match[1] in NATIVE_SYMBOLS:
+                if match and match[1] in ARCHIVE_SYMBOLS:
                     result[match[1]].append(match[2])
     else:
         owner = ""
@@ -224,36 +247,52 @@ def map_definitions(text, system):
             match = re.match(
                 r"^\s*(?:(?:0x)?[0-9a-fA-F]+\s+)+([A-Za-z_][A-Za-z_0-9]*)\s*$",
                 line)
-            if match and match[1] in NATIVE_SYMBOLS:
+            if match and match[1] in ARCHIVE_SYMBOLS:
                 result[match[1]].append(owner)
     return result
 
 
-def validate_runtime_map(text, system, archive_members=None):
+def validate_runtime_map(text, system, gmssl_members=None, crypto_members=None):
     require(not EXTERNAL_ARCHIVE.search(text),
-            "production link selected an external Crypto/GmSSL archive")
+            "production link selected another SSL/crypto archive")
     definitions = map_definitions(text, system)
     lld_mingw = system == "Windows" and re.search(
         r"(?m)^Address\s+Size\s+Align\s+Out\s+In\s+Symbol\s*$", text)
-    invalid = {}
+    invalid_native = {}
     for name in NATIVE_SYMBOLS:
         owners = definitions[name]
         valid = len(owners) == 1
         if valid and lld_mingw:
-            valid = archive_members is not None and archive_members.get(name) == {owners[0]}
+            valid = gmssl_members is not None and gmssl_members.get(name) == {owners[0]}
+        elif valid:
+            valid = GMSSL_MEMBER.search(owners[0]) is not None
+        if not valid:
+            invalid_native[name] = owners
+    require(not invalid_native, "production native TLS is not supplied once by GmSSL: " +
+            str(invalid_native))
+    # A static linker can omit unused Crypto facade members from CNet; when
+    # they ARE selected, every physical definition must come from Crypto only.
+    invalid_facade = {}
+    for name in FACADE_SYMBOLS:
+        owners = definitions[name]
+        if not owners:
+            continue
+        valid = len(owners) == 1
+        if valid and lld_mingw:
+            valid = crypto_members is not None and crypto_members.get(name) == {owners[0]}
         elif valid:
             valid = CRYPTO_MEMBER.search(owners[0]) is not None
         if not valid:
-            invalid[name] = owners
-    require(not invalid, "production TLS is not supplied once by local Crypto: " + str(invalid))
+            invalid_facade[name] = owners
+    require(not invalid_facade, "production facade is not supplied by Salts::Crypto: " +
+            str(invalid_facade))
     return dict(definitions)
 
-
 def validate_peer_map(text):
-    require(not CRYPTO_ARCHIVE.search(text),
-            "consumer/plugin link contains a second static Crypto archive")
+    require(not CRYPTO_ARCHIVE.search(text) and not GMSSL_ARCHIVE.search(text),
+            "consumer/plugin link contains a copied static Crypto/GmSSL archive")
     require(not EXTERNAL_ARCHIVE.search(text),
-            "consumer/plugin link contains an external Crypto/GmSSL archive")
+            "consumer/plugin link contains another SSL/crypto archive")
     for symbol in NATIVE_SYMBOLS:
         require(re.search(r"(?<![A-Za-z_0-9])_?" + re.escape(symbol) +
                           r"(?![A-Za-z_0-9])", text) is None,
@@ -276,26 +315,39 @@ def validate_dependencies(names):
 
 
 def inspect(args):
-    files = [args.archive, args.runtime, args.map, *args.peer, *args.peer_map]
+    files = [args.archive, args.gmssl_archive, args.runtime, args.map,
+             *args.peer, *args.peer_map]
     require(all(path.is_file() for path in files), "required native artifact/link map missing")
     require(len(args.peer) == 3 and len(args.peer_map) == 3,
             "require both actual production plugins and their loader")
     if args.system == "Windows":
         reader = args.nm
         require(reader, "COFF symbol reader required")
-        dumpbin = "dumpbin" in Path(reader).name.lower()
-        symbols = command(
-            [reader, "/nologo", "/symbols", str(args.archive)] if dumpbin else
-            [reader, "-g", "--defined-only", "--print-file-name", str(args.archive)])
     else:
         reader = args.nm or shutil.which("nm")
         require(reader, "native nm required")
-        symbols = command([reader, "-g", str(args.archive)])
-    table = archive_definitions(symbols, args.system)
-    validate_archive(table)
-    archive_members = nm_archive_members(symbols, args.system) if args.system == "Windows" and not dumpbin else None
+    dumpbin = args.system == "Windows" and "dumpbin" in Path(reader).name.lower()
+
+    def read_symbols(path):
+        if dumpbin:
+            return command([reader, "/nologo", "/symbols", str(path)])
+        if args.system == "Windows":
+            return command([reader, "-g", "--defined-only", "--print-file-name",
+                            str(path)])
+        return command([reader, "-g", str(path)])
+
+    crypto_symbols = read_symbols(args.archive)
+    gmssl_symbols = read_symbols(args.gmssl_archive)
+    crypto_table = archive_definitions(crypto_symbols, args.system)
+    gmssl_table = archive_definitions(gmssl_symbols, args.system)
+    validate_archives(gmssl_table, crypto_table)
+    gmssl_members = (nm_archive_members(gmssl_symbols, args.system)
+                     if args.system == "Windows" and not dumpbin else None)
+    crypto_members = (nm_archive_members(crypto_symbols, args.system)
+                      if args.system == "Windows" and not dumpbin else None)
     ownership = validate_runtime_map(
-        args.map.read_text(errors="replace"), args.system, archive_members)
+        args.map.read_text(errors="replace"), args.system,
+        gmssl_members=gmssl_members, crypto_members=crypto_members)
     for path in args.peer_map:
         validate_peer_map(path.read_text(errors="replace"))
     imports = {}
@@ -322,14 +374,17 @@ def inspect(args):
         require(any(re.search(r"(?:lib)?saltscore_cnet(?:[-.]|$)", name, re.I)
                     for name in imports[str(path)]),
                 "production plugin does not import the real CNet owner: " + str(path))
-    return {"ok": True, "archive": str(args.archive), "runtime": str(args.runtime),
-            "strong_archive_definitions": len(table), "native_owners": ownership,
-            "imports": imports, "scope": "production-native-link-not-facade-parity"}
-
+    return {"ok": True, "crypto_archive": str(args.archive),
+            "gmssl_archive": str(args.gmssl_archive), "runtime": str(args.runtime),
+            "crypto_strong_definitions": len(crypto_table),
+            "gmssl_strong_definitions": len(gmssl_table),
+            "native_owners": ownership, "imports": imports,
+            "scope": "production-two-archive-native-link-not-facade-parity"}
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--archive", required=True, type=Path)
+    parser.add_argument("--gmssl-archive", required=True, type=Path)
     parser.add_argument("--runtime", required=True, type=Path)
     parser.add_argument("--map", required=True, type=Path)
     parser.add_argument("--system", required=True)

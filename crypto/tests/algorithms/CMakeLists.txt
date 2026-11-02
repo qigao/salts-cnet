@@ -1,8 +1,8 @@
 add_executable(salts_crypto_sha_ed448_vectors sha_ed448_vectors.c)
 target_compile_features(salts_crypto_sha_ed448_vectors PRIVATE c_std_11)
 target_link_libraries(salts_crypto_sha_ed448_vectors PRIVATE Salts::Crypto Salts::TinyTest)
-# Source-tree tests use the verified local native header; installed tests
-# resolve their own header from the Crypto SDK instead.
+# Source-tree tests use the pinned installed vcpkg GmSSL headers;
+# never access a locally copied native implementation.
 target_include_directories(salts_crypto_sha_ed448_vectors PRIVATE
   "${_crypto_native_include}")
 add_test(NAME crypto.algorithms.sha256_sm3_ed448_rfc8032 COMMAND salts_crypto_sha_ed448_vectors)

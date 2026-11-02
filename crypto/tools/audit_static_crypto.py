@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Fail-closed two-module SDK archive audit; one static ASN1 and one static Crypto."""
+"""Fail-closed static SDK audit: Crypto, ASN1 and external vcpkg GmSSL.
+
+Crypto and GmSSL are separate physical archives; callers must provide the
+installed vcpkg prefix explicitly. This never builds an installer/consumer.
+"""
 from __future__ import annotations
 
 import argparse
@@ -10,8 +14,12 @@ import re
 import subprocess
 import sys
 
-CRYPTO_SYMBOLS = (
+GMSSL_SYMBOLS = (
     "sm3_init", "sm3_update", "sm3_finish",
+    "sha256_init", "sha256_update", "sha256_finish",
+    "tls_init", "tls_set_io", "tls_do_handshake", "tls_send", "tls_recv",
+)
+CRYPTO_SYMBOLS = (
     "crypto_tls_session_handshake",
     "crypto_tls_auth_abi_version",
     "crypto_tls_session_create_auth_v1_3",
@@ -21,7 +29,6 @@ CRYPTO_SYMBOLS = (
     "salts_crypto_sha256", "salts_crypto_ed448_sign",
     "salts_crypto_ed448_verify", "salts_crypto_random_bytes",
     "salts_crypto_libecc_get_random",
-    "sha256_init", "sha256_update", "sha256_finish",
     "crypto_asn1_ecdsa_signature_encode",
     "crypto_asn1_ecdsa_signature_decode",
     "crypto_asn1_rfc8410_spki_encode",
@@ -75,15 +82,22 @@ def _check_archive_inventory(prefix: Path, allowed: list[Path]) -> None:
         if path.is_file() and re.search(r"\.so\.[0-9]+", path.name):
             raise ValueError("versioned shared library forbidden: " + str(path))
 
-def inspect(prefix: Path, asn1_prefix: Path | None = None) -> dict:
+def inspect(prefix: Path, asn1_prefix: Path | None = None,
+            gmssl_prefix: Path | None = None) -> dict:
     prefix = prefix.resolve(strict=True)
     asn1_prefix = (asn1_prefix or prefix).resolve(strict=True)
+    if gmssl_prefix is None:
+        raise ValueError("--gmssl-prefix is required for external vcpkg GmSSL")
+    gmssl_prefix = gmssl_prefix.resolve(strict=True)
     ext = ".lib" if sys.platform == "win32" else ".a"
     crypto_name = "salts_crypto.lib" if ext == ".lib" else "libsalts_crypto.a"
     asn1_name = "salts_asn1.lib" if ext == ".lib" else "libsalts_asn1.a"
+    gmssl_name = "gmssl.lib" if ext == ".lib" else "libgmssl.a"
     crypto_archive = prefix / "lib" / crypto_name
     asn1_archive = asn1_prefix / "lib" / asn1_name
-    if not crypto_archive.is_file() or not asn1_archive.is_file():
+    gmssl_archive = gmssl_prefix / "lib" / gmssl_name
+    if not all(path.is_file() for path in
+               (crypto_archive, asn1_archive, gmssl_archive)):
         raise ValueError("missing one of the required independent native static archives")
     _check_archive_inventory(prefix, [
         crypto_archive, *([asn1_archive] if asn1_prefix == prefix else [])
@@ -105,8 +119,15 @@ def inspect(prefix: Path, asn1_prefix: Path | None = None) -> dict:
         raise ValueError("legacy salts/crypto.h found")
     if (prefix / "include" / "crypto" / "provider.h").exists():
         raise ValueError("provider compatibility header found")
-    if not (prefix / "include" / "gmssl" / "sm3.h").is_file():
-        raise ValueError("canonical installed GmSSL sm3.h missing")
+    if (prefix / "include" / "gmssl").exists():
+        raise ValueError("Crypto SDK must not duplicate installed vcpkg GmSSL headers")
+    for rel in ("include/gmssl/sm3.h", "include/gmssl/tls.h",
+                "share/gmssl/GmSSLConfig.cmake", "share/gmssl/copyright"):
+        if not (gmssl_prefix / rel).is_file():
+            raise ValueError("canonical vcpkg GmSSL file missing: " + rel)
+    for name in ("libgmssl.so", "libgmssl.dylib", "gmssl.dll"):
+        if (gmssl_prefix / "lib" / name).exists():
+            raise ValueError("GmSSL must remain a separate STATIC vcpkg provider: " + name)
 
     targets = prefix / "lib" / "cmake" / "Crypto" / "CryptoTargets.cmake"
     asn1targets = asn1_prefix / "lib" / "cmake" / "ASN1" / "ASN1Targets.cmake"
@@ -121,33 +142,56 @@ def inspect(prefix: Path, asn1_prefix: Path | None = None) -> dict:
         raise ValueError("ASN1 must export one imported static target")
     if "Salts::ASN1" not in crypto_value or "find_dependency(ASN1" not in cfg.read_text(encoding="utf-8"):
         raise ValueError("Crypto must explicitly depend on exactly one ASN1 package")
-    if "GmSSL::" in crypto_value or "PrivateGmSSL" in crypto_value:
-        raise ValueError("Crypto must not export a GmSSL/Provider target")
+    config_text = cfg.read_text(encoding="utf-8")
+    if ("find_dependency(GmSSL CONFIG REQUIRED)" not in config_text or
+            "GmSSL::GmSSL" not in crypto_value):
+        raise ValueError("Crypto static package must transitively resolve vcpkg GmSSL")
+    if "PrivateGmSSL" in crypto_value:
+        raise ValueError("noncanonical private GmSSL provider exported")
     report = {
         "ok": True,
         "crypto_archive": str(crypto_archive),
         "asn1_archive": str(asn1_archive),
-        "native_modules": ["Salts::ASN1", "Salts::Crypto"],
+        "gmssl_archive": str(gmssl_archive),
+        "native_modules": ["Salts::ASN1", "Salts::Crypto", "GmSSL::GmSSL"],
         "symbols_checked": False,
     }
     if sys.platform == "win32":
-        # COFF uniqueness still requires its own exact-tool qualification
-        # (tracked independently); C11/C++17 consumers prove real linkage.
+        # COFF uniqueness is checked by the real production CNet llvm-nm
+        # and link-map auditor. This SDK metadata audit does not pretend
+        # to have parsed COFF strong/COMDAT definitions.
         return report
 
     crypto_symbols = _defined_symbols(crypto_archive)
     asn1_symbols = _defined_symbols(asn1_archive)
+    gmssl_symbols = _defined_symbols(gmssl_archive)
     for label, table, required in (
         ("Crypto", crypto_symbols, CRYPTO_SYMBOLS),
         ("ASN1", asn1_symbols, ASN1_SYMBOLS),
+        ("GmSSL", gmssl_symbols, GMSSL_SYMBOLS),
     ):
         invalid = {s: table[s] for s in required if table[s] != 1}
         if invalid:
             raise ValueError(label + " missing or nonunique exported symbols: " + str(invalid))
-    duplicates = [s for s in ASN1_SYMBOLS if crypto_symbols[s]]
-    duplicates += [s for s in CRYPTO_SYMBOLS if asn1_symbols[s]]
+    duplicates = sorted(
+        (set(crypto_symbols) & set(asn1_symbols)) |
+        (set(crypto_symbols) & set(gmssl_symbols)) |
+        (set(asn1_symbols) & set(gmssl_symbols))
+    )
     if duplicates:
-        raise ValueError("cross-module duplicate native definitions: " + str(duplicates))
+        raise ValueError("cross-archive duplicate strong definitions: " + str(duplicates))
+    for label, symbols in (("Crypto", crypto_symbols),
+                           ("ASN1", asn1_symbols),
+                           ("GmSSL", gmssl_symbols)):
+        repeated = {name: count for name, count in symbols.items() if count > 1}
+        if repeated:
+            raise ValueError(label + " archive duplicate strong definitions: " +
+                             str(repeated))
+    embedded_tls = [name for name in crypto_symbols
+                    if name.startswith(("tls_", "tlcp_"))]
+    if embedded_tls:
+        raise ValueError("Crypto contains a duplicate native TLS/TLCP engine: " +
+                         str(embedded_tls))
     forbidden = [s for s in crypto_symbols if
                  s in OLD_SYMBOLS or
                  s.startswith(("salts_asn1_", "crypto_asn1_reader_", "crypto_asn1_value_")) or
@@ -157,6 +201,7 @@ def inspect(prefix: Path, asn1_prefix: Path | None = None) -> dict:
     report["symbols_checked"] = True
     report["crypto_symbol_count"] = len(crypto_symbols)
     report["asn1_symbol_count"] = len(asn1_symbols)
+    report["gmssl_symbol_count"] = len(gmssl_symbols)
     return report
 
 def main() -> int:
@@ -164,15 +209,17 @@ def main() -> int:
     parser.add_argument("--prefix", type=Path, required=True)
     parser.add_argument("--asn1-prefix", type=Path,
                         help="use only if ASN1 is installed at a separate prefix")
+    parser.add_argument("--gmssl-prefix", type=Path, required=True,
+                        help="installed vcpkg GmSSL target triplet prefix")
     parser.add_argument("--report", type=Path, required=True)
     args = parser.parse_args()
     try:
-        result = inspect(args.prefix, args.asn1_prefix)
+        result = inspect(args.prefix, args.asn1_prefix, args.gmssl_prefix)
     except (OSError, ValueError) as exc:
         result = {"ok": False, "reason": str(exc)}
     args.report.parent.mkdir(parents=True, exist_ok=True)
     args.report.write_text(json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    print("Two static module ownership: " + ("PASS" if result["ok"] else "FAIL " + result["reason"]))
+    print("Independent Crypto/ASN1/GmSSL archive ownership: " + ("PASS" if result["ok"] else "FAIL " + result["reason"]))
     return 0 if result["ok"] else 1
 
 if __name__ == "__main__":

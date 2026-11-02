@@ -58,6 +58,7 @@
     },
     "simde",
     "c-ares",
-    "kcp"
+    "kcp",
+    "gmssl"
   ]
 }
