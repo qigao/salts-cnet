@@ -1,11 +1,12 @@
 /*
- * Real loopback TCP CNet integration, independent of the former Salts binary.
- * One caller owns the CNet client and listener. The native peer owns its
- * blocking socket. The received mem_slice_t deliberately survives stop/destroy.
+ * Real local TCP/IPC CNet integration, independent of the former Salts binary.
+ * One caller owns each CNet client and listener; TCP peers use native blocking
+ * sockets. The received mem_slice_t deliberately survives stop/destroy.
  */
 #include <tinytest.h>
 #include <cnet/cnet.h>
 #include <cnet/client_pool.h>
+#include <cnet/ipc.h>
 #include <clock.h>
 #include <thread.h>
 #include <error_codes.h>
@@ -13,6 +14,7 @@
 
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <limits.h>
 
@@ -998,6 +1000,242 @@ cleanup:
   return result;
 }
 
+static int progress_ipc_pair(cnet_ipc_listener *listener, cnet_client *client,
+                             cnet_client *server) {
+  size_t events = 0u;
+  int status = cnet_ipc_listener_advance(listener, 1u, &events);
+  if (status == SALTS_OK) status = cnet_client_poll(client, 1u, &events);
+  if (status == SALTS_OK) status = cnet_client_poll(server, 1u, &events);
+  return status;
+}
+
+/* One thread owns the listener and both production clients. IPC is AF_UNIX
+ * on POSIX and an overlapped named pipe on Windows. Detachment transfers one
+ * resource; failed admission must consume/close it, while the established
+ * neighbor survives. Receive demand bounds events without assuming framing. */
+static int saltscore_native_entry_test_cnet_ipc_lifetime(void) {
+  cnet_client client = {0}, server = {0};
+  cnet_ipc_listener listener = {0};
+  cnet_client_config client_cfg = client_config(), server_cfg = client_config();
+  cnet_ipc_listener_config listener_cfg = {
+      sizeof(cnet_ipc_listener_config), CNET_IPC_VERSION, backend_kind(), NULL,
+      1u, 2u, 256u, 256u};
+  tcp_probe outbound = {0}, inbound = {0}, rejected = {0};
+  cnet_observer outbound_observer = {on_state, on_borrowed, &outbound, on_sent};
+  const cnet_observer inbound_observer = {on_state, on_borrowed, &inbound, on_sent};
+  cnet_connect_options options = {0};
+  cnet_stream_socket_options socket_options = CNET_STREAM_SOCKET_OPTIONS_INIT;
+  int *tcp_only_options[] = {&socket_options.nodelay, &socket_options.keepalive,
+                             &socket_options.linger};
+  cnet_connection connection = {0}, accepted_connection = {0}, rejected_connection = {0};
+  cnet_connection rejected_adoption = {17u, 19u};
+  cnet_ipc_accepted accepted = {0};
+  mem_buffer_t *pending = NULL;
+  mem_slice_t ranges[2] = {{0}};
+  char *directory = NULL;
+  char uri[256];
+  uint64_t deadline, option_value = UINT64_MAX;
+  size_t events = 0u;
+  bool stopped = false;
+  int result = 0, client_live = 0, server_live = 0, listener_live = 0;
+  const unsigned char request[] = {'i', 'p', 'c'};
+  const unsigned char response[] = {'d', 'o', 'n', 'e'};
+
+  directory = tt_make_temp_dir("cnetipc");
+  VERIFY(directory != NULL);
+#if defined(_WIN32)
+  {
+    const char *name = directory;
+    for (const char *cursor = directory; *cursor != '\0'; ++cursor)
+      if (*cursor == '/' || *cursor == '\\') name = cursor + 1;
+    VERIFY(snprintf(uri, sizeof(uri), "ipc://%s", name) > 0);
+  }
+#else
+  VERIFY(snprintf(uri, sizeof(uri), "ipc://%s/peer", directory) > 0);
+#endif
+  listener_cfg.uri = uri;
+  server_cfg.connection_capacity = 1u;
+  VERIFY(cnet_client_init(&client, &client_cfg) == SALTS_OK);
+  client_live = 1;
+  VERIFY(cnet_client_init(&server, &server_cfg) == SALTS_OK);
+  server_live = 1;
+  VERIFY(cnet_ipc_listener_init(&listener, &listener_cfg) == SALTS_OK);
+  listener_live = 1;
+  VERIFY(cnet_ipc_listener_advance(&listener, 1u, &events) == SALTS_OK);
+  options.uri = uri;
+  options.observer = outbound_observer;
+  for (size_t i = 0u; i < sizeof(tcp_only_options) / sizeof(tcp_only_options[0]); ++i) {
+    socket_options = (cnet_stream_socket_options)CNET_STREAM_SOCKET_OPTIONS_INIT;
+    *tcp_only_options[i] = 1;
+    VERIFY(cnet_client_set_stream_socket_options(&client, &socket_options) == SALTS_OK);
+    VERIFY(cnet_connect(&client, &options, &rejected_adoption) == SALTS_ENOTSUP);
+    VERIFY(rejected_adoption.slot == 0u && rejected_adoption.generation == 0u);
+    VERIFY(outbound.connected == 0u && outbound.terminal == 0u);
+  }
+  socket_options = (cnet_stream_socket_options)CNET_STREAM_SOCKET_OPTIONS_INIT;
+  VERIFY(cnet_client_set_stream_socket_options(&client, &socket_options) == SALTS_OK);
+  VERIFY(cnet_connect(&client, &options, &connection) == SALTS_OK);
+  deadline = cmeta_monotonic_ms() + 5000u;
+  while (accepted.kind == CNET_IPC_RESOURCE_NONE && cmeta_monotonic_ms() < deadline) {
+    int status;
+    VERIFY(progress_ipc_pair(&listener, &client, &server) == SALTS_OK);
+    status = cnet_ipc_listener_accept_detached(&listener, &accepted);
+    VERIFY(status == SALTS_OK || status == SALTS_ENOENT);
+  }
+#if defined(_WIN32)
+  VERIFY(accepted.kind == CNET_IPC_RESOURCE_PIPE);
+#else
+  VERIFY(accepted.kind == CNET_IPC_RESOURCE_SOCKET);
+#endif
+  VERIFY(cnet_client_adopt_ipc(&server, &accepted, &inbound_observer,
+                              &accepted_connection) == SALTS_OK);
+  VERIFY(accepted.kind == CNET_IPC_RESOURCE_NONE && accepted.native_handle == 0u);
+  VERIFY(cnet_client_adopt_ipc(&server, &accepted, &inbound_observer,
+                              &rejected_adoption) == SALTS_EINVAL);
+  VERIFY(rejected_adoption.slot == 0u && rejected_adoption.generation == 0u);
+  VERIFY(cnet_ipc_accepted_close(&accepted) == SALTS_EALREADY);
+  deadline = cmeta_monotonic_ms() + 5000u;
+  while ((!outbound.connected || !inbound.connected) && cmeta_monotonic_ms() < deadline)
+    VERIFY(progress_ipc_pair(&listener, &client, &server) == SALTS_OK);
+  VERIFY(outbound.connected == 1u && inbound.connected == 1u);
+  VERIFY(cnet_connection_tcp_option_get(&client, connection, CNET_TCP_SOCKET_NODELAY,
+                                        &option_value) == SALTS_ENOTSUP);
+  VERIFY(option_value == 0u);
+  VERIFY(cnet_connection_tcp_option_set(&client, connection,
+                                        CNET_TCP_SOCKET_KEEPALIVE_ENABLED, 1u) == SALTS_ENOTSUP);
+  VERIFY(cnet_connection_tcp_option_set(&server, accepted_connection,
+                                        CNET_TCP_SOCKET_NODELAY, 1u) == SALTS_ENOTSUP);
+  VERIFY(cnet_connection_shutdown(&client, connection, CNET_TCP_SHUTDOWN_SEND) == SALTS_ENOTSUP);
+
+  /* A second real peer fills no extra final-owner slot. Rejection consumes the
+   * detached resource and closes that peer without disturbing the first. */
+  options.observer = (cnet_observer){on_state, on_borrowed, &rejected, on_sent};
+  VERIFY(cnet_ipc_listener_advance(&listener, 1u, &events) == SALTS_OK);
+  VERIFY(cnet_connect(&client, &options, &rejected_connection) == SALTS_OK);
+  deadline = cmeta_monotonic_ms() + 5000u;
+  while ((accepted.kind == CNET_IPC_RESOURCE_NONE || !rejected.connected) &&
+         cmeta_monotonic_ms() < deadline) {
+    VERIFY(progress_ipc_pair(&listener, &client, &server) == SALTS_OK);
+    if (accepted.kind == CNET_IPC_RESOURCE_NONE) {
+      const int status = cnet_ipc_listener_accept_detached(&listener, &accepted);
+      VERIFY(status == SALTS_OK || status == SALTS_ENOENT);
+    }
+  }
+  VERIFY(accepted.kind != CNET_IPC_RESOURCE_NONE && rejected.connected == 1u);
+  VERIFY(cnet_client_adopt_ipc(&server, &accepted, &inbound_observer,
+                              &rejected_adoption) == SALTS_ENOBUFS);
+  VERIFY(accepted.kind == CNET_IPC_RESOURCE_NONE && accepted.native_handle == 0u);
+  VERIFY(rejected_adoption.slot == 0u && rejected_adoption.generation == 0u);
+  VERIFY(cnet_ipc_accepted_close(&accepted) == SALTS_EALREADY);
+  VERIFY(cnet_receive(&client, rejected_connection, 1u) == SALTS_OK);
+  deadline = cmeta_monotonic_ms() + 5000u;
+  while (!rejected.terminal && cmeta_monotonic_ms() < deadline)
+    VERIFY(progress_ipc_pair(&listener, &client, &server) == SALTS_OK);
+  VERIFY(rejected.terminal == 1u && rejected.failed == 0u && rejected.sent == 0u);
+  VERIFY(outbound.terminal == 0u && inbound.terminal == 0u);
+
+  VERIFY(cnet_receive(&server, accepted_connection, sizeof(request) + 1u) == SALTS_OK);
+  VERIFY(cnet_receive(&client, connection, sizeof(response) + 1u) == SALTS_OK);
+  pending = mem_get_buffer(mem_global(), sizeof(request));
+  VERIFY(pending != NULL);
+  memcpy(mem_buffer_data(pending), request, sizeof(request));
+  mem_set_used(pending, sizeof(request));
+  ranges[0] = mem_slice(pending, 0u, 1u);
+  ranges[1] = mem_slice(pending, 1u, 2u);
+  VERIFY(ranges[0].buffer == pending && ranges[1].buffer == pending);
+#if defined(_WIN32)
+  /* Named-pipe vectors are unsupported; prove rejection without a retained
+   * backing, then independently exercise the supported buffer-send API. */
+  VERIFY(cnet_send_slicev(&client, connection, ranges, 2u) == SALTS_ENOTSUP);
+  VERIFY(mem_buffer_ref_count(pending) == 3u);
+  mem_slice_release(&ranges[0]);
+  mem_slice_release(&ranges[1]);
+  VERIFY(mem_buffer_ref_count(pending) == 1u);
+  VERIFY(cnet_send_buffer(&client, connection, pending) == SALTS_OK);
+#else
+  VERIFY(cnet_send_slicev(&client, connection, ranges, 2u) == SALTS_OK);
+  VERIFY(mem_buffer_ref_count(pending) == 4u);
+  mem_slice_release(&ranges[0]);
+  mem_slice_release(&ranges[1]);
+#endif
+  VERIFY(mem_buffer_ref_count(pending) == 2u);
+  mem_buffer_release(pending);
+  pending = NULL;
+  deadline = cmeta_monotonic_ms() + 5000u;
+  while ((outbound.sent < 1u || inbound.borrowed_bytes < sizeof(request)) &&
+         cmeta_monotonic_ms() < deadline)
+    VERIFY(progress_ipc_pair(&listener, &client, &server) == SALTS_OK);
+  VERIFY(outbound.sent == 1u && outbound.last_send_bytes == sizeof(request));
+  VERIFY(inbound.borrowed_bytes == sizeof(request) &&
+         memcmp(inbound.borrowed_data, request, sizeof(request)) == 0);
+  VERIFY(outbound.failed == 0u && inbound.failed == 0u &&
+         outbound.terminal == 0u && inbound.terminal == 0u);
+  pending = mem_get_buffer(mem_global(), sizeof(response));
+  VERIFY(pending != NULL);
+  memcpy(mem_buffer_data(pending), response, sizeof(response));
+  mem_set_used(pending, sizeof(response));
+  VERIFY(cnet_send_buffer_and_close(&server, accepted_connection, pending) == SALTS_OK);
+  mem_buffer_release(pending);
+  pending = NULL;
+  deadline = cmeta_monotonic_ms() + 5000u;
+  while ((!outbound.terminal || !inbound.terminal) && cmeta_monotonic_ms() < deadline)
+    VERIFY(progress_ipc_pair(&listener, &client, &server) == SALTS_OK);
+  VERIFY(inbound.sent == 1u && inbound.last_send_bytes == sizeof(response) &&
+         inbound.sends_at_terminal == 1u);
+  VERIFY(outbound.borrowed_bytes == sizeof(response) &&
+         memcmp(outbound.borrowed_data, response, sizeof(response)) == 0);
+  VERIFY(outbound.terminal == 1u && inbound.terminal == 1u &&
+         outbound.failed == 0u && inbound.failed == 0u);
+  VERIFY(progress_ipc_pair(&listener, &client, &server) == SALTS_OK);
+  VERIFY(outbound.sent == 1u && inbound.sent == 1u &&
+         outbound.terminal == 1u && inbound.terminal == 1u && rejected.terminal == 1u);
+  VERIFY(cnet_client_stop(&client, 5000u) == SALTS_OK);
+  VERIFY(cnet_client_destroy(&client) == SALTS_OK);
+  client_live = 0;
+  VERIFY(cnet_client_stop(&server, 5000u) == SALTS_OK);
+  VERIFY(cnet_client_destroy(&server) == SALTS_OK);
+  server_live = 0;
+  deadline = cmeta_monotonic_ms() + 5000u;
+  while (!stopped && cmeta_monotonic_ms() < deadline) {
+    const int status = cnet_ipc_listener_stop(&listener, &stopped);
+    VERIFY(status == SALTS_OK || status == SALTS_EBUSY);
+    if (!stopped) VERIFY(cnet_ipc_listener_advance(&listener, 1u, &events) == SALTS_OK);
+  }
+  VERIFY(stopped);
+  VERIFY(cnet_ipc_listener_destroy(&listener) == SALTS_OK);
+  listener_live = 0;
+  VERIFY(tt_remove_tree(directory) == 0);
+  free(directory);
+  directory = NULL;
+
+cleanup:
+  mem_slice_release(&ranges[0]);
+  mem_slice_release(&ranges[1]);
+  if (pending) mem_buffer_release(pending);
+  if (accepted.kind != CNET_IPC_RESOURCE_NONE) (void)cnet_ipc_accepted_close(&accepted);
+  if (client_live) {
+    (void)cnet_client_stop(&client, 3000u);
+    (void)cnet_client_destroy(&client);
+  }
+  if (server_live) {
+    (void)cnet_client_stop(&server, 3000u);
+    (void)cnet_client_destroy(&server);
+  }
+  if (listener_live) {
+    deadline = cmeta_monotonic_ms() + 3000u;
+    while (!stopped && cmeta_monotonic_ms() < deadline) {
+      (void)cnet_ipc_listener_stop(&listener, &stopped);
+      if (!stopped) (void)cnet_ipc_listener_advance(&listener, 1u, &events);
+    }
+    (void)cnet_ipc_listener_destroy(&listener);
+  }
+  if (directory) {
+    (void)tt_remove_tree(directory);
+    free(directory);
+  }
+  return result;
+}
+
 spec("CNet real TCP loopback and retained slice") {
   it("preserves the real owner lifecycle and original failure code") {
     const int result = saltscore_original_entry_test_cnet_tcp_loopback_c();
@@ -1018,5 +1256,9 @@ spec("CNet real TCP loopback and retained slice") {
   it("holds external close obligations until real success or cancellation completions are routed") {
     const int result = saltscore_native_entry_test_cnet_external_cancel_drain();
     check(result == 0, "native external cancellation drain returned %d", result);
+  }
+  it("adopts local IPC once, consumes rejected children and drains retained request/reply") {
+    const int result = saltscore_native_entry_test_cnet_ipc_lifetime();
+    check(result == 0, "native IPC lifetime returned %d", result);
   }
 }
