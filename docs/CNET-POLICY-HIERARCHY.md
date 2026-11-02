@@ -1,6 +1,6 @@
 # CNet-native policy hierarchy: owner, connection lifetime and transfer workload
 
-**Status:** Design/RFC only; tracked in [SaltsCore #156](https://github.com/qigao/salts-core/issues/156).
+**Status:** M0 RFC + M1 native admission TinyTest changes in Draft PR #157; new test coverage is not qualified until exact-HEAD CI passes. Tracked in [SaltsCore #156](https://github.com/qigao/salts-core/issues/156).
 Baseline: SaltsCore master bc070affca0afbc5cad6e060b9c60a7a22abad10,
 reconciled with the native-testing merge. This RFC supersedes the earlier
 ACE/Configurator-oriented draft in PR #157. **No CMeta, ACE, reflection,
@@ -388,8 +388,14 @@ must preserve current cnet_connection ABI, terminal identity and ownership.
 
 ## Acceptance without new workflows or consumer/test projects
 
-**M0 (this PR):** design/mapping only; no new runtime capability or
-performance claim.
+**M0:** approved design/mapping, no new runtime capability or performance
+claim. **M1 in this Draft PR:** extend the existing `tests/test_cnet_policy.c`
+with real CNet URI/TLS and UDP/KCP/secure-KCP admission checks, bounded FEC/
+Owner/terminal version rejections, positive endpoint initialization and
+pre-READY secure KCP send denial. Link the existing `saltscore.cnet_policy`
+CTest target against production `Salts::CNet` instead of duplicating policy
+sources into the test executable. This is **source test coverage pending CI**,
+not evidence of new first-class host Channel Plan APIs.
 
 **M1:** within existing tests/test_cnet_policy.c TinyTest, verify invalid
 classification/version, raw transport/channel recipe mismatch (e.g. TLS/UDP,
@@ -417,7 +423,8 @@ consumer or probe CI. Compare same workload raw vs host-composed policy
 in separate opt-in performance experiments with CPU/op, p95/p99,
 write amplification, retained bytes and fair shutdown evidence.
 
-**Nonclaim:** the existing successful default CNet/TinyTest CI proves
-its established API/test coverage; it does not already prove this
-new cross-profile composition or automatically supply transport-level
-adaptive batching and stream deadlines. Track only exact HEAD results.
+**Nonclaim:** the previously successful CNet/TinyTest CI proves only its
+established API/test coverage. New M1 cases must pass CI at their exact HEAD;
+passing negative admission and pre-READY tests does **not** prove end-to-end
+TLS/DTLS/SCTP, cross-profile runtime composition, fairness, adaptive batching
+or per-connection stream deadlines. Keep M2/M3 independent. Track exact HEAD.
