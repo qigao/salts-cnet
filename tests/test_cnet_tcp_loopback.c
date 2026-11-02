@@ -55,6 +55,8 @@ typedef struct tcp_probe {
   unsigned terminal;
   unsigned failed;
   unsigned sent;
+  unsigned sends_at_terminal;
+  int last_error_status;
   unsigned owned_received;
   unsigned borrowed_received;
   unsigned borrowed_bytes;
@@ -69,10 +71,13 @@ static void on_state(void *user, cnet_connection connection,
                      cnet_connection_state state, const cnet_error *error) {
   tcp_probe *p = (tcp_probe *)user;
   (void)connection;
+  if (error != NULL) p->last_error_status = error->status;
   if (state == CNET_CONNECTION_CONNECTED) ++p->connected;
   if (state == CNET_CONNECTION_FAILED || error != NULL) ++p->failed;
-  if (state == CNET_CONNECTION_CLOSED || state == CNET_CONNECTION_FAILED)
+  if (state == CNET_CONNECTION_CLOSED || state == CNET_CONNECTION_FAILED) {
+    p->sends_at_terminal = p->sent;
     ++p->terminal;
+  }
 }
 static void on_borrowed(void *user, cnet_connection connection,
                         const cnet_receive_view *value) {
@@ -795,6 +800,204 @@ cleanup:
   return result;
 }
 
+static int observe_external_one(native_io_backend *backend, native_io_completion *completion) {
+  const uint64_t deadline = cmeta_monotonic_ms() + 5000u;
+  while (cmeta_monotonic_ms() < deadline) {
+    size_t count = 0u;
+    const int status = native_io_backend_observe(backend, completion, 1u, 10u, &count);
+    if (status == SALTS_OK && count == 1u) return SALTS_OK;
+    if (status != SALTS_OK && status != SALTS_ETIMEDOUT) return status;
+  }
+  return SALTS_ETIMEDOUT;
+}
+
+/* The host is the only NativeIO observer. An observed completion ends the
+ * native borrow, but CNet still retains its request/backing until routing.
+ * Round 0 holds a real successful send terminal across close/cancel; round 1
+ * cancels a genuinely pending receive, then holds that cancellation terminal.
+ * Neither path may destroy early, publish twice, or close the borrowed backend. */
+static int saltscore_native_entry_test_cnet_external_cancel_drain(void) {
+  cnet_client client = {0};
+  cnet_listener listener = {0};
+  native_io_backend backend = {0};
+  cnet_client_config config = client_config();
+  const native_io_backend_config backend_config = {backend_kind(), 2u, 4u, 4u};
+  const cnet_listener_config listener_config = {backend_kind(), "127.0.0.1", 0u, 2u};
+  tcp_probe probe = {0};
+  const cnet_observer observer = {on_state, on_borrowed, &probe, on_sent};
+  cnet_connection connection = {0}, previous = {0};
+  cnet_external_request_snapshot requests[4] = {{0}};
+  native_io_completion held = {0}, stale = {0};
+  native_io_backend_stats stats = {0};
+  mem_buffer_t *pending = NULL;
+  test_socket peer = TEST_INVALID_SOCKET;
+  struct sockaddr_in remote = {0};
+  const unsigned char expected[] = {0x31u, 0x72u, 0xa4u, 0xffu};
+  unsigned char received[sizeof(expected)] = {0};
+  uint16_t port = 0u;
+  size_t events = 0u, count = 0u;
+  bool consumed = false, held_live = false;
+  int client_live = 0, listener_live = 0, backend_live = 0;
+  int ready = 0, result = 0;
+
+  config.connection_capacity = 1u;
+  VERIFY(cnet_listener_init(&listener, &listener_config) == SALTS_OK);
+  listener_live = 1;
+  VERIFY(cnet_listener_port(&listener, &port) == SALTS_OK && port != 0u);
+  VERIFY(native_io_backend_init(&backend, &backend_config) == SALTS_OK);
+  backend_live = 1;
+  VERIFY(cnet_client_init_external(&client, &config, &backend) == SALTS_OK);
+  client_live = 1;
+  remote.sin_family = AF_INET;
+  remote.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+  remote.sin_port = htons(port);
+
+  for (unsigned round = 0u; round < 2u; ++round) {
+    probe = (tcp_probe){0};
+    peer = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    VERIFY(peer != TEST_INVALID_SOCKET);
+    VERIFY(test_recv_timeout(peer) == 0);
+    VERIFY(connect(peer, (const struct sockaddr *)&remote, (int)sizeof(remote)) == 0);
+    VERIFY(cnet_listener_wait(&listener, 5000u, &ready) == SALTS_OK && ready == 1);
+    VERIFY(cnet_listener_accept(&listener, &client, &observer, &connection) == SALTS_OK);
+    VERIFY(cnet_client_advance_external(&client, &events) == SALTS_OK);
+    VERIFY(probe.connected == 1u && probe.terminal == 0u && probe.failed == 0u);
+    if (round == 0u) {
+      pending = mem_get_buffer(mem_global(), sizeof(expected));
+      VERIFY(pending != NULL);
+      memcpy(mem_buffer_data(pending), expected, sizeof(expected));
+      mem_set_used(pending, sizeof(expected));
+      VERIFY(cnet_send_buffer(&client, connection, pending) == SALTS_OK);
+      VERIFY(mem_buffer_ref_count(pending) == 2u);
+    } else {
+      VERIFY(connection.slot == previous.slot && connection.generation != previous.generation);
+      VERIFY(cnet_receive(&client, connection, 1u) == SALTS_OK);
+    }
+    VERIFY(cnet_client_advance_external(&client, &events) == SALTS_OK);
+    VERIFY(cnet_client_external_request_snapshots(&client, connection,
+                                                  requests, 4u, &count) == SALTS_OK);
+    VERIFY(count == 1u && requests[0].operation_kind ==
+           (round == 0u ? NATIVE_IO_OPERATION_STREAM_SEND : NATIVE_IO_OPERATION_STREAM_RECV));
+    if (round == 0u) {
+      VERIFY(observe_external_one(&backend, &held) == SALTS_OK);
+      held_live = true;
+      VERIFY(held.kind == NATIVE_IO_COMPLETION_OK && held.status == SALTS_OK &&
+             held.bytes == sizeof(expected));
+      VERIFY(held.request.slot == requests[0].request.slot &&
+             held.request.generation == requests[0].request.generation);
+      VERIFY(native_io_backend_get_stats(&backend, &stats));
+      VERIFY(stats.active_requests == 0u);
+      VERIFY(mem_buffer_ref_count(pending) == 2u && probe.sent == 0u);
+    } else {
+      /* Replay a real old completion while the reused connection has a live
+       * native read. Both request and connection generations must stay intact. */
+      VERIFY(cnet_client_route_external_completion(&client, &stale, &consumed, &events) == SALTS_OK);
+      VERIFY(!consumed && probe.sent == 0u && probe.terminal == 0u);
+      VERIFY(native_io_backend_get_stats(&backend, &stats));
+      VERIFY(stats.active_requests == 1u);
+    }
+
+    VERIFY(cnet_close(&client, connection) == SALTS_OK);
+    VERIFY(cnet_client_advance_external(&client, &events) == SALTS_OK);
+    VERIFY(probe.terminal == 0u && probe.sent == 0u && probe.failed == 0u);
+    VERIFY(cnet_client_stop_external(&client) == SALTS_EBUSY);
+    VERIFY(cnet_client_destroy(&client) == SALTS_EBUSY);
+    if (round == 0u) {
+      VERIFY(mem_buffer_ref_count(pending) == 2u);
+    } else {
+      VERIFY(observe_external_one(&backend, &held) == SALTS_OK);
+      held_live = true;
+      VERIFY(held.kind == NATIVE_IO_COMPLETION_CANCELLED && held.bytes == 0u);
+    }
+    VERIFY(cnet_client_external_request_snapshots(&client, connection,
+                                                  requests, 4u, &count) == SALTS_OK);
+    VERIFY(count == 1u && held.request.slot == requests[0].request.slot &&
+           held.request.generation == requests[0].request.generation);
+    VERIFY(probe.terminal == 0u && probe.borrowed_received == 0u);
+    VERIFY(cnet_client_stop_external(&client) == SALTS_EBUSY);
+    VERIFY(cnet_client_destroy(&client) == SALTS_EBUSY);
+    {
+      const int status = cnet_client_route_external_completion(&client, &held, &consumed, &events);
+      held_live = !consumed;
+      VERIFY(status == SALTS_OK);
+    }
+    VERIFY(consumed);
+    if (probe.failed != 0u || probe.terminal != 1u ||
+        probe.sent != (round == 0u ? 1u : 0u))
+      fprintf(stderr, "external close round %u: terminal=%u failed=%u sent=%u status=%d\n",
+              round, probe.terminal, probe.failed, probe.sent, probe.last_error_status);
+    VERIFY(probe.terminal == 1u && probe.failed == 0u &&
+           probe.sent == (round == 0u ? 1u : 0u) &&
+           probe.sends_at_terminal == probe.sent && probe.borrowed_received == 0u);
+    if (round == 0u) {
+      VERIFY(mem_buffer_ref_count(pending) == 1u);
+      VERIFY(test_recv_exact(peer, received, sizeof(received)) == 0);
+      VERIFY(memcmp(received, expected, sizeof(expected)) == 0);
+      mem_buffer_release(pending);
+      pending = NULL;
+      stale = held;
+    }
+    {
+      unsigned char byte = 0u;
+      VERIFY(recv(peer, (char *)&byte, 1, 0) == 0);
+    }
+    VERIFY(cnet_client_route_external_completion(&client, &held, &consumed, &events) == SALTS_OK);
+    VERIFY(!consumed);
+    VERIFY(cnet_client_advance_external(&client, &events) == SALTS_OK);
+    VERIFY(probe.terminal == 1u && probe.failed == 0u &&
+           probe.sent == (round == 0u ? 1u : 0u));
+    VERIFY(native_io_backend_get_stats(&backend, &stats));
+    VERIFY(stats.active_requests == 0u && stats.endpoint_count == 0u && stats.admission_open);
+    previous = connection;
+    test_close_socket(peer);
+    peer = TEST_INVALID_SOCKET;
+  }
+  VERIFY(cnet_client_stop_external(&client) == SALTS_OK);
+  VERIFY(cnet_client_destroy(&client) == SALTS_OK);
+  client_live = 0;
+  VERIFY(native_io_backend_get_stats(&backend, &stats));
+  VERIFY(stats.admission_open && stats.active_requests == 0u && stats.endpoint_count == 0u);
+  VERIFY(native_io_backend_wake(&backend) == SALTS_OK);
+  VERIFY(native_io_backend_close(&backend) == SALTS_OK);
+  VERIFY(native_io_backend_destroy(&backend) == SALTS_OK);
+  backend_live = 0;
+  VERIFY(cnet_listener_close(&listener) == SALTS_OK);
+  VERIFY(cnet_listener_destroy(&listener) == SALTS_OK);
+  listener_live = 0;
+
+cleanup:
+  test_close_socket(peer);
+  if (client_live) {
+    const uint64_t deadline = cmeta_monotonic_ms() + 3000u;
+    if (held_live) {
+      (void)cnet_client_route_external_completion(&client, &held, &consumed, &events);
+      held_live = !consumed;
+    }
+    if (connection.slot != 0u) (void)cnet_close(&client, connection);
+    while (cmeta_monotonic_ms() < deadline) {
+      native_io_completion completions[4];
+      const int stop_status = cnet_client_stop_external(&client);
+      if (stop_status == SALTS_OK || stop_status == SALTS_EALREADY) break;
+      (void)cnet_client_advance_external(&client, &events);
+      count = 0u;
+      (void)native_io_backend_observe(&backend, completions, 4u, 10u, &count);
+      for (size_t i = 0u; i < count; ++i)
+        (void)cnet_client_route_external_completion(&client, &completions[i], &consumed, &events);
+    }
+    (void)cnet_client_destroy(&client);
+  }
+  if (pending) mem_buffer_release(pending);
+  if (backend_live) {
+    (void)native_io_backend_close(&backend);
+    (void)native_io_backend_destroy(&backend);
+  }
+  if (listener_live) {
+    (void)cnet_listener_close(&listener);
+    (void)cnet_listener_destroy(&listener);
+  }
+  return result;
+}
+
 spec("CNet real TCP loopback and retained slice") {
   it("preserves the real owner lifecycle and original failure code") {
     const int result = saltscore_original_entry_test_cnet_tcp_loopback_c();
@@ -811,5 +1014,9 @@ spec("CNet real TCP loopback and retained slice") {
   it("recovers bounded send credits after rejected FINAL and rejects stale connection generations") {
     const int result = saltscore_native_entry_test_cnet_send_backpressure();
     check(result == 0, "native send backpressure returned %d", result);
+  }
+  it("holds external close obligations until real success or cancellation completions are routed") {
+    const int result = saltscore_native_entry_test_cnet_external_cancel_drain();
+    check(result == 0, "native external cancellation drain returned %d", result);
   }
 }

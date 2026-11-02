@@ -673,13 +673,21 @@ static int cnet_owner_cancel_native_request(cnet_owner_impl *impl,
       !native_io_request_valid(request->native_request))
     return SALTS_EPROTO;
   status = native_io_backend_cancel(&impl->backend, request->native_request);
+  if (status == SALTS_ENOENT && impl->backend_borrowed) {
+    /* The host may already have observed this native terminal without routing
+     * it to CNet. Observation invalidates the NativeIO identity, but this active
+     * CNet request and its backing still await that exact completion. Treat
+     * cancellation as already completing; never retire or fail it here. */
+    status = SALTS_EALREADY;
+  }
   if (status == SALTS_OK || status == SALTS_EALREADY) {
     /*
-     * NativeIO still owns this request until its matching terminal is
-     * observed, even when cancel reports EALREADY. But once cancellation
-     * was accepted (or the completion already won), the request's former
-     * READ/WRITE deadline must no longer race the deliberate close into
-     * a spurious FAILED terminal. Do not retire the lease or its buffer.
+     * CNet owns this request until its matching terminal is routed. NativeIO
+     * may still own the pending borrow, or an external host may already hold
+     * the observed completion. Once cancellation was accepted (or completion
+     * already won), its former READ/WRITE deadline must no longer race the
+     * deliberate close into a spurious FAILED terminal. Do not retire the
+     * lease or its buffer.
      *
      * The Owner remains the sole deadline-queue writer. A deadline already
      * taken by process_deadlines was cleared before cancellation, so
