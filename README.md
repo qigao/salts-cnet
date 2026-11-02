@@ -116,14 +116,16 @@ production-only consumers may explicitly disable the TinyTest library.
 
 The checked-in vcpkg manifest declares GmSSL and CNet dependencies directly.
 Compiler/host-data Actions use published `qigao/vcpkg-cache@v0.1.0`.
-The dependency setup Action is pinned to `7b1dcbe9415f43802209bb6507e57710e9f9bbfa`,
+The dependency setup Action is pinned to `a561c4c3179331e2f2cf3c68c6116cfb9e3db00b`,
 which supplies native Windows pkg-config and preserves `PKG_CONFIG` in vcpkg's
 port environment. The manifest requests `pkgconf` only on non-Windows targets;
 Windows uses that native host tool without acquiring pkg-config from MSYS2.
 The custom registry selects `reference: fix/gmssl-tls12-negotiation` and
-pins baseline `7b1dcbe9415f43802209bb6507e57710e9f9bbfa`. GmSSL 3.2.0#18
+pins baseline `a561c4c3179331e2f2cf3c68c6116cfb9e3db00b`. GmSSL 3.2.0#18
 adds TLS 1.2 range negotiation and RSA-PSS verification; its complete port
-tree is pinned in the Crypto source lock. This provider update is under review.
+tree is pinned in the Crypto source lock. The pinned vcpkg-make helper also
+excludes MSYS pkgconf from its Windows autotools bundle and requires the
+configured native PKG_CONFIG. These dependency updates are under review.
 
 An unavailable dependency fails configuration, without substituting another
 TLS provider or an implicit transport fallback. Local source ownership does

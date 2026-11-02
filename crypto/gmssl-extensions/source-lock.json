@@ -8,7 +8,7 @@
   },
   "package": {
     "registry_repository": "https://github.com/qigao/vcpkg-cache",
-    "registry_commit": "7b1dcbe9415f43802209bb6507e57710e9f9bbfa",
+    "registry_commit": "a561c4c3179331e2f2cf3c68c6116cfb9e3db00b",
     "port_tree": "3b06c785649c2cd632c319375e9bc08e53296b39",
     "name": "gmssl",
     "version": "3.2.0",

@@ -175,7 +175,7 @@ jobs:
       - name: Set up shared dependency contract
         id: vcpkg
         # Includes the pinned native Windows pkg-config; avoid MSYS2 for pkg-config.
-        uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-cache@7b1dcbe9415f43802209bb6507e57710e9f9bbfa
+        uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-cache@a561c4c3179331e2f2cf3c68c6116cfb9e3db00b
         with:
           mode: read
           token: ${{ github.token }}
