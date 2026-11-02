@@ -7,8 +7,9 @@ Bounded send-credit recovery and TLS pool READY/reuse merged in PRs #162/#163
 after CI #163/#164. The external close/completion regression fix merged in
 PR #164 after CI #167. Local IPC admission/transfer merged in PR #165 after
 CI #169. Pipe policy admission and POSIX FIFO transfer merged in PR #166 after
-CI #171. Fixed 1/2/4-Owner SG cohosting/isolation tests are pending their own
-exact-head CI. The rest of M2 and M3 remain open in
+CI #171. Fixed 1/2/4-Owner SG cohosting/isolation merged in PR #167 after CI #173.
+Mixed SG-owned/CNet terminal routing tests are pending their own exact-head CI.
+The rest of M2 and M3 remain open in
 [SaltsCore #156](https://github.com/qigao/salts-core/issues/156).
 Baseline: SaltsCore master bc070affca0afbc5cad6e060b9c60a7a22abad10,
 reconciled with the native-testing merge. This RFC supersedes the earlier
@@ -445,6 +446,7 @@ write amplification, retained bytes and fair shutdown evidence.
 | External close with observed send/pending receive terminals, retained obligations and stale replay | #164 `e1999a6ff3d5ee05f92a666cd1aa399306f3f4f6` | [CI #167](https://github.com/qigao/salts-core/actions/runs/41402483632), ten LLVM jobs passed |
 | Detached local IPC ownership, capacity rejection, retained request/final reply and accept drain | #165 `2f80ccf2cb29f61d768218b7a194175ebcf1de71` | [CI #169](https://github.com/qigao/salts-core/actions/runs/41404951972), ten LLVM jobs passed |
 | Pipe TCP-policy rejection and native FIFO/named-pipe retained transfer | #166 `1d26cd1439c77061abfca3242455089bae437539` | [CI #171](https://github.com/qigao/salts-core/actions/runs/41408786504), ten LLVM jobs passed |
+| Fixed 1/2/4-Owner SG cohosting, bulk/control isolation and host-lease drain | #167 `74e405472109280ae621d0bc2bea350aec18c6d2` | [CI #173](https://github.com/qigao/salts-core/actions/runs/41415636265), ten LLVM jobs passed |
 
 PR #161 extends the existing `saltscore.cnet_tcp_loopback`
 TinyTest/CTest against production `Salts::CNet`: one Manager/Pool connection
@@ -497,7 +499,7 @@ Live TCP properties and half-shutdown remain unsupported. The exact-head matrix
 above includes POSIX FIFO and Windows named-pipe runtime evidence; Android jobs
 remain build-only.
 
-The next M3 source slice uses the existing NativeIO SG runtime with 1, 2 and 4
+PR #167 uses the existing NativeIO SG runtime with 1, 2 and 4
 fixed Owners. Each Owner registers one host lease and hosts two independent
 external CNet clients on its backend: a 32-KiB bulk send and a small control
 exchange. Short routed tasks advance clients, observe once through the host
@@ -510,9 +512,29 @@ real peer reply, then admits a final send. SG shutdown and host release remain
 busy until all borrowed clients are gone. Each backend reaches zero requests
 and endpoints before host release and SG shutdown. Main accesses Owner state
 only between submit/wait boundaries; borrowed callback storage outlives runtime
-destruction. These tests are pending exact-head CI. They prove composition and
-teardown isolation, not latency fairness, saturation behavior, or mixed SG-owned
-completion routing.
+destruction. These tests passed the exact-head matrix above. They prove
+composition and teardown isolation; latency fairness, saturation behavior and
+mixed SG-owned completion routing require separate evidence.
+
+The next source slice adds mixed-ownership variants to those same 1/2/4-Owner
+cases. Each Owner attaches one real UDP endpoint to its SG backend and admits
+an owned receive while its two external CNet clients transfer TCP data. The
+native peer supplies the exact byte. A second owned receive is cancelled while
+the remaining CNet client still has a pending receive. Cancellation alone must
+not settle the token: terminal and finalizer run once, on the fixed Owner, only
+during host observation. Recursive observation from that terminal is EBUSY.
+The host counts the SG-settled events without routing them again to CNet. No
+particular OS batching or cross-endpoint completion order is assumed.
+
+For the error path, the test prepends one deliberately unknown request identity
+to an actual observed batch containing a CNet completion. EPROTO must be returned
+after every remaining real event is routed exactly once; normal CNet sends,
+receives and final close must still drain. The unknown event is an injected
+negative, not a completion claimed to come from the kernel. All real completions
+are observed once through the host lease. SG-owned storage remains live until
+finalization, the endpoint is closed/released after both terminals, and clients
+are destroyed before host release and runtime destruction. This slice is pending
+its own exact-head CI and does not qualify scheduler fairness or kernel pressure.
 
 **Nonclaim:** each successful matrix qualifies only its tested slice. Android
 x64/ARM64 jobs build the SDK without device runtime tests. Forced partial writes,
