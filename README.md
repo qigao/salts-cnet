@@ -74,6 +74,13 @@ under `crypto/vendor/libecc/`. CNet is the single production DSO owner of the
 linked native TLS implementation; two independently loaded plugins must import
 CNet instead of copying GmSSL/Crypto static archives.
 
+Installed `find_package(SaltsCore CONFIG REQUIRED)` imports the shared runtime
+without loading the separate static Crypto package or locating GmSSL. CMeta
+and other shared-runtime users need only the Core SDK. Programs that directly
+link `Salts::Crypto` must explicitly `find_package(Crypto CONFIG REQUIRED)`
+and provide that static package's declared dependencies. CNet's private TLS
+implementation and the Core source-build dependency graph are unchanged.
+
 Use CMake 3.21 or newer, a C11 compiler, and a C++17 compiler when testing.
 Provide the canonical pinned c-ares, KCP and SIMDe dependencies and an installed
 host re2c 4.6 with the pinned Unicode 17 data. The checked-in manifest makes

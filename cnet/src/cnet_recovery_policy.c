@@ -11,6 +11,7 @@ static int recovery_check(const cnet_reconnect_state *s) {
       s->config.size != sizeof(s->config) ||
       s->config.version != CNET_RECOVERY_POLICY_VERSION ||
       s->incarnation == 0u) return SALTS_EINVAL;
+  if (s->evaluating) return SALTS_EBUSY;
   return s->owner_thread == cmeta_thread_current_token() ? SALTS_OK : SALTS_EPERM;
 }
 static int recovery_ticket(const cnet_reconnect_state *s, cnet_reconnect_ticket t) {
@@ -26,9 +27,23 @@ static uint64_t recovery_mix64(uint64_t *state) {
   x = (x ^ (x >> 27u)) * UINT64_C(0x94d049bb133111eb);
   return x ^ (x >> 31u);
 }
-static void recovery_schedule(cnet_reconnect_state *s, uint64_t now_ms) {
+int cnet_backoff_fixed(void *user, const cnet_backoff_input *input, uint64_t *out) {
+  (void)user;
+  if (input == NULL || out == NULL || input->initial_ms > input->maximum_ms) return SALTS_EINVAL;
+  *out = input->initial_ms;
+  return SALTS_OK;
+}
+int cnet_backoff_exponential_jitter(void *user, const cnet_backoff_input *input, uint64_t *out) {
+  (void)user;
+  if (input == NULL || out == NULL || input->exponential_ms > input->maximum_ms) return SALTS_EINVAL;
+  uint64_t half = input->exponential_ms / 2u + input->exponential_ms % 2u;
+  uint64_t span = input->exponential_ms - half;
+  *out = half + (span == 0u ? 0u : input->random_value % (span + 1u));
+  return SALTS_OK;
+}
+static int recovery_schedule(cnet_reconnect_state *s, uint64_t now_ms) {
   const uint64_t upper = s->config.maximum_backoff_ms;
-  uint64_t half, span, delay;
+  uint64_t delay = 0u;
   if (s->last_backoff_ms == 0u) {
     s->last_backoff_ms = s->config.initial_backoff_ms;
   } else if (s->last_backoff_ms >= upper || s->last_backoff_ms > upper / 2u) {
@@ -36,17 +51,27 @@ static void recovery_schedule(cnet_reconnect_state *s, uint64_t now_ms) {
   } else {
     s->last_backoff_ms *= 2u;
   }
-  half = s->last_backoff_ms / 2u + s->last_backoff_ms % 2u;
-  span = s->last_backoff_ms - half;
-  delay = half + (span == 0u ? 0u : recovery_mix64(&s->random_state) % (span + 1u));
+  const cnet_backoff_input input = {s->attempts, s->config.initial_backoff_ms,
+      upper, s->last_backoff_ms, recovery_mix64(&s->random_state)};
+  cnet_backoff_fn choose = s->config.backoff.delay != NULL
+      ? s->config.backoff.delay : cnet_backoff_exponential_jitter;
+  s->evaluating = true;
+  int status = choose(s->config.backoff.user, &input, &delay);
+  s->evaluating = false;
+  if (status != SALTS_OK || delay > upper) {
+    s->sealed = true;
+    return status != SALTS_OK ? status : SALTS_EINVAL;
+  }
   s->next_attempt_ms = delay > UINT64_MAX - now_ms ? UINT64_MAX : now_ms + delay;
   if (s->next_attempt_ms >= s->config.deadline_ms) s->next_attempt_ms = UINT64_MAX;
+  return SALTS_OK;
 }
 int cnet_reconnect_init(cnet_reconnect_state *s, const cnet_reconnect_config *c) {
   uint_fast64_t current;
   if (s == NULL || c == NULL || c->size != sizeof(*c) ||
       c->version != CNET_RECOVERY_POLICY_VERSION || c->max_attempts == 0u ||
-      c->deadline_ms == 0u || c->initial_backoff_ms > c->maximum_backoff_ms)
+      c->deadline_ms == 0u || c->initial_backoff_ms > c->maximum_backoff_ms ||
+      (c->backoff.delay == NULL && c->backoff.user != NULL))
     return SALTS_EINVAL;
   if (s->owner_address == (uintptr_t)s && s->incarnation != 0u)
     return SALTS_EALREADY;
@@ -132,8 +157,7 @@ int cnet_reconnect_failed(cnet_reconnect_state *s, cnet_reconnect_ticket t,
     s->sealed = true;
     return SALTS_OK;
   }
-  recovery_schedule(s, now_ms);
-  return SALTS_OK;
+  return recovery_schedule(s, now_ms);
 }
 int cnet_reconnect_lost(cnet_reconnect_state *s, cnet_reconnect_ticket t,
                         cnet_reconnect_failure_kind kind, uint64_t now_ms,
@@ -155,8 +179,7 @@ int cnet_reconnect_lost(cnet_reconnect_state *s, cnet_reconnect_ticket t,
     s->sealed = true;
     return SALTS_OK;
   }
-  recovery_schedule(s, now_ms);
-  return SALTS_OK;
+  return recovery_schedule(s, now_ms);
 }
 int cnet_reconnect_seal(cnet_reconnect_state *s) {
   int status = recovery_check(s);

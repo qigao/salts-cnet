@@ -1,3 +1,4 @@
+#include "cnet_resources.h"
 #include <cnet/managed_dial.h>
 #include <clock.h>
 #include <error_codes.h>
@@ -117,7 +118,7 @@ int cnet_managed_dial_init(cnet_managed_dial *dial,
   size_t uri_len;
   int status;
   if (dial == NULL || config == NULL || dial->impl != NULL ||
-      config->size != sizeof(*config) ||
+      !cnet_allocator_valid(&config->storage) || config->size != sizeof(*config) ||
       config->version != CNET_MANAGED_DIAL_VERSION ||
       config->manager == NULL || config->client == NULL ||
       config->client->impl == NULL ||
@@ -137,15 +138,15 @@ int cnet_managed_dial_init(cnet_managed_dial *dial,
   status = cnet_manager_get_snapshot(config->manager, &manager_snapshot);
   if (status != SALTS_OK) return status;
   if (manager_snapshot.sealed) return SALTS_ESHUTDOWN;
-  impl = (dial_impl *)calloc(1u, sizeof(*impl));
+  impl = (dial_impl *)cnet_storage_alloc(&config->storage, 1u, sizeof(*impl));
   if (impl == NULL) return SALTS_ENOMEM;
-  impl->uri = (char *)malloc(uri_len + 1u);
-  if (impl->uri == NULL) { free(impl); return SALTS_ENOMEM; }
+  impl->uri = (char *)cnet_storage_alloc(&config->storage, uri_len + 1u, 1u);
+  if (impl->uri == NULL) { cnet_storage_free(impl); return SALTS_ENOMEM; }
   memcpy(impl->uri, config->connection.uri, uri_len + 1u);
   status = cnet_reconnect_init(&impl->recovery, &config->recovery);
   if (status != SALTS_OK) {
-    free(impl->uri);
-    free(impl);
+    cnet_storage_free(impl->uri);
+    cnet_storage_free(impl);
     return status;
   }
   impl->owner_thread = cmeta_thread_current_token();
@@ -297,8 +298,8 @@ int cnet_managed_dial_destroy(cnet_managed_dial *dial) {
   if (status != SALTS_OK) return status;
   if (impl->in_callback || !impl->stopping || impl->managed.slot != 0u)
     return SALTS_EBUSY;
-  free(impl->uri);
-  free(impl);
+  cnet_storage_free(impl->uri);
+  cnet_storage_free(impl);
   dial->impl = NULL;
   return SALTS_OK;
 }

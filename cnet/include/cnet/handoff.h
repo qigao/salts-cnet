@@ -33,6 +33,7 @@ typedef struct cnet_handoff_config {
   uint32_t version;
   size_t connection_capacity;
   size_t queue_capacity;
+  cnet_allocator storage;
 } cnet_handoff_config;
 
 typedef struct cnet_handoff_snapshot {

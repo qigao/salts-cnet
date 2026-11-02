@@ -80,6 +80,7 @@ typedef struct cnet_owner_config {
   /** Optional single-owner monotonic clock seam; NULL uses cmeta_monotonic_ms(). */
   cnet_owner_now_ms_fn now_ms;
   void *clock_context;
+  cnet_resources resources;
 } cnet_owner_config;
 
 #if defined(CNET_INTERNAL_PROFILING)

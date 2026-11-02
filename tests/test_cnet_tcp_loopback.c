@@ -72,6 +72,9 @@ extern const void *saltscore_owner_probe_thread(void);
 extern void saltscore_owner_probe_release(mem_slice_t *slice);
 
 typedef struct tcp_probe {
+  unsigned completed;
+  cnet_send_result completion;
+  unsigned completions_at_terminal;
   unsigned connected;
   unsigned terminal;
   unsigned failed;
@@ -96,6 +99,7 @@ static void on_state(void *user, cnet_connection connection,
   if (state == CNET_CONNECTION_CONNECTED) ++p->connected;
   if (state == CNET_CONNECTION_FAILED || error != NULL) ++p->failed;
   if (state == CNET_CONNECTION_CLOSED || state == CNET_CONNECTION_FAILED) {
+    p->completions_at_terminal = p->completed;
     p->sends_at_terminal = p->sent;
     ++p->terminal;
   }
@@ -130,6 +134,48 @@ static void on_owned(void *user, cnet_connection connection,
   p->owned_slice = slice; /* Own exactly one backing reference until cleanup. */
   ++p->owned_received;
 }
+static void on_operation(void *user, const cnet_send_result *result) {
+  tcp_probe *p = user;
+  ++p->completed;
+  p->completion = *result;
+}
+typedef struct resource_probe { size_t allocated, released, buffers, freed_buffers; } resource_probe;
+static void *probe_allocate(void *user, size_t bytes) {
+  resource_probe *p = user;
+  void *memory = malloc(bytes);
+  if (memory != NULL) ++p->allocated;
+  return memory;
+}
+static void probe_deallocate(void *user, void *memory, size_t bytes) {
+  resource_probe *p = user;
+  (void)bytes;
+  ++p->released;
+  free(memory);
+}
+static void probe_buffer_free(void *memory, void *user) {
+  ++((resource_probe *)user)->freed_buffers;
+  free(memory);
+}
+static int probe_send_admit(void *user, const cnet_send_usage *total,
+                            const cnet_send_usage *connection, size_t bytes, size_t backing) {
+  (void)user; (void)connection; (void)bytes; (void)backing;
+  return total->operations == 0u ? SALTS_OK : SALTS_ENOBUFS;
+}
+static int probe_send_pause(void *user, const cnet_send_usage *total,
+                            const cnet_send_usage *connection, size_t bytes, size_t backing) {
+  (void)user; (void)total; (void)connection; (void)bytes; (void)backing;
+  return SALTS_ENOBUFS;
+}
+static int probe_buffer(void *user, size_t bytes, mem_buffer_t **out) {
+  void *data = malloc(bytes);
+  *out = NULL;
+  if (data == NULL) return SALTS_ENOMEM;
+  *out = mem_wrap_external(data, bytes, probe_buffer_free, user);
+  if (*out == NULL) { free(data); return SALTS_ENOMEM; }
+  ++((resource_probe *)user)->buffers;
+  return SALTS_OK;
+}
+
 static void on_sent(void *user, cnet_connection connection, size_t length) {
   tcp_probe *p = (tcp_probe *)user;
   (void)connection;
@@ -181,10 +227,13 @@ static int poll_until(cnet_client *client, unsigned *counter, unsigned expected)
     }                                                                        \
   } while (0)
 
-static int saltscore_original_entry_test_cnet_tcp_loopback_c(void) {
+static int saltscore_original_entry_test_cnet_tcp_loopback_c(unsigned scenario) {
+  const bool custom = scenario != 0u;
   cnet_client client = {0};
   cnet_listener listener = {0};
-  const cnet_client_config config = client_config();
+  cnet_client_config config = client_config();
+  resource_probe resources = {0};
+  cnet_operation operation = {0};
   const cnet_listener_config listener_config = {
       backend_kind(), "127.0.0.1", 0u, 2u};
   tcp_probe probe = {0};
@@ -199,6 +248,21 @@ static int saltscore_original_entry_test_cnet_tcp_loopback_c(void) {
   int client_live = 0, listener_live = 0;
   int ready = 0, result = 0;
 
+  if (custom) {
+    config.resources.storage = (cnet_allocator){probe_allocate, probe_deallocate, &resources};
+    config.resources.receive = (cnet_buffer_provider){probe_buffer, &resources};
+    pending = mem_get_buffer(mem_global(), 1u);
+    VERIFY(pending != NULL);
+    switch (scenario) {
+      case 1u: config.send_limits.connection_bytes = 1u; break;
+      case 2u: config.send_limits.connection_operations = 1u; break;
+      case 3u: config.send_limits.bytes = 1u; break;
+      case 4u: config.send_limits.backing_bytes = mem_buffer_capacity(pending); break;
+      case 5u: config.send_limits.connection_backing_bytes = mem_buffer_capacity(pending); break;
+      case 6u: config.send_limits.operations = 1u; break;
+      case 7u: config.send_admission = (cnet_send_admission_policy){probe_send_admit, NULL}; break;
+    }
+  }
   VERIFY(cnet_listener_init(&listener, &listener_config) == SALTS_OK);
   listener_live = 1;
   VERIFY(cnet_listener_port(&listener, &port) == SALTS_OK && port != 0u);
@@ -232,26 +296,87 @@ static int saltscore_original_entry_test_cnet_tcp_loopback_c(void) {
          probe.borrowed_received == 0u && probe.failed == 0u);
   /* This slice was created by the CNet DSO; compare with the executable and
    * an independently loaded module on this same live OS thread. */
-  VERIFY(mem_buffer_pool(probe.owned_slice.buffer) == mem_global());
+  VERIFY(custom ? mem_is_external(probe.owned_slice.buffer) :
+         mem_buffer_pool(probe.owned_slice.buffer) == mem_global());
   VERIFY(saltscore_owner_probe_pool() == mem_global());
   VERIFY(saltscore_owner_probe_thread() == cmeta_thread_current_token());
 
-  pending = mem_get_buffer(mem_global(), 1u);
+  if (pending == NULL) pending = mem_get_buffer(mem_global(), 1u);
   VERIFY(pending != NULL);
   *mem_buffer_data(pending) = 0xa5;
   mem_set_used(pending, 1u);
-  VERIFY(cnet_send_buffer(&client, connection, pending) == SALTS_OK);
+  if (custom) {
+    mem_slice_t slice = mem_slice(pending, 0u, 1u);
+    const cnet_send_options options = {&slice, 1u, false, on_operation, &probe};
+    cnet_admission_limit limit = CNET_LIMIT_NONE;
+    int admitted = cnet_send(&client, connection, &options, &operation, &limit);
+    mem_slice_release(&slice);
+    VERIFY(admitted == SALTS_OK && operation.id != 0u && probe.completed == 0u);
+    cnet_send_usage usage = {0};
+    VERIFY(cnet_client_send_usage(&client, connection, &usage) == SALTS_OK && usage.bytes == 1u);
+    static const cnet_admission_limit expected_limits[] = {CNET_LIMIT_NONE,
+        CNET_LIMIT_CONNECTION_BYTES, CNET_LIMIT_CONNECTION_OPERATIONS, CNET_LIMIT_BYTES,
+        CNET_LIMIT_BACKING_BYTES, CNET_LIMIT_CONNECTION_BACKING_BYTES, CNET_LIMIT_OPERATIONS,
+        CNET_LIMIT_POLICY};
+    cnet_operation rejected = {0};
+    slice = mem_slice(pending, 0u, 1u);
+    admitted = cnet_send(&client, connection, &options, &rejected, &limit);
+    mem_slice_release(&slice);
+    VERIFY(admitted == SALTS_ENOBUFS && rejected.id == 0u &&
+           limit == expected_limits[scenario] && mem_buffer_ref_count(pending) == 2u);
+    if (scenario == 7u) {
+      const cnet_send_admission_policy paused = {probe_send_pause, NULL};
+      VERIFY(cnet_client_set_send_admission(&client, &paused) == SALTS_OK);
+    }
+  } else VERIFY(cnet_send_buffer(&client, connection, pending) == SALTS_OK);
   mem_buffer_release(pending); /* CNet must retain until terminal send. */
   pending = NULL;
   VERIFY(poll_until(&client, &probe.sent, 1u) == SALTS_OK);
   VERIFY(probe.last_send_bytes == 1u && probe.failed == 0u);
+  if (custom) {
+    cnet_send_usage usage = {0};
+    VERIFY(probe.completed == 1u && probe.completion.operation.id == operation.id &&
+           probe.completion.status == SALTS_OK);
+    VERIFY(cnet_client_send_usage(&client, connection, &usage) == SALTS_OK && usage.operations == 0u);
+  }
   VERIFY(recv(peer, (char *)&outgoing, 1, 0) == 1 &&
          outgoing == 0xa5u);
+
+  if (scenario == 7u) {
+    /* Replacement while the first send was live did not revoke its terminal.
+     * The replacement still governs new admission after that send settles. */
+    pending = mem_get_buffer(mem_global(), 1u);
+    VERIFY(pending != NULL);
+    *mem_buffer_data(pending) = 0x5a;
+    mem_set_used(pending, 1u);
+    mem_slice_t slice = mem_slice(pending, 0u, 1u);
+    const cnet_send_options options = {&slice, 1u, false, on_operation, &probe};
+    cnet_operation next = {0};
+    cnet_admission_limit limit = CNET_LIMIT_NONE;
+    int status = cnet_send(&client, connection, &options, &next, &limit);
+    mem_slice_release(&slice);
+    VERIFY(status == SALTS_ENOBUFS && next.id == 0u && limit == CNET_LIMIT_POLICY);
+    const cnet_send_admission_policy normal = {0};
+    VERIFY(cnet_client_set_send_admission(&client, &normal) == SALTS_OK);
+    slice = mem_slice(pending, 0u, 1u);
+    status = cnet_send(&client, connection, &options, &next, &limit);
+    mem_slice_release(&slice);
+    VERIFY(status == SALTS_OK && next.id != operation.id);
+    mem_buffer_release(pending);
+    pending = NULL;
+    VERIFY(poll_until(&client, &probe.sent, 2u) == SALTS_OK);
+    VERIFY(probe.completed == 2u && probe.completion.operation.id == next.id &&
+           probe.completion.status == SALTS_OK);
+    cnet_send_usage usage = {0};
+    VERIFY(cnet_client_send_usage(&client, connection, &usage) == SALTS_OK &&
+           usage.operations == 0u && usage.bytes == 0u && usage.backing_bytes == 0u);
+    VERIFY(recv(peer, (char *)&outgoing, 1, 0) == 1 && outgoing == 0x5au);
+  }
 
   VERIFY(cnet_close(&client, connection) == SALTS_OK);
   VERIFY(poll_until(&client, &probe.terminal, 1u) == SALTS_OK);
   VERIFY(probe.terminal == 1u && probe.failed == 0u &&
-         probe.owned_received == 1u && probe.sent == 1u);
+         probe.owned_received == 1u && probe.sent == (scenario == 7u ? 2u : 1u));
 
   VERIFY(cnet_client_stop(&client, 5000u) == SALTS_OK);
   VERIFY(cnet_client_destroy(&client) == SALTS_OK);
@@ -276,6 +401,9 @@ cleanup:
   test_close_socket(peer);
   /* Last release deliberately occurs in another DLL/DSO after CNet destroy. */
   if (probe.owned_slice.buffer) saltscore_owner_probe_release(&probe.owned_slice);
+  if (custom && (resources.allocated == 0u || resources.allocated != resources.released ||
+                 resources.buffers == 0u || resources.buffers != resources.freed_buffers))
+    if (result == 0) result = __LINE__;
   return result;
 }
 
@@ -469,6 +597,16 @@ static test_socket test_native_listener(uint16_t *port) {
   return listener;
 }
 
+static int invalid_pool_choice(void *user, const cnet_pool_candidate *candidates,
+                               size_t count, uint64_t sequence, size_t *out) {
+  (void)user; (void)candidates; (void)sequence; *out = count; return SALTS_OK;
+}
+static int guarded_pool_choice(void *user, const cnet_pool_candidate *candidates,
+                               size_t count, uint64_t sequence, size_t *out) {
+  cnet_pool_snapshot snapshot;
+  if (cnet_pool_get_snapshot(user, &snapshot) != SALTS_EBUSY) return SALTS_EPROTO;
+  return cnet_pool_select_least_used(NULL, candidates, count, sequence, out);
+}
 static int pool_acquire_rejected(cnet_client_pool *pool, const cnet_pool_key *key,
                                  int expected_status) {
   cnet_pool_lease lease = {UINTPTR_MAX, UINT64_MAX, UINT64_MAX, SIZE_MAX};
@@ -575,6 +713,11 @@ static int saltscore_native_entry_test_cnet_pool_reuse(void) {
                                  i == 1u ? SALTS_EINVAL : SALTS_ENOBUFS));
   }
 
+  const cnet_pool_selection_policy invalid_selection = {invalid_pool_choice, NULL};
+  const cnet_pool_selection_policy guarded_selection = {guarded_pool_choice, &pool};
+  VERIFY(cnet_pool_set_selection(&pool, &invalid_selection) == SALTS_OK);
+  VERIFY(pool_acquire_rejected(&pool, &key, SALTS_EINVAL));
+  VERIFY(cnet_pool_set_selection(&pool, &guarded_selection) == SALTS_OK);
   for (unsigned exchange = 0u; exchange < 2u; ++exchange) {
     VERIFY(cnet_pool_try_acquire(&pool, &key, NULL, &lease, &leased) == SALTS_OK);
     VERIFY(leased.manager == managed.manager && leased.incarnation == managed.incarnation &&
@@ -866,6 +1009,7 @@ static int saltscore_native_entry_test_cnet_external_cancel_drain(bool prefix_on
   uint16_t port = 0u;
   size_t events = 0u, count = 0u;
   uint64_t submitted_before_route = 0u;
+  cnet_operation operation = {0};
   bool consumed = false, held_live = false;
   int client_live = 0, listener_live = 0, backend_live = 0;
   int ready = 0, result = 0;
@@ -919,7 +1063,9 @@ static int saltscore_native_entry_test_cnet_external_cancel_drain(bool prefix_on
         VERIFY(ranges[i].buffer == pending && ranges[i].length == PREFIX_SEGMENT_BYTES);
         ++range_count;
       }
-      VERIFY(cnet_send_slicev(&client, connection, ranges, range_count) == SALTS_OK);
+      const cnet_send_options options = {ranges, range_count, false, on_operation, &probe};
+      VERIFY(cnet_send(&client, connection, &options, &operation, NULL) == SALTS_OK);
+      VERIFY(operation.id != 0u && probe.completed == 0u);
       for (size_t i = 0u; i < range_count; ++i) mem_slice_release(&ranges[i]);
       range_count = 0u;
       VERIFY(mem_buffer_ref_count(pending) == 2u);
@@ -986,6 +1132,13 @@ static int saltscore_native_entry_test_cnet_external_cancel_drain(bool prefix_on
     VERIFY(probe.terminal == 1u && probe.failed == 0u &&
            probe.sent == (round == 0u ? 1u : 0u) &&
            probe.sends_at_terminal == probe.sent && probe.borrowed_received == 0u);
+    if (round == 2u) {
+      cnet_send_usage usage = {0};
+      VERIFY(probe.completed == 1u && probe.completions_at_terminal == 1u &&
+             probe.completion.operation.id == operation.id && probe.completion.status == SALTS_ECANCELED);
+      VERIFY(cnet_client_send_usage(&client, (cnet_connection){0}, &usage) == SALTS_OK &&
+             usage.operations == 0u && usage.bytes == 0u && usage.backing_bytes == 0u);
+    }
     if (round != 1u) {
       VERIFY(mem_buffer_ref_count(pending) == 1u);
       if (round == 0u) {
@@ -2150,8 +2303,14 @@ cleanup:
 
 spec("CNet real TCP loopback and retained slice") {
   it("preserves the real owner lifecycle and original failure code") {
-    const int result = saltscore_original_entry_test_cnet_tcp_loopback_c();
+    const int result = saltscore_original_entry_test_cnet_tcp_loopback_c(0u);
     check(result == 0, "native integration returned %d", result);
+  }
+  for (unsigned scenario = 1u; scenario <= 7u; ++scenario) {
+    it("uses custom providers and settles send admission policy %u", scenario) {
+      const int result = saltscore_original_entry_test_cnet_tcp_loopback_c(scenario);
+      check(result == 0, "custom policy integration returned %d", result);
+    }
   }
   it("keeps TCP persistent through small and retained-vector bulk, then final close") {
     const int result = saltscore_native_entry_test_cnet_tcp_stream_bulk();

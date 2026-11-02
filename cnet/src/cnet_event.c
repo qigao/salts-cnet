@@ -1,3 +1,4 @@
+#include "cnet_resources.h"
 #include "cnet_event.h"
 
 #include <cnet/cnet.h>
@@ -189,7 +190,7 @@ int cnet_event_queue_init(cnet_event_queue *queue, const cnet_event_queue_config
                                : (size_t)config->capacity * config->max_payload_bytes;
   if (payload_capacity_bytes < config->max_payload_bytes) return SALTS_EINVAL;
 
-  impl = (cnet_event_queue_impl *)calloc(1u, sizeof(*impl));
+  impl = (cnet_event_queue_impl *)cnet_storage_alloc(&config->storage, 1u, sizeof(*impl));
   if (impl == NULL) return SALTS_ENOMEM;
   ring_config.entry_size = sizeof(cnet_event_entry);
   ring_config.capacity = config->capacity;
@@ -197,14 +198,15 @@ int cnet_event_queue_init(cnet_event_queue *queue, const cnet_event_queue_config
   ring_config.mode = DISRUPTOR_MODE_WORKER_POOL;
   impl->ring = disruptor_create(&ring_config);
   if (impl->ring == NULL) {
-    free(impl);
+    cnet_storage_free(impl);
     return SALTS_ENOMEM;
   }
   impl->borrowed_sequences =
-      (_Atomic uint64_t *)calloc((size_t)config->capacity, sizeof(*impl->borrowed_sequences));
+      (_Atomic uint64_t *)cnet_storage_alloc(&config->storage, (size_t)config->capacity, sizeof(*impl->borrowed_sequences));
   if (impl->borrowed_sequences == NULL || mem_init(&impl->payload_pool, 0u) != 0) {
     disruptor_destroy(impl->ring);
-    free(impl);
+    cnet_storage_free((void *)impl->borrowed_sequences);
+    cnet_storage_free(impl);
     return SALTS_ENOMEM;
   }
   impl->data_capacity = config->data_capacity;
@@ -444,8 +446,8 @@ int cnet_event_queue_destroy(cnet_event_queue *queue) {
     return SALTS_EBUSY;
   disruptor_destroy(impl->ring);
   mem_destroy(&impl->payload_pool);
-  free((void *)impl->borrowed_sequences);
-  free(impl);
+  cnet_storage_free((void *)impl->borrowed_sequences);
+  cnet_storage_free(impl);
   queue->impl = NULL;
   atomic_store_explicit(&queue->_publisher_lifecycle,
                         CNET_EVENT_PUBLISHER_CLOSED | CNET_EVENT_PUBLISHER_DESTROYED,

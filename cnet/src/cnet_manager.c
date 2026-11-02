@@ -1,3 +1,4 @@
+#include "cnet_resources.h"
 #include <cnet/manager.h>
 #include <thread.h>
 #include <stdatomic.h>
@@ -103,23 +104,23 @@ int cnet_manager_init(cnet_manager *manager, const cnet_manager_config *config) 
   uint_fast64_t incarnation;
   if (manager == NULL || config == NULL) return SALTS_EINVAL;
   if (manager->impl != NULL) return SALTS_EALREADY;
-  if (config->size != sizeof(*config) || config->version != CNET_MANAGER_VERSION ||
+  if (!cnet_allocator_valid(&config->storage) || config->size != sizeof(*config) || config->version != CNET_MANAGER_VERSION ||
       config->client == NULL || config->client->impl == NULL || config->record_capacity == 0u ||
       config->connection_capacity == 0u || config->connection_capacity > config->record_capacity)
     return SALTS_EINVAL;
   if (config->record_capacity > SIZE_MAX / sizeof(manager_record)) return SALTS_ERANGE;
-  impl = calloc(1u, sizeof(*impl));
+  impl = cnet_storage_alloc(&config->storage, 1u, sizeof(*impl));
   if (impl == NULL) return SALTS_ENOMEM;
-  impl->records = calloc(config->record_capacity, sizeof(*impl->records));
+  impl->records = cnet_storage_alloc(&config->storage, config->record_capacity, sizeof(*impl->records));
   if (impl->records == NULL) {
-    free(impl);
+    cnet_storage_free(impl);
     return SALTS_ENOMEM;
   }
   incarnation = atomic_load_explicit(&manager_incarnation, memory_order_relaxed);
   do {
     if (incarnation >= UINT64_MAX) {
-      free(impl->records);
-      free(impl);
+      cnet_storage_free(impl->records);
+      cnet_storage_free(impl);
       return SALTS_ERANGE;
     }
   } while (!atomic_compare_exchange_weak_explicit(&manager_incarnation, &incarnation,
@@ -391,8 +392,8 @@ int cnet_manager_destroy(cnet_manager *manager) {
   if (impl->advancing || impl->callbacks != 0u || impl->reserved != 0u || impl->bound != 0u ||
       impl->retired != 0u)
     return SALTS_EBUSY;
-  free(impl->records);
-  free(impl);
+  cnet_storage_free(impl->records);
+  cnet_storage_free(impl);
   manager->impl = NULL;
   return SALTS_OK;
 }

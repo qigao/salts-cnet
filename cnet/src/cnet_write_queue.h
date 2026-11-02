@@ -17,6 +17,7 @@ typedef struct cnet_write_queue_config {
   size_t connection_capacity;
   size_t capacity;
   size_t max_payload_bytes;
+  cnet_allocator storage;
 } cnet_write_queue_config;
 
 typedef struct cnet_write_handle {

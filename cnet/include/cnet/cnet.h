@@ -3,6 +3,7 @@
 
 #include <error_codes.h>
 #include <native_io.h>
+#include <cnet/resources.h>
 #include <cmeta_buffer.h>
 
 #include <stddef.h>
@@ -315,8 +316,8 @@ typedef void (*cnet_receive_fn)(void *user, cnet_connection connection,
  * buffer reference. A zero-length receive (for example an empty UDP datagram)
  * is delivered as an empty slice with no backing reference. The callback may
  * keep a non-empty descriptor after return and must eventually release that
- * reference with mem_slice_release(). The backing is allocated from the
- * process-global Salts pool, so an already delivered slice remains valid across
+ * reference with mem_slice_release(). The configured receive provider keeps
+ * each backing alive independently, so an already delivered slice is valid across
  * later cnet_client_poll(), connection close, cnet_client_stop(), and
  * cnet_client_destroy().
  *
@@ -517,6 +518,9 @@ typedef struct cnet_client_config {
    * non-zero value must cover at least one maximum-sized event.
    */
   size_t event_buffer_bytes;
+  cnet_resources resources;
+  cnet_send_limits send_limits;
+  cnet_send_admission_policy send_admission;
 } cnet_client_config;
 
 /**
@@ -897,6 +901,44 @@ int cnet_start_tls_server(cnet_client *client, cnet_connection connection,
  * but must not mutate data/used/capacity while the logical send is in flight.
  * Rejection retains no lasting reference.
  */
+/* Logical send identity, unique across client lifetimes; not an ownership ref. */
+typedef struct cnet_operation { uint64_t id; } cnet_operation;
+typedef struct cnet_send_result {
+  cnet_operation operation;
+  cnet_connection connection;
+  size_t requested_bytes;
+  /* OK means the logical write completed locally. Failure does not prove that
+   * no prefix reached the peer, nor authorize application replay. */
+  int status;
+} cnet_send_result;
+typedef void (*cnet_send_complete_fn)(void *user, const cnet_send_result *result);
+typedef struct cnet_send_options {
+  const mem_slice_t *segments;
+  size_t segment_count;
+  bool close_after_send;
+  cnet_send_complete_fn complete;
+  void *user;
+} cnet_send_options;
+/* One bounded FIFO operation. Rejection zeroes output and retains nothing.
+ * Acceptance produces exactly one completion on the progress owner, after the
+ * logical write settles, before the connection terminal observer on failure.
+ * The callback/user are borrowed until completion. No inline completion during
+ * admission. A callback may send/close, but cannot poll/stop/destroy recursively.
+ * A successful completion precedes the existing observer.on_send notification;
+ * that notification remains enabled and is not another operation completion.
+ * Convenience send_buffer/slice/slicev use this same admission and accounting. */
+int cnet_send(cnet_client *client, cnet_connection connection,
+              const cnet_send_options *options, cnet_operation *out_operation,
+              cnet_admission_limit *out_limit);
+/* Owner-only accounting. Zero connection returns aggregate usage. */
+int cnet_client_send_usage(cnet_client *client, cnet_connection connection,
+                            cnet_send_usage *out);
+/* Owner-only, outside callbacks/progress. Copied policy applies to subsequent
+ * sends; accepted operations retain their original completion obligations.
+ * Old policy user can be released after replacement returns. Hard limits and
+ * resource providers are immutable for this client lifetime. */
+int cnet_client_set_send_admission(cnet_client *client,
+                                   const cnet_send_admission_policy *policy);
 int cnet_send_buffer(cnet_client *client, cnet_connection connection, mem_buffer_t *buffer);
 
 /**

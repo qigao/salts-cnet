@@ -1,3 +1,4 @@
+#include "cnet_resources.h"
 #include "cnet_shards.h"
 
 #include <thread.h>
@@ -31,6 +32,7 @@ struct cnet_shards_impl {
   size_t max_command_payload_bytes;
   size_t max_write_payload_bytes;
 #if defined(CNET_INTERNAL_MULTI_OWNER_POC)
+  cnet_resources experimental_resources;
   native_io_backend_kind experimental_backend_kind;
   size_t experimental_request_capacity;
   size_t experimental_completion_batch_capacity;
@@ -138,11 +140,11 @@ static int cnet_shards_init_impl(cnet_shards *shards, const cnet_shards_config *
   max_write_payload_bytes = config->max_write_payload_bytes != 0u
                                 ? config->max_write_payload_bytes
                                 : config->max_command_payload_bytes;
-  impl = (cnet_shards_impl *)calloc(1u, sizeof(*impl));
+  impl = (cnet_shards_impl *)cnet_storage_alloc(&config->resources.storage, 1u, sizeof(*impl));
   if (impl == NULL) return SALTS_ENOMEM;
-  impl->records = (cnet_shard_record *)calloc(config->shard_count, sizeof(*impl->records));
+  impl->records = (cnet_shard_record *)cnet_storage_alloc(&config->resources.storage, config->shard_count, sizeof(*impl->records));
   if (impl->records == NULL) {
-    free(impl);
+    cnet_storage_free(impl);
     return SALTS_ENOMEM;
   }
   impl->shard_count = config->shard_count;
@@ -154,6 +156,7 @@ static int cnet_shards_init_impl(cnet_shards *shards, const cnet_shards_config *
   impl->max_write_payload_bytes = max_write_payload_bytes;
 #if defined(CNET_INTERNAL_MULTI_OWNER_POC)
   if (allow_multi_owner) {
+    impl->experimental_resources = config->resources;
     impl->experimental_backend_kind = config->backend_kind;
     impl->experimental_request_capacity = config->request_capacity_per_shard;
     impl->experimental_completion_batch_capacity = config->completion_batch_capacity;
@@ -171,13 +174,14 @@ static int cnet_shards_init_impl(cnet_shards *shards, const cnet_shards_config *
     cnet_shard_record *record = &impl->records[index];
     const cnet_command_queue_config command_config = {config->command_capacity_per_shard,
                                                       config->max_command_payload_bytes,
-                                                      config->command_buffer_bytes};
+                                                      config->command_buffer_bytes, config->resources.storage};
     const cnet_event_queue_config event_config = {config->event_capacity_per_shard,
                                                   config->event_capacity_per_shard / 2u,
                                                   impl->max_event_payload_bytes,
-                                                  config->event_buffer_bytes};
+                                                  config->event_buffer_bytes, config->resources.storage};
     const cnet_owner_config owner_config = {
         .backend_kind = config->backend_kind,
+        .resources = config->resources,
         .borrowed_backend = config->borrowed_backend,
         .connection_capacity = config->connection_capacity_per_shard,
         .request_capacity = config->request_capacity_per_shard,
@@ -195,7 +199,7 @@ static int cnet_shards_init_impl(cnet_shards *shards, const cnet_shards_config *
     record->shards = impl;
     record->shard = (uint32_t)index;
     atomic_init(&record->drive_status, SALTS_OK);
-    status = cnet_session_table_init(&record->sessions, config->connection_capacity_per_shard);
+    status = cnet_session_table_init_with_storage(&record->sessions, config->connection_capacity_per_shard, &config->resources.storage);
     if (status == SALTS_OK) status = cnet_command_queue_init(&record->commands, &command_config);
     if (status == SALTS_OK) status = cnet_event_queue_init(&record->events, &event_config);
 #if defined(CNET_INTERNAL_MULTI_OWNER_POC)
@@ -211,8 +215,8 @@ static int cnet_shards_init_impl(cnet_shards *shards, const cnet_shards_config *
   if (status != SALTS_OK) {
     cnet_shards_cleanup_records(impl, initialized);
     cmeta_mutex_destroy(&impl->admission_lock);
-    free(impl->records);
-    free(impl);
+    cnet_storage_free(impl->records);
+    cnet_storage_free(impl);
     return status;
   }
 
@@ -246,6 +250,7 @@ int cnet_shards_init_owner_experimental(cnet_shards *shards, uint32_t shard) {
 
   owner_config = (cnet_owner_config){
       .backend_kind = impl->experimental_backend_kind,
+      .resources = impl->experimental_resources,
       .connection_capacity = impl->connection_capacity_per_shard,
       .request_capacity = impl->experimental_request_capacity,
       .completion_batch_capacity = impl->experimental_completion_batch_capacity,
@@ -992,8 +997,8 @@ int cnet_shards_destroy(cnet_shards *shards) {
     if (status != SALTS_OK) return status;
   }
   cmeta_mutex_destroy(&impl->admission_lock);
-  free(impl->records);
-  free(impl);
+  cnet_storage_free(impl->records);
+  cnet_storage_free(impl);
   shards->impl = NULL;
   return SALTS_OK;
 }

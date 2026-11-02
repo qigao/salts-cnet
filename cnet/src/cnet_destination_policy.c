@@ -49,6 +49,16 @@ int cnet_destination_choose(const cnet_destination_selection *selection,
     return SALTS_ETIMEDOUT;
 
   switch (selection->kind) {
+    case CNET_DESTINATION_CUSTOM: {
+      if (selection->choose == NULL) return SALTS_EINVAL;
+      index = SIZE_MAX;
+      int status = selection->choose(selection->choose_user, selection, &index);
+      if (status != SALTS_OK) return status;
+      if (index >= selection->endpoint_count) return SALTS_EINVAL;
+      if (!selection->endpoints[index].eligible) return SALTS_ENOBUFS;
+      goto selected;
+    }
+
     case CNET_DESTINATION_EXPLICIT:
       for (index = 0u; index < selection->endpoint_count; ++index) {
         if (selection->endpoints[index].endpoint_id ==

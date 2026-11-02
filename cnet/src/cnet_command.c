@@ -1,3 +1,4 @@
+#include "cnet_resources.h"
 #include "cnet_command.h"
 
 #include <cmeta_buffer.h>
@@ -137,17 +138,17 @@ int cnet_command_queue_init(cnet_command_queue *queue, const cnet_command_queue_
   if (capacity > SIZE_MAX / sizeof(cnet_command_entry) || capacity > SIZE_MAX / sizeof(uint32_t))
     return SALTS_ERANGE;
 
-  impl = (cnet_command_queue_impl *)calloc(1u, sizeof(*impl));
+  impl = (cnet_command_queue_impl *)cnet_storage_alloc(&config->storage, 1u, sizeof(*impl));
   if (impl == NULL) return SALTS_ENOMEM;
-  impl->entries = (cnet_command_entry *)calloc(capacity, sizeof(*impl->entries));
-  impl->free_slots = (uint32_t *)calloc(capacity, sizeof(*impl->free_slots));
-  impl->queued_slots = (uint32_t *)calloc(capacity, sizeof(*impl->queued_slots));
+  impl->entries = (cnet_command_entry *)cnet_storage_alloc(&config->storage, capacity, sizeof(*impl->entries));
+  impl->free_slots = (uint32_t *)cnet_storage_alloc(&config->storage, capacity, sizeof(*impl->free_slots));
+  impl->queued_slots = (uint32_t *)cnet_storage_alloc(&config->storage, capacity, sizeof(*impl->queued_slots));
   if (impl->entries == NULL || impl->free_slots == NULL || impl->queued_slots == NULL ||
       mem_init(&impl->payload_pool, 0u) != 0) {
-    free(impl->queued_slots);
-    free(impl->free_slots);
-    free(impl->entries);
-    free(impl);
+    cnet_storage_free(impl->queued_slots);
+    cnet_storage_free(impl->free_slots);
+    cnet_storage_free(impl->entries);
+    cnet_storage_free(impl);
     return SALTS_ENOMEM;
   }
   impl->capacity = capacity;
@@ -354,11 +355,11 @@ int cnet_command_queue_destroy(cnet_command_queue *queue) {
   if (!impl->close_complete || impl->live_commands != 0u || impl->queued_count != 0u ||
       impl->free_count != impl->capacity)
     return SALTS_EBUSY;
-  free(impl->queued_slots);
-  free(impl->free_slots);
-  free(impl->entries);
+  cnet_storage_free(impl->queued_slots);
+  cnet_storage_free(impl->free_slots);
+  cnet_storage_free(impl->entries);
   mem_destroy(&impl->payload_pool);
-  free(impl);
+  cnet_storage_free(impl);
   queue->impl = NULL;
   return SALTS_OK;
 }

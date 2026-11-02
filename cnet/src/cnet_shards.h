@@ -30,6 +30,7 @@ typedef struct cnet_shards_config {
   size_t write_capacity_per_shard;
   size_t max_write_payload_bytes;
   size_t event_buffer_bytes;
+  cnet_resources resources;
 } cnet_shards_config;
 
 typedef struct cnet_shards_layout {

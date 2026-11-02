@@ -1,3 +1,4 @@
+#include "cnet_resources.h"
 #include "cnet_session.h"
 
 #include <thread.h>
@@ -105,6 +106,9 @@ bool cnet_session_handle_valid(cnet_session_handle handle) {
 }
 
 int cnet_session_table_init(cnet_session_table *table, size_t capacity) {
+  return cnet_session_table_init_with_storage(table, capacity, NULL);
+}
+int cnet_session_table_init_with_storage(cnet_session_table *table, size_t capacity, const cnet_allocator *storage) {
   cnet_session_table_impl *impl;
 
   if (table == NULL) return SALTS_EINVAL;
@@ -114,14 +118,14 @@ int cnet_session_table_init(cnet_session_table *table, size_t capacity) {
       capacity > SIZE_MAX / sizeof(uint32_t))
     return SALTS_ERANGE;
 
-  impl = (cnet_session_table_impl *)calloc(1u, sizeof(*impl));
+  impl = (cnet_session_table_impl *)cnet_storage_alloc(storage, 1u, sizeof(*impl));
   if (impl == NULL) return SALTS_ENOMEM;
-  impl->entries = (cnet_session_entry *)calloc(capacity, sizeof(*impl->entries));
-  impl->free_slots = (uint32_t *)calloc(capacity, sizeof(*impl->free_slots));
+  impl->entries = (cnet_session_entry *)cnet_storage_alloc(storage, capacity, sizeof(*impl->entries));
+  impl->free_slots = (uint32_t *)cnet_storage_alloc(storage, capacity, sizeof(*impl->free_slots));
   if (impl->entries == NULL || impl->free_slots == NULL) {
-    free(impl->free_slots);
-    free(impl->entries);
-    free(impl);
+    cnet_storage_free(impl->free_slots);
+    cnet_storage_free(impl->entries);
+    cnet_storage_free(impl);
     return SALTS_ENOMEM;
   }
   impl->capacity = capacity;
@@ -145,9 +149,9 @@ int cnet_session_table_destroy(cnet_session_table *table) {
   }
   cmeta_mutex_unlock(&impl->lock);
   cmeta_mutex_destroy(&impl->lock);
-  free(impl->free_slots);
-  free(impl->entries);
-  free(impl);
+  cnet_storage_free(impl->free_slots);
+  cnet_storage_free(impl->entries);
+  cnet_storage_free(impl);
   table->impl = NULL;
   return SALTS_OK;
 }

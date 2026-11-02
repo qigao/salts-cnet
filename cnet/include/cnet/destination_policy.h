@@ -35,9 +35,15 @@ typedef enum cnet_destination_policy_kind {
   CNET_DESTINATION_ROUND_ROBIN = 2,
   CNET_DESTINATION_WEIGHTED_RR = 3,
   CNET_DESTINATION_LEAST_INFLIGHT = 4,
-  CNET_DESTINATION_STRICT_KEY = 5
+  CNET_DESTINATION_STRICT_KEY = 5,
+  CNET_DESTINATION_CUSTOM
 } cnet_destination_policy_kind;
 
+/* Custom selection is evaluated synchronously against the same validated
+ * immutable snapshot as built-ins. It creates no reservation or I/O. Returned
+ * indices are checked for range and eligibility before publishing a result. */
+struct cnet_destination_selection;
+typedef int (*cnet_destination_selection_fn)(void *user, const struct cnet_destination_selection *input, size_t *out_index);
 typedef struct cnet_destination_selection {
   size_t size;
   uint32_t version;
@@ -51,6 +57,8 @@ typedef struct cnet_destination_selection {
   uint64_t explicit_endpoint_id;
   uint64_t key_hash;
   bool key_known;
+  cnet_destination_selection_fn choose;
+  void *choose_user;
 } cnet_destination_selection;
 
 typedef struct cnet_destination_result {

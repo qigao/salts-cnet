@@ -15,6 +15,20 @@ extern "C" {
  * timer, background worker, retrying payload or hidden connection is created.
  * One client/transport attempt and its FMQ/HTTP/other protocol handshake are
  * owned by the embedding caller. This state is address-stable; do not copy it. */
+typedef struct cnet_backoff_input {
+  uint32_t attempts;
+  uint64_t initial_ms;
+  uint64_t maximum_ms;
+  uint64_t exponential_ms;
+  uint64_t random_value;
+} cnet_backoff_input;
+typedef int (*cnet_backoff_fn)(void *user, const cnet_backoff_input *input, uint64_t *delay_ms);
+typedef struct cnet_backoff_policy { cnet_backoff_fn delay; void *user; } cnet_backoff_policy;
+int cnet_backoff_fixed(void *user, const cnet_backoff_input *input, uint64_t *delay_ms);
+int cnet_backoff_exponential_jitter(void *user, const cnet_backoff_input *input, uint64_t *delay_ms);
+/* Copied per recovery episode. Pure bounded decision, no I/O/reentrant mutation.
+ * Delay must be <= maximum_backoff_ms. Core still enforces attempts, deadlines,
+ * security sealing and generation identity. Zero selects exponential jitter. */
 typedef struct cnet_reconnect_config {
   size_t size;
   uint32_t version;
@@ -22,6 +36,7 @@ typedef struct cnet_reconnect_config {
   uint64_t deadline_ms; /* Absolute monotonic budget for this recovery episode. */
   uint64_t initial_backoff_ms;
   uint64_t maximum_backoff_ms;
+  cnet_backoff_policy backoff;
   uint64_t jitter_seed; /* Explicit deterministic seed for tests/reproducibility. */
 } cnet_reconnect_config;
 
@@ -39,6 +54,7 @@ typedef struct cnet_reconnect_state {
   bool awaiting_protocol;
   bool protocol_ready;
   bool sealed;
+  bool evaluating;
 } cnet_reconnect_state;
 
 typedef struct cnet_reconnect_ticket {
@@ -76,8 +92,9 @@ int cnet_reconnect_connected(cnet_reconnect_state *state,
 /* Caller must verify full protocol handshake, authority and identity. */
 int cnet_reconnect_protocol_ready(cnet_reconnect_state *state,
                                   cnet_reconnect_ticket ticket, uint64_t now_ms);
-/* Failure of connect or protocol handshake schedules a capped, deterministic
- * half-to-full jitter. Security/auth failures seal instead of downgrading. */
+/* Failure of connect or protocol handshake schedules the configured bounded
+ * delay (default: deterministic half-to-full jitter). Security/auth failures
+ * seal instead of downgrading. */
 int cnet_reconnect_failed(cnet_reconnect_state *state, cnet_reconnect_ticket ticket,
                           cnet_reconnect_failure_kind kind, uint64_t now_ms);
 /* Only an already protocol-ready session may start a new recovery episode.

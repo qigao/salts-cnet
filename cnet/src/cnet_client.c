@@ -3,6 +3,7 @@
 #include <cnet/websocket_transport.h>
 
 #include "cnet_client_internal.h"
+#include "cnet_resources.h"
 #include "cnet_dispatcher.h"
 #include "cnet_module.h"
 #include "cnet_shards.h"
@@ -36,6 +37,14 @@ typedef struct cnet_ws_transport_impl {
 static void cnet_ws_sent(cnet_ws_transport_impl *bridge, size_t size);
 static void cnet_ws_terminal(cnet_ws_transport_impl *bridge, int status);
 
+typedef struct cnet_send_record {
+  cnet_operation operation;
+  cnet_send_complete_fn complete;
+  void *user;
+  size_t bytes, backing_bytes, next;
+} cnet_send_record;
+static atomic_uint_fast64_t cnet_operation_sequence;
+
 typedef struct cnet_client_record {
   cnet_client_impl *client;
   cnet_shard_connection internal;
@@ -53,6 +62,8 @@ typedef struct cnet_client_record {
   bool active;
   /** Number of admitted logical writes not yet settled by send/terminal callback. */
   size_t pending_writes;
+  size_t send_head, send_tail;
+  cnet_send_usage send_usage;
   /* Same-owner command reservations only; canonical lifecycle lives in cnet_session_table. */
   bool close_command_pending;
   bool tls_command_pending;
@@ -60,6 +71,14 @@ typedef struct cnet_client_record {
 } cnet_client_record;
 
 struct cnet_client_impl {
+  const void *owner_thread;
+  cnet_resources resources;
+  cnet_send_limits send_limits;
+  cnet_send_admission_policy send_admission;
+  cnet_send_usage send_usage;
+  cnet_send_record *sends;
+  size_t send_free;
+  bool evaluating_policy;
   cnet_shards shards;
   cnet_dispatcher dispatcher;
   cnet_client_record *records;
@@ -94,9 +113,11 @@ struct cnet_client_impl {
 };
 
 static SALTS_THREAD_LOCAL cnet_client_impl *cnet_active_callback_client;
+static SALTS_THREAD_LOCAL cnet_client_impl *cnet_active_policy_client;
 
 static cnet_client_impl *cnet_client_get(cnet_client *client) {
-  return client != NULL ? (cnet_client_impl *)client->impl : NULL;
+  cnet_client_impl *impl = client != NULL ? (cnet_client_impl *)client->impl : NULL;
+  return impl != NULL && impl == cnet_active_policy_client ? NULL : impl;
 }
 
 static bool cnet_power_of_two(size_t value) { return value != 0u && (value & (value - 1u)) == 0u; }
@@ -108,6 +129,8 @@ static bool cnet_client_config_valid(const cnet_client_config *config) {
       config->completion_batch_capacity > config->request_capacity ||
       !cnet_power_of_two(config->event_capacity) || config->event_capacity < 2u ||
       config->max_send_bytes == 0u || config->receive_buffer_bytes == 0u ||
+      !cnet_resources_valid(&config->resources) ||
+      (config->send_admission.evaluate == NULL && config->send_admission.user != NULL) ||
       (config->event_buffer_bytes != 0u &&
        config->event_buffer_bytes < config->receive_buffer_bytes) ||
       ((config->tls_io_buffer_bytes == 0u) != (config->tls_handshake_timeout_ms == 0u)) ||
@@ -190,7 +213,7 @@ static bool cnet_client_terminal(cnet_event_state state) {
   return state == CNET_EVENT_STATE_CLOSED || state == CNET_EVENT_STATE_FAILED;
 }
 
-static int cnet_client_materialize_receive(const cnet_dispatch_view *view,
+static int cnet_client_materialize_receive(cnet_client_impl *impl, const cnet_dispatch_view *view,
                                            mem_slice_t *out_slice) {
   mem_buffer_t *buffer;
   if (view == NULL || out_slice == NULL || view->kind != CNET_EVENT_RECEIVE ||
@@ -212,13 +235,35 @@ static int cnet_client_materialize_receive(const cnet_dispatch_view *view,
    * canonical ownership. Producer-owned CNet receive events should never need
    * this materialization after #595.
    */
-  buffer = mem_get_buffer(mem_global(), view->size);
-  if (buffer == NULL) return SALTS_ENOMEM;
+  const int acquire_status = cnet_buffer_acquire(&impl->resources.receive, view->size, &buffer);
+  if (acquire_status != SALTS_OK) return acquire_status;
   memcpy(mem_buffer_data(buffer), view->data, view->size);
   mem_set_used(buffer, view->size);
   *out_slice = mem_slice(buffer, 0u, view->size);
   mem_buffer_release(buffer);
   return out_slice->buffer != NULL ? SALTS_OK : SALTS_ENOMEM;
+}
+
+static void cnet_client_send_settle(cnet_client_record *record, int status) {
+  cnet_client_impl *impl = record->client;
+  if (record->send_head == 0u) { cnet_client_record_error(impl, SALTS_EPROTO); return; }
+  const size_t slot = record->send_head;
+  const cnet_send_record saved = impl->sends[slot - 1u];
+  const cnet_send_result result = {saved.operation, record->public_handle, saved.bytes, status};
+  record->send_head = saved.next;
+  if (record->send_head == 0u) record->send_tail = 0u;
+  --record->send_usage.operations;
+  record->send_usage.bytes -= saved.bytes;
+  record->send_usage.backing_bytes -= saved.backing_bytes;
+  --impl->send_usage.operations;
+  impl->send_usage.bytes -= saved.bytes;
+  impl->send_usage.backing_bytes -= saved.backing_bytes;
+  impl->sends[slot - 1u] = (cnet_send_record){.next = impl->send_free};
+  impl->send_free = slot;
+  if (saved.complete != NULL) {
+    saved.complete(saved.user, &result);
+    ++impl->poll_callback_count;
+  }
 }
 
 static void cnet_client_observe(void *context, const cnet_dispatch_view *view) {
@@ -227,6 +272,13 @@ static void cnet_client_observe(void *context, const cnet_dispatch_view *view) {
   cnet_client_impl *previous = cnet_active_callback_client;
 
   cnet_active_callback_client = impl;
+  if (view->kind == CNET_EVENT_STATE && cnet_client_terminal(view->state)) {
+    record->close_command_pending = true;
+    while (record->send_head != 0u)
+      cnet_client_send_settle(record, view->state == CNET_EVENT_STATE_FAILED
+          ? (cnet_client_cmeta_status(view->status) ? view->status : SALTS_EIO)
+          : SALTS_ECANCELED);
+  }
   if (view->kind == CNET_EVENT_RECEIVE) {
     const bool peer_eof = record->preserve_send_on_eof && record->scheme == CNET_URI_TCP && view->size == 0u;
     const cnet_message_kind kind =
@@ -253,7 +305,7 @@ static void cnet_client_observe(void *context, const cnet_dispatch_view *view) {
        */
     } else if (record->receive_slice_handler != NULL) {
       mem_slice_t slice = {0};
-      const int materialize_status = cnet_client_materialize_receive(view, &slice);
+      const int materialize_status = cnet_client_materialize_receive(impl, view, &slice);
       if (materialize_status != SALTS_OK) {
         cnet_client_record_error(impl, materialize_status);
       } else {
@@ -276,6 +328,7 @@ static void cnet_client_observe(void *context, const cnet_dispatch_view *view) {
       if (record->pending_writes == 0u) cnet_client_record_error(impl, SALTS_EPROTO);
       else --record->pending_writes;
     }
+    cnet_client_send_settle(record, SALTS_OK);
     if (record->ws_transport != NULL) {
       cnet_ws_sent(record->ws_transport, view->argument);
       ++impl->poll_callback_count;
@@ -339,8 +392,9 @@ static void cnet_client_cleanup_init(cnet_client_impl *impl) {
   }
   if (impl->shards.impl != NULL) (void)cnet_shards_destroy(&impl->shards);
   cmeta_mutex_destroy(&impl->control_lock);
-  free(impl->records);
-  free(impl);
+  cnet_storage_free(impl->sends);
+  cnet_storage_free(impl->records);
+  cnet_storage_free(impl);
   (void)cnet_module_shutdown();
 }
 
@@ -362,11 +416,30 @@ static int cnet_client_init_impl(cnet_client *client,
   status = cnet_module_init();
   if (status != SALTS_OK) return status;
 
-  impl = (cnet_client_impl *)calloc(1u, sizeof(*impl));
+  impl = (cnet_client_impl *)cnet_storage_alloc(&config->resources.storage, 1u, sizeof(*impl));
   if (impl == NULL) {
     (void)cnet_module_shutdown();
     return SALTS_ENOMEM;
   }
+  impl->owner_thread = cmeta_thread_current_token();
+  impl->resources = config->resources;
+  impl->send_admission = config->send_admission;
+  impl->send_limits = config->send_limits;
+  if (impl->send_limits.operations == 0u) impl->send_limits.operations = config->command_capacity;
+  if (impl->send_limits.operations > config->command_capacity ||
+      (impl->send_limits.bytes == 0u &&
+       impl->send_limits.operations > SIZE_MAX / config->max_send_bytes)) {
+    cnet_storage_free(impl); (void)cnet_module_shutdown(); return SALTS_EINVAL;
+  }
+  if (impl->send_limits.bytes == 0u)
+    impl->send_limits.bytes = impl->send_limits.operations * config->max_send_bytes;
+  if (impl->send_limits.backing_bytes == 0u) impl->send_limits.backing_bytes = SIZE_MAX;
+  if (impl->send_limits.connection_operations == 0u)
+    impl->send_limits.connection_operations = impl->send_limits.operations;
+  if (impl->send_limits.connection_bytes == 0u)
+    impl->send_limits.connection_bytes = impl->send_limits.bytes;
+  if (impl->send_limits.connection_backing_bytes == 0u)
+    impl->send_limits.connection_backing_bytes = impl->send_limits.backing_bytes;
   impl->shard_count = 1u;
   impl->capacity_per_shard = config->connection_capacity;
   impl->record_count = config->connection_capacity;
@@ -384,13 +457,19 @@ static int cnet_client_init_impl(cnet_client *client,
   atomic_init(&impl->callback_error, SALTS_OK);
   atomic_init(&impl->external_wake_pending, 0);
   cmeta_mutex_init(&impl->control_lock);
-  impl->records = (cnet_client_record *)calloc(impl->record_count, sizeof(*impl->records));
+  impl->records = (cnet_client_record *)cnet_storage_alloc(&impl->resources.storage, impl->record_count, sizeof(*impl->records));
   if (impl->records == NULL) {
     cnet_client_cleanup_init(impl);
     return SALTS_ENOMEM;
   }
   for (index = 0u; index < impl->record_count; ++index)
     impl->records[index].client = impl;
+  impl->sends = cnet_storage_alloc(&impl->resources.storage,
+      impl->send_limits.operations, sizeof(*impl->sends));
+  if (impl->sends == NULL) { cnet_client_cleanup_init(impl); return SALTS_ENOMEM; }
+  for (index = 0u; index < impl->send_limits.operations; ++index)
+    impl->sends[index].next = index + 1u == impl->send_limits.operations ? 0u : index + 2u;
+  impl->send_free = 1u;
 
   max_command_payload_bytes =
       sizeof(cnet_owner_connect_payload) > sizeof(cnet_owner_start_tls_payload)
@@ -428,6 +507,7 @@ static int cnet_client_init_impl(cnet_client *client,
                            : config->event_capacity * max_event_payload_bytes;
   shards_config = (cnet_shards_config){
       .backend_kind = config->backend,
+      .resources = config->resources,
       .borrowed_backend = borrowed_backend,
       .shard_count = 1u,
       .connection_capacity_per_shard = impl->capacity_per_shard,
@@ -448,7 +528,7 @@ static int cnet_client_init_impl(cnet_client *client,
     cnet_client_cleanup_init(impl);
     return status;
   }
-  status = cnet_dispatcher_init(&impl->dispatcher, &impl->shards);
+  status = cnet_dispatcher_init_with_storage(&impl->dispatcher, &impl->shards, &impl->resources.storage);
   if (status == SALTS_OK)
     status = cnet_shards_bind_event_sink(&impl->shards, cnet_client_dispatch, &impl->dispatcher);
   if (status != SALTS_OK) {
@@ -906,6 +986,7 @@ static int cnet_client_admit_start_tls(cnet_client_impl *impl, cnet_connection c
   cnet_shard_connection internal = {0};
   cnet_client_record *record;
   int status;
+  if (impl->evaluating_policy) return SALTS_EBUSY;
   if (!impl->admission_open) status = SALTS_ESHUTDOWN;
   else if (impl->tls_io_buffer_bytes == 0u) status = SALTS_ENOTSUP;
   else {
@@ -1419,12 +1500,73 @@ typedef struct cnet_client_send_input {
   size_t size;
   size_t segment_count;
   bool close_after_send;
+  cnet_send_complete_fn complete;
+  void *user;
+  cnet_operation *out_operation;
+  cnet_admission_limit *out_limit;
 } cnet_client_send_input;
+
+static int cnet_client_send_charge(cnet_client_impl *impl, cnet_client_record *record,
+                                    const cnet_client_send_input *input,
+                                    size_t *backing, uint64_t *operation) {
+  mem_buffer_t *buffers[CNET_RETAINED_VECTOR_MAX];
+  size_t count = input->retained_slices != NULL ? input->segment_count : 1u;
+  cnet_admission_limit limit = CNET_LIMIT_NONE;
+  *backing = 0u;
+  for (size_t i = 0u; i < count; ++i) {
+    mem_buffer_t *buffer = input->retained_slices != NULL ? input->retained_slices[i].buffer
+        : input->retained_slice != NULL ? input->retained_slice->buffer : input->retained_buffer;
+    bool duplicate = false;
+    buffers[i] = buffer;
+    for (size_t j = 0u; j < i; ++j) if (buffers[j] == buffer) duplicate = true;
+    if (!duplicate) {
+      size_t capacity = mem_buffer_capacity(buffer);
+      if (capacity > SIZE_MAX - *backing) return SALTS_ERANGE;
+      *backing += capacity;
+    }
+  }
+  const cnet_send_limits *l = &impl->send_limits;
+  const cnet_send_usage *a = &impl->send_usage, *c = &record->send_usage;
+  if (a->operations >= l->operations) limit = CNET_LIMIT_OPERATIONS;
+  else if (input->size > l->bytes - a->bytes) limit = CNET_LIMIT_BYTES;
+  else if (*backing > l->backing_bytes - a->backing_bytes) limit = CNET_LIMIT_BACKING_BYTES;
+  else if (c->operations >= l->connection_operations) limit = CNET_LIMIT_CONNECTION_OPERATIONS;
+  else if (input->size > l->connection_bytes - c->bytes) limit = CNET_LIMIT_CONNECTION_BYTES;
+  else if (*backing > l->connection_backing_bytes - c->backing_bytes)
+    limit = CNET_LIMIT_CONNECTION_BACKING_BYTES;
+  if (limit != CNET_LIMIT_NONE) {
+    if (input->out_limit != NULL) *input->out_limit = limit;
+    return SALTS_ENOBUFS;
+  }
+  if (impl->send_admission.evaluate != NULL) {
+    cnet_client_impl *previous_policy = cnet_active_policy_client;
+    cnet_active_policy_client = impl;
+    impl->evaluating_policy = true;
+    int status = impl->send_admission.evaluate(impl->send_admission.user, a, c, input->size, *backing);
+    impl->evaluating_policy = false;
+    cnet_active_policy_client = previous_policy;
+    if (status != SALTS_OK) {
+      if (input->out_limit != NULL) *input->out_limit = CNET_LIMIT_POLICY;
+      return status;
+    }
+  }
+  uint_fast64_t current = atomic_load_explicit(&cnet_operation_sequence, memory_order_relaxed);
+  do {
+    if (current == UINT64_MAX) return SALTS_ERANGE;
+  } while (!atomic_compare_exchange_weak_explicit(&cnet_operation_sequence, &current, current + 1u,
+                                                  memory_order_relaxed, memory_order_relaxed));
+  *operation = current + 1u;
+  return SALTS_OK;
+}
 
 static int cnet_client_send_admit(cnet_client_impl *impl, cnet_connection connection,
                                   const cnet_client_send_input *input) {
   cnet_shard_connection internal = {0};
   cnet_client_record *record;
+  size_t backing = 0u;
+  uint64_t operation = 0u;
+  if (impl->owner_thread != cmeta_thread_current_token()) return SALTS_EPERM;
+  if (impl->evaluating_policy) return SALTS_EBUSY;
   int status;
   if (!impl->admission_open) status = SALTS_ESHUTDOWN;
   else {
@@ -1440,6 +1582,8 @@ static int cnet_client_send_admit(cnet_client_impl *impl, cnet_connection connec
     else if (record->pending_writes == SIZE_MAX)
       status = SALTS_ERANGE;
     else {
+      status = cnet_client_send_charge(impl, record, input, &backing, &operation);
+      if (status != SALTS_OK) return status;
       if (input->close_after_send) {
         if (input->retained_slices != NULL)
           status = cnet_shards_send_slicev_close_direct(
@@ -1462,6 +1606,21 @@ static int cnet_client_send_admit(cnet_client_impl *impl, cnet_connection connec
         status = SALTS_EINVAL;
       }
       if (status == SALTS_OK) {
+        size_t slot = impl->send_free;
+        cnet_send_record *send = &impl->sends[slot - 1u];
+        impl->send_free = send->next;
+        *send = (cnet_send_record){.operation = {operation}, .complete = input->complete,
+            .user = input->user, .bytes = input->size, .backing_bytes = backing};
+        if (record->send_tail != 0u) impl->sends[record->send_tail - 1u].next = slot;
+        else record->send_head = slot;
+        record->send_tail = slot;
+        ++impl->send_usage.operations;
+        impl->send_usage.bytes += input->size;
+        impl->send_usage.backing_bytes += backing;
+        ++record->send_usage.operations;
+        record->send_usage.bytes += input->size;
+        record->send_usage.backing_bytes += backing;
+        if (input->out_operation != NULL) input->out_operation->id = operation;
         ++record->pending_writes;
         record->close_command_pending = input->close_after_send;
       }
@@ -1500,6 +1659,56 @@ static bool cnet_client_slice_canonical(const mem_slice_t *slice) {
   delta = data - base;
   if (delta > (uintptr_t)SIZE_MAX) return false;
   return (size_t)delta < used && slice->length <= used - (size_t)delta;
+}
+
+int cnet_send(cnet_client *client, cnet_connection connection,
+              const cnet_send_options *options, cnet_operation *out_operation,
+              cnet_admission_limit *out_limit) {
+  cnet_client_impl *impl = cnet_client_get(client);
+  if (out_operation != NULL) *out_operation = (cnet_operation){0};
+  if (out_limit != NULL) *out_limit = CNET_LIMIT_NONE;
+  if (impl == NULL || options == NULL || out_operation == NULL ||
+      options->complete == NULL || options->segments == NULL || options->segment_count == 0u ||
+      options->segment_count > CNET_RETAINED_VECTOR_MAX) return SALTS_EINVAL;
+  cnet_client_send_input input = {.retained_slices = options->segments,
+      .segment_count = options->segment_count, .close_after_send = options->close_after_send,
+      .complete = options->complete, .user = options->user, .out_operation = out_operation,
+      .out_limit = out_limit};
+  for (size_t i = 0u; i < options->segment_count; ++i) {
+    if (!cnet_client_slice_canonical(&options->segments[i])) return SALTS_EINVAL;
+    if (options->segments[i].length > SIZE_MAX - input.size) return SALTS_ERANGE;
+    input.size += options->segments[i].length;
+  }
+  if (input.size > impl->max_send_bytes) return SALTS_EMSGSIZE;
+  return cnet_client_send_admit(impl, connection, &input);
+}
+
+int cnet_client_send_usage(cnet_client *client, cnet_connection connection,
+                            cnet_send_usage *out) {
+  cnet_client_impl *impl = cnet_client_get(client);
+  cnet_shard_connection internal = {0};
+  if (out == NULL) return SALTS_EINVAL;
+  *out = (cnet_send_usage){0};
+  if (impl == NULL) return SALTS_EINVAL;
+  if (impl->owner_thread != cmeta_thread_current_token()) return SALTS_EPERM;
+  if (connection.slot == 0u && connection.generation == 0u) { *out = impl->send_usage; return SALTS_OK; }
+  cnet_client_record *record = cnet_client_find_record(impl, connection, &internal);
+  if (record == NULL) return SALTS_ENOENT;
+  *out = record->send_usage;
+  return SALTS_OK;
+}
+
+int cnet_client_set_send_admission(cnet_client *client,
+                                   const cnet_send_admission_policy *policy) {
+  cnet_client_impl *impl = cnet_client_get(client);
+  if (impl == NULL || policy == NULL ||
+      (policy->evaluate == NULL && policy->user != NULL)) return SALTS_EINVAL;
+  if (impl->owner_thread != cmeta_thread_current_token()) return SALTS_EPERM;
+  if (cnet_active_callback_client == impl || impl->poll_active || impl->stop_active)
+    return SALTS_EBUSY;
+  if (!impl->admission_open) return SALTS_ESHUTDOWN;
+  impl->send_admission = *policy;
+  return SALTS_OK;
 }
 
 int cnet_send_slice(cnet_client *client, cnet_connection connection,
@@ -2156,8 +2365,9 @@ int cnet_client_destroy(cnet_client *client) {
   status = cnet_shards_destroy(&impl->shards);
   if (status != SALTS_OK) return status;
   cmeta_mutex_destroy(&impl->control_lock);
-  free(impl->records);
-  free(impl);
+  cnet_storage_free(impl->sends);
+  cnet_storage_free(impl->records);
+  cnet_storage_free(impl);
   client->impl = NULL;
   return cnet_module_shutdown();
 }
@@ -2249,7 +2459,7 @@ int cnet_websocket_transport_init(cnet_websocket_transport *transport,
     return SALTS_ERANGE;
   if (configuration->max_frame_bytes + CNET_WEBSOCKET_MAX_HEADER_BYTES > impl->max_send_bytes)
     return SALTS_EMSGSIZE;
-  bridge = (cnet_ws_transport_impl *)calloc(1u, sizeof(*bridge));
+  bridge = (cnet_ws_transport_impl *)cnet_storage_alloc(&impl->resources.storage, 1u, sizeof(*bridge));
   if (bridge == NULL) return SALTS_ENOMEM;
   bridge->client = client;
   bridge->connection = connection;
@@ -2262,7 +2472,7 @@ int cnet_websocket_transport_init(cnet_websocket_transport *transport,
   config.on_event = cnet_ws_event;
   config.user = bridge;
   status = cnet_websocket_init_tagged(&bridge->websocket, &config, policy);
-  if (status != SALTS_OK) { free(bridge); return status; }
+  if (status != SALTS_OK) { cnet_storage_free(bridge); return status; }
   record->ws_transport = bridge;
   transport->impl = bridge;
   return SALTS_OK;
@@ -2297,7 +2507,7 @@ int cnet_websocket_transport_destroy(cnet_websocket_transport *transport) {
   if (!bridge->terminal || bridge->pending || bridge->submitting) return SALTS_EBUSY;
   status = cnet_websocket_destroy(&bridge->websocket);
   if (status != SALTS_OK) return status;
-  free(bridge);
+  cnet_storage_free(bridge);
   transport->impl = NULL;
   return SALTS_OK;
 }
