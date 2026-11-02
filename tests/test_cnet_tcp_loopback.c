@@ -836,8 +836,13 @@ static int observe_external_one(native_io_backend *backend, native_io_completion
  * native borrow, but CNet still retains its request/backing until routing.
  * Round 0 holds a real successful send terminal across close/cancel; round 1
  * cancels a genuinely pending receive, then holds that cancellation terminal.
- * Neither path may destroy early, publish twice, or close the borrowed backend. */
-static int saltscore_native_entry_test_cnet_external_cancel_drain(void) {
+ * The separate prefix case holds one real native vector terminal for a still
+ * incomplete logical write. Close must discard its unsent ranges after routing.
+ * No path may destroy early, publish twice, or close the borrowed backend. */
+static int saltscore_native_entry_test_cnet_external_cancel_drain(bool prefix_only) {
+  enum { PREFIX_SEGMENTS = NATIVE_IO_VECTOR_MAX + 1u, PREFIX_SEGMENT_BYTES = 512u,
+         PREFIX_STRIDE = PREFIX_SEGMENT_BYTES + 3u,
+         PREFIX_BYTES = PREFIX_SEGMENTS * PREFIX_SEGMENT_BYTES };
   cnet_client client = {0};
   cnet_listener listener = {0};
   native_io_backend backend = {0};
@@ -851,17 +856,22 @@ static int saltscore_native_entry_test_cnet_external_cancel_drain(void) {
   native_io_completion held = {0}, stale = {0};
   native_io_backend_stats stats = {0};
   mem_buffer_t *pending = NULL;
+  mem_slice_t ranges[PREFIX_SEGMENTS] = {{0}};
+  size_t range_count = 0u;
+  unsigned char prefix_received[PREFIX_BYTES];
   test_socket peer = TEST_INVALID_SOCKET;
   struct sockaddr_in remote = {0};
   const unsigned char expected[] = {0x31u, 0x72u, 0xa4u, 0xffu};
   unsigned char received[sizeof(expected)] = {0};
   uint16_t port = 0u;
   size_t events = 0u, count = 0u;
+  uint64_t submitted_before_route = 0u;
   bool consumed = false, held_live = false;
   int client_live = 0, listener_live = 0, backend_live = 0;
   int ready = 0, result = 0;
 
   config.connection_capacity = 1u;
+  if (prefix_only) config.max_send_bytes = PREFIX_BYTES;
   VERIFY(cnet_listener_init(&listener, &listener_config) == SALTS_OK);
   listener_live = 1;
   VERIFY(cnet_listener_port(&listener, &port) == SALTS_OK && port != 0u);
@@ -873,7 +883,7 @@ static int saltscore_native_entry_test_cnet_external_cancel_drain(void) {
   remote.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
   remote.sin_port = htons(port);
 
-  for (unsigned round = 0u; round < 2u; ++round) {
+  for (unsigned round = prefix_only ? 2u : 0u; round < (prefix_only ? 3u : 2u); ++round) {
     probe = (tcp_probe){0};
     peer = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
     VERIFY(peer != TEST_INVALID_SOCKET);
@@ -890,20 +900,40 @@ static int saltscore_native_entry_test_cnet_external_cancel_drain(void) {
       mem_set_used(pending, sizeof(expected));
       VERIFY(cnet_send_buffer(&client, connection, pending) == SALTS_OK);
       VERIFY(mem_buffer_ref_count(pending) == 2u);
-    } else {
+    } else if (round == 1u) {
       VERIFY(connection.slot == previous.slot && connection.generation != previous.generation);
       VERIFY(cnet_receive(&client, connection, 1u) == SALTS_OK);
+    } else {
+      /* More nonadjacent ranges than one native vector can hold force a real
+       * prefix completion even when IOCP buffers each submitted write in full.
+       * No kernel short write or injected completion is needed for this race. */
+      VERIFY(PREFIX_SEGMENTS <= CNET_RETAINED_VECTOR_MAX);
+      pending = mem_get_buffer(mem_global(), PREFIX_SEGMENTS * PREFIX_STRIDE);
+      VERIFY(pending != NULL);
+      mem_set_used(pending, PREFIX_SEGMENTS * PREFIX_STRIDE);
+      for (size_t i = 0u; i < PREFIX_SEGMENTS; ++i) {
+        for (size_t j = 0u; j < PREFIX_SEGMENT_BYTES; ++j)
+          mem_buffer_data(pending)[i * PREFIX_STRIDE + j] =
+              (char)(((i * PREFIX_SEGMENT_BYTES + j) * 29u + 3u) & 0xffu);
+        ranges[i] = mem_slice(pending, i * PREFIX_STRIDE, PREFIX_SEGMENT_BYTES);
+        VERIFY(ranges[i].buffer == pending && ranges[i].length == PREFIX_SEGMENT_BYTES);
+        ++range_count;
+      }
+      VERIFY(cnet_send_slicev(&client, connection, ranges, range_count) == SALTS_OK);
+      for (size_t i = 0u; i < range_count; ++i) mem_slice_release(&ranges[i]);
+      range_count = 0u;
+      VERIFY(mem_buffer_ref_count(pending) == 2u);
     }
     VERIFY(cnet_client_advance_external(&client, &events) == SALTS_OK);
     VERIFY(cnet_client_external_request_snapshots(&client, connection,
                                                   requests, 4u, &count) == SALTS_OK);
     VERIFY(count == 1u && requests[0].operation_kind ==
-           (round == 0u ? NATIVE_IO_OPERATION_STREAM_SEND : NATIVE_IO_OPERATION_STREAM_RECV));
-    if (round == 0u) {
+           (round == 1u ? NATIVE_IO_OPERATION_STREAM_RECV : NATIVE_IO_OPERATION_STREAM_SEND));
+    if (round != 1u) {
       VERIFY(observe_external_one(&backend, &held) == SALTS_OK);
       held_live = true;
       VERIFY(held.kind == NATIVE_IO_COMPLETION_OK && held.status == SALTS_OK &&
-             held.bytes == sizeof(expected));
+             (round == 0u ? held.bytes == sizeof(expected) : held.bytes > 0u && held.bytes < PREFIX_BYTES));
       VERIFY(held.request.slot == requests[0].request.slot &&
              held.request.generation == requests[0].request.generation);
       VERIFY(native_io_backend_get_stats(&backend, &stats));
@@ -923,7 +953,7 @@ static int saltscore_native_entry_test_cnet_external_cancel_drain(void) {
     VERIFY(probe.terminal == 0u && probe.sent == 0u && probe.failed == 0u);
     VERIFY(cnet_client_stop_external(&client) == SALTS_EBUSY);
     VERIFY(cnet_client_destroy(&client) == SALTS_EBUSY);
-    if (round == 0u) {
+    if (round != 1u) {
       VERIFY(mem_buffer_ref_count(pending) == 2u);
     } else {
       VERIFY(observe_external_one(&backend, &held) == SALTS_OK);
@@ -937,12 +967,18 @@ static int saltscore_native_entry_test_cnet_external_cancel_drain(void) {
     VERIFY(probe.terminal == 0u && probe.borrowed_received == 0u);
     VERIFY(cnet_client_stop_external(&client) == SALTS_EBUSY);
     VERIFY(cnet_client_destroy(&client) == SALTS_EBUSY);
+    VERIFY(native_io_backend_get_stats(&backend, &stats));
+    submitted_before_route = stats.submitted;
     {
       const int status = cnet_client_route_external_completion(&client, &held, &consumed, &events);
       held_live = !consumed;
       VERIFY(status == SALTS_OK);
     }
     VERIFY(consumed);
+    if (round == 2u) {
+      VERIFY(native_io_backend_get_stats(&backend, &stats));
+      VERIFY(stats.submitted == submitted_before_route && stats.active_requests == 0u);
+    }
     if (probe.failed != 0u || probe.terminal != 1u ||
         probe.sent != (round == 0u ? 1u : 0u))
       fprintf(stderr, "external close round %u: terminal=%u failed=%u sent=%u status=%d\n",
@@ -950,10 +986,16 @@ static int saltscore_native_entry_test_cnet_external_cancel_drain(void) {
     VERIFY(probe.terminal == 1u && probe.failed == 0u &&
            probe.sent == (round == 0u ? 1u : 0u) &&
            probe.sends_at_terminal == probe.sent && probe.borrowed_received == 0u);
-    if (round == 0u) {
+    if (round != 1u) {
       VERIFY(mem_buffer_ref_count(pending) == 1u);
-      VERIFY(test_recv_exact(peer, received, sizeof(received)) == 0);
-      VERIFY(memcmp(received, expected, sizeof(expected)) == 0);
+      if (round == 0u) {
+        VERIFY(test_recv_exact(peer, received, sizeof(received)) == 0);
+        VERIFY(memcmp(received, expected, sizeof(expected)) == 0);
+      } else {
+        VERIFY(test_recv_exact(peer, prefix_received, held.bytes) == 0);
+        for (size_t i = 0u; i < held.bytes; ++i)
+          VERIFY(prefix_received[i] == (unsigned char)((i * 29u + 3u) & 0xffu));
+      }
       mem_buffer_release(pending);
       pending = NULL;
       stale = held;
@@ -987,6 +1029,7 @@ static int saltscore_native_entry_test_cnet_external_cancel_drain(void) {
   listener_live = 0;
 
 cleanup:
+  for (size_t i = 0u; i < range_count; ++i) mem_slice_release(&ranges[i]);
   test_close_socket(peer);
   if (client_live) {
     const uint64_t deadline = cmeta_monotonic_ms() + 3000u;
@@ -2123,8 +2166,12 @@ spec("CNet real TCP loopback and retained slice") {
     check(result == 0, "native send backpressure returned %d", result);
   }
   it("holds external close obligations until real success or cancellation completions are routed") {
-    const int result = saltscore_native_entry_test_cnet_external_cancel_drain();
+    const int result = saltscore_native_entry_test_cnet_external_cancel_drain(false);
     check(result == 0, "native external cancellation drain returned %d", result);
+  }
+  it("closes after an observed vector prefix without submitting its unsent remainder") {
+    const int result = saltscore_native_entry_test_cnet_external_cancel_drain(true);
+    check(result == 0, "native observed-prefix close returned %d", result);
   }
   it("drains large retained noncontiguous TCP ranges in FIFO order through final send and FIN") {
     const int result = saltscore_native_entry_test_cnet_kernel_pressure(false);

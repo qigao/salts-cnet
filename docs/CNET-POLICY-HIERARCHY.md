@@ -10,6 +10,7 @@ CI #169. Pipe policy admission and POSIX FIFO transfer merged in PR #166 after
 CI #171. Fixed 1/2/4-Owner SG cohosting/isolation merged in PR #167 after CI #173.
 Mixed SG-owned/CNet terminal routing merged in PR #168 after CI #175.
 Large-vector POSIX kernel-pressure tests are pending their own exact-head CI.
+An observed-vector-prefix close regression fix is also pending qualification.
 The rest of M2 and M3 remain open in
 [SaltsCore #156](https://github.com/qigao/salts-core/issues/156).
 Baseline: SaltsCore master bc070affca0afbc5cad6e060b9c60a7a22abad10,
@@ -556,6 +557,23 @@ it does not require or claim short writes or kernel-pressure cancellation on
 IOCP. No synthetic short completion, private descriptor mutation or alternate
 backend is used. These new cases are pending exact-head CI; POSIX pressure and
 cancellation have not been locally executed on Windows.
+
+The next close-ordering regression holds a real NativeIO vector prefix terminal
+before requesting CNet close. Seventeen nonadjacent retained ranges exceed the
+existing sixteen-span NativeIO submission bound, so the observed native terminal
+is a strict prefix of the logical write even on IOCP. This is bounded vector
+submission, not a synthetic short completion or a Windows kernel-pressure claim.
+
+Previously, routing that held success after close resubmitted the logical
+remainder and left the connection open. A closed plain-stream logical write now
+settles its unsent remainder as cancelled after accounting for the real prefix;
+it admits no more native work and emits no successful logical send. A fully
+completed logical write still reports its send before close. TLS ciphertext
+retains its separate record/shutdown drain behavior. The regression checks the
+unchanged native submission count, retained backing and EBUSY stop/destroy before
+routing, one clean terminal, exact peer prefix followed immediately by FIN,
+released backing and rejected replay. It failed before the fix and passed locally
+on Windows afterward; its own exact-head cross-platform CI remains pending.
 
 **Nonclaim:** each successful matrix qualifies only its tested slice. Android
 x64/ARM64 jobs build the SDK without device runtime tests. Windows kernel
