@@ -8,7 +8,8 @@ after CI #163/#164. The external close/completion regression fix merged in
 PR #164 after CI #167. Local IPC admission/transfer merged in PR #165 after
 CI #169. Pipe policy admission and POSIX FIFO transfer merged in PR #166 after
 CI #171. Fixed 1/2/4-Owner SG cohosting/isolation merged in PR #167 after CI #173.
-Mixed SG-owned/CNet terminal routing tests are pending their own exact-head CI.
+Mixed SG-owned/CNet terminal routing merged in PR #168 after CI #175.
+Large-vector POSIX kernel-pressure tests are pending their own exact-head CI.
 The rest of M2 and M3 remain open in
 [SaltsCore #156](https://github.com/qigao/salts-core/issues/156).
 Baseline: SaltsCore master bc070affca0afbc5cad6e060b9c60a7a22abad10,
@@ -447,6 +448,7 @@ write amplification, retained bytes and fair shutdown evidence.
 | Detached local IPC ownership, capacity rejection, retained request/final reply and accept drain | #165 `2f80ccf2cb29f61d768218b7a194175ebcf1de71` | [CI #169](https://github.com/qigao/salts-core/actions/runs/41404951972), ten LLVM jobs passed |
 | Pipe TCP-policy rejection and native FIFO/named-pipe retained transfer | #166 `1d26cd1439c77061abfca3242455089bae437539` | [CI #171](https://github.com/qigao/salts-core/actions/runs/41408786504), ten LLVM jobs passed |
 | Fixed 1/2/4-Owner SG cohosting, bulk/control isolation and host-lease drain | #167 `74e405472109280ae621d0bc2bea350aec18c6d2` | [CI #173](https://github.com/qigao/salts-core/actions/runs/41415636265), ten LLVM jobs passed |
+| Mixed SG-owned/CNet terminals, owned receive cancellation and error-batch drain | #168 `0b4d781d14c3e2deb185537842be7ab4543e2025` | [CI #175](https://github.com/qigao/salts-core/actions/runs/41419975647), ten LLVM jobs passed |
 
 PR #161 extends the existing `saltscore.cnet_tcp_loopback`
 TinyTest/CTest against production `Salts::CNet`: one Manager/Pool connection
@@ -516,7 +518,7 @@ destruction. These tests passed the exact-head matrix above. They prove
 composition and teardown isolation; latency fairness, saturation behavior and
 mixed SG-owned completion routing require separate evidence.
 
-The next source slice adds mixed-ownership variants to those same 1/2/4-Owner
+PR #168 adds mixed-ownership variants to those same 1/2/4-Owner
 cases. Each Owner attaches one real UDP endpoint to its SG backend and admits
 an owned receive while its two external CNet clients transfer TCP data. The
 native peer supplies the exact byte. A second owned receive is cancelled while
@@ -533,11 +535,30 @@ receives and final close must still drain. The unknown event is an injected
 negative, not a completion claimed to come from the kernel. All real completions
 are observed once through the host lease. SG-owned storage remains live until
 finalization, the endpoint is closed/released after both terminals, and clients
-are destroyed before host release and runtime destruction. This slice is pending
-its own exact-head CI and does not qualify scheduler fairness or kernel pressure.
+are destroyed before host release and runtime destruction. This slice passed
+the exact-head matrix above and does not qualify scheduler fairness or kernel pressure.
+
+The next source slice sends an 8-MiB logical vector using four nonadjacent ranges
+from one immutable retained backing, followed by a one-byte FIFO tail. The peer
+pauses reading with a configured finite receive buffer; the sender has a small
+SO_SNDBUF. On POSIX the test requires at least one real short NativeIO write and
+then a pending send with no logical send/close callback. Resuming nonblocking
+peer reads on the same host must deliver every byte exactly once, followed by
+the final tail and FIN. A POSIX cancellation variant queues an ordinary tail
+(final admission seals public close), explicitly closes during the pending
+write, and checks EBUSY stop/destroy and retained backing until the actual native
+terminal is routed. Stale replay cannot settle it twice.
+
+Windows loopback may buffer the entire overlapped write despite small configured
+socket buffers. Its large-vector case therefore holds that real full terminal
+before routing and checks retained backing, exact bytes, FIFO callbacks and FIN;
+it does not require or claim short writes or kernel-pressure cancellation on
+IOCP. No synthetic short completion, private descriptor mutation or alternate
+backend is used. These new cases are pending exact-head CI; POSIX pressure and
+cancellation have not been locally executed on Windows.
 
 **Nonclaim:** each successful matrix qualifies only its tested slice. Android
-x64/ARM64 jobs build the SDK without device runtime tests. Forced partial writes,
-kernel backpressure, other cancellation orderings,
+x64/ARM64 jobs build the SDK without device runtime tests. Windows kernel
+backpressure/short-write cancellation, other cancellation orderings,
 fixed SG multi-Owner fairness, DTLS/SCTP, adaptive batching and per-connection
 stream deadlines retain separate gates. Keep M2/M3 independent. Track exact HEAD.

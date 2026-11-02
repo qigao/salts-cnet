@@ -31,6 +31,13 @@ static int test_recv_timeout(test_socket s) {
   DWORD timeout = 4000;
   return setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, (const char *)&timeout, sizeof(timeout));
 }
+static int test_nonblocking(test_socket s) {
+  u_long enabled = 1u;
+  return ioctlsocket(s, FIONBIO, &enabled);
+}
+static bool test_would_block(void) {
+  return WSAGetLastError() == WSAEWOULDBLOCK;
+}
 #else
 #  include <errno.h>
 #  include <fcntl.h>
@@ -49,6 +56,13 @@ static void test_close_socket(test_socket s) {
 static int test_recv_timeout(test_socket s) {
   struct timeval timeout = {4, 0};
   return setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
+}
+static int test_nonblocking(test_socket s) {
+  const int flags = fcntl(s, F_GETFL, 0);
+  return flags < 0 ? -1 : fcntl(s, F_SETFL, flags | O_NONBLOCK);
+}
+static bool test_would_block(void) {
+  return errno == EAGAIN || errno == EWOULDBLOCK;
 }
 #endif
 
@@ -1005,6 +1019,242 @@ cleanup:
   return result;
 }
 
+/* One host owns client/backend and a native peer. Four nonadjacent ranges
+ * share one immutable backing; a final byte follows in the two-slot FIFO.
+ * The peer pauses reads until a real native send stalls. The backing stays
+ * retained until successful drain or until close's actual terminal is routed.
+ * POSIX must report a short native write. IOCP may buffer the whole write;
+ * hold that actual terminal until the retained-backing checks finish instead.
+ * Peer reads resume nonblocking on this same host, without a second observer. */
+enum { PRESSURE_SEGMENTS = 4, PRESSURE_SEGMENT_BYTES = 2 * 1024 * 1024,
+       PRESSURE_BYTES = PRESSURE_SEGMENTS * PRESSURE_SEGMENT_BYTES, PRESSURE_GAP = 67 };
+
+static unsigned char pressure_byte(size_t offset) {
+  return (unsigned char)((offset * 29u + (offset / PRESSURE_SEGMENT_BYTES) * 17u + 3u) & 0xffu);
+}
+
+static int saltscore_native_entry_test_cnet_kernel_pressure(bool cancel) {
+  cnet_client client = {0};
+  cnet_listener listener = {0};
+  native_io_backend backend = {0};
+  cnet_client_config config = client_config();
+  const native_io_backend_config backend_config = {backend_kind(), 2u, 4u, 4u};
+  const cnet_listener_config listener_config = {backend_kind(), "127.0.0.1", 0u, 2u};
+  tcp_probe probe = {0};
+  const cnet_observer observer = {on_state, on_borrowed, &probe, on_sent};
+  cnet_connection connection = {0};
+  native_io_backend_stats stats = {0};
+  cnet_external_request_snapshot requests[4] = {{0}};
+  native_io_completion held = {0};
+  mem_buffer_t *bulk = NULL, *final = NULL;
+  mem_slice_t ranges[PRESSURE_SEGMENTS] = {{0}};
+  test_socket peer = TEST_INVALID_SOCKET;
+  struct sockaddr_in remote = {0};
+  unsigned char received[65536];
+  uint16_t port = 0u;
+  uint64_t send_buffer = 0u, deadline;
+  size_t events = 0u, count = 0u, range_count = 0u, native_bytes = 0u, peer_bytes = 0u;
+  bool consumed = false, held_live = false, stalled = false, buffered = false, eof = false;
+  int client_live = 0, listener_live = 0, backend_live = 0, ready = 0, result = 0;
+  int peer_buffer = 65536;
+
+  config.connection_capacity = 1u;
+  config.command_capacity = 2u;
+  config.max_send_bytes = PRESSURE_BYTES;
+  VERIFY(cnet_listener_init(&listener, &listener_config) == SALTS_OK);
+  listener_live = 1;
+  VERIFY(cnet_listener_port(&listener, &port) == SALTS_OK && port != 0u);
+  VERIFY(cnet_listener_tcp_option_set(&listener, CNET_TCP_SOCKET_SEND_BUFFER_BYTES, 4096u) == SALTS_OK);
+  VERIFY(cnet_listener_tcp_option_set(&listener, CNET_TCP_SOCKET_NODELAY, 1u) == SALTS_OK);
+  VERIFY(native_io_backend_init(&backend, &backend_config) == SALTS_OK);
+  backend_live = 1;
+  VERIFY(cnet_client_init_external(&client, &config, &backend) == SALTS_OK);
+  client_live = 1;
+  peer = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+  VERIFY(peer != TEST_INVALID_SOCKET);
+  /* Pin a finite receive window before connect; loopback autotuning can
+   * otherwise absorb even this large write without a paused-peer stall. */
+  VERIFY(setsockopt(peer, SOL_SOCKET, SO_RCVBUF, (const char *)&peer_buffer,
+                     (int)sizeof(peer_buffer)) == 0);
+  remote.sin_family = AF_INET;
+  remote.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+  remote.sin_port = htons(port);
+  VERIFY(connect(peer, (const struct sockaddr *)&remote, (int)sizeof(remote)) == 0);
+  VERIFY(cnet_listener_wait(&listener, 5000u, &ready) == SALTS_OK && ready == 1);
+  VERIFY(cnet_listener_accept(&listener, &client, &observer, &connection) == SALTS_OK);
+  VERIFY(cnet_client_advance_external(&client, &events) == SALTS_OK);
+  VERIFY(probe.connected == 1u && probe.failed == 0u);
+  VERIFY(cnet_connection_tcp_option_get(&client, connection, CNET_TCP_SOCKET_SEND_BUFFER_BYTES,
+                                         &send_buffer) == SALTS_OK);
+  VERIFY(send_buffer != 0u && send_buffer < PRESSURE_BYTES);
+
+  bulk = mem_get_buffer(mem_global(), PRESSURE_BYTES + PRESSURE_SEGMENTS * PRESSURE_GAP);
+  final = mem_get_buffer(mem_global(), 1u);
+  VERIFY(bulk != NULL && final != NULL);
+  mem_set_used(bulk, PRESSURE_BYTES + PRESSURE_SEGMENTS * PRESSURE_GAP);
+  for (size_t i = 0u; i < PRESSURE_SEGMENTS; ++i) {
+    const size_t offset = i * (PRESSURE_SEGMENT_BYTES + PRESSURE_GAP);
+    for (size_t j = 0u; j < PRESSURE_SEGMENT_BYTES; ++j)
+      mem_buffer_data(bulk)[offset + j] = (char)pressure_byte(i * PRESSURE_SEGMENT_BYTES + j);
+    ranges[i] = mem_slice(bulk, offset, PRESSURE_SEGMENT_BYTES);
+    VERIFY(ranges[i].buffer == bulk && ranges[i].length == PRESSURE_SEGMENT_BYTES);
+    ++range_count;
+  }
+  VERIFY(cnet_send_slicev(&client, connection, ranges, range_count) == SALTS_OK);
+  for (size_t i = 0u; i < range_count; ++i) mem_slice_release(&ranges[i]);
+  range_count = 0u;
+  *mem_buffer_data(final) = (char)0xee;
+  mem_set_used(final, 1u);
+  /* A final-send admission seals public close too. The cancellation case
+   * therefore queues an ordinary tail, which explicit close may discard. */
+  VERIFY((cancel ? cnet_send_buffer(&client, connection, final)
+                 : cnet_send_buffer_and_close(&client, connection, final)) == SALTS_OK);
+  VERIFY(mem_buffer_ref_count(bulk) == 2u && mem_buffer_ref_count(final) == 2u);
+
+  /* No peer reads yet. A short native completion advances only its prefix;
+   * the timeout gate requires one still-active NativeIO send, not a full queue. */
+  deadline = cmeta_monotonic_ms() + 5000u;
+  while (!stalled && cmeta_monotonic_ms() < deadline) {
+    VERIFY(cnet_client_advance_external(&client, &events) == SALTS_OK);
+    count = 0u;
+    const int status = native_io_backend_observe(&backend, &held, 1u, 1u, &count);
+    held_live = count == 1u;
+    VERIFY(status == SALTS_OK || status == SALTS_ETIMEDOUT);
+    if (held_live) {
+      VERIFY(held.kind == NATIVE_IO_COMPLETION_OK && held.status == SALTS_OK && held.bytes > 0u);
+#if defined(_WIN32)
+      if (held.bytes == PRESSURE_BYTES - native_bytes) {
+        buffered = true;
+        break; /* Full IOCP terminal is held, not a Windows pressure claim. */
+      }
+#endif
+      VERIFY(held.bytes < PRESSURE_BYTES - native_bytes);
+      native_bytes += held.bytes;
+      const int routed = cnet_client_route_external_completion(&client, &held, &consumed, &events);
+      held_live = !consumed;
+      VERIFY(routed == SALTS_OK && consumed);
+    } else if (status == SALTS_ETIMEDOUT) stalled = true;
+    VERIFY(probe.sent == 0u && probe.terminal == 0u && probe.failed == 0u);
+    VERIFY(mem_buffer_ref_count(bulk) == 2u && mem_buffer_ref_count(final) == 2u);
+  }
+  VERIFY((stalled || buffered) && native_bytes < PRESSURE_BYTES);
+#if !defined(_WIN32)
+  VERIFY(native_bytes > 0u); /* An actual short sendmsg/writev terminal. */
+#endif
+  VERIFY(cnet_client_external_request_snapshots(&client, connection, requests, 4u, &count) == SALTS_OK);
+  VERIFY(count == 1u && requests[0].operation_kind == NATIVE_IO_OPERATION_STREAM_SEND);
+  VERIFY(native_io_backend_get_stats(&backend, &stats));
+  VERIFY(stats.active_requests == (buffered ? 0u : 1u) && stats.endpoint_count == 1u && stats.admission_open);
+  VERIFY(probe.sent == 0u && probe.terminal == 0u && probe.failed == 0u);
+  VERIFY(mem_buffer_ref_count(bulk) == 2u && mem_buffer_ref_count(final) == 2u);
+
+  if (cancel) {
+    VERIFY(cnet_close(&client, connection) == SALTS_OK);
+    VERIFY(cnet_client_advance_external(&client, &events) == SALTS_OK);
+    VERIFY(probe.sent == 0u && probe.terminal == 0u && probe.failed == 0u);
+    VERIFY(mem_buffer_ref_count(bulk) == 2u);
+    VERIFY(cnet_client_stop_external(&client) == SALTS_EBUSY);
+    VERIFY(cnet_client_destroy(&client) == SALTS_EBUSY);
+    VERIFY(observe_external_one(&backend, &held) == SALTS_OK);
+    held_live = true;
+    VERIFY((held.kind == NATIVE_IO_COMPLETION_CANCELLED && held.status == SALTS_ECANCELED &&
+             held.bytes == 0u) ||
+             (held.kind == NATIVE_IO_COMPLETION_OK && held.status == SALTS_OK &&
+              held.bytes > 0u && held.bytes < PRESSURE_BYTES - native_bytes));
+    VERIFY(mem_buffer_ref_count(bulk) == 2u && probe.terminal == 0u);
+    const int routed = cnet_client_route_external_completion(&client, &held, &consumed, &events);
+    held_live = !consumed;
+    VERIFY(routed == SALTS_OK && consumed);
+    VERIFY(probe.sent == 0u && probe.terminal == 1u && probe.failed == 0u);
+    VERIFY(cnet_client_route_external_completion(&client, &held, &consumed, &events) == SALTS_OK);
+    VERIFY(!consumed && probe.terminal == 1u && probe.sent == 0u);
+  } else {
+    VERIFY(test_nonblocking(peer) == 0);
+    if (held_live) {
+      native_bytes += held.bytes;
+      const int routed = cnet_client_route_external_completion(&client, &held, &consumed, &events);
+      held_live = !consumed;
+      VERIFY(routed == SALTS_OK && consumed);
+    }
+    deadline = cmeta_monotonic_ms() + 15000u;
+    while ((!eof || probe.terminal == 0u) && cmeta_monotonic_ms() < deadline) {
+      VERIFY(cnet_client_advance_external(&client, &events) == SALTS_OK);
+      count = 0u;
+      const int status = native_io_backend_observe(&backend, &held, 1u, 0u, &count);
+      held_live = count == 1u;
+      VERIFY(status == SALTS_OK || status == SALTS_ETIMEDOUT);
+      if (held_live) {
+        VERIFY(held.kind == NATIVE_IO_COMPLETION_OK && held.status == SALTS_OK && held.bytes > 0u);
+        VERIFY(held.bytes <= PRESSURE_BYTES + 1u - native_bytes);
+        native_bytes += held.bytes;
+        const int routed = cnet_client_route_external_completion(&client, &held, &consumed, &events);
+        held_live = !consumed;
+        VERIFY(routed == SALTS_OK && consumed);
+      }
+      for (size_t pass = 0u; !eof && pass < 64u; ++pass) {
+        const int bytes = recv(peer, (char *)received, (int)sizeof(received), 0);
+        if (bytes < 0) { VERIFY(test_would_block()); break; }
+        if (bytes == 0) { eof = true; break; }
+        VERIFY((size_t)bytes <= PRESSURE_BYTES + 1u - peer_bytes);
+        for (int i = 0; i < bytes; ++i) {
+          const size_t offset = peer_bytes + (size_t)i;
+          VERIFY(received[i] == (offset < PRESSURE_BYTES ? pressure_byte(offset) : 0xeeu));
+        }
+        peer_bytes += (size_t)bytes;
+      }
+      VERIFY(probe.failed == 0u);
+    }
+    VERIFY(eof && peer_bytes == PRESSURE_BYTES + 1u && native_bytes == PRESSURE_BYTES + 1u);
+    VERIFY(probe.sent == 2u && probe.send_sizes[0] == PRESSURE_BYTES && probe.send_sizes[1] == 1u &&
+             probe.terminal == 1u && probe.sends_at_terminal == 2u && probe.failed == 0u);
+  }
+  VERIFY(mem_buffer_ref_count(bulk) == 1u && mem_buffer_ref_count(final) == 1u);
+  test_close_socket(peer);
+  peer = TEST_INVALID_SOCKET;
+  VERIFY(cnet_client_stop_external(&client) == SALTS_OK);
+  VERIFY(cnet_client_destroy(&client) == SALTS_OK);
+  client_live = 0;
+  VERIFY(native_io_backend_get_stats(&backend, &stats));
+  VERIFY(stats.active_requests == 0u && stats.endpoint_count == 0u && stats.admission_open);
+  VERIFY(native_io_backend_close(&backend) == SALTS_OK);
+  VERIFY(native_io_backend_destroy(&backend) == SALTS_OK);
+  backend_live = 0;
+  VERIFY(cnet_listener_close(&listener) == SALTS_OK);
+  VERIFY(cnet_listener_destroy(&listener) == SALTS_OK);
+  listener_live = 0;
+
+cleanup:
+  test_close_socket(peer);
+  if (client_live) {
+    const uint64_t cleanup_deadline = cmeta_monotonic_ms() + 3000u;
+    if (held_live) (void)cnet_client_route_external_completion(&client, &held, &consumed, &events);
+    if (connection.slot != 0u) (void)cnet_close(&client, connection);
+    while (cmeta_monotonic_ms() < cleanup_deadline) {
+      native_io_completion completions[4];
+      const int stopped = cnet_client_stop_external(&client);
+      if (stopped == SALTS_OK || stopped == SALTS_EALREADY) break;
+      (void)cnet_client_advance_external(&client, &events);
+      count = 0u;
+      (void)native_io_backend_observe(&backend, completions, 4u, 10u, &count);
+      for (size_t i = 0u; i < count; ++i)
+        (void)cnet_client_route_external_completion(&client, &completions[i], &consumed, &events);
+    }
+    (void)cnet_client_destroy(&client);
+  }
+  for (size_t i = 0u; i < range_count; ++i) mem_slice_release(&ranges[i]);
+  if (bulk) mem_buffer_release(bulk);
+  if (final) mem_buffer_release(final);
+  if (backend_live) {
+    (void)native_io_backend_close(&backend);
+    (void)native_io_backend_destroy(&backend);
+  }
+  if (listener_live) {
+    (void)cnet_listener_close(&listener);
+    (void)cnet_listener_destroy(&listener);
+  }
+  return result;
+}
+
 static int progress_ipc_pair(cnet_ipc_listener *listener, cnet_client *client,
                              cnet_client *server) {
   size_t events = 0u;
@@ -1876,6 +2126,16 @@ spec("CNet real TCP loopback and retained slice") {
     const int result = saltscore_native_entry_test_cnet_external_cancel_drain();
     check(result == 0, "native external cancellation drain returned %d", result);
   }
+  it("drains large retained noncontiguous TCP ranges in FIFO order through final send and FIN") {
+    const int result = saltscore_native_entry_test_cnet_kernel_pressure(false);
+    check(result == 0, "native kernel-pressure drain returned %d", result);
+  }
+#if !defined(_WIN32)
+  it("holds a POSIX kernel-stalled retained vector until close's real completion is routed") {
+    const int result = saltscore_native_entry_test_cnet_kernel_pressure(true);
+    check(result == 0, "native kernel-pressure cancellation returned %d", result);
+  }
+#endif
   it("adopts local IPC once, consumes rejected children and drains retained request/reply") {
     const int result = saltscore_native_entry_test_cnet_ipc_lifetime(false);
     check(result == 0, "native IPC lifetime returned %d", result);
