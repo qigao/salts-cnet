@@ -54,15 +54,15 @@ independent M5 static Crypto Owner TLS1.2/1.3 and M6 two-plugin shared DSO
 cases do **not** establish that production CNet has fully switched to
 Crypto TLS/TLCP. That is tracked separately in Issue #81.
 
-The opaque Crypto TLS v1.0 interface has no authenticated
-`peer_close_notify` observation. The test-only
-`cnet_tls_crypto_qualification.c` shutdown adapter uses the current
-three-output CNet contract but always reports the reciprocal peer-authenticated
-notification as **false** until a real Crypto API supplies verified evidence.
-A local alert, `CRYPTO_TLS_CLOSED`, and raw transport EOF are not substitutes
-for this. A green M5/M6 test-only configuration must **not** be promoted to
-production reciprocal TLS shutdown/close correctness without the independent
-#81 close/cancel/peer-alert gates.
+The additive opaque Crypto TLS v1.4 `crypto/tls_close.h` provides a
+read-only, authenticated reciprocal peer `close_notify` signal. The private
+GmSSL adapter reports it **only** after TLS1.2 MAC or TLS1.3 AEAD validation
+and parsing of the peer's actual alert. The test-only CNet adapter continues
+to read buffered close ciphertext after it sends its own alert. TCP EOF,
+local output, fatal alerts and `CRYPTO_TLS_CLOSED` alone are NOT evidence.
+The independent Issue #152 owns the complete negative shutdown/cancel gate.
+A green M5/M6 test-only graph does not imply full public production CNet TLS
+provider cutover.
 
 For real source-tree acceptance inside the **existing** native project,
 after setting the required vcpkg/LLVM environment used by the CI presets:
@@ -76,14 +76,13 @@ cmake --build --preset ci-native
 ctest --preset ci-native --output-on-failure
 ```
 
-The existing LLVM CI has a **workflow_dispatch** boolean
-`cnet_crypto_optional`, which enables this genuine M5/M6 qualification on
-Linux x64 using the committed certificate fixtures. Ordinary pull requests
-keep the optional duplicate source-built CNet test graph OFF, because the
-underlying Crypto TLS v1.0 engine cannot yet prove authenticated reciprocal
-`close_notify` (Issue #81). On a manual run, all real native and M5/M6 CTest
-entries remain active and fail on a genuine error; nothing is silently
-`DISABLED`, marked `WILL_FAIL`, or considered accepted from a build-only pass.
+The existing Linux x64 native CI now enables the real M5/M6 tests **on every
+PR/push** using the committed certificate fixtures; there is no new workflow,
+probe job, test harness or fake-green skip. Every original CNet Owner and
+two-plugin DSO CTest remains active and must pass. The native LLVM matrix,
+sanitizers and per-platform tests are otherwise unchanged. Keep the semantic
+negative alert/EOF/cancellation acceptance in Issue #152 until separately
+proved, not inferred from a default CI success.
 Python independent-peer mTLS/SAN options still require their own exact-head
 acceptance and are not production correctness claims.
 

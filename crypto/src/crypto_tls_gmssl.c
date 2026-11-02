@@ -5,6 +5,7 @@
 #include <crypto/tls_ext.h>
 #include <crypto/tls_peer.h>
 #include <crypto/tls_auth.h>
+#include <crypto/tls_close.h>
 #include <gmssl/tls.h>
 #include <gmssl/x509_cer.h>
 
@@ -581,6 +582,35 @@ crypto_tls_result crypto_tls_session_shutdown(crypto_tls_session *s)
         status = map_backend_result(tls_shutdown(&s->connection));
         if (atomic_load_explicit(&s->cancelled, memory_order_acquire))
             status = CRYPTO_TLS_CANCELLED;
+    }
+    unlock_session(s);
+    return status;
+}
+
+uint32_t crypto_tls_close_abi_version(void)
+{
+    return CRYPTO_TLS_CLOSE_ABI_VERSION;
+}
+
+crypto_tls_result crypto_tls_session_peer_close_notify_v1_4(
+    crypto_tls_session *s, uint32_t *out_received)
+{
+    crypto_tls_result status;
+    if (!out_received) return CRYPTO_TLS_INVALID_ARGUMENT;
+    status = lock_session(s);
+    if (status != CRYPTO_TLS_OK) return status;
+    if (atomic_load_explicit(&s->cancelled, memory_order_acquire)) {
+        status = CRYPTO_TLS_CANCELLED;
+    } else {
+        /* This flag is set by GmSSL ONLY while handling a successfully
+         * authenticated/decrypted TLS 1.2 or 1.3 peer alert. Never derive
+         * evidence from a local send, return code, TCP EOF or shutdown_state.
+         * completed_handshake also rejects unverified client authentication.
+         */
+        status = completed_handshake(s);
+        if (status == CRYPTO_TLS_OK) {
+            *out_received = s->connection.close_notify_received == 1 ? 1u : 0u;
+        }
     }
     unlock_session(s);
     return status;
