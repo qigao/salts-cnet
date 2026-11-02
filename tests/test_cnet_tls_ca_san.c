@@ -846,10 +846,13 @@ static int run_python_ssl_client(const char *port_path,
   const bool expect_local_peer_close = strcmp(outcome, "localclose") == 0;
   const bool expect_final_send_close = strcmp(outcome, "sendclose") == 0;
   const bool expect_gated_receive = strcmp(outcome, "gated") == 0;
+  const bool expect_invalid_close = strcmp(outcome, "eof") == 0 ||
+      strcmp(outcome, "truncated") == 0 || strcmp(outcome, "badalert") == 0 ||
+      strcmp(outcome, "fatal") == 0;
   const bool should_verify =
       strcmp(outcome, "accept") == 0 || expect_idle_read_timeout ||
       expect_orderly_close || expect_local_peer_close ||
-      expect_final_send_close || expect_gated_receive;
+      expect_final_send_close || expect_gated_receive || expect_invalid_close;
   cnet_client server = {0};
   cnet_listener listener = {0};
   cnet_tls_server tls_server = {0};
@@ -991,13 +994,34 @@ static int run_python_ssl_client(const char *port_path,
     /* A successful app echo cannot substitute for reciprocal close_notify
      * or for exact NativeIO request retirement. */
     if (should_verify && !expect_orderly_close && !expect_local_peer_close &&
-        !expect_final_send_close &&
+        !expect_final_send_close && !expect_invalid_close &&
         response_sent && probe.sent_count) break;
     if (probe.terminal_count) break;
   }
 
   REQUIRE(accepted);
-  if (expect_orderly_close || expect_local_peer_close || expect_final_send_close) {
+  if (probe.failed || probe.connected_count != 1u) {
+    fprintf(stderr, "CNET_TLS_TERMINAL protocol=%s expected=%s connected=%u "
+                    "terminal=%u failed=%u status=%d stage=%s received=%u sent=%u\n",
+            protocol, outcome, probe.connected_count, probe.terminal_count,
+            probe.failed, probe.last_error_status, probe.failure_stage,
+            probe.received_count, probe.sent_count);
+  }
+  if (expect_invalid_close) {
+    REQUIRE(armed && probe.connected_count == 1u);
+    REQUIRE(probe.received_count == 1u && probe.received_byte == 0x46u);
+    REQUIRE(response_sent && probe.sent_count == 1u);
+    REQUIRE(probe.terminal_count == 1u && probe.failed == 1u);
+    REQUIRE(probe.last_connection_state == CNET_CONNECTION_FAILED);
+    REQUIRE(probe.last_error_status == SALTS_ECONNABORTED ||
+            probe.last_error_status == SALTS_EPROTO);
+    REQUIRE(strcmp(probe.failure_stage, "read") == 0);
+    for (unsigned index = 0u; index < 2u; ++index) {
+      REQUIRE(cnet_client_poll(&server, 0u, &events) == SALTS_OK);
+      REQUIRE(probe.terminal_count == 1u);
+      REQUIRE(probe.received_count == 1u && probe.sent_count == 1u);
+    }
+  } else if (expect_orderly_close || expect_local_peer_close || expect_final_send_close) {
     /* Python ssl.unwrap() requires a real authenticated reciprocal
      * close_notify for both explicit cnet_close and retained final send.
      * TCP EOF, SEND callback or local ciphertext flush are insufficient.
@@ -1069,8 +1093,9 @@ cleanup:
     (void)cnet_listener_destroy(&listener);
   }
   if (server_live) {
-    (void)cnet_client_stop(&server, 5000u);
-    (void)cnet_client_destroy(&server);
+    const int stop_status = cnet_client_stop(&server, 5000u);
+    const int destroy_status = cnet_client_destroy(&server);
+    if (stop_status != SALTS_OK || destroy_status != SALTS_OK) result = 1;
   }
   if (tls_live) (void)cnet_tls_server_destroy(&tls_server);
   if (result == 0)

@@ -3,13 +3,14 @@
     {
       "kind": "git",
       "repository": "https://github.com/qigao/vcpkg-cache",
-      "reference": "v0.1.0",
-      "baseline": "05a10d73a5b1d01598e59d8cf34074513bd49df4",
+      "reference": "fix/gmssl-tls12-negotiation",
+      "baseline": "a561c4c3179331e2f2cf3c68c6116cfb9e3db00b",
       "packages": [
         "aklomp-base64",
         "c-ares",
         "zstd",
-        "gmssl"
+        "gmssl",
+        "vcpkg-make"
       ]
     }
   ]

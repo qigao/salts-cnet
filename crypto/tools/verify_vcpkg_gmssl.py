@@ -13,12 +13,12 @@ import os
 from pathlib import Path
 import sys
 
-# qigao/vcpkg-cache PR #214, merged as d2ce09ebd3cf127338eea5c8d87a588aeb9d127c
+# qigao/vcpkg-cache: TLS 1.2 range negotiation and RSA-PSS verification.
 # The complete port tree, not just a manifest/portfile hash.
-EXPECTED_PORT_TREE = "9eee73ae12ad32e499425f8cc28b740c5f84d89e"
+EXPECTED_PORT_TREE = "3b06c785649c2cd632c319375e9bc08e53296b39"
 EXPECTED_FILES = {
-    "portfile.cmake": "e9d5fa752330900fdfe0525744e14c35cc62633d",
-    "vcpkg.json": "c5346f31c9c335c4b9923da95098cfa1654958fc",
+    "portfile.cmake": "ed1bf21ebbdd8a3f0b45277a2298f8559f498da9",
+    "vcpkg.json": "9beb2f5922fad3460ce4ffd7c976d4b961e635ae",
     "GmSSLConfig.cmake": "6539349471a849b4d613cbb9b1f05cd6ece313d1",
 }
 
@@ -71,9 +71,9 @@ def verify_port(port: Path) -> None:
             raise ValueError(f"incorrect source-controlled GmSSL file: {name}")
     manifest = json.loads((port / "vcpkg.json").read_text(encoding="utf-8"))
     if (manifest.get("name"), manifest.get("version"), manifest.get("port-version")) != (
-        "gmssl", "3.2.0", 17
+        "gmssl", "3.2.0", 18
     ):
-        raise ValueError("require exact GmSSL 3.2.0#17 from qigao/vcpkg-cache")
+        raise ValueError("require exact GmSSL 3.2.0#18 from qigao/vcpkg-cache")
 
 
 def verify_installed(prefix: Path) -> None:
@@ -101,7 +101,7 @@ def main() -> int:
     except (OSError, ValueError, json.JSONDecodeError) as error:
         print(f"FAIL GmSSL port source ownership: {error}", file=sys.stderr)
         return 1
-    print(f"PASS GmSSL 3.2.0#17: immutable full port tree {EXPECTED_PORT_TREE}")
+    print(f"PASS GmSSL 3.2.0#18: immutable full port tree {EXPECTED_PORT_TREE}")
     if args.prefix is not None:
         print("PASS installed GmSSL static input " + str(args.prefix))
     return 0

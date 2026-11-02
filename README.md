@@ -68,7 +68,7 @@ See [architecture](docs/ARCHITECTURE.md) for ownership and migration gates.
 The default graph builds the whole CNet transport source tree, including the
 original IPC FIFO, peer index and native-path changes. Production CNet links
 the first-party static `Salts::Crypto` facade and the **separately installed**
-vcpkg `GmSSL::GmSSL` static library (GmSSL 3.2.0#17). No local native GmSSL
+vcpkg `GmSSL::GmSSL` static library (GmSSL 3.2.0#18). No local native GmSSL
 source mirror is compiled into `Salts::Crypto`; Ed448 remains first-party
 under `crypto/vendor/libecc/`. CNet is the single production DSO owner of the
 linked native TLS implementation; two independently loaded plugins must import
@@ -115,15 +115,17 @@ synthetic consumer or installer projects. With `BUILD_TESTING=OFF`,
 production-only consumers may explicitly disable the TinyTest library.
 
 The checked-in vcpkg manifest declares GmSSL and CNet dependencies directly.
-The shared cache Actions use published `qigao/vcpkg-cache@v0.1.0` and the
-custom registry selects `reference: v0.1.0`. vcpkg requires a 40-hex Git
-`baseline`, which is pinned to the commit tagged by this release
-(`05a10d73a5b1d01598e59d8cf34074513bd49df4`); this is the required registry schema, not a second
-infrastructure version. GmSSL 3.2.0#17 remains pinned to its original
-source and exact Git port tree. Binary-cache ABIs are still verified
-independently of the Action release version.
-The unified LLVM workflow builds and tests the native graph; the migration
-remains Draft until the **same exact HEAD** passes its complete checks.
+Compiler/host-data Actions use published `qigao/vcpkg-cache@v0.1.0`.
+The dependency setup Action is pinned to `a561c4c3179331e2f2cf3c68c6116cfb9e3db00b`,
+which supplies native Windows pkg-config and preserves `PKG_CONFIG` in vcpkg's
+port environment. The manifest requests `pkgconf` only on non-Windows targets;
+Windows uses that native host tool without acquiring pkg-config from MSYS2.
+The custom registry selects `reference: fix/gmssl-tls12-negotiation` and
+pins baseline `a561c4c3179331e2f2cf3c68c6116cfb9e3db00b`. GmSSL 3.2.0#18
+adds TLS 1.2 range negotiation and RSA-PSS verification; its complete port
+tree is pinned in the Crypto source lock. The pinned vcpkg-make helper also
+excludes MSYS pkgconf from its Windows autotools bundle and requires the
+configured native PKG_CONFIG. These dependency updates are under review.
 
 An unavailable dependency fails configuration, without substituting another
 TLS provider or an implicit transport fallback. Local source ownership does

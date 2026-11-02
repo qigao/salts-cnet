@@ -27,6 +27,85 @@ CASES = ("client", "missing", "wrongca", "eku", "expired", "chain", "badsig")
 VERSION = {"12": "TLSv1.2", "13": "TLSv1.3"}
 
 
+def rejected_close_exchange(ctx, raw, proto: str, mode: str) -> None:
+    """Authenticated exchange followed by an invalid TLS shutdown.
+
+    MemoryBIO retains the actual OpenSSL record encryption, so corrupting or
+    truncating unwrap's output tests a real encrypted close_notify record.
+    """
+    incoming, outgoing = ssl.MemoryBIO(), ssl.MemoryBIO()
+    peer = ctx.wrap_bio(incoming, outgoing, server_hostname="localhost")
+
+    def flush() -> None:
+        while outgoing.pending:
+            raw.sendall(outgoing.read())
+
+    def receive() -> None:
+        wire = raw.recv(16384)
+        if not wire:
+            raise AssertionError("native closed before authenticated exchange")
+        incoming.write(wire)
+
+    while True:
+        try:
+            peer.do_handshake()
+            flush()
+            break
+        except ssl.SSLWantReadError:
+            flush()
+            receive()
+    if peer.version() != VERSION[proto] or not peer.getpeercert():
+        raise AssertionError("negative-close peer must authenticate first")
+    if peer.write(b"F") != 1:
+        raise AssertionError("missing authenticated request")
+    flush()
+    while True:
+        try:
+            if peer.read(1) != b"G":
+                raise AssertionError("missing authenticated response")
+            break
+        except ssl.SSLWantReadError:
+            receive()
+
+    if mode in ("truncated", "badalert"):
+        try:
+            peer.unwrap()
+        except ssl.SSLWantReadError:
+            pass
+        alert = bytearray(outgoing.read())
+        if len(alert) <= 5:
+            raise AssertionError("OpenSSL did not encrypt close_notify")
+        if mode == "truncated":
+            del alert[-1]
+        else:
+            alert[-1] ^= 1  # Invalid MAC/AEAD tag, never authenticated consent.
+        raw.sendall(alert)
+    elif mode == "fatal":
+        # Make OpenSSL emit a genuine encrypted fatal bad_record_mac alert
+        # under the negotiated client keys; no plaintext alert injection.
+        incoming.write(b"\x17\x03\x03\x00\x20" + bytes(32))
+        try:
+            peer.read(1)
+        except ssl.SSLError as exc:
+            if isinstance(exc, (ssl.SSLWantReadError, ssl.SSLWantWriteError)):
+                raise AssertionError("invalid record did not generate a fatal alert") from exc
+        else:
+            raise AssertionError("OpenSSL accepted the unauthenticated record")
+        if not outgoing.pending:
+            raise AssertionError("OpenSSL did not generate encrypted fatal alert")
+        flush()
+    elif mode != "eof":
+        raise AssertionError(f"unknown shutdown failure: {mode}")
+    # Preserve the read half so CNet must retire its own NativeIO requests
+    # and close within the existing socket deadline. EOF is never success.
+    raw.shutdown(socket.SHUT_WR)
+    try:
+        while raw.recv(16384):
+            pass
+    except ConnectionResetError:
+        pass
+
+
 def fragmented_tls13_exchange(
     ctx: ssl.SSLContext, raw: socket.socket, *, coalesced: bool = False
 ) -> None:
@@ -108,15 +187,22 @@ def scenario(
     *, fragmented: bool = False, idle: bool = False,
     orderly_close: bool = False, gated: bool = False,
     coalesced: bool = False, local_close: bool = False,
-    send_close: bool = False,
+    send_close: bool = False, rejected_close: str = "",
 ) -> None:
-    if (idle or orderly_close or gated or coalesced or fragmented or local_close or send_close) and (
+    if (idle or gated or coalesced or fragmented) and (
         proto != "13" or case != "client" or
         sum((idle, orderly_close, gated, coalesced, fragmented,
              local_close, send_close)) != 1
     ):
         raise AssertionError("special TLS1.3 cases require distinct real client credentials")
+    if (orderly_close or local_close or send_close or rejected_close) and (
+        case != "client" or
+        sum((idle, orderly_close, gated, coalesced, fragmented,
+             local_close, send_close, bool(rejected_close))) != 1
+    ):
+        raise AssertionError("close cases require distinct authenticated credentials")
     expected = (
+        rejected_close if rejected_close else
         "sendclose" if send_close else
         "localclose" if local_close else
         "gated" if gated else
@@ -127,6 +213,7 @@ def scenario(
     if fragmented and (proto != "13" or case != "client"):
         raise AssertionError("fragmented ciphertext gate is valid TLS1.3 only")
     suffix = (
+        f"-{rejected_close}" if rejected_close else
         "-sendclose" if send_close else
         "-localclose" if local_close else
         "-gated" if gated else
@@ -148,12 +235,23 @@ def scenario(
         expected_digest = hashlib.sha256(
             certificate.public_bytes(serialization.Encoding.DER)
         ).hexdigest()
-    native = subprocess.Popen(
-        [str(binary), "--python-ssl-client", str(port_path),
-         str(fixtures["ca"]), str(fixtures["server"]),
-         str(fixtures["server-key"]), proto, expected, expected_digest],
-        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
-    )
+    # Certificate rejection can emit more than a Windows pipe buffer.
+    # An unread PIPE blocks the native TLS owner before it can send its
+    # fatal alert; waiting for the peer first creates a false IOCP hang.
+    # Private temporary files collect diagnostics without transport backpressure.
+    native_out = tempfile.TemporaryFile(mode="w+", encoding="utf-8", errors="replace")
+    native_err = tempfile.TemporaryFile(mode="w+", encoding="utf-8", errors="replace")
+    try:
+        native = subprocess.Popen(
+            [str(binary), "--python-ssl-client", str(port_path),
+             str(fixtures["ca"]), str(fixtures["server"]),
+             str(fixtures["server-key"]), proto, expected, expected_digest],
+            stdout=native_out, stderr=native_err,
+        )
+    except BaseException:
+        native_out.close()
+        native_err.close()
+        raise
     failure = None
     phase = "await-native-listen"
     peer_rejected = False
@@ -173,7 +271,11 @@ def scenario(
         with socket.create_connection(("127.0.0.1", port), timeout=8.0) as raw:
             raw.settimeout(9.0)
             try:
-                if fragmented or coalesced:
+                if rejected_close:
+                    phase = f"authenticated-rejected-close-{rejected_close}"
+                    rejected_close_exchange(ctx, raw, proto, rejected_close)
+                    peer_completed = True
+                elif fragmented or coalesced:
                     phase = (
                         "tls13-coalesced-finished-plus-application"
                         if coalesced else
@@ -267,6 +369,8 @@ def scenario(
                             else:
                                 peer_rejected = True
             except (ssl.SSLError, ConnectionError, EOFError):
+                if rejected_close:
+                    raise
                 if expected in ("accept", "close", "gated", "localclose",
                                 "sendclose"):
                     raise
@@ -278,8 +382,8 @@ def scenario(
                     peer_rejected = True
         if expected == "reject" and not peer_rejected:
             raise AssertionError("invalid client was not rejected")
-        if expected in ("accept", "idle", "close", "gated",
-                        "localclose", "sendclose") and not peer_completed:
+        if (rejected_close or expected in ("accept", "idle", "close", "gated",
+                        "localclose", "sendclose")) and not peer_completed:
             raise AssertionError("authenticated peer did not reach required terminal")
     except (socket.timeout, TimeoutError) as exc:
         failure = f"deadline exceeded during {phase}: {type(exc).__name__}"
@@ -287,18 +391,28 @@ def scenario(
         failure = f"{type(exc).__name__} during {phase}: {str(exc)[:300]}"
     finally:
         try:
-            out, err = native.communicate(timeout=12)
+            native.wait(timeout=12)
         except subprocess.TimeoutExpired:
             native.kill()
-            out, err = native.communicate()
+            native.wait()
             failure = failure or "native server retained live owner past deadline"
+        native_out.seek(0)
+        native_err.seek(0)
+        out, err = native_out.read(), native_err.read()
+        native_out.close()
+        native_err.close()
     if failure is not None or native.returncode != 0 or (
         f"PASS production NativeIO CNet server / TLS{proto} / {expected}" not in out
     ):
+        diagnostic = "\n".join(
+            line for line in err.splitlines()
+            if line.startswith(("CNET_", "CNet TLS case"))
+        )
         raise AssertionError(
             f"TLS{proto} {case} failed at {phase}: {failure or ''} "
             f"native_exit={native.returncode} "
-            f"stdout={out[-350:]} stderr={err[-1200:]}"
+            f"stdout={out[-350:]} stderr={diagnostic[-1200:]} "
+            + crypto.safe_native_diagnostic(err.encode("utf-8"))
         )
     print(
         f"PASS independent Python ssl TLS{proto} {case} {expected}"
@@ -324,6 +438,12 @@ def main() -> int:
         private.chmod(0o700)
         fixtures = python_mtls.make_fixtures(private)
         for proto in ("12", "13"):
+            for mode in ("eof", "truncated", "badalert", "fatal"):
+                scenario(args.binary, private, python_mtls, fixtures, proto,
+                         "client", rejected_close=mode)
+            for close_mode in ("orderly_close", "local_close", "send_close"):
+                scenario(args.binary, private, python_mtls, fixtures, proto,
+                         "client", **{close_mode: True})
             if proto == "13":
                 # Qualify the retained NativeIO TLS_READ separately before
                 # the historically intermittent immediate-send case, and
@@ -332,26 +452,6 @@ def main() -> int:
                 scenario(
                     args.binary, private, python_mtls, fixtures, "13", "client",
                     gated=True,
-                )
-                scenario(
-                    args.binary, private, python_mtls, fixtures, "13", "client",
-                    orderly_close=True,
-                )
-                # One real application-initiated local CNet shutdown overlaps
-                # the Python TLS1.3 peer's reciprocal close_notify. The
-                # native CNet test must publish precisely one CLOSED even
-                # if its original NativeIO TLS_READ cancellation races a
-                # completion. This is NOT an EOF-only success check.
-                scenario(
-                    args.binary, private, python_mtls, fixtures, "13", "client",
-                    local_close=True,
-                )
-                # Final retained application send (not explicit cnet_close)
-                # must also complete a two-way TLS1.3 close_notify. Python's
-                # unwrap() rejects an early TCP teardown on Windows as well.
-                scenario(
-                    args.binary, private, python_mtls, fixtures, "13", "client",
-                    send_close=True,
                 )
                 # Before the immediate-send case, force the real encrypted
                 # ClientFinished+ApplicationData to arrive in a single

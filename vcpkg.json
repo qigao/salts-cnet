@@ -17,11 +17,6 @@
         {
           "name": "libjpeg-turbo",
           "platform": "windows"
-        },
-        {
-          "name": "pkgconf",
-          "host": true,
-          "platform": "linux"
         }
       ]
     },
@@ -40,10 +35,6 @@
     "usb": {
       "description": "Private libusb provider for the native USB module",
       "dependencies": [
-        {
-          "name": "pkgconf",
-          "host": true
-        },
         "libusb"
       ]
     },
@@ -54,7 +45,8 @@
   "dependencies": [
     {
       "name": "pkgconf",
-      "host": true
+      "host": true,
+      "platform": "!windows"
     },
     "simde",
     "c-ares",

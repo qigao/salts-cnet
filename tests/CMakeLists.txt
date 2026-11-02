@@ -243,7 +243,10 @@ if(TARGET Salts::CNet)
   target_include_directories(saltscore_gmssl_tls_io_abi_test PRIVATE
     "$<TARGET_PROPERTY:GmSSL::GmSSL,INTERFACE_INCLUDE_DIRECTORIES>")
   target_compile_definitions(saltscore_gmssl_tls_io_abi_test PRIVATE
-    ENABLE_TLS ENABLE_SECP256R1 ENABLE_SECP384R1 ENABLE_SHA1 ENABLE_SHA2 ENABLE_AES)
+    ENABLE_TLS ENABLE_SECP256R1 ENABLE_SECP384R1 ENABLE_SHA1 ENABLE_SHA2 ENABLE_AES
+    "CRYPTO_CLOSE_TEST_CA=\"${PROJECT_SOURCE_DIR}/crypto/tests/fixtures/external-io-ca-cert.pem\""
+    "CRYPTO_CLOSE_TEST_SERVER_CERT=\"${PROJECT_SOURCE_DIR}/crypto/tests/fixtures/external-io-server-cert.pem\""
+    "CRYPTO_CLOSE_TEST_SERVER_KEY=\"${PROJECT_SOURCE_DIR}/crypto/tests/fixtures/external-io-server-key.pem\"")
   add_test(NAME saltscore.gmssl_tls_io_abi COMMAND saltscore_gmssl_tls_io_abi_test)
 
   add_executable(saltscore_gmssl_shangmi_provider_test
@@ -292,8 +295,6 @@ if(TARGET Salts::CNet)
 
   # This is the exact production Salts::CNet target, never the retired
   # second test-only CNet Owner / Crypto adapter.
-  option(SALTSCORE_CNET_PRODUCTION_REQUIRED_MTLS_TEST
-    "Exercise public NativeIO CNet REQUIRED client-certificate auth" OFF)
   if(SALTSCORE_CNET_PRODUCTION_REQUIRED_MTLS_TEST)
     find_package(Python3 COMPONENTS Interpreter REQUIRED)
     add_test(NAME saltscore.cnet_production_required_mtls

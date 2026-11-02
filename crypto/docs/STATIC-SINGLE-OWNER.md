@@ -17,7 +17,7 @@ immutable source-blob hashes, while the vcpkg port compiles them exactly once.
 
 The GmSSL port is pinned through `vcpkg.json`, `vcpkg-configuration.json`
 and the shared `setup-vcpkg-cache` action; the migration's current version
-is **GmSSL 3.2.0#17** at port tree `9eee73ae12ad32e499425f8cc28b740c5f84d89e`.
+is **GmSSL 3.2.0#18** at port tree `3b06c785649c2cd632c319375e9bc08e53296b39`.
 The port restores the previously qualified RFC 5746 TLS12/TLS13
 range secure-hello guard without admitting TLS13-only/TLCP renegotiation.
 
