@@ -176,9 +176,8 @@ jobs:
 
       - name: Set up shared dependency contract
         id: vcpkg
-        # The PR #263 port overlay must match the manifest's pinned registry
-        # GmSSL 3.2.0#17; the older shared action injects #16/#15.
-        uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-cache@v0.1.0
+        # Includes the pinned native Windows pkg-config; avoid MSYS2 for pkg-config.
+        uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-cache@2913c530b8f12ae411e3c180e898fb6c7783462f
         with:
           mode: read
           token: ${{ github.token }}
