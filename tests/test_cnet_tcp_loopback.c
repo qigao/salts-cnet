@@ -31,10 +31,14 @@ static int test_recv_timeout(test_socket s) {
   return setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, (const char *)&timeout, sizeof(timeout));
 }
 #else
+#  include <errno.h>
+#  include <fcntl.h>
+#  include <poll.h>
 #  include <arpa/inet.h>
 #  include <netinet/in.h>
 #  include <sys/socket.h>
 #  include <sys/time.h>
+#  include <sys/stat.h>
 #  include <unistd.h>
 typedef int test_socket;
 #  define TEST_INVALID_SOCKET (-1)
@@ -1013,7 +1017,7 @@ static int progress_ipc_pair(cnet_ipc_listener *listener, cnet_client *client,
  * on POSIX and an overlapped named pipe on Windows. Detachment transfers one
  * resource; failed admission must consume/close it, while the established
  * neighbor survives. Receive demand bounds events without assuming framing. */
-static int saltscore_native_entry_test_cnet_ipc_lifetime(void) {
+static int saltscore_native_entry_test_cnet_ipc_lifetime(bool pipe_dial) {
   cnet_client client = {0}, server = {0};
   cnet_ipc_listener listener = {0};
   cnet_client_config client_cfg = client_config(), server_cfg = client_config();
@@ -1033,7 +1037,7 @@ static int saltscore_native_entry_test_cnet_ipc_lifetime(void) {
   mem_buffer_t *pending = NULL;
   mem_slice_t ranges[2] = {{0}};
   char *directory = NULL;
-  char uri[256];
+  char uri[256], dial_uri[256];
   uint64_t deadline, option_value = UINT64_MAX;
   size_t events = 0u;
   bool stopped = false;
@@ -1054,6 +1058,8 @@ static int saltscore_native_entry_test_cnet_ipc_lifetime(void) {
   VERIFY(snprintf(uri, sizeof(uri), "ipc://%s/peer", directory) > 0);
 #endif
   listener_cfg.uri = uri;
+  VERIFY(snprintf(dial_uri, sizeof(dial_uri), "%s%s",
+                   pipe_dial ? "pipe://" : "ipc://", uri + sizeof("ipc://") - 1u) > 0);
   server_cfg.connection_capacity = 1u;
   VERIFY(cnet_client_init(&client, &client_cfg) == SALTS_OK);
   client_live = 1;
@@ -1062,11 +1068,13 @@ static int saltscore_native_entry_test_cnet_ipc_lifetime(void) {
   VERIFY(cnet_ipc_listener_init(&listener, &listener_cfg) == SALTS_OK);
   listener_live = 1;
   VERIFY(cnet_ipc_listener_advance(&listener, 1u, &events) == SALTS_OK);
-  options.uri = uri;
+  options.uri = dial_uri;
   options.observer = outbound_observer;
-  for (size_t i = 0u; i < sizeof(tcp_only_options) / sizeof(tcp_only_options[0]); ++i) {
+  for (size_t i = 0u; i < 5u; ++i) {
     socket_options = (cnet_stream_socket_options)CNET_STREAM_SOCKET_OPTIONS_INIT;
-    *tcp_only_options[i] = 1;
+    if (i < 3u) *tcp_only_options[i] = 1;
+    else if (i == 3u) socket_options.receive_buffer_bytes = 1024u;
+    else socket_options.send_buffer_bytes = 1024u;
     VERIFY(cnet_client_set_stream_socket_options(&client, &socket_options) == SALTS_OK);
     VERIFY(cnet_connect(&client, &options, &rejected_adoption) == SALTS_ENOTSUP);
     VERIFY(rejected_adoption.slot == 0u && rejected_adoption.generation == 0u);
@@ -1236,6 +1244,157 @@ cleanup:
   return result;
 }
 
+#if !defined(_WIN32)
+static int fifo_peer_read_exact(int descriptor, unsigned char *output, size_t size) {
+  const uint64_t deadline = cmeta_monotonic_ms() + 5000u;
+  size_t done = 0u;
+  while (done < size && cmeta_monotonic_ms() < deadline) {
+    struct pollfd ready = {descriptor, POLLIN, 0};
+    const int status = poll(&ready, 1u, 10);
+    ssize_t bytes;
+    if (status < 0 && errno == EINTR) continue;
+    if (status < 0) return SALTS_EIO;
+    if (status == 0) continue;
+    bytes = read(descriptor, output + done, size - done);
+    if (bytes < 0 && (errno == EINTR || errno == EAGAIN)) continue;
+    if (bytes <= 0) return SALTS_EIO;
+    done += (size_t)bytes;
+  }
+  return done == size ? SALTS_OK : SALTS_ETIMEDOUT;
+}
+
+/* The native peer owns the opposite ends of two real FIFOs. A temporary read
+ * descriptor only lets the peer open .rx before CNet connects; it is closed
+ * immediately and never receives payload. CNet owns .rx read/.tx write for
+ * its whole generation. No AF_UNIX/TCP substitution or vector flattening. */
+static int saltscore_native_entry_test_cnet_fifo_lifetime(void) {
+  cnet_client client = {0};
+  const cnet_client_config config = client_config();
+  tcp_probe probe = {0};
+  cnet_connect_options options = {0};
+  cnet_connection connection = {0}, rejected = {17u, 19u};
+  cnet_stream_socket_options socket_options = CNET_STREAM_SOCKET_OPTIONS_INIT;
+  int *tcp_only_options[] = {&socket_options.nodelay, &socket_options.keepalive,
+                             &socket_options.linger};
+  char *directory = NULL;
+  char base[256], read_path[260], write_path[260], uri[264];
+  int peer_read = -1, peer_write = -1, bootstrap_read = -1;
+  int client_live = 0, result = 0;
+  mem_buffer_t *pending = NULL;
+  mem_slice_t ranges[3] = {{0}};
+  unsigned char received[3] = {0};
+  const unsigned char reply[] = {'a', 'c', 'k'};
+  uint64_t option_value = UINT64_MAX;
+  size_t events = 0u;
+
+  directory = tt_make_temp_dir("cnetfifo");
+  VERIFY(directory != NULL);
+  VERIFY(snprintf(base, sizeof(base), "%s/stream", directory) > 0);
+  VERIFY(snprintf(read_path, sizeof(read_path), "%s.rx", base) > 0);
+  VERIFY(snprintf(write_path, sizeof(write_path), "%s.tx", base) > 0);
+  VERIFY(snprintf(uri, sizeof(uri), "pipe://%s", base) > 0);
+  VERIFY(mkfifo(read_path, 0600) == 0 && mkfifo(write_path, 0600) == 0);
+  peer_read = open(write_path, O_RDONLY | O_NONBLOCK);
+  VERIFY(peer_read >= 0);
+  bootstrap_read = open(read_path, O_RDONLY | O_NONBLOCK);
+  VERIFY(bootstrap_read >= 0);
+  peer_write = open(read_path, O_WRONLY | O_NONBLOCK);
+  VERIFY(peer_write >= 0);
+  VERIFY(close(bootstrap_read) == 0);
+  bootstrap_read = -1;
+  VERIFY(cnet_client_init(&client, &config) == SALTS_OK);
+  client_live = 1;
+  options.uri = uri;
+  options.observer = (cnet_observer){on_state, on_borrowed, &probe, on_sent};
+  for (size_t i = 0u; i < 5u; ++i) {
+    socket_options = (cnet_stream_socket_options)CNET_STREAM_SOCKET_OPTIONS_INIT;
+    if (i < 3u) *tcp_only_options[i] = 1;
+    else if (i == 3u) socket_options.receive_buffer_bytes = 1024u;
+    else socket_options.send_buffer_bytes = 1024u;
+    VERIFY(cnet_client_set_stream_socket_options(&client, &socket_options) == SALTS_OK);
+    VERIFY(cnet_connect(&client, &options, &rejected) == SALTS_ENOTSUP);
+    VERIFY(rejected.slot == 0u && rejected.generation == 0u);
+    VERIFY(probe.connected == 0u && probe.terminal == 0u);
+  }
+  socket_options = (cnet_stream_socket_options)CNET_STREAM_SOCKET_OPTIONS_INIT;
+  VERIFY(cnet_client_set_stream_socket_options(&client, &socket_options) == SALTS_OK);
+  VERIFY(cnet_connect(&client, &options, &connection) == SALTS_OK);
+  VERIFY(poll_until(&client, &probe.connected, 1u) == SALTS_OK);
+  VERIFY(probe.connected == 1u && probe.failed == 0u && probe.terminal == 0u);
+  VERIFY(cnet_connection_tcp_option_get(&client, connection, CNET_TCP_SOCKET_NODELAY,
+                                        &option_value) == SALTS_ENOTSUP);
+  VERIFY(option_value == 0u);
+  VERIFY(cnet_connection_tcp_option_set(&client, connection,
+                                        CNET_TCP_SOCKET_KEEPALIVE_ENABLED, 1u) == SALTS_ENOTSUP);
+  VERIFY(cnet_connection_shutdown(&client, connection, CNET_TCP_SHUTDOWN_SEND) == SALTS_ENOTSUP);
+  pending = mem_get_buffer(mem_global(), 5u);
+  VERIFY(pending != NULL);
+  memcpy(mem_buffer_data(pending), "v-e-c", 5u);
+  mem_set_used(pending, 5u);
+  for (size_t i = 0u; i < 3u; ++i) {
+    ranges[i] = mem_slice(pending, i * 2u, 1u);
+    VERIFY(ranges[i].buffer == pending);
+  }
+  VERIFY(cnet_send_slicev(&client, connection, ranges, 3u) == SALTS_OK);
+  VERIFY(mem_buffer_ref_count(pending) == 5u);
+  for (size_t i = 0u; i < 3u; ++i) mem_slice_release(&ranges[i]);
+  VERIFY(mem_buffer_ref_count(pending) == 2u);
+  mem_buffer_release(pending);
+  pending = NULL;
+  VERIFY(poll_until(&client, &probe.sent, 1u) == SALTS_OK);
+  VERIFY(probe.sent == 1u && probe.last_send_bytes == 3u);
+  VERIFY(fifo_peer_read_exact(peer_read, received, sizeof(received)) == SALTS_OK);
+  VERIFY(memcmp(received, "vec", sizeof(received)) == 0);
+  VERIFY(cnet_receive(&client, connection, sizeof(reply) + 1u) == SALTS_OK);
+  VERIFY(write(peer_write, reply, sizeof(reply)) == (ssize_t)sizeof(reply));
+  VERIFY(poll_until(&client, &probe.borrowed_bytes, sizeof(reply)) == SALTS_OK);
+  VERIFY(probe.borrowed_bytes == sizeof(reply) &&
+         memcmp(probe.borrowed_data, reply, sizeof(reply)) == 0);
+  VERIFY(probe.terminal == 0u && probe.failed == 0u);
+  pending = mem_get_buffer(mem_global(), 3u);
+  VERIFY(pending != NULL);
+  memcpy(mem_buffer_data(pending), "end", 3u);
+  mem_set_used(pending, 3u);
+  VERIFY(cnet_send_buffer_and_close(&client, connection, pending) == SALTS_OK);
+  mem_buffer_release(pending);
+  pending = NULL;
+  VERIFY(poll_until(&client, &probe.terminal, 1u) == SALTS_OK);
+  VERIFY(probe.sent == 2u && probe.sends_at_terminal == 2u &&
+         probe.terminal == 1u && probe.failed == 0u);
+  VERIFY(fifo_peer_read_exact(peer_read, received, sizeof(received)) == SALTS_OK);
+  VERIFY(memcmp(received, "end", sizeof(received)) == 0);
+  VERIFY(read(peer_read, received, 1u) == 0);
+  VERIFY(cnet_client_poll(&client, 0u, &events) == SALTS_OK);
+  VERIFY(probe.sent == 2u && probe.terminal == 1u && probe.failed == 0u);
+  VERIFY(cnet_client_stop(&client, 5000u) == SALTS_OK);
+  VERIFY(cnet_client_destroy(&client) == SALTS_OK);
+  client_live = 0;
+  VERIFY(close(peer_read) == 0);
+  peer_read = -1;
+  VERIFY(close(peer_write) == 0);
+  peer_write = -1;
+  VERIFY(tt_remove_tree(directory) == 0);
+  free(directory);
+  directory = NULL;
+
+cleanup:
+  for (size_t i = 0u; i < 3u; ++i) mem_slice_release(&ranges[i]);
+  if (pending) mem_buffer_release(pending);
+  if (client_live) {
+    (void)cnet_client_stop(&client, 3000u);
+    (void)cnet_client_destroy(&client);
+  }
+  if (bootstrap_read >= 0) (void)close(bootstrap_read);
+  if (peer_read >= 0) (void)close(peer_read);
+  if (peer_write >= 0) (void)close(peer_write);
+  if (directory) {
+    (void)tt_remove_tree(directory);
+    free(directory);
+  }
+  return result;
+}
+#endif
+
 spec("CNet real TCP loopback and retained slice") {
   it("preserves the real owner lifecycle and original failure code") {
     const int result = saltscore_original_entry_test_cnet_tcp_loopback_c();
@@ -1258,7 +1417,15 @@ spec("CNet real TCP loopback and retained slice") {
     check(result == 0, "native external cancellation drain returned %d", result);
   }
   it("adopts local IPC once, consumes rejected children and drains retained request/reply") {
-    const int result = saltscore_native_entry_test_cnet_ipc_lifetime();
+    const int result = saltscore_native_entry_test_cnet_ipc_lifetime(false);
     check(result == 0, "native IPC lifetime returned %d", result);
+  }
+  it("rejects TCP-only pipe policy and drains retained native pipe transfer") {
+#if defined(_WIN32)
+    const int result = saltscore_native_entry_test_cnet_ipc_lifetime(true);
+#else
+    const int result = saltscore_native_entry_test_cnet_fifo_lifetime();
+#endif
+    check(result == 0, "native pipe lifetime returned %d", result);
   }
 }
