@@ -577,7 +577,7 @@ int cnet_connect(cnet_client *client, const cnet_connect_options *options,
   if ((options->tls != NULL || options->tls_client != NULL) && uri.scheme != CNET_URI_TLS)
     return SALTS_EINVAL;
   if (uri.scheme == CNET_URI_TLS && impl->tls_io_buffer_bytes == 0u) return SALTS_ENOTSUP;
-  if (uri.scheme == CNET_URI_IPC &&
+  if ((uri.scheme == CNET_URI_IPC || uri.scheme == CNET_URI_PIPE) &&
       (impl->socket_options.receive_buffer_bytes != 0u || impl->socket_options.send_buffer_bytes != 0u ||
        impl->socket_options.keepalive || impl->socket_options.linger || impl->socket_options.nodelay))
     return SALTS_ENOTSUP;

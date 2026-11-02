@@ -746,6 +746,8 @@ int cnet_stream_socket_options_validate(const cnet_stream_socket_options *option
  * native-socket adoption and direct cnet_listener_accept*() calls preserve
  * the socket's existing live policy, including configured listener options.
  * No active connection may exist while replacing this client-global policy.
+ * IPC/Pipe connection admission rejects enabled TCP-only policy with
+ * SALTS_ENOTSUP; reset it to defaults before connecting those transports.
  */
 int cnet_client_set_stream_socket_options(cnet_client *client,
                                           const cnet_stream_socket_options *options);

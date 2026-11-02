@@ -5,8 +5,9 @@ and TLS retained-transfer slices merged in PRs #159 and #160 after their
 exact-head LLVM CI passed. TCP pool READY/reuse merged in PR #161 after CI #160.
 Bounded send-credit recovery and TLS pool READY/reuse merged in PRs #162/#163
 after CI #163/#164. The external close/completion regression fix merged in
-PR #164 after CI #167. Local IPC admission/transfer tests are source changes
-pending their own exact-head CI. The rest of M2 and M3 remain open in
+PR #164 after CI #167. Local IPC admission/transfer merged in PR #165 after
+CI #169. Pipe policy admission and POSIX FIFO transfer changes are pending
+their own exact-head CI. The rest of M2 and M3 remain open in
 [SaltsCore #156](https://github.com/qigao/salts-core/issues/156).
 Baseline: SaltsCore master bc070affca0afbc5cad6e060b9c60a7a22abad10,
 reconciled with the native-testing merge. This RFC supersedes the earlier
@@ -441,6 +442,7 @@ write amplification, retained bytes and fair shutdown evidence.
 | Bounded send-credit recovery, rejected final-send ownership and stale TCP handles | #162 `6f0183c66737c3a33257145528ddb10c836c45a4` | [CI #163](https://github.com/qigao/salts-core/actions/runs/41398654219), ten LLVM jobs passed |
 | Verified TLS protocol READY, exact security-key reuse and lease/Manager drain | #163 `aeb12701a76c519e3185b4375541126cb7de3d37` | [CI #164](https://github.com/qigao/salts-core/actions/runs/41399822641), ten LLVM jobs passed |
 | External close with observed send/pending receive terminals, retained obligations and stale replay | #164 `e1999a6ff3d5ee05f92a666cd1aa399306f3f4f6` | [CI #167](https://github.com/qigao/salts-core/actions/runs/41402483632), ten LLVM jobs passed |
+| Detached local IPC ownership, capacity rejection, retained request/final reply and accept drain | #165 `2f80ccf2cb29f61d768218b7a194175ebcf1de71` | [CI #169](https://github.com/qigao/salts-core/actions/runs/41404951972), ten LLVM jobs passed |
 
 PR #161 extends the existing `saltscore.cnet_tcp_loopback`
 TinyTest/CTest against production `Salts::CNet`: one Manager/Pool connection
@@ -473,7 +475,7 @@ backend can mean the host already observed the terminal; it must not turn a
 clean close into FAILED or release storage before routing. This fix and its
 production-loopback regression passed the exact-head matrix recorded above.
 
-The next source slice exercises a real local IPC listener with detached
+PR #165 exercises a real local IPC listener with detached
 adoption into production CNet: AF_UNIX sockets on POSIX and overlapped named
 pipes on Windows. A full final Owner must consume/close a rejected detached
 child while its established neighbor still transfers a retained request and
@@ -481,10 +483,20 @@ final reply. TCP-only options and half-shutdown are rejected on IPC. POSIX
 retained vectors are exercised; Windows pipe vectors reject without a retain,
 and its supported buffer-send API is tested separately. Both clients and
 pending listener accepts drain before destruction and caller-owned path cleanup.
-These checks remain pending exact-head CI and do not cover POSIX FIFO pipes.
+These checks passed the exact-head matrix above and do not cover POSIX FIFO pipes.
+
+The next regression applies the same TCP-only policy rejection to `pipe://`
+as to `ipc://`: enabled NODELAY, keepalive, linger and socket buffer overrides
+must fail admission without a partial handle rather than be silently ignored.
+The Windows test dials the real named-pipe endpoint with the Pipe URI; the
+POSIX test owns two actual `.rx`/`.tx` FIFOs and checks a noncontiguous retained
+vector, native peer reply, retained final send, EOF and caller-owned path cleanup.
+Live TCP properties and half-shutdown remain unsupported. These new Pipe checks
+and the admission fix are pending exact-head CI; POSIX FIFO runtime evidence
+cannot be inferred from the local Windows test.
 
 **Nonclaim:** each successful matrix qualifies only its tested slice. Android
 x64/ARM64 jobs build the SDK without device runtime tests. Forced partial writes,
-kernel backpressure, other cancellation orderings, POSIX FIFO pipes,
+kernel backpressure, other cancellation orderings,
 fixed SG multi-Owner fairness, DTLS/SCTP, adaptive batching and per-connection
 stream deadlines retain separate gates. Keep M2/M3 independent. Track exact HEAD.
