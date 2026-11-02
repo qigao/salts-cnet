@@ -4,8 +4,9 @@
 and TLS retained-transfer slices merged in PRs #159 and #160 after their
 exact-head LLVM CI passed. TCP pool READY/reuse merged in PR #161 after CI #160.
 Bounded send-credit recovery and TLS pool READY/reuse merged in PRs #162/#163
-after CI #163/#164. External close/completion routing has a regression fix
-pending its own exact-head CI. The rest of M2 and M3 remain open in
+after CI #163/#164. The external close/completion regression fix merged in
+PR #164 after CI #167. Local IPC admission/transfer tests are source changes
+pending their own exact-head CI. The rest of M2 and M3 remain open in
 [SaltsCore #156](https://github.com/qigao/salts-core/issues/156).
 Baseline: SaltsCore master bc070affca0afbc5cad6e060b9c60a7a22abad10,
 reconciled with the native-testing merge. This RFC supersedes the earlier
@@ -439,6 +440,7 @@ write amplification, retained bytes and fair shutdown evidence.
 | TCP protocol READY, exact-key pool reuse, lease/context drain and stale identities | #161 `df14a884033c951fb45bb24f11d420d541213f7f` | [CI #160](https://github.com/qigao/salts-core/actions/runs/41396782017), ten LLVM jobs passed |
 | Bounded send-credit recovery, rejected final-send ownership and stale TCP handles | #162 `6f0183c66737c3a33257145528ddb10c836c45a4` | [CI #163](https://github.com/qigao/salts-core/actions/runs/41398654219), ten LLVM jobs passed |
 | Verified TLS protocol READY, exact security-key reuse and lease/Manager drain | #163 `aeb12701a76c519e3185b4375541126cb7de3d37` | [CI #164](https://github.com/qigao/salts-core/actions/runs/41399822641), ten LLVM jobs passed |
+| External close with observed send/pending receive terminals, retained obligations and stale replay | #164 `e1999a6ff3d5ee05f92a666cd1aa399306f3f4f6` | [CI #167](https://github.com/qigao/salts-core/actions/runs/41402483632), ten LLVM jobs passed |
 
 PR #161 extends the existing `saltscore.cnet_tcp_loopback`
 TinyTest/CTest against production `Salts::CNet`: one Manager/Pool connection
@@ -461,7 +463,7 @@ or kernel send-buffer pressure. PR #163 separately checks application READY and
 two request/reply leases over one verified TLS connection, with stable peer
 fingerprint, exact security-key rejection and clean terminal/recycle.
 
-The next regression holds a real NativeIO send completion across CNet close,
+PR #164 holds a real NativeIO send completion across CNet close,
 then cancels a pending receive and holds that real cancellation completion.
 One host thread observes; CNet must retain each request/backing and reject
 stop/destroy until the matching completion is routed. Replayed completions
@@ -469,10 +471,20 @@ cannot settle a reused connection/request, and CNet must leave the borrowed
 backend open after its own destroy. NativeIO cancellation ENOENT on a borrowed
 backend can mean the host already observed the terminal; it must not turn a
 clean close into FAILED or release storage before routing. This fix and its
-production-loopback regression remain pending exact-head cross-platform CI.
+production-loopback regression passed the exact-head matrix recorded above.
+
+The next source slice exercises a real local IPC listener with detached
+adoption into production CNet: AF_UNIX sockets on POSIX and overlapped named
+pipes on Windows. A full final Owner must consume/close a rejected detached
+child while its established neighbor still transfers a retained request and
+final reply. TCP-only options and half-shutdown are rejected on IPC. POSIX
+retained vectors are exercised; Windows pipe vectors reject without a retain,
+and its supported buffer-send API is tested separately. Both clients and
+pending listener accepts drain before destruction and caller-owned path cleanup.
+These checks remain pending exact-head CI and do not cover POSIX FIFO pipes.
 
 **Nonclaim:** each successful matrix qualifies only its tested slice. Android
 x64/ARM64 jobs build the SDK without device runtime tests. Forced partial writes,
-kernel backpressure, other cancellation orderings, IPC/Pipe,
+kernel backpressure, other cancellation orderings, POSIX FIFO pipes,
 fixed SG multi-Owner fairness, DTLS/SCTP, adaptive batching and per-connection
 stream deadlines retain separate gates. Keep M2/M3 independent. Track exact HEAD.
