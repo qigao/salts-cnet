@@ -81,6 +81,8 @@ typedef struct cnet_manager_snapshot {
  * allocates all records up front. EINVAL for invalid/versioned input, ERANGE for
  * size/identity overflow, ENOMEM on allocation failure, EALREADY for live wrapper.
  * Failure leaves the zero wrapper unchanged. Does not reserve CNet capacity.
+ * Must initialize on the borrowed client's fixed Owner; another thread returns
+ * EPERM before storage allocation or publishing a Manager implementation.
  */
 int cnet_manager_init(cnet_manager *manager, const cnet_manager_config *config);
 

@@ -122,6 +122,12 @@ static cnet_client_impl *cnet_client_get(cnet_client *client) {
   return impl != NULL && impl == cnet_active_policy_client ? NULL : impl;
 }
 
+int cnet_client_check_owner(cnet_client *client) {
+  cnet_client_impl *impl = cnet_client_get(client);
+  if (impl == NULL) return SALTS_EINVAL;
+  return impl->owner_thread == cmeta_thread_current_token() ? SALTS_OK : SALTS_EPERM;
+}
+
 static bool cnet_power_of_two(size_t value) { return value != 0u && (value & (value - 1u)) == 0u; }
 
 static bool cnet_client_config_valid(const cnet_client_config *config) {

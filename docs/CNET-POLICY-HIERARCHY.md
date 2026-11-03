@@ -209,6 +209,16 @@ recycle still drain normally. A live-transport control case admits READY, resets
 the episode and completes a real request/reply. Cross-platform qualification
 follows the exact-head formal CI result.
 
+### Manager initialization Owner
+
+Manager initialization must execute on its borrowed client's fixed Owner. A live
+client wrapper alone is insufficient: a foreign thread receives `EPERM` before
+the Manager storage provider runs or an implementation is published. Manager
+progress and transport callbacks therefore share the same Owner from admission.
+The formal real TCP phase case attempts foreign-thread initialization with a
+counting allocator, requires zero allocations and an unpublished wrapper, then
+continues real traffic and teardown on the original client Owner.
+
 ### Multi-connection pool policy composition
 
 Pool acquisition copies its protocol callback/user binding before entering

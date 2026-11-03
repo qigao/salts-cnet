@@ -1,6 +1,7 @@
 #include "cnet_resources.h"
 #include "cnet_manager_internal.h"
 #include "cnet_reuse.h"
+#include "cnet_client_internal.h"
 #include <cnet/manager.h>
 #include <thread.h>
 #include <stdatomic.h>
@@ -110,6 +111,7 @@ static cnet_observer bridge(manager_record *record) {
 int cnet_manager_init(cnet_manager *manager, const cnet_manager_config *config) {
   manager_impl *impl;
   uint_fast64_t incarnation;
+  int status;
   if (manager == NULL || config == NULL) return SALTS_EINVAL;
   if (manager->impl != NULL) return SALTS_EALREADY;
   if (!cnet_allocator_valid(&config->storage) || config->size != sizeof(*config) || config->version != CNET_MANAGER_VERSION ||
@@ -117,6 +119,8 @@ int cnet_manager_init(cnet_manager *manager, const cnet_manager_config *config) 
       config->connection_capacity == 0u || config->connection_capacity > config->record_capacity)
     return SALTS_EINVAL;
   if (config->record_capacity > SIZE_MAX / sizeof(manager_record)) return SALTS_ERANGE;
+  status = cnet_client_check_owner(config->client);
+  if (status != SALTS_OK) return status;
   impl = cnet_storage_alloc(&config->storage, 1u, sizeof(*impl));
   if (impl == NULL) return SALTS_ENOMEM;
   impl->records = cnet_storage_alloc(&config->storage, config->record_capacity, sizeof(*impl->records));
