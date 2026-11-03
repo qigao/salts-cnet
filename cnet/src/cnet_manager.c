@@ -1,4 +1,5 @@
 #include "cnet_resources.h"
+#include "cnet_manager_internal.h"
 #include <cnet/manager.h>
 #include <thread.h>
 #include <stdatomic.h>
@@ -36,6 +37,12 @@ static int get_manager(cnet_manager *manager, manager_impl **out) {
   if (manager == NULL || manager->impl == NULL) return SALTS_EINVAL;
   *out = manager->impl;
   return (*out)->thread == cmeta_thread_current_token() ? SALTS_OK : SALTS_EPERM;
+}
+int cnet_manager_validate_client(cnet_manager *manager, cnet_client *client) {
+  manager_impl *impl;
+  int status = get_manager(manager, &impl);
+  if (status != SALTS_OK) return status;
+  return impl->client == client ? SALTS_OK : SALTS_EINVAL;
 }
 static manager_record *find_record(manager_impl *impl, cnet_managed_connection id) {
   manager_record *record;

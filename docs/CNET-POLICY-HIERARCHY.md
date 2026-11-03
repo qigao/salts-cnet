@@ -200,6 +200,33 @@ Manager attachments recycle once. This qualifies the generic host token
 contract, not HTTP multiplexing, MQTT QoS, a scheduler fairness or throughput
 claim. Cross-platform qualification follows the exact-head formal CI result.
 
+### ManagedDial client ownership and admission
+
+ManagedDial checks both Manager connection credits and attachment records before
+calling host admission or consuming an attempt. A cancelled/terminal record
+returns its connection credit before its context hold and deferred recycle end.
+If those records fill the table, `advance` returns `ENOBUFS` with zero wait and
+leaves the recovery generation, attempt budget and seal state unchanged. Releasing
+the hold alone is insufficient; the host must also advance Manager recycle.
+The formal TCP case holds the sole cancelled record through both phases, then
+recycles it and completes a real Dial connection and protocol exchange.
+
+ManagedDial borrows the exact client wrapper used to initialize its Manager.
+Both init variants reject a different wrapper with `EINVAL` before allocating
+storage or invoking admission. A shared Owner thread or matching connection
+slot/generation does not establish client identity: connect and close must
+reach the same client. The host keeps both borrowed wrappers live until Dial
+destruction and continues their existing progress/recycle loop.
+
+The formal TCP loopback suite uses two clients with overlapping public handle
+values and real native peers. It checks allocation-free mismatch rejection,
+admission deferral without consuming an attempt, callback reentry rejection,
+explicit protocol READY after transport connection and a real peer greeting,
+and idempotent seal. Dial destruction remains busy through transport terminal
+until Manager recycle; destroying that Dial and its client leaves the neighbor
+able to complete another request/reply. Cross-platform qualification follows
+the exact-head formal CI result.
+
 ### CMeta integration above Core
 
 `qigao/cmeta` supplies the optional `<cmeta/cnet_policy.h>` adapter. It exposes
