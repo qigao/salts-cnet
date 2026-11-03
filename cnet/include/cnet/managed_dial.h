@@ -85,7 +85,11 @@ int cnet_managed_dial_advance(cnet_managed_dial *dial, uint64_t now_ms,
  * protocol authentication/handshake/admission is READY. CONNECTED alone
  * never resets backoff or grants application replay. Obtain the current
  * snapshot.recovery_ticket after observing CONNECTED; copy it unchanged.
- * Zero/stale/future attempt tickets fail closed (ENOENT/EALREADY). */
+ * Zero/stale/future attempt tickets fail closed (ENOENT/EALREADY).
+ * Requires the current transport to remain OPEN: opening/handshaking returns
+ * EBUSY; admitted close, FINAL send, directional shutdown, stopped client or
+ * Manager request_close returns ESHUTDOWN before changing recovery accounting.
+ * A rejected READY does not replace transport terminal or Manager recycle. */
 int cnet_managed_dial_protocol_ready(cnet_managed_dial *dial,
                                      cnet_reconnect_ticket ticket,
                                      uint64_t now_ms);

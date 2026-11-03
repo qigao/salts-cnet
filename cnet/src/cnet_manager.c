@@ -1,5 +1,6 @@
 #include "cnet_resources.h"
 #include "cnet_manager_internal.h"
+#include "cnet_reuse.h"
 #include <cnet/manager.h>
 #include <thread.h>
 #include <stdatomic.h>
@@ -281,6 +282,15 @@ int cnet_manager_lookup(cnet_manager *manager, cnet_managed_connection id,
   status = get_record(manager, id, &impl, &record);
   if (status == SALTS_OK) entry_for(record, out);
   return status;
+}
+int cnet_manager_reuse_status(cnet_manager *manager, cnet_managed_connection id) {
+  manager_impl *impl;
+  manager_record *record;
+  int status = get_record(manager, id, &impl, &record);
+  if (status != SALTS_OK) return status;
+  if (impl->closing || record->state == CNET_MANAGER_RETIRED) return SALTS_ESHUTDOWN;
+  if (record->state != CNET_MANAGER_BOUND) return SALTS_EBUSY;
+  return cnet_client_reuse_status(impl->client, record->connection);
 }
 int cnet_manager_inspect(cnet_manager *manager, size_t index, cnet_manager_entry *out) {
   manager_impl *impl;

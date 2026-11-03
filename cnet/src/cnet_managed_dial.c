@@ -1,5 +1,6 @@
 #include "cnet_resources.h"
 #include "cnet_manager_internal.h"
+#include "cnet_reuse.h"
 #include <cnet/managed_dial.h>
 #include <clock.h>
 #include <error_codes.h>
@@ -258,6 +259,8 @@ int cnet_managed_dial_protocol_ready(cnet_managed_dial *dial,
       ticket.generation != impl->ticket.generation ||
       ticket.incarnation != impl->ticket.incarnation)
     return SALTS_ENOENT;
+  status = cnet_manager_reuse_status(impl->manager, impl->managed);
+  if (status != SALTS_OK) return status;
   return cnet_reconnect_protocol_ready(&impl->recovery, ticket, now_ms);
 }
 int cnet_managed_dial_get_snapshot(cnet_managed_dial *dial,

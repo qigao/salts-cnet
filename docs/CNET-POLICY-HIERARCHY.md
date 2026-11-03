@@ -115,6 +115,23 @@ add per-connection mutable hard limits or change resource-provider lifetime.
 
 ### Memory and terminal accounting
 
+Pool READY admission and each new lease also inspect the existing CNet session
+through Manager. Manager BOUND alone does not prove the transport is OPEN:
+connect/handshake may still be pending, or final-send/direct close may already
+have sealed admission before the terminal observer retires the Manager record.
+Opening/handshaking candidates are temporarily ineligible. Closing, directional
+shutdown, stopped and stale connections are marked draining without closing
+anything or fabricating terminal notification. A closing Manager likewise
+cannot issue new pool leases; merely sealing new Manager reservations does not
+stop an otherwise live pool connection.
+
+The Owner performs these checks synchronously before selector/protocol-token
+admission, without progress, callbacks, allocation or another lifecycle state
+machine. Exact pool keys, host-declared protocol READY and actual protocol slot
+reservations remain required. Existing leases keep their original release
+authority and physical records stay charged until real terminal and final lease
+release. This is an internal CNet/Manager/Pool check, with no new public API.
+
 `storage` covers CNet client/Owner/session/dispatcher/command/event/write
 records and the WebSocket transport bridge, plus explicitly configured
 Manager/Handoff/ManagedDial/Pool objects. It does not replace dependency-owned
@@ -174,6 +191,23 @@ This cutover preserves the production TLS/TLCP/ShangMi implementation. It does
 not substitute the narrower versioned Crypto qualification adapter or claim
 DTLS support. Local Windows LLVM tests passed; the cutover remains pending
 its own exact-head cross-platform CI.
+
+### ManagedDial READY on a live transport
+
+ManagedDial protocol READY also requires its Manager-owned transport to remain
+OPEN at the call. A matching attempt ticket cannot reset recovery accounting
+after direct close, retained FINAL admission, Manager request_close or directional
+shutdown, even before the terminal callback retires the Manager record. These
+paths return `ESHUTDOWN`; opening/handshaking returns `EBUSY`. The same private
+transport-state check guards Pool reuse and Dial READY. Protocol authentication
+and handshake authority remain with the host.
+
+The formal TCP suite covers a real peer greeting followed by each of those four
+close admissions, asserting rejection before terminal without changing the
+attempt count, generation, deadline or READY state. Real terminal/FIN and Manager
+recycle still drain normally. A live-transport control case admits READY, resets
+the episode and completes a real request/reply. Cross-platform qualification
+follows the exact-head formal CI result.
 
 ### Multi-connection pool policy composition
 
