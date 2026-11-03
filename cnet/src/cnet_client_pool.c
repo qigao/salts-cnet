@@ -107,10 +107,19 @@ int cnet_pool_init(cnet_client_pool *pool, const cnet_pool_config *config) {
   impl = (pool_impl *)cnet_storage_alloc(&config->storage, 1u, sizeof(*impl));
   if (impl == NULL) return SALTS_ENOMEM;
   impl->physical = (pool_physical *)cnet_storage_alloc(&config->storage, config->max_connections, sizeof(*impl->physical));
+  if (impl->physical == NULL) {
+    cnet_storage_free(impl);
+    return SALTS_ENOMEM;
+  }
   impl->leases = (pool_lease_record *)cnet_storage_alloc(&config->storage, config->max_leases, sizeof(*impl->leases));
+  if (impl->leases == NULL) {
+    cnet_storage_free(impl->physical);
+    cnet_storage_free(impl);
+    return SALTS_ENOMEM;
+  }
   impl->selection = config->selection;
   impl->candidates = cnet_storage_alloc(&config->storage, config->max_connections, sizeof(*impl->candidates));
-  if (impl->physical == NULL || impl->leases == NULL || impl->candidates == NULL) {
+  if (impl->candidates == NULL) {
     cnet_storage_free(impl->physical); cnet_storage_free(impl->leases); cnet_storage_free(impl->candidates); cnet_storage_free(impl);
     return SALTS_ENOMEM;
   }

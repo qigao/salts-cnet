@@ -175,6 +175,22 @@ not substitute the narrower versioned Crypto qualification adapter or claim
 DTLS support. Local Windows LLVM tests passed; the cutover remains pending
 its own exact-head cross-platform CI.
 
+### Management allocation failure
+
+Management storage initialization stops after its first allocator failure.
+Handoff no longer attempts queue allocation after record allocation fails;
+Pool no longer attempts later lease/candidate arrays after an earlier allocation
+fails. Both return `ENOMEM`, free prior allocations through their original
+providers and leave the wrapper unpublished.
+
+The formal policy suite injects failure at each successive storage allocation
+for Manager, Handoff, ManagedDial and Pool until initialization succeeds. It
+requires no later allocation call after failure, zero remaining provider-owned
+allocations and an unchanged borrowed Manager. Successful instances exercise
+reserve/cancel/recycle, handoff credit release, idle Dial sealing or Pool
+reservation abort before destruction. This qualifies initialization rollback
+and bounded helper lifecycle, without dialing a peer or claiming transport drain.
+
 ### Multi-connection pool policy composition
 
 The existing real TCP loopback suite includes two physical connections with
