@@ -1,6 +1,6 @@
 # Direct NativeIO and CNet: Windows x64, 2026-11-03
 
-Measured source: `3d202c54a18ddc6b319d849a347caa524f5acb9c`.
+Measured source: `e8372e15393c14e6608e7544e8297a2f6b853305`.
 The following evidence commit changes documentation/data only. See the
 [measurement contract](../CNET-POLICY-BENCHMARK.md) and
 [all 25 raw rows](cnet-nativeio-windows-x64-2026-11-03.csv).
@@ -25,7 +25,8 @@ span at a time through its public vector API. The caller retains the source,
 validates endpoint/request/tag identity, handles actual prefix completions and
 releases its logical reference before publishing completion. It instantiates no
 CNet client. The CNet modes use the same single-span retained-send path and
-offered write window. Setup differences are outside the measured interval.
+offered write window. Both listeners are closed before warm-up, so neither
+retains idle accept work. Setup differences are outside the measured interval.
 
 Window 8 compares only native CNet and the callback mode. Direct concurrent
 logical writes need a separate partial-write/ordering contract; no application
@@ -49,11 +50,11 @@ acknowledgement. Process CPU includes host, native peer and validation work.
 
 | Window | Mode | MiB/s median (min–max) | Process CPU µs/op | p50 µs | p95 µs | p99 µs | Connection drain µs |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| 1 | Direct NativeIO | 654.72 (629.86–688.94) | 38.15 | 6.1 | 7.7 | 9.2 | 30.3 |
-| 1 | Native CNet | 626.97 (589.36–675.17) | 45.78 | 6.6 | 8.4 | 11.6 | 34.3 |
-| 1 | CNet callback | 639.80 (616.31–675.81) | 38.15 | 6.6 | 8.3 | 11.7 | 35.2 |
-| 8 | Native CNet | 652.68 (636.06–661.68) | 45.78 | 286.2 | 355.5 | 463.4 | 31.5 |
-| 8 | CNet callback | 650.07 (626.90–661.43) | 38.15 | 291.1 | 363.2 | 410.7 | 31.6 |
+| 1 | Direct NativeIO | 641.12 (547.89–666.04) | 45.78 | 6.3 | 7.8 | 10.3 | 33.5 |
+| 1 | Native CNet | 603.68 (551.71–649.91) | 45.78 | 7.0 | 9.0 | 11.7 | 35.2 |
+| 1 | CNet callback | 614.66 (545.14–658.58) | 45.78 | 6.9 | 8.8 | 12.1 | 39.2 |
+| 8 | Native CNet | 637.03 (547.07–645.77) | 45.78 | 289.9 | 372.7 | 545.6 | 34.0 |
+| 8 | CNet callback | 623.91 (567.74–653.19) | 38.15 | 300.9 | 367.2 | 406.3 | 50.6 |
 
 Every measured sample used exactly 2,048 real native submissions for 2,048
 logical writes. Timed data therefore does not claim observed short writes.
@@ -73,15 +74,16 @@ has no CNet storage provider, so its zero column is not a global or NativeIO
 allocation measurement. No kernel copy count is instrumented. Every sample
 verified complete peer byte sequence, full logical completion, sole host source
 reference, FIN, zero native requests/endpoints and complete final destruction.
-The opt-in existing formal CTest passed all 49 TinyTest cases in 3.77 seconds.
+The opt-in existing formal CTest passed all 49 TinyTest cases in 4.04 seconds.
 
 ## Interpretation and remaining evidence
 
 The throughput ranges overlap at window 1 and at window 8. The earlier run's
 lower callback throughput did not reproduce as a stable direction in this
-cohort. GetProcessTimes still advances in 15.625-ms steps; the 7.63-µs/op median
-CPU difference is exactly one such step over 2,048 writes. It cannot isolate
-small callback CPU cost. No fast path, new policy API or general overhead bound
+cohort. GetProcessTimes still advances in 15.625-ms steps. All three window-1
+CPU medians are identical; the window-8 7.63-µs/op median CPU difference is exactly
+one such step over 2,048 writes. It cannot isolate small callback CPU cost.
+No fast path, new policy API or general overhead bound
 is justified by this single-host run.
 
 Concurrent NativeIO, independent control/bulk connections, several Owners,
