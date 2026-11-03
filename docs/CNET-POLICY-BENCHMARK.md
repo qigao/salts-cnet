@@ -75,7 +75,9 @@ a correctness assertion. The optional larger samples use the same path.
 - ENOBUFS counts are deliberate full offers; successful reference/drain checks
   distinguish bounded admission pressure from dropped or abandoned writes.
 - Close/drain time is separate from steady transfer. A peer FIN and zero native
-  usage are required regardless of the measured value.
+  requests/endpoints end the interval. Peer, client, listener and backend object
+  destruction is verified afterward, outside this interval. This avoids timing
+  different final Winsock cleanup/reference behavior as a connection cost.
 - Native submit count is read from backend counters outside the timed interval.
   It distinguishes logical writes from real native submissions and continuations.
 

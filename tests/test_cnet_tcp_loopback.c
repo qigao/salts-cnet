@@ -3776,15 +3776,15 @@ static int matched_sample(matched_mode mode, size_t window, size_t operations, b
   VERIFY(test_blocking(f->peer) == 0);
   unsigned char byte;
   VERIFY(recv(f->peer, (char *)&byte, 1u, 0) == 0);
+  VERIFY(native_io_backend_get_stats(&f->backend, &stats) && stats.active_requests == 0u && stats.endpoint_count == 0u);
+  measured.drain_ns = cmeta_hrtime() - drain_start;
   test_close_socket(f->peer);
   f->peer = TEST_INVALID_SOCKET;
   if (mode != MATCHED_NATIVEIO) {
     VERIFY(cnet_client_stop_external(&f->client) == SALTS_OK);
     VERIFY(cnet_client_destroy(&f->client) == SALTS_OK);
   }
-  VERIFY(native_io_backend_get_stats(&f->backend, &stats) && stats.active_requests == 0u && stats.endpoint_count == 0u);
   VERIFY(native_io_backend_close(&f->backend) == SALTS_OK && native_io_backend_destroy(&f->backend) == SALTS_OK);
-  measured.drain_ns = cmeta_hrtime() - drain_start;
   VERIFY(f->storage.allocated == f->storage.released && mem_buffer_ref_count(f->source) == 1u);
   if (report) {
     printf("CNET_POLICY_CSV,%s,%u,%zu,%zu,%zu,%llu,%llu,%llu,%llu,%llu,%zu,%zu,%zu,%zu,%zu,%zu,%llu,%llu\n",
