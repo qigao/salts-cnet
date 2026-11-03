@@ -1245,6 +1245,129 @@ cleanup:
   return result;
 }
 
+typedef struct dial_recovery_probe {
+  cnet_managed_dial *dial;
+  cnet_reconnect_failure_kind decision;
+  unsigned calls;
+  int recursive_advance, recursive_seal;
+} dial_recovery_probe;
+
+static cnet_reconnect_failure_kind dial_classify_probe(
+    void *user, cnet_connection_state state, const cnet_error *error) {
+  dial_recovery_probe *probe = user;
+  uint64_t wait = 0u;
+  (void)state;
+  (void)error;
+  ++probe->calls;
+  probe->recursive_advance = cnet_managed_dial_advance(probe->dial, cmeta_monotonic_ms(), &wait);
+  probe->recursive_seal = cnet_managed_dial_seal(probe->dial);
+  return probe->decision;
+}
+
+/* Three real TCP incarnations: pre-READY loss, READY loss, security stop.
+ * Only explicit protocol readiness resets attempts; every replacement waits
+ * for terminal and Manager recycle, and stale identities never gain authority. */
+static int saltscore_native_entry_test_cnet_dial_recovery(void) {
+  cnet_client client = {0};
+  cnet_manager manager = {0};
+  cnet_managed_dial dial = {0};
+  cnet_client_config config = client_config();
+  const cnet_manager_config manager_config = {
+      sizeof(cnet_manager_config), CNET_MANAGER_VERSION, &client, 1u, 1u};
+  tcp_probe probe = {0};
+  dial_recovery_probe classifier = {.dial = &dial, .decision = CNET_RECONNECT_TRANSIENT};
+  cnet_managed_dial_snapshot snapshot = {0};
+  cnet_reconnect_ticket old_ticket = {0};
+  cnet_connection old_connection = {0};
+  cnet_manager_entry entry = {0};
+  test_socket listener = TEST_INVALID_SOCKET, peer = TEST_INVALID_SOCKET;
+  uint16_t port = 0u;
+  char uri[80];
+  uint64_t wait_ms = UINT64_MAX, initial_deadline = cmeta_monotonic_ms() + 5000u;
+  size_t work = 0u;
+  int result = 0;
+  config.connection_capacity = 1u;
+  VERIFY(cnet_client_init(&client, &config) == SALTS_OK);
+  VERIFY(cnet_manager_init(&manager, &manager_config) == SALTS_OK);
+  listener = test_native_listener(&port);
+  VERIFY(listener != TEST_INVALID_SOCKET && port != 0u);
+  VERIFY(snprintf(uri, sizeof(uri), "tcp://127.0.0.1:%u", (unsigned)port) > 0);
+  const cnet_managed_dial_config dial_config = {
+      .size = sizeof(cnet_managed_dial_config), .version = CNET_MANAGED_DIAL_VERSION,
+      .manager = &manager, .client = &client,
+      .connection = {.uri = uri, .observer = {on_state, on_borrowed, &probe, on_sent}},
+      .recovery = {.size = sizeof(cnet_reconnect_config), .version = CNET_RECOVERY_POLICY_VERSION,
+          .max_attempts = 2u, .deadline_ms = initial_deadline,
+          .backoff = {cnet_backoff_fixed, NULL}},
+      .recovery_episode_ms = 10000u, .classify = dial_classify_probe, .classify_user = &classifier};
+  VERIFY(cnet_managed_dial_init(&dial, &dial_config) == SALTS_OK);
+  for (unsigned round = 0u; round < 3u; ++round) {
+    const unsigned char greeting = (unsigned char)(0x61u + round);
+    VERIFY(cnet_managed_dial_advance(&dial, cmeta_monotonic_ms(), &wait_ms) == SALTS_OK);
+    VERIFY(cnet_managed_dial_get_snapshot(&dial, &snapshot) == SALTS_OK &&
+           snapshot.recovery.in_flight && snapshot.recovery.attempts == (round == 1u ? 2u : 1u));
+    if (round != 0u) {
+      VERIFY(snapshot.connection.slot == old_connection.slot && snapshot.connection.generation > old_connection.generation);
+      VERIFY(snapshot.recovery_ticket.generation > old_ticket.generation);
+      VERIFY(cnet_managed_dial_protocol_ready(&dial, old_ticket, cmeta_monotonic_ms()) == SALTS_ENOENT);
+      VERIFY(cnet_receive(&client, old_connection, 1u) == SALTS_ENOENT);
+    }
+    VERIFY(poll_until(&client, &probe.connected, round + 1u) == SALTS_OK);
+    peer = accept(listener, NULL, NULL);
+    VERIFY(peer != TEST_INVALID_SOCKET && test_recv_timeout(peer) == 0);
+    VERIFY(cnet_receive(&client, snapshot.connection, 1u) == SALTS_OK);
+    VERIFY(send(peer, (const char *)&greeting, 1, 0) == 1);
+    const unsigned target = probe.borrowed_bytes + 1u;
+    VERIFY(poll_until(&client, &probe.borrowed_bytes, target) == SALTS_OK && probe.borrowed_data[target - 1u] == greeting);
+    VERIFY(cnet_managed_dial_get_snapshot(&dial, &snapshot) == SALTS_OK && snapshot.recovery.awaiting_protocol);
+    if (round == 1u) {
+      VERIFY(cnet_managed_dial_protocol_ready(&dial, snapshot.recovery_ticket, cmeta_monotonic_ms()) == SALTS_OK);
+      VERIFY(cnet_managed_dial_get_snapshot(&dial, &snapshot) == SALTS_OK &&
+             snapshot.recovery.protocol_ready && snapshot.recovery.attempts == 0u);
+      VERIFY(composition_exchange(&client, snapshot.connection, &probe, peer, 2u) == 0);
+    }
+    if (round == 2u) classifier.decision = CNET_RECONNECT_SECURITY;
+    old_ticket = snapshot.recovery_ticket;
+    old_connection = snapshot.connection;
+    VERIFY(cnet_receive(&client, snapshot.connection, 1u) == SALTS_OK);
+    test_close_socket(peer);
+    peer = TEST_INVALID_SOCKET;
+    VERIFY(poll_until(&client, &probe.terminal, round + 1u) == SALTS_OK);
+    VERIFY(probe.failed == 0u && classifier.calls == round + 1u &&
+           classifier.recursive_advance == SALTS_EBUSY && classifier.recursive_seal == SALTS_EBUSY);
+    VERIFY(cnet_manager_lookup(&manager, snapshot.managed, &entry) == SALTS_OK && entry.state == CNET_MANAGER_RETIRED);
+    VERIFY(cnet_managed_dial_advance(&dial, cmeta_monotonic_ms(), &wait_ms) == SALTS_EBUSY && wait_ms == 0u);
+    VERIFY(cnet_managed_dial_destroy(&dial) == SALTS_EBUSY);
+    VERIFY(cnet_managed_dial_get_snapshot(&dial, &snapshot) == SALTS_OK &&
+           !snapshot.recovery.in_flight && !snapshot.recovery.awaiting_protocol && !snapshot.recovery.protocol_ready &&
+           snapshot.recovery.sealed == (round == 2u));
+    if (round == 0u) VERIFY(snapshot.recovery.deadline_ms == initial_deadline && snapshot.recovery.attempts == 1u);
+    else VERIFY(snapshot.recovery.deadline_ms > initial_deadline && snapshot.recovery.attempts == (round == 1u ? 0u : 1u));
+    VERIFY(cnet_manager_advance(&manager, 1u, &work) == SALTS_OK && work == 1u);
+    VERIFY(cnet_managed_dial_protocol_ready(&dial, old_ticket, cmeta_monotonic_ms()) == SALTS_ENOENT);
+  }
+  VERIFY(cnet_managed_dial_advance(&dial, cmeta_monotonic_ms(), &wait_ms) == SALTS_ESHUTDOWN && wait_ms == 0u);
+  VERIFY(cnet_managed_dial_seal(&dial) == SALTS_OK);
+  VERIFY(cnet_managed_dial_destroy(&dial) == SALTS_OK);
+  VERIFY(cnet_manager_destroy(&manager) == SALTS_OK);
+  VERIFY(cnet_client_stop(&client, 5000u) == SALTS_OK);
+  VERIFY(cnet_client_destroy(&client) == SALTS_OK);
+cleanup:
+  test_close_socket(peer);
+  test_close_socket(listener);
+  if (dial.impl != NULL) (void)cnet_managed_dial_seal(&dial);
+  if (manager.impl != NULL) {
+    (void)cnet_manager_request_close(&manager);
+    (void)cnet_manager_advance(&manager, 1u, &work);
+  }
+  if (client.impl != NULL) (void)cnet_client_stop(&client, 3000u);
+  if (manager.impl != NULL) (void)cnet_manager_advance(&manager, 1u, &work);
+  if (dial.impl != NULL) (void)cnet_managed_dial_destroy(&dial);
+  if (manager.impl != NULL) (void)cnet_manager_destroy(&manager);
+  if (client.impl != NULL) (void)cnet_client_destroy(&client);
+  return result;
+}
+
 /* Saturate the production retained-write admission bound before progressing
  * NativeIO. This is queue-capacity backpressure, not a forced partial kernel
  * write. A rejected FINAL must not retain backing or seal send/receive admission.
@@ -2950,6 +3073,10 @@ spec("CNet real TCP loopback and retained slice") {
   it("rejects a foreign Dial client and stops only its Manager-owned connection") {
     const int result = saltscore_native_entry_test_cnet_dial_owner();
     check(result == 0, "native Dial owner returned %d", result);
+  }
+  it("recovers real TCP incarnations across handshake loss and READY loss, then seals on security failure") {
+    const int result = saltscore_native_entry_test_cnet_dial_recovery();
+    check(result == 0, "native Dial recovery returned %d", result);
   }
   it("recovers bounded send credits after rejected FINAL and rejects stale connection generations") {
     const int result = saltscore_native_entry_test_cnet_send_backpressure();
