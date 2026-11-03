@@ -118,6 +118,10 @@ struct cnet_owner_impl {
   cnet_session_handle *session_work;
   cnet_owner_pending_event *pending_events;
   native_io_completion *completions;
+  /* Entries already consumed by NativeIO observe(), still awaiting CNet route
+   * in the current ordered batch. No owned request is released here. */
+  const native_io_completion *unrouted_completions;
+  size_t unrouted_completion_count;
   size_t connection_capacity;
   size_t request_capacity;
   size_t completion_batch_capacity;
@@ -677,19 +681,34 @@ static int cnet_owner_cancel_native_request(cnet_owner_impl *impl,
   status = native_io_backend_cancel(&impl->backend, request->native_request);
   if (status == SALTS_ENOENT) {
     /*
-     * Both owned and borrowed NativeIO backends release a request identity
-     * when observe() returns its terminal completion. CNet routes a complete
-     * observed batch one entry at a time, so another active TLS_READ request
-     * in the SAME batch may already be absent from NativeIO when a TLS_WRITE
-     * completion requests its cancellation (send-and-close).
+     * NativeIO observe() releases an already-observed request identity before
+     * CNet routes the ordered completion batch. A TLS_WRITE completion may
+     * initiate send-and-close while a matching TLS_READ terminal is still
+     * later in that same batch. Treat ONLY that exact observed generation as
+     * already completing, retaining CNet's active request and borrowed buffer
+     * until the completion is routed.
      *
-     * The CNet request, generation and borrowed buffer remain owned until its
-     * matching terminal is routed. ENOENT here means cancel lost to terminal
-     * observation, not that another provider should be selected or that close
-     * is authenticated. Neither release the CNet borrow nor invent a peer
-     * close_notify; the subsequent completion is mandatory.
+     * A borrowed NativeIO host can likewise hold a matching terminal before
+     * handing it to CNet (the existing contract). Any other owned-backend
+     * ENOENT remains an error: do not hide a lost/stale native request.
      */
-    status = SALTS_EALREADY;
+    bool terminal_already_observed = impl->backend_borrowed;
+    if (!terminal_already_observed && impl->unrouted_completions != NULL) {
+      const uintptr_t token =
+          (uintptr_t)(request - impl->request_records + 1u);
+      for (size_t i = 0u; i < impl->unrouted_completion_count; ++i) {
+        const native_io_completion *event = &impl->unrouted_completions[i];
+        if (event->user_data == token &&
+            event->request.slot == request->native_request.slot &&
+            event->request.generation == request->native_request.generation &&
+            event->endpoint.slot == request->operation.endpoint.slot &&
+            event->endpoint.generation == request->operation.endpoint.generation) {
+          terminal_already_observed = true;
+          break;
+        }
+      }
+    }
+    if (terminal_already_observed) status = SALTS_EALREADY;
   }
   if (status == SALTS_OK || status == SALTS_EALREADY) {
     /*
@@ -2747,9 +2766,14 @@ static int cnet_owner_process_completion_batch(cnet_owner_impl *impl,
   size_t index;
   if (impl == NULL || (events == NULL && count != 0u)) return SALTS_EINVAL;
   for (index = 0u; index < count; ++index) {
-    const int status = cnet_owner_route_completion(impl, &events[index]);
+    int status;
+    impl->unrouted_completions = events + index + 1u;
+    impl->unrouted_completion_count = count - index - 1u;
+    status = cnet_owner_route_completion(impl, &events[index]);
     if (status != SALTS_OK && first_error == SALTS_OK) first_error = status;
   }
+  impl->unrouted_completions = NULL;
+  impl->unrouted_completion_count = 0u;
   return first_error;
 }
 
