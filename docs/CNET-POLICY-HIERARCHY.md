@@ -175,6 +175,16 @@ not substitute the narrower versioned Crypto qualification adapter or claim
 DTLS support. Local Windows LLVM tests passed; the cutover remains pending
 its own exact-head cross-platform CI.
 
+### Manager initialization Owner
+
+Manager initialization must execute on its borrowed client's fixed Owner. A live
+client wrapper alone is insufficient: a foreign thread receives `EPERM` before
+the Manager storage provider runs or an implementation is published. Manager
+progress and transport callbacks therefore share the same Owner from admission.
+The formal real TCP phase case attempts foreign-thread initialization with a
+counting allocator, requires zero allocations and an unpublished wrapper, then
+continues real traffic and teardown on the original client Owner.
+
 ### Multi-connection pool policy composition
 
 The existing real TCP loopback suite includes two physical connections with

@@ -2566,6 +2566,9 @@ typedef struct phase_probe {
   unsigned evaluated, callback_checks;
   size_t total_operations, connection_operations;
   int decision, policy_reentry, callback_mutation, wrong_owner;
+  int wrong_manager_owner;
+  size_t wrong_manager_allocated, wrong_manager_released;
+  bool wrong_manager_published;
 } phase_probe;
 
 static int phase_evaluate(void *user, const cnet_send_usage *total,
@@ -2601,6 +2604,17 @@ static void phase_wrong_owner(void *user) {
   phase_probe *p = user;
   const cnet_send_admission_policy empty = {0};
   p->wrong_owner = cnet_set_send_admission(p->client, p->connection, &empty);
+  cnet_manager manager = {0};
+  resource_probe storage = {0};
+  const cnet_manager_config config = {
+      .size = sizeof(cnet_manager_config), .version = CNET_MANAGER_VERSION,
+      .client = p->client, .record_capacity = 1u, .connection_capacity = 1u,
+      .storage = {probe_allocate, probe_deallocate, &storage}};
+  p->wrong_manager_owner = cnet_manager_init(&manager, &config);
+  p->wrong_manager_published = manager.impl != NULL;
+  if (manager.impl != NULL) (void)cnet_manager_destroy(&manager);
+  p->wrong_manager_allocated = storage.allocated;
+  p->wrong_manager_released = storage.released;
 }
 
 static int saltscore_native_entry_test_cnet_connection_phases(void) {
@@ -2647,6 +2661,8 @@ static int saltscore_native_entry_test_cnet_connection_phases(void) {
   VERIFY(cmeta_thread_join(&thread) == SALTS_OK);
   cmeta_thread_destroy(&thread);
   VERIFY(phases[0].wrong_owner == SALTS_EPERM);
+  VERIFY(phases[0].wrong_manager_owner == SALTS_EPERM && !phases[0].wrong_manager_published);
+  VERIFY(phases[0].wrong_manager_allocated == 0u && phases[0].wrong_manager_released == 0u);
   const cnet_send_admission_policy invalid = {NULL, &phases[0]};
   VERIFY(cnet_set_send_admission(&client, phases[0].connection, &invalid) == SALTS_EINVAL);
   VERIFY(cnet_set_send_admission(&client, phases[0].connection, NULL) == SALTS_EINVAL);
