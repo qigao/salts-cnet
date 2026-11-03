@@ -1111,6 +1111,10 @@ static int saltscore_native_entry_test_cnet_dial_owner(void) {
   tcp_probe probes[2] = {{0}, {0}};
   resource_probe storage = {0};
   dial_admission_probe admission = {.dial = &dial, .decision = SALTS_ENOBUFS};
+  tcp_probe retired_probe = {0};
+  cnet_managed_connection retired = {0};
+  const cnet_manager_attachment retired_attachment = {
+      {on_state, NULL, &retired_probe, NULL}, on_recycled, true};
   cnet_managed_dial_snapshot snapshot = {0};
   cnet_manager_snapshot manager_snapshot = {0};
   cnet_connection neighbor = {0};
@@ -1153,6 +1157,32 @@ static int saltscore_native_entry_test_cnet_dial_owner(void) {
 
   dial_config.client = &clients[0];
   VERIFY(cnet_managed_dial_init_admitted(&dial, &dial_config, dial_admit_probe, &admission) == SALTS_OK);
+  /* Connection credits return on cancel, but the sole record remains borrowed
+   * through context release and a later bounded Manager advance. Neither phase
+   * may invoke admission or consume/seal the Dial's recovery episode. */
+  VERIFY(cnet_manager_reserve(&manager, &retired_attachment, &retired) == SALTS_OK);
+  VERIFY(cnet_manager_cancel(&manager, retired) == SALTS_OK);
+  VERIFY(cnet_manager_get_snapshot(&manager, &manager_snapshot) == SALTS_OK &&
+         manager_snapshot.reserved == 0u && manager_snapshot.bound == 0u &&
+         manager_snapshot.retired == 1u && manager_snapshot.context_holds == 1u);
+  admission.decision = SALTS_OK;
+  VERIFY(cnet_managed_dial_advance(&dial, cmeta_monotonic_ms(), &wait_ms) == SALTS_ENOBUFS);
+  VERIFY(wait_ms == 0u && admission.calls == 0u);
+  VERIFY(cnet_managed_dial_get_snapshot(&dial, &snapshot) == SALTS_OK &&
+         snapshot.recovery.attempts == 0u && snapshot.recovery.generation == 0u &&
+         !snapshot.recovery.sealed && snapshot.managed.slot == 0u);
+  VERIFY(cnet_manager_advance(&manager, 1u, &work) == SALTS_OK && work == 0u);
+  VERIFY(retired_probe.recycled == 0u);
+  VERIFY(cnet_manager_release_context(&manager, retired) == SALTS_OK);
+  VERIFY(cnet_managed_dial_advance(&dial, cmeta_monotonic_ms(), &wait_ms) == SALTS_ENOBUFS);
+  VERIFY(wait_ms == 0u && admission.calls == 0u);
+  VERIFY(cnet_managed_dial_get_snapshot(&dial, &snapshot) == SALTS_OK &&
+         snapshot.recovery.attempts == 0u && snapshot.recovery.generation == 0u &&
+         !snapshot.recovery.sealed && snapshot.managed.slot == 0u);
+  VERIFY(cnet_manager_advance(&manager, 1u, &work) == SALTS_OK && work == 1u);
+  VERIFY(retired_probe.recycled == 1u);
+  retired = (cnet_managed_connection){0};
+  admission.decision = SALTS_ENOBUFS;
   VERIFY(cnet_managed_dial_advance(&dial, cmeta_monotonic_ms(), &wait_ms) == SALTS_ENOBUFS);
   VERIFY(wait_ms == 0u && admission.calls == 1u && admission.recursive_seal == SALTS_EBUSY);
   VERIFY(cnet_managed_dial_get_snapshot(&dial, &snapshot) == SALTS_OK &&
@@ -1201,6 +1231,7 @@ cleanup:
   for (size_t i = 0u; i < 2u; ++i) test_close_socket(peers[i]);
   if (dial.impl != NULL) (void)cnet_managed_dial_seal(&dial);
   if (manager.impl != NULL) {
+    if (retired.slot != 0u) (void)cnet_manager_release_context(&manager, retired);
     (void)cnet_manager_request_close(&manager);
     (void)cnet_manager_advance(&manager, 1u, &work);
   }

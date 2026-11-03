@@ -74,6 +74,9 @@ int cnet_managed_dial_init_admitted(cnet_managed_dial *dial,
  * recycled Manager record returns EBUSY. The single ready-to-dial transition
  * actually calls manager_reserve/connect, with a generation-safe attempt
  * ticket. Local admission failures fail fast, not hidden recovery attempts.
+ * Exhausted Manager connection credits or attachment records return ENOBUFS
+ * before the admission hook or attempt accounting. Retired records still count
+ * until context holds end and manager_advance recycles them.
  * EBUSY out_wait_ms describes remaining backoff only, never sleeps. */
 int cnet_managed_dial_advance(cnet_managed_dial *dial, uint64_t now_ms,
                               uint64_t *out_wait_ms);

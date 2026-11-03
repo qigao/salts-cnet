@@ -183,6 +183,11 @@ int cnet_managed_dial_advance(cnet_managed_dial *dial, uint64_t now_ms,
   if (manager_snapshot.sealed) return SALTS_ESHUTDOWN;
   if (manager_snapshot.reserved + manager_snapshot.bound >=
       manager_snapshot.connection_capacity) return SALTS_ENOBUFS;
+  /* Terminal/cancel returns a connection credit before the attachment record
+   * is reusable. Do not acquire host capacity or consume an attempt while all
+   * records still belong to live or retired contexts. */
+  if (manager_snapshot.reserved + manager_snapshot.bound + manager_snapshot.retired >=
+      manager_snapshot.record_capacity) return SALTS_ENOBUFS;
   if (impl->admit != NULL) {
     /* Preflight without changing generation/attempt accounting. The final
      * begin below remains authoritative; the callback cannot mutate this dial. */

@@ -202,6 +202,15 @@ claim. Cross-platform qualification follows the exact-head formal CI result.
 
 ### ManagedDial client ownership and admission
 
+ManagedDial checks both Manager connection credits and attachment records before
+calling host admission or consuming an attempt. A cancelled/terminal record
+returns its connection credit before its context hold and deferred recycle end.
+If those records fill the table, `advance` returns `ENOBUFS` with zero wait and
+leaves the recovery generation, attempt budget and seal state unchanged. Releasing
+the hold alone is insufficient; the host must also advance Manager recycle.
+The formal TCP case holds the sole cancelled record through both phases, then
+recycles it and completes a real Dial connection and protocol exchange.
+
 ManagedDial borrows the exact client wrapper used to initialize its Manager.
 Both init variants reject a different wrapper with `EINVAL` before allocating
 storage or invoking admission. A shared Owner thread or matching connection
