@@ -1,4 +1,5 @@
 #include "cnet_resources.h"
+#include "cnet_manager_internal.h"
 #include <cnet/managed_dial.h>
 #include <clock.h>
 #include <error_codes.h>
@@ -135,6 +136,8 @@ int cnet_managed_dial_init(cnet_managed_dial *dial,
     return SALTS_EINVAL;
   uri_len = strlen(config->connection.uri);
   if (uri_len > CNET_MANAGED_DIAL_URI_MAX) return SALTS_EMSGSIZE;
+  status = cnet_manager_validate_client(config->manager, config->client);
+  if (status != SALTS_OK) return status;
   status = cnet_manager_get_snapshot(config->manager, &manager_snapshot);
   if (status != SALTS_OK) return status;
   if (manager_snapshot.sealed) return SALTS_ESHUTDOWN;

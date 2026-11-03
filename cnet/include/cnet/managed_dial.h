@@ -24,7 +24,7 @@ typedef struct cnet_managed_dial_config {
   size_t size;
   uint32_t version;
   cnet_manager *manager;  /* Borrowed. Host owns manager progress/recycle. */
-  cnet_client *client;    /* Same CNet client passed to manager initialization. */
+  cnet_client *client;    /* Exact client wrapper passed to manager initialization. */
   cnet_connect_options connection; /* URI copied; TLS profile pointers borrowed. */
   cnet_reconnect_config recovery;
   uint64_t recovery_episode_ms; /* New absolute budget after a READY peer is lost. */
@@ -47,7 +47,10 @@ typedef struct cnet_managed_dial_snapshot {
 
 /* One physical connection at a time, fixed initializing Owner. No implicit
  * NativeIO observe, worker/timer, retrying application DATA or new Manager.
- * The whole link + observer lifetime is kept until Manager on_recycle. */
+ * The whole link + observer lifetime is kept until Manager on_recycle.
+ * Both init variants reject a different client wrapper with EINVAL before
+ * storage allocation or admission; matching thread/connection IDs do not
+ * establish client identity. */
 int cnet_managed_dial_init(cnet_managed_dial *dial,
                             const cnet_managed_dial_config *config);
 
