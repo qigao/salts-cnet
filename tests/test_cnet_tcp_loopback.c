@@ -3665,7 +3665,8 @@ static int matched_sample(bool composed, size_t window, size_t operations, bool 
   VERIFY((window == 8u) == (measured.rejected != 0u));
   const uint64_t drain_start = cmeta_hrtime();
   VERIFY(cnet_close(&f->client, f->connection) == SALTS_OK);
-  VERIFY(cnet_client_advance_external(&f->client, &events) == SALTS_OK && f->io.terminal == 1u);
+  VERIFY(cnet_client_advance_external(&f->client, &events) == SALTS_OK &&
+           f->io.terminal == 1u && f->io.failed == 0u);
   VERIFY(test_blocking(f->peer) == 0);
   unsigned char byte;
   VERIFY(recv(f->peer, (char *)&byte, 1u, 0) == 0);

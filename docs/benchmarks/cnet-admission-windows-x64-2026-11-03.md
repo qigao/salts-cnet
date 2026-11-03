@@ -1,8 +1,9 @@
 # Native versus callback admission: Windows x64, 2026-11-03
 
 Measured source: `5397736dca92e13abd7589b9e1a75c545c29d784`, based on master
-`c888705263dffbcb93a480e074d8e8d450635645`. The later report commit changes only
-this evidence. See the [protocol and invocation](../CNET-POLICY-BENCHMARK.md)
+`c888705263dffbcb93a480e074d8e8d450635645`. Later commits add this evidence and
+an explicit clean-close assertion outside the measured transfer. See the
+[protocol and invocation](../CNET-POLICY-BENCHMARK.md)
 and [all 20 raw samples](cnet-admission-windows-x64-2026-11-03.csv).
 
 ## Configuration
