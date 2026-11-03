@@ -25,6 +25,8 @@ cut over.
 
 ## Source layout and original module ownership
 
+The optional `media/` module compiles the existing native Capture and Playback implementations into a single `Salts::Media` static archive. It keeps the existing C headers and symbol names but has no legacy CMake target aliases.
+
 The repository root has **no** catch-all `include/` or `src/`. Each
 existing module owns its own source and header tree:
 
@@ -50,7 +52,7 @@ invariant on Linux, Windows and macOS.
 
 | Mandatory | Optional on supported platforms |
 |---|---|
-| Core byte views, Platform, Concurrency, FS, Coroutine, NativeIO, ASN1, Crypto, URI, CNet | Process, Unicode, IDNA, Serial, USB, Capture, Playback |
+| Core byte views, Platform, Concurrency, FS, Coroutine, NativeIO, ASN1, Crypto, URI, CNet | Process, Unicode, IDNA, Serial, USB, Media (Capture + Playback) |
 
 Unicode stays pinned to Unicode 17.0.0 with re2c as a **build-time** tool only;
 IDNA depends only on the new Unicode module. FS and Process are native system
