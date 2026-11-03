@@ -834,6 +834,7 @@ typedef struct pool_protocol_bank {
   cnet_managed_connection managed[2];
   uint64_t tokens[2][2], next_token;
   size_t capacity[2], attempts, attempted_mask;
+  int reject_status;
   unsigned errors;
 } pool_protocol_bank;
 typedef struct pool_protocol_provider {
@@ -842,6 +843,7 @@ typedef struct pool_protocol_provider {
   uint64_t last_token;
   cnet_pool_protocol_ops *rebind;
   void *next_user;
+  bool rebind_on_full;
 } pool_protocol_provider;
 
 static int composition_reserve(void *user, cnet_managed_connection managed, uint64_t *out) {
@@ -854,6 +856,7 @@ static int composition_reserve(void *user, cnet_managed_connection managed, uint
     ++bank->errors;
     return SALTS_EPROTO;
   }
+  if (bank->reject_status != SALTS_OK) return bank->reject_status;
   for (size_t i = 0u; i < 2u; ++i) {
     const cnet_managed_connection expected = bank->managed[i];
     if (managed.manager != expected.manager || managed.incarnation != expected.incarnation ||
@@ -872,6 +875,10 @@ static int composition_reserve(void *user, cnet_managed_connection managed, uint
         provider->rebind = NULL;
       }
       return SALTS_OK;
+    }
+    if (provider->rebind_on_full && provider->rebind != NULL) {
+      provider->rebind->user = provider->next_user;
+      provider->rebind = NULL;
     }
     return SALTS_ENOBUFS;
   }
@@ -902,6 +909,22 @@ static int composition_pause(void *user, const cnet_pool_candidate *candidates,
   (void)candidates; (void)count; (void)sequence;
   *out = SIZE_MAX;
   return cnet_pool_set_selection(user, &normal) == SALTS_EBUSY ? SALTS_EBUSY : SALTS_EPROTO;
+}
+
+typedef struct pool_selection_probe {
+  cnet_client_pool *pool;
+  size_t index, calls;
+  int status;
+} pool_selection_probe;
+
+static int composition_select_probe(void *user, const cnet_pool_candidate *candidates,
+                                     size_t count, uint64_t sequence, size_t *out) {
+  pool_selection_probe *probe = user;
+  (void)candidates; (void)count; (void)sequence;
+  ++probe->calls;
+  *out = probe->index;
+  if (cnet_pool_seal(probe->pool) != SALTS_EBUSY) return SALTS_EPROTO;
+  return probe->status;
 }
 
 static int composition_exchange(cnet_client *client, cnet_connection connection,
@@ -980,6 +1003,43 @@ static int saltscore_native_entry_test_cnet_pool_composition(void) {
     VERIFY(probes[i].borrowed_data[0] == byte);
     VERIFY(cnet_pool_bind_ready(&pool, physical[i], bank.managed[i], 2u) == SALTS_OK);
   }
+  /* Selection cannot publish a bad/filtered/repeated index, and a hard error
+   * from either callback must leave both leases and real protocol slots free. */
+  pool_selection_probe selection_probe = {.pool = &pool};
+  const cnet_pool_selection_policy custom = {composition_select_probe, &selection_probe};
+  VERIFY(cnet_pool_set_selection(&pool, &custom) == SALTS_OK);
+  for (unsigned negative = 0u; negative < 4u; ++negative) {
+    cnet_pool_key requested = key;
+    const size_t attempts_before = bank.attempts;
+    selection_probe.calls = 0u;
+    selection_probe.status = negative == 0u ? SALTS_EIO : SALTS_OK;
+    selection_probe.index = negative == 1u ? 2u : 0u;
+    if (negative == 2u) ++requested.authority_id;
+    if (negative == 3u) bank.capacity[0] = 0u;
+    rejected = (cnet_pool_lease){1u, 1u, 1u, 1u};
+    leased = (cnet_managed_connection){1u, 1u, 1u, 1u};
+    VERIFY(cnet_pool_try_acquire(&pool, &requested, &protocol, &rejected, &leased) ==
+           (negative == 0u ? SALTS_EIO : SALTS_EINVAL));
+    VERIFY(rejected.pool == 0u && rejected.incarnation == 0u && rejected.generation == 0u && rejected.slot == 0u);
+    VERIFY(leased.manager == 0u && leased.incarnation == 0u && leased.generation == 0u && leased.slot == 0u);
+    VERIFY(selection_probe.calls == (negative == 3u ? 2u : 1u));
+    VERIFY(bank.attempts == attempts_before + (negative == 3u ? 1u : 0u));
+    VERIFY(providers[0].acquired == 0u && providers[0].released == 0u &&
+           providers[1].acquired == 0u && providers[1].released == 0u);
+    VERIFY(cnet_pool_get_snapshot(&pool, &snapshot) == SALTS_OK &&
+           snapshot.active_leases == 0u && snapshot.ready == 2u && snapshot.physical_in_use == 2u);
+    VERIFY(bank.tokens[0][0] == 0u && bank.tokens[0][1] == 0u &&
+           bank.tokens[1][0] == 0u && bank.tokens[1][1] == 0u);
+    bank.capacity[0] = 1u;
+  }
+  VERIFY(cnet_pool_set_selection(&pool, &first) == SALTS_OK);
+  bank.reject_status = SALTS_EIO;
+  const size_t hard_error_attempts = bank.attempts;
+  VERIFY(cnet_pool_try_acquire(&pool, &key, &protocol, &rejected, &leased) == SALTS_EIO);
+  VERIFY(bank.attempts == hard_error_attempts + 1u && rejected.slot == 0u && leased.slot == 0u);
+  VERIFY(cnet_pool_get_snapshot(&pool, &snapshot) == SALTS_OK && snapshot.active_leases == 0u && snapshot.ready == 2u);
+  VERIFY(providers[0].acquired == 0u && providers[0].released == 0u);
+  bank.reject_status = SALTS_OK;
   for (size_t i = 0u; i < 2u; ++i) {
     VERIFY(cnet_pool_set_selection(&pool, i == 0u ? &first : &round_robin) == SALTS_OK);
     if (i == 1u) {
@@ -1008,9 +1068,18 @@ static int saltscore_native_entry_test_cnet_pool_composition(void) {
     if (j == 2u) bank.capacity[0] = bank.capacity[1] = 2u;
     attempts = bank.attempts;
     bank.attempted_mask = 0u;
+    if (j == 1u) {
+      providers[1].rebind = &protocol;
+      providers[1].next_user = &providers[0];
+      providers[1].rebind_on_full = true;
+    }
     VERIFY(cnet_pool_set_selection(&pool, j < 3u ? &first : &least_used) == SALTS_OK);
     VERIFY(cnet_pool_try_acquire(&pool, &key, &protocol, &leases[j], &leased) == SALTS_OK);
-    if (j == 1u) VERIFY(bank.attempts == attempts + 2u && bank.attempted_mask == 3u);
+    if (j == 1u) {
+      VERIFY(bank.attempts == attempts + 2u && bank.attempted_mask == 3u);
+      VERIFY(protocol.user == &providers[0] && providers[1].acquired == 1u && providers[0].acquired == 2u);
+      protocol.user = &providers[1];
+    }
     VERIFY(providers[1].last_index == expected && leased.slot == bank.managed[expected].slot);
     VERIFY(composition_exchange(&client, connections[expected], &probes[expected], peers[expected],
                                 providers[1].last_token) == 0);

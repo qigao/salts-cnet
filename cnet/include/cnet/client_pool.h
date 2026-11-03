@@ -90,6 +90,9 @@ typedef struct cnet_pool_lease {
  * The callback/user binding is copied before any selection/reserve callback
  * and kept for the whole acquire, including candidate retries. Updating the
  * host's original binding during reserve affects subsequent acquires only.
+ * A failed reserve must leave no protocol slot owned by this acquire. ENOBUFS
+ * excludes that candidate and permits a bounded alternative; other errors end
+ * acquisition immediately. Failed reservations do not receive release callbacks.
  * release must settle the admitted token exactly once and must not reenter
  * the pool; cancellation/transport terminal does not implicitly release it. */
 typedef struct cnet_pool_protocol_ops {

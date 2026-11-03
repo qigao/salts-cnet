@@ -186,6 +186,17 @@ to provider B inside A's successful reservation, transmits that token to its
 peer, then requires A to release it exactly once. Later acquisitions use B;
 terminal/drain and final lease release leave both providers balanced.
 
+The same formal TCP case checks selector errors, out-of-range and filtered
+indices, and repeated selection of a candidate already excluded by protocol
+ENOBUFS. Rejections leave empty output identities, unchanged lease/physical
+counts, no protocol tokens and no release calls. A protocol hard error returns
+unchanged after one reservation call, without trying the neighbor. A failed
+reserve owns no protocol slot; only ENOBUFS permits a bounded alternative.
+During a successful alternate-candidate acquire, the first full candidate
+rebinds the host's future provider, but the second candidate and accepted lease
+retain the provider captured at entry. The actual peer exchange and final
+provider balances verify settlement after those rejected paths.
+
 The existing real TCP loopback suite includes two physical connections with
 the same exact pool key. Each completes a real peer protocol greeting before
 READY binding. The host owns a bounded protocol token bank, independently of
