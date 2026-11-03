@@ -17,13 +17,11 @@ if(WIN32)
   target_compile_features(capture_exposure_windows_test PRIVATE c_std_11)
   target_include_directories(capture_exposure_windows_test PRIVATE
     "${PROJECT_SOURCE_DIR}/media/capture/include")
-  # Keep the exact production backend in the fake-COM test. Some MF helper
-  # references remain live under MSVC even with function-level dead stripping.
-  # Resolve those references through their native libraries, but delay-load
-  # MF DLLs so the control-only cases cannot initialize real capture services
-  # through a process-start import.
+  # Test the actual single static Media archive alongside the source-owned
+  # Windows MF control implementation. The native playback invalid-owner
+  # assertions now also resolve from the same Salts::Media archive.
   target_link_libraries(capture_exposure_windows_test PRIVATE
-    Salts::Core Salts::TinyTest yuv
+    Salts::Media Salts::TinyTest yuv
     mfplat mf mfuuid mfreadwrite strmiids ole32 oleaut32)
   add_test(NAME capture_exposure_windows_test COMMAND capture_exposure_windows_test)
   set_target_properties(capture_exposure_windows_test PROPERTIES FOLDER "media/capture/tests")
