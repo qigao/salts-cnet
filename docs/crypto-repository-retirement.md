@@ -1,49 +1,55 @@
 # qigao/crypto repository retirement — native source ownership
 
-The intended canonical source home, pending acceptance and merge, is
-qigao/salts-core, with module-local
-asn1/ and crypto/ directories. The separate qigao/crypto repository
-becomes a historical donor only; it must not remain the active authority
-for code, CI and future installed packages after migration completes.
+SaltsCore is the canonical source home for the module-local `asn1/` and
+`crypto/` interfaces, implementation, CI and package configuration. The former
+`qigao/crypto` repository is a historical donor. Its read-only archival was
+recorded in [the migration audit](https://github.com/qigao/salts-core/issues/147#issuecomment-6562099755)
+on 2026-11-02; preserve its source history and outstanding retirement records.
 
-Salts::ASN1 is the one independent BER/DER C11 codec, not a TLS engine.
-The SaltsCore root always assembles and installs it; it is not controlled
-by a build option. Its independent C/C++ module tests also run in a standalone
-ASN1 configure, separately from the default Core graph.
+`Salts::ASN1` owns the independent BER/DER C11 codec. The root graph assembles
+and installs it, and Crypto consumes that target. It is not a TLS engine.
 
-Salts::Crypto is the one TLS and algorithms owner in the default Core graph.
-The locked local `crypto/native/gmssl/` implementation and private libecc
-objects are compiled directly into its single static archive. No installed
-GmSSL prefix or imported provider archive is required. The independent
-`crypto/` configure uses the same local sources and requires only the sibling
-installed ASN1 package and native system dependencies.
+`Salts::Crypto` produces one first-party static facade archive, including its
+private Ed448 libecc objects. The TLS provider is the **separate imported
+`GmSSL::GmSSL` static archive** installed by the pinned vcpkg port. The old
+full source mirror and OBJECT build under `crypto/native/gmssl/` were removed
+by [PR #149](https://github.com/qigao/salts-core/pull/149). There is no provider
+archive merge or second local GmSSL compilation.
 
-Production CNet retains its original GmSSL API calls and TLS behavior, but
-resolves them through the same local Salts::Crypto archive. It does not
-compile another native TLS implementation. This is a source/build ownership
-change; the static Crypto still contains the GmSSL-derived engine and is
-NOT a third-party-free native TLS implementation. The additional
-`SALTSCORE_TEST_CNET_CRYPTO_QUALIFICATION` graph is test-only and cannot
-substitute for real production CNet, installed SDK or runtime owner evidence.
+The root `vcpkg.json` declares GmSSL, and `vcpkg-configuration.json` selects
+its custom registry baseline. Crypto uses plain required CMake package
+resolution; its installed configuration explicitly imports GmSSL and ASN1.
+Missing dependencies fail configuration. The extension sources and recipes
+belong to `crypto/gmssl-extensions/`; its
+[source lock](../crypto/gmssl-extensions/source-lock.json) records upstream,
+registry, port-tree, extension-checkout and original blob identities. The
+active package is `gmssl 3.2.0#18`, including the TLS corrections qualified
+in [PR #172](https://github.com/qigao/salts-core/pull/172).
 
-RETIREMENT BLOCKERS:
-- The 18 changed inputs of qigao/crypto Draft PR #43 have now
-  been staged in this migration branch: 16 byte-exact active inputs, one
-  adapted module-ownership checker, and one reviewed local-build adaptation.
-  The original Crypto CMake input remains byte-exact in a snapshot, and a
-  pinned patch must reconstruct the active CMake file. They must still pass real TLS/mTLS
-  native tests before retirement. Their original GmSSL-backed workflow
-  is preserved as a historical input, not a production approval.
-- Qualify the actual locked local TLS/TLCP implementation, including its
-  third-party provenance, on every supported platform; local compilation
-  alone does not prove a different engine or completion of a TLS rewrite.
-- Preserve TLS1.2/1.3, ShangMi, TLCP, CA/SAN, mTLS, full binary ALPN,
-  RFC5929/9266, alert/EOF and bounded NativeIO ownership semantics.
-- Migrate all other active consumers, workflow inputs and release pins.
-- Run exact-head Linux/macOS/Windows CI, sanitizers and installed C11/C++17
-  tests, plus one physical owner across plugins and process DLL/DSOs.
+Production CNet calls only the opaque `<crypto/tls_stream.h>` interface after
+[PR #173](https://github.com/qigao/salts-core/pull/173). Crypto owns private
+provider state, TLS/TLCP and certificate verification. CNet owns transport
+progress, NativeIO buffer leases, cancellation and deadline/terminal routing.
+Crypto and its external GmSSL archive link transitively into the single CNet
+shared runtime. CNet consumers link `Salts::CNet`. Independent Monocypher
+(Secure KCP) and Reed (GF256 FEC) remain separate libraries under `vendor/`.
 
-Only then should the former qigao/crypto GitHub repository be ARCHIVED
-read-only. Do not delete it or lose unmerged source; no release yet.
+Preserve the migration's original source and patch records, including the
+unmerged donor work from qigao/crypto PR #43. Source relocation and package
+ownership do not establish a new TLS engine, release qualification, or one
+physical owner across arbitrary independently linked DSOs.
 
-See qigao/crypto PR #43 and Issue #44, salts-core PR #74 and Issue #71.
+The existing LLVM CTest matrix exercises native Linux/macOS/Windows x64 and
+ARM64, Linux sanitizers, TLS1.2/1.3, ShangMi/TLCP, CA/SAN/mTLS, algorithm and
+X.509 contracts, Secure KCP/FEC, and real CNet/DSO ownership. Android jobs
+compile the graph; they do not provide device runtime evidence. Tests use the
+project's formal registrations and user presets, without extra consumer,
+installer or probe projects.
+
+Authenticated peer shutdown remains distinct from local output flushing and
+TCP EOF. [Issue #152](https://github.com/qigao/salts-core/issues/152) tracks
+that semantic gate and its observed-completion cancellation regression;
+source architecture completion alone cannot close a failing runtime gate.
+[Issue #153](https://github.com/qigao/salts-core/issues/153) separately tracks
+the remaining standalone test-driver disposition. Historical donor retirement
+records remain under [Crypto #45](https://github.com/qigao/crypto/issues/45).
