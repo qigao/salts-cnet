@@ -675,11 +675,20 @@ static int cnet_owner_cancel_native_request(cnet_owner_impl *impl,
       !native_io_request_valid(request->native_request))
     return SALTS_EPROTO;
   status = native_io_backend_cancel(&impl->backend, request->native_request);
-  if (status == SALTS_ENOENT && impl->backend_borrowed) {
-    /* The host may already have observed this native terminal without routing
-     * it to CNet. Observation invalidates the NativeIO identity, but this active
-     * CNet request and its backing still await that exact completion. Treat
-     * cancellation as already completing; never retire or fail it here. */
+  if (status == SALTS_ENOENT) {
+    /*
+     * Both owned and borrowed NativeIO backends release a request identity
+     * when observe() returns its terminal completion. CNet routes a complete
+     * observed batch one entry at a time, so another active TLS_READ request
+     * in the SAME batch may already be absent from NativeIO when a TLS_WRITE
+     * completion requests its cancellation (send-and-close).
+     *
+     * The CNet request, generation and borrowed buffer remain owned until its
+     * matching terminal is routed. ENOENT here means cancel lost to terminal
+     * observation, not that another provider should be selected or that close
+     * is authenticated. Neither release the CNet borrow nor invent a peer
+     * close_notify; the subsequent completion is mandatory.
+     */
     status = SALTS_EALREADY;
   }
   if (status == SALTS_OK || status == SALTS_EALREADY) {
