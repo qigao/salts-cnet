@@ -3738,6 +3738,8 @@ static int matched_sample(matched_mode mode, size_t window, size_t operations, b
     VERIFY(cnet_listener_accept(&f->listener, &f->client, &observer, &f->connection) == SALTS_OK);
     VERIFY(cnet_client_advance_external(&f->client, &events) == SALTS_OK && f->io.connected == 1u);
     VERIFY(cnet_connection_tcp_option_set(&f->client, f->connection, CNET_TCP_SOCKET_NODELAY, 1u) == SALTS_OK);
+    VERIFY(cnet_listener_close(&f->listener) == SALTS_OK);
+    VERIFY(cnet_listener_destroy(&f->listener) == SALTS_OK);
   }
   VERIFY(test_nonblocking(f->peer) == 0);
   if (mode == MATCHED_CALLBACK) {

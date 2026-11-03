@@ -32,8 +32,9 @@ an explicit ordering/partial-write contract; this slice does not add an
 application queue to manufacture that comparison.
 
 Direct mode creates and accepts its TCP pair through native socket APIs, while
-CNet mode uses its public listener. Setup is outside the measured region in
-both. Each attaches one accepted nonblocking stream to the same kind/capacity
+CNet mode uses its public listener. Both listeners are closed and destroyed
+before warm-up, so neither retains idle accept work during measurement. Setup
+is outside the measured region in both. Each attaches one accepted nonblocking stream to the same kind/capacity
 of backend and enables TCP_NODELAY before warm-up. Direct mode contains no
 CNet client or CNet progress call in the transfer. Its local terminal is
 published only after the full logical byte count, with the caller's retained
