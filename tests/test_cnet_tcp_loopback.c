@@ -840,6 +840,8 @@ typedef struct pool_protocol_provider {
   pool_protocol_bank *bank;
   size_t acquired, released, last_index;
   uint64_t last_token;
+  cnet_pool_protocol_ops *rebind;
+  void *next_user;
 } pool_protocol_provider;
 
 static int composition_reserve(void *user, cnet_managed_connection managed, uint64_t *out) {
@@ -863,6 +865,12 @@ static int composition_reserve(void *user, cnet_managed_connection managed, uint
       provider->last_token = *out;
       provider->last_index = i;
       ++provider->acquired;
+      /* A host can prepare its next binding during reservation. The accepted
+       * token must keep the provider that actually admitted this acquire. */
+      if (provider->rebind != NULL) {
+        provider->rebind->user = provider->next_user;
+        provider->rebind = NULL;
+      }
       return SALTS_OK;
     }
     return SALTS_ENOBUFS;
@@ -974,8 +982,13 @@ static int saltscore_native_entry_test_cnet_pool_composition(void) {
   }
   for (size_t i = 0u; i < 2u; ++i) {
     VERIFY(cnet_pool_set_selection(&pool, i == 0u ? &first : &round_robin) == SALTS_OK);
+    if (i == 1u) {
+      providers[0].rebind = &protocol;
+      providers[0].next_user = &providers[1];
+    }
     VERIFY(cnet_pool_try_acquire(&pool, &key, &protocol, &leases[i], &leased) == SALTS_OK);
     VERIFY(providers[0].last_index == i && leased.slot == bank.managed[i].slot);
+    if (i == 1u) VERIFY(protocol.user == &providers[1] && providers[1].acquired == 0u);
     VERIFY(composition_exchange(&client, connections[i], &probes[i], peers[i], providers[0].last_token) == 0);
   }
   VERIFY(cnet_pool_set_selection(&pool, &first) == SALTS_OK);
@@ -987,6 +1000,7 @@ static int saltscore_native_entry_test_cnet_pool_composition(void) {
   VERIFY(cnet_pool_get_snapshot(&pool, &snapshot) == SALTS_OK && snapshot.active_leases == 2u);
   stale = leases[1];
   VERIFY(cnet_pool_release(&pool, leases[1]) == SALTS_OK);
+  VERIFY(providers[0].released == 1u && providers[1].released == 0u);
   leases[1] = (cnet_pool_lease){0};
   protocol.user = &providers[1];
   for (size_t j = 1u; j < 4u; ++j) {

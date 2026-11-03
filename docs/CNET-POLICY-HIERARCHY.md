@@ -177,6 +177,15 @@ its own exact-head cross-platform CI.
 
 ### Multi-connection pool policy composition
 
+Pool acquisition copies its protocol callback/user binding before entering
+selection or reservation callbacks. The same binding applies across bounded
+candidate retries and becomes the successful lease's release authority. A host
+may prepare its next binding during reserve without redirecting the token just
+admitted. The real TCP composition case rebinds the host's user from provider A
+to provider B inside A's successful reservation, transmits that token to its
+peer, then requires A to release it exactly once. Later acquisitions use B;
+terminal/drain and final lease release leave both providers balanced.
+
 The existing real TCP loopback suite includes two physical connections with
 the same exact pool key. Each completes a real peer protocol greeting before
 READY binding. The host owns a bounded protocol token bank, independently of
