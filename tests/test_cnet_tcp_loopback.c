@@ -626,7 +626,7 @@ static int pool_acquire_rejected(cnet_client_pool *pool, const cnet_pool_key *ke
  * peer's greeting; transport CONNECTED is insufficient. One physical slot and
  * one protocol slot bound reuse. Leases survive transport terminal until the
  * host releases them; Manager's context hold outlives those pool obligations. */
-static int saltscore_native_entry_test_cnet_pool_reuse(void) {
+static int saltscore_native_entry_test_cnet_pool_reuse(unsigned close_mode) {
   cnet_client client = {0};
   cnet_manager manager = {0};
   cnet_client_pool pool = {0};
@@ -681,6 +681,7 @@ static int saltscore_native_entry_test_cnet_pool_reuse(void) {
   VERIFY(cnet_manager_reserve(&manager, &attachment, &managed) == SALTS_OK);
   VERIFY(pool_acquire_rejected(&pool, &key, SALTS_ENOBUFS));
   VERIFY(cnet_manager_connect(&manager, managed, &connect_options, &connection) == SALTS_OK);
+  VERIFY(cnet_pool_bind_ready(&pool, physical, managed, 1u) == SALTS_EBUSY);
   VERIFY(poll_until(&client, &probe.connected, 1u) == SALTS_OK);
   VERIFY(probe.connected == 1u && probe.terminal == 0u && probe.failed == 0u);
   peer = accept(listener, NULL, NULL);
@@ -703,6 +704,8 @@ static int saltscore_native_entry_test_cnet_pool_reuse(void) {
   VERIFY(cnet_pool_get_snapshot(&pool, &pool_snapshot) == SALTS_OK);
   VERIFY(pool_snapshot.connecting == 0u && pool_snapshot.ready == 1u &&
          pool_snapshot.physical_in_use == 1u);
+  /* Sealing new Manager reservations alone must preserve existing reuse. */
+  VERIFY(cnet_manager_seal(&manager) == SALTS_OK);
 
   /* Each changed identity must deny reuse. Optional security IDs remain zero
    * for this plaintext recipe; setting one is a different key, not TLS proof. */
@@ -758,23 +761,60 @@ static int saltscore_native_entry_test_cnet_pool_reuse(void) {
   }
 
   VERIFY(cnet_pool_terminal(&pool, physical) == SALTS_EBUSY);
-  VERIFY(cnet_pool_begin_drain(&pool, physical) == SALTS_OK);
-  VERIFY(pool_acquire_rejected(&pool, &key, SALTS_ENOBUFS));
-  VERIFY(cnet_close(&client, connection) == SALTS_OK);
+  if (close_mode == 0u) {
+    VERIFY(cnet_pool_begin_drain(&pool, physical) == SALTS_OK);
+    VERIFY(pool_acquire_rejected(&pool, &key, SALTS_ENOBUFS));
+    VERIFY(cnet_close(&client, connection) == SALTS_OK);
+  } else {
+    /* Leave a real lease slot available: rejection must come from transport
+     * closure, not from lease exhaustion or an explicit pool drain. */
+    VERIFY(cnet_pool_release(&pool, lease) == SALTS_OK);
+    lease = (cnet_pool_lease){0};
+    if (close_mode == 1u) {
+      VERIFY(cnet_close(&client, connection) == SALTS_OK);
+    } else if (close_mode == 2u) {
+      pending = mem_get_buffer(mem_global(), 1u);
+      VERIFY(pending != NULL);
+      *mem_buffer_data(pending) = 0xf1u;
+      mem_set_used(pending, 1u);
+      VERIFY(cnet_send_buffer_and_close(&client, connection, pending) == SALTS_OK);
+      mem_buffer_release(pending);
+      pending = NULL;
+    } else if (close_mode == 3u) {
+      VERIFY(cnet_manager_request_close(&manager) == SALTS_OK);
+    } else {
+      VERIFY(cnet_connection_shutdown(&client, connection, CNET_TCP_SHUTDOWN_SEND) == SALTS_OK);
+    }
+    VERIFY(probe.terminal == 0u);
+    VERIFY(cnet_manager_lookup(&manager, managed, &entry) == SALTS_OK &&
+           entry.state == CNET_MANAGER_BOUND);
+    VERIFY(pool_acquire_rejected(&pool, &key, SALTS_ENOBUFS));
+    VERIFY(cnet_pool_get_snapshot(&pool, &pool_snapshot) == SALTS_OK &&
+           pool_snapshot.draining == 1u && pool_snapshot.ready == 0u &&
+           pool_snapshot.physical_in_use == 1u && pool_snapshot.active_leases == 0u);
+    VERIFY(cnet_pool_terminal(&pool, physical) == SALTS_EBUSY);
+    if (close_mode == 3u) VERIFY(cnet_manager_advance(&manager, 1u, &work) == SALTS_OK && work == 1u);
+    if (close_mode == 4u) VERIFY(cnet_close(&client, connection) == SALTS_OK);
+  }
   VERIFY(poll_until(&client, &probe.terminal, 1u) == SALTS_OK);
-  VERIFY(probe.terminal == 1u && probe.failed == 0u && probe.sent == 2u);
+  VERIFY(probe.terminal == 1u && probe.failed == 0u && probe.sent == (close_mode == 2u ? 3u : 2u));
+  if (close_mode == 2u) VERIFY(recv(peer, (char *)&byte, 1, 0) == 1 && byte == 0xf1u);
   VERIFY(recv(peer, (char *)&byte, 1, 0) == 0);
   VERIFY(cnet_manager_lookup(&manager, managed, &entry) == SALTS_OK);
   VERIFY(entry.state == CNET_MANAGER_RETIRED && entry.context_held);
   VERIFY(cnet_pool_terminal(&pool, physical) == SALTS_OK);
   VERIFY(cnet_pool_get_snapshot(&pool, &pool_snapshot) == SALTS_OK);
-  VERIFY(pool_snapshot.physical_in_use == 1u && pool_snapshot.active_leases == 1u &&
-         pool_snapshot.terminal_waiting_for_leases == 1u && !pool_snapshot.drained);
-  VERIFY(cnet_pool_destroy(&pool) == SALTS_EBUSY);
+  if (close_mode == 0u) {
+    VERIFY(pool_snapshot.physical_in_use == 1u && pool_snapshot.active_leases == 1u &&
+           pool_snapshot.terminal_waiting_for_leases == 1u && !pool_snapshot.drained);
+    VERIFY(cnet_pool_destroy(&pool) == SALTS_EBUSY);
+  } else VERIFY(pool_snapshot.drained && pool_snapshot.physical_in_use == 0u);
   VERIFY(cnet_manager_advance(&manager, 1u, &work) == SALTS_OK);
   VERIFY(probe.recycled == 0u);
-  VERIFY(cnet_pool_release(&pool, lease) == SALTS_OK);
-  VERIFY(cnet_pool_release(&pool, lease) == SALTS_ENOENT);
+  if (lease.slot != 0u) {
+    VERIFY(cnet_pool_release(&pool, lease) == SALTS_OK);
+    VERIFY(cnet_pool_release(&pool, lease) == SALTS_ENOENT);
+  }
   lease = (cnet_pool_lease){0};
   VERIFY(cnet_pool_get_snapshot(&pool, &pool_snapshot) == SALTS_OK);
   VERIFY(pool_snapshot.drained && pool_snapshot.physical_in_use == 0u &&
@@ -2317,8 +2357,14 @@ spec("CNet real TCP loopback and retained slice") {
     check(result == 0, "native stream transfer returned %d", result);
   }
   it("leases one exact-key TCP connection only after protocol READY and drains retained leases") {
-    const int result = saltscore_native_entry_test_cnet_pool_reuse();
+    const int result = saltscore_native_entry_test_cnet_pool_reuse(0u);
     check(result == 0, "native pool reuse returned %d", result);
+  }
+  for (unsigned close_mode = 1u; close_mode <= 4u; ++close_mode) {
+    it("rejects pool reuse before transport terminal after close mode %u", close_mode) {
+      const int result = saltscore_native_entry_test_cnet_pool_reuse(close_mode);
+      check(result == 0, "native pool close admission returned %d", result);
+    }
   }
   it("recovers bounded send credits after rejected FINAL and rejects stale connection generations") {
     const int result = saltscore_native_entry_test_cnet_send_backpressure();

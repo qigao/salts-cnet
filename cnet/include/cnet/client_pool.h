@@ -121,7 +121,9 @@ int cnet_pool_reserve_connecting(cnet_client_pool *pool, const cnet_pool_key *ke
                                  cnet_pool_connection *out_connection);
 
 /* Caller asserts an actual Manager BOUND connection is protocol READY. Pool
- * validates Manager identity and refuses duplicate bindings. For multiplexed
+ * also requires its CNet transport to be OPEN with admission unsealed (EBUSY
+ * while opening/handshaking, ESHUTDOWN after close/final-send/shutdown).
+ * Validates Manager identity and refuses duplicate bindings. For multiplexed
  * capacity >1, every acquire must supply protocol reserve/release callbacks. */
 int cnet_pool_bind_ready(cnet_client_pool *pool, cnet_pool_connection connection,
                          cnet_managed_connection managed, size_t protocol_capacity);
@@ -129,8 +131,11 @@ int cnet_pool_bind_ready(cnet_client_pool *pool, cnet_pool_connection connection
 /* No queue and no implicit dial. On success reserve a unique generation-safe
  * lease and, when supplied, an authoritative protocol slot. Returns ENOBUFS
  * when no ready compatible slot has both physical and protocol capacity.
- * Manager identity is rechecked at admission: an asynchronously RETIRED or
- * recycled physical connection is marked draining, never leased again. */
+ * Manager identity and CNet transport admission are rechecked before selection:
+ * closing/final-send/shutdown, RETIRED or recycled connections are marked
+ * draining, even before a transport terminal observer retires the Manager.
+ * Opening/handshaking entries remain temporarily ineligible. Existing leases
+ * and physical credits still require real terminal and explicit release. */
 int cnet_pool_try_acquire(cnet_client_pool *pool, const cnet_pool_key *key,
                           const cnet_pool_protocol_ops *protocol,
                           cnet_pool_lease *out_lease,
