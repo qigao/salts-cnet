@@ -191,7 +191,11 @@ suite("Windows automatic exposure") {
         check_equal(device.sets, 0);
     }
 
-    it("verifies static Media playback API invalid-owner state without a device") {
+    it("verifies both static Media API owners without opening devices") {
+        /* Pull the actual Win32 Capture dispatcher and the PCM Playback owner
+         * from the same static archive; do not just inspect target metadata. */
+        check_equal(salts_capture_get_state(NULL), SALTS_CAPTURE_STATE_STOPPED);
+        check_equal(salts_capture_start(NULL), -1);
         check_equal(salts_playback_get_state(NULL), SALTS_PLAYBACK_STATE_ERROR);
         check_equal(salts_playback_start(NULL), SALTS_PLAYBACK_ERR_FORMAT);
     }
