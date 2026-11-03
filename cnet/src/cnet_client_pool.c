@@ -227,12 +227,20 @@ int cnet_pool_try_acquire(cnet_client_pool *pool, const cnet_pool_key *key,
                           cnet_pool_lease *out_lease, cnet_managed_connection *out_managed) {
   pool_impl *impl;
   size_t free_lease = SIZE_MAX;
+  cnet_pool_protocol_ops binding;
   int status;
   if (out_lease == NULL || out_managed == NULL) return SALTS_EINVAL;
   *out_lease = (cnet_pool_lease){0};
   *out_managed = (cnet_managed_connection){0};
   status = pool_owner(pool, &impl);
   if (status != SALTS_OK) return status;
+  /* Capture callback authority before entering selector/reserve user code.
+   * Preparing a future host binding cannot redirect this acquire's token or
+   * the release callback copied into its eventual lease. */
+  if (protocol != NULL) {
+    binding = *protocol;
+    protocol = &binding;
+  }
   if (!key_valid(key) || key->owner_id != impl->owner_id ||
       (protocol != NULL && (protocol->reserve == NULL || protocol->release == NULL)))
     return SALTS_EINVAL;
