@@ -865,6 +865,264 @@ cleanup:
   return result;
 }
 
+/* Host protocol reservations are real, bounded slots, independent of the
+ * pool's advertised capacity. Tokens are transmitted to native peers and held
+ * until explicit lease release. Both providers share slots but own distinct
+ * release counters; their callback storage outlives every lease and terminal. */
+typedef struct pool_protocol_bank {
+  cnet_client_pool *pool;
+  cnet_managed_connection managed[2];
+  uint64_t tokens[2][2], next_token;
+  size_t capacity[2], attempts, attempted_mask;
+  unsigned errors;
+} pool_protocol_bank;
+typedef struct pool_protocol_provider {
+  pool_protocol_bank *bank;
+  size_t acquired, released, last_index;
+  uint64_t last_token;
+} pool_protocol_provider;
+
+static int composition_reserve(void *user, cnet_managed_connection managed, uint64_t *out) {
+  pool_protocol_provider *provider = user;
+  pool_protocol_bank *bank = provider->bank;
+  cnet_pool_snapshot snapshot;
+  *out = 0u;
+  ++bank->attempts;
+  if (cnet_pool_get_snapshot(bank->pool, &snapshot) != SALTS_EBUSY) {
+    ++bank->errors;
+    return SALTS_EPROTO;
+  }
+  for (size_t i = 0u; i < 2u; ++i) {
+    const cnet_managed_connection expected = bank->managed[i];
+    if (managed.manager != expected.manager || managed.incarnation != expected.incarnation ||
+        managed.generation != expected.generation || managed.slot != expected.slot) continue;
+    bank->attempted_mask |= (size_t)1u << i;
+    for (size_t j = 0u; j < bank->capacity[i]; ++j) {
+      if (bank->tokens[i][j] != 0u) continue;
+      *out = bank->tokens[i][j] = ++bank->next_token;
+      provider->last_token = *out;
+      provider->last_index = i;
+      ++provider->acquired;
+      return SALTS_OK;
+    }
+    return SALTS_ENOBUFS;
+  }
+  ++bank->errors;
+  return SALTS_ENOENT;
+}
+
+static void composition_release(void *user, uint64_t token) {
+  pool_protocol_provider *provider = user;
+  pool_protocol_bank *bank = provider->bank;
+  cnet_pool_snapshot snapshot;
+  if (cnet_pool_get_snapshot(bank->pool, &snapshot) != SALTS_EBUSY) ++bank->errors;
+  for (size_t i = 0u; i < 2u; ++i) {
+    for (size_t j = 0u; j < 2u; ++j) {
+      if (token != 0u && bank->tokens[i][j] == token) {
+        bank->tokens[i][j] = 0u;
+        ++provider->released;
+        return;
+      }
+    }
+  }
+  ++bank->errors;
+}
+
+static int composition_pause(void *user, const cnet_pool_candidate *candidates,
+                               size_t count, uint64_t sequence, size_t *out) {
+  const cnet_pool_selection_policy normal = {0};
+  (void)candidates; (void)count; (void)sequence;
+  *out = SIZE_MAX;
+  return cnet_pool_set_selection(user, &normal) == SALTS_EBUSY ? SALTS_EBUSY : SALTS_EPROTO;
+}
+
+static int composition_exchange(cnet_client *client, cnet_connection connection,
+                                  tcp_probe *probe, test_socket peer, uint64_t token) {
+  int result = 0;
+  const unsigned sent = probe->sent, received = probe->borrowed_bytes;
+  unsigned char byte = 0u, reply = (unsigned char)(token | 0x80u);
+  mem_buffer_t *buffer = mem_get_buffer(mem_global(), 1u);
+  VERIFY(buffer != NULL && token != 0u && token < 0x80u);
+  *mem_buffer_data(buffer) = (unsigned char)token;
+  mem_set_used(buffer, 1u);
+  VERIFY(cnet_send_buffer(client, connection, buffer) == SALTS_OK);
+  mem_buffer_release(buffer);
+  buffer = NULL;
+  VERIFY(poll_until(client, &probe->sent, sent + 1u) == SALTS_OK);
+  VERIFY(recv(peer, (char *)&byte, 1, 0) == 1 && byte == token);
+  VERIFY(cnet_receive(client, connection, 1u) == SALTS_OK);
+  VERIFY(send(peer, (const char *)&reply, 1, 0) == 1);
+  VERIFY(poll_until(client, &probe->borrowed_bytes, received + 1u) == SALTS_OK);
+  VERIFY(probe->borrowed_data[received] == reply && probe->failed == 0u);
+cleanup:
+  if (buffer != NULL) mem_buffer_release(buffer);
+  return result;
+}
+
+static int saltscore_native_entry_test_cnet_pool_composition(void) {
+  cnet_client client = {0};
+  cnet_manager manager = {0};
+  cnet_client_pool pool = {0};
+  cnet_client_config config = client_config();
+  const cnet_manager_config manager_config = {
+      sizeof(cnet_manager_config), CNET_MANAGER_VERSION, &client, 2u, 2u};
+  const cnet_pool_config pool_config = {
+      sizeof(cnet_pool_config), CNET_CLIENT_POOL_VERSION, &manager, 11u, 2u, 2u, 4u};
+  pool_protocol_bank bank = {.pool = &pool, .capacity = {1u, 1u}};
+  pool_protocol_provider providers[2] = {{.bank = &bank}, {.bank = &bank}};
+  cnet_pool_protocol_ops protocol = {composition_reserve, composition_release, &providers[0]};
+  const cnet_pool_selection_policy first = {cnet_pool_select_first, NULL};
+  const cnet_pool_selection_policy round_robin = {cnet_pool_select_round_robin, NULL};
+  const cnet_pool_selection_policy least_used = {cnet_pool_select_least_used, NULL};
+  const cnet_pool_selection_policy paused = {composition_pause, &pool};
+  cnet_pool_key key = {.size = sizeof(cnet_pool_key), .version = CNET_CLIENT_POOL_VERSION,
+      .runtime_id = 1u, .owner_id = 11u, .authority_id = 17u, .transport_id = 1u, .protocol_id = 23u};
+  cnet_pool_connection physical[2] = {{0}, {0}};
+  cnet_connection connections[2] = {{0}, {0}};
+  cnet_pool_lease leases[4] = {{0}}, rejected = {0}, stale = {0};
+  cnet_managed_connection leased = {0};
+  cnet_pool_snapshot snapshot = {0};
+  tcp_probe probes[2] = {{0}, {0}};
+  test_socket listener = TEST_INVALID_SOCKET, peers[2] = {TEST_INVALID_SOCKET, TEST_INVALID_SOCKET};
+  uint16_t port = 0u;
+  unsigned char byte = 0x52u;
+  char uri[80];
+  size_t work = 0u;
+  int result = 0;
+  VERIFY(cnet_client_init(&client, &config) == SALTS_OK);
+  listener = test_native_listener(&port);
+  VERIFY(listener != TEST_INVALID_SOCKET && port != 0u);
+  key.endpoint_id = port;
+  VERIFY(snprintf(uri, sizeof(uri), "tcp://127.0.0.1:%u", (unsigned)port) > 0);
+  VERIFY(cnet_manager_init(&manager, &manager_config) == SALTS_OK);
+  VERIFY(cnet_pool_init(&pool, &pool_config) == SALTS_OK);
+  for (size_t i = 0u; i < 2u; ++i) {
+    const cnet_manager_attachment attachment = {
+        {on_state, on_borrowed, &probes[i], on_sent}, on_recycled, true};
+    const cnet_connect_options options = {.uri = uri};
+    VERIFY(cnet_pool_reserve_connecting(&pool, &key, &physical[i]) == SALTS_OK);
+    VERIFY(cnet_manager_reserve(&manager, &attachment, &bank.managed[i]) == SALTS_OK);
+    VERIFY(cnet_manager_connect(&manager, bank.managed[i], &options, &connections[i]) == SALTS_OK);
+    VERIFY(poll_until(&client, &probes[i].connected, 1u) == SALTS_OK);
+    peers[i] = accept(listener, NULL, NULL);
+    VERIFY(peers[i] != TEST_INVALID_SOCKET && test_recv_timeout(peers[i]) == 0);
+    VERIFY(cnet_receive(&client, connections[i], 1u) == SALTS_OK);
+    VERIFY(send(peers[i], (const char *)&byte, 1, 0) == 1);
+    VERIFY(poll_until(&client, &probes[i].borrowed_bytes, 1u) == SALTS_OK);
+    VERIFY(probes[i].borrowed_data[0] == byte);
+    VERIFY(cnet_pool_bind_ready(&pool, physical[i], bank.managed[i], 2u) == SALTS_OK);
+  }
+  for (size_t i = 0u; i < 2u; ++i) {
+    VERIFY(cnet_pool_set_selection(&pool, i == 0u ? &first : &round_robin) == SALTS_OK);
+    VERIFY(cnet_pool_try_acquire(&pool, &key, &protocol, &leases[i], &leased) == SALTS_OK);
+    VERIFY(providers[0].last_index == i && leased.slot == bank.managed[i].slot);
+    VERIFY(composition_exchange(&client, connections[i], &probes[i], peers[i], providers[0].last_token) == 0);
+  }
+  VERIFY(cnet_pool_set_selection(&pool, &first) == SALTS_OK);
+  size_t attempts = bank.attempts;
+  bank.attempted_mask = 0u;
+  VERIFY(cnet_pool_try_acquire(&pool, &key, &protocol, &rejected, &leased) == SALTS_ENOBUFS);
+  VERIFY(rejected.pool == 0u && rejected.slot == 0u && leased.manager == 0u && leased.slot == 0u);
+  VERIFY(bank.attempts == attempts + 2u && bank.attempted_mask == 3u && providers[0].released == 0u);
+  VERIFY(cnet_pool_get_snapshot(&pool, &snapshot) == SALTS_OK && snapshot.active_leases == 2u);
+  stale = leases[1];
+  VERIFY(cnet_pool_release(&pool, leases[1]) == SALTS_OK);
+  leases[1] = (cnet_pool_lease){0};
+  protocol.user = &providers[1];
+  for (size_t j = 1u; j < 4u; ++j) {
+    const size_t expected = j == 2u ? 0u : 1u;
+    if (j == 2u) bank.capacity[0] = bank.capacity[1] = 2u;
+    attempts = bank.attempts;
+    bank.attempted_mask = 0u;
+    VERIFY(cnet_pool_set_selection(&pool, j < 3u ? &first : &least_used) == SALTS_OK);
+    VERIFY(cnet_pool_try_acquire(&pool, &key, &protocol, &leases[j], &leased) == SALTS_OK);
+    if (j == 1u) VERIFY(bank.attempts == attempts + 2u && bank.attempted_mask == 3u);
+    VERIFY(providers[1].last_index == expected && leased.slot == bank.managed[expected].slot);
+    VERIFY(composition_exchange(&client, connections[expected], &probes[expected], peers[expected],
+                                providers[1].last_token) == 0);
+  }
+  attempts = bank.attempts;
+  VERIFY(cnet_pool_try_acquire(&pool, &key, &protocol, &rejected, &leased) == SALTS_ENOBUFS);
+  VERIFY(bank.attempts == attempts && rejected.slot == 0u && leased.slot == 0u);
+  VERIFY(cnet_pool_release(&pool, stale) == SALTS_ENOENT && providers[0].released == 1u);
+
+  VERIFY(cnet_pool_begin_drain(&pool, physical[0]) == SALTS_OK);
+  VERIFY(cnet_close(&client, connections[0]) == SALTS_OK);
+  VERIFY(poll_until(&client, &probes[0].terminal, 1u) == SALTS_OK);
+  VERIFY(cnet_pool_terminal(&pool, physical[0]) == SALTS_OK);
+  VERIFY(cnet_pool_get_snapshot(&pool, &snapshot) == SALTS_OK && snapshot.active_leases == 4u &&
+         snapshot.terminal_waiting_for_leases == 1u && snapshot.physical_in_use == 2u);
+  VERIFY(providers[0].released == 1u && providers[1].released == 0u);
+  protocol.user = &providers[0]; /* Live leases must retain provider B's copied binding. */
+  VERIFY(cnet_pool_set_selection(&pool, &paused) == SALTS_OK);
+  VERIFY(cnet_pool_release(&pool, leases[2]) == SALTS_OK);
+  leases[2] = (cnet_pool_lease){0};
+  VERIFY(cnet_pool_try_acquire(&pool, &key, &protocol, &rejected, &leased) == SALTS_EBUSY);
+  VERIFY(bank.attempts == attempts && rejected.slot == 0u && leased.slot == 0u);
+  VERIFY(cnet_pool_release(&pool, leases[0]) == SALTS_OK);
+  leases[0] = (cnet_pool_lease){0};
+  VERIFY(providers[0].released == 2u && providers[1].released == 1u);
+  VERIFY(cnet_pool_get_snapshot(&pool, &snapshot) == SALTS_OK && snapshot.physical_in_use == 1u);
+  VERIFY(cnet_pool_release(&pool, leases[1]) == SALTS_OK);
+  leases[1] = (cnet_pool_lease){0};
+  VERIFY(cnet_pool_set_selection(&pool, &round_robin) == SALTS_OK);
+  VERIFY(cnet_pool_try_acquire(&pool, &key, &protocol, &leases[0], &leased) == SALTS_OK);
+  VERIFY(providers[0].last_index == 1u && leased.slot == bank.managed[1].slot);
+  VERIFY(composition_exchange(&client, connections[1], &probes[1], peers[1], providers[0].last_token) == 0);
+  VERIFY(cnet_pool_seal(&pool) == SALTS_OK);
+  VERIFY(cnet_pool_try_acquire(&pool, &key, &protocol, &rejected, &leased) == SALTS_ESHUTDOWN);
+  VERIFY(cnet_close(&client, connections[1]) == SALTS_OK);
+  VERIFY(poll_until(&client, &probes[1].terminal, 1u) == SALTS_OK);
+  VERIFY(cnet_pool_terminal(&pool, physical[1]) == SALTS_OK);
+  VERIFY(cnet_pool_destroy(&pool) == SALTS_EBUSY);
+  for (size_t i = 0u; i < 4u; ++i) {
+    if (leases[i].slot == 0u) continue;
+    VERIFY(cnet_pool_release(&pool, leases[i]) == SALTS_OK);
+    leases[i] = (cnet_pool_lease){0};
+  }
+  VERIFY(providers[0].acquired == 3u && providers[0].released == 3u &&
+         providers[1].acquired == 3u && providers[1].released == 3u && bank.errors == 0u);
+  VERIFY(cnet_pool_get_snapshot(&pool, &snapshot) == SALTS_OK && snapshot.drained);
+  VERIFY(cnet_pool_destroy(&pool) == SALTS_OK);
+  for (size_t i = 0u; i < 2u; ++i) {
+    VERIFY(bank.tokens[i][0] == 0u && bank.tokens[i][1] == 0u);
+    VERIFY(probes[i].terminal == 1u && probes[i].failed == 0u);
+    VERIFY(recv(peers[i], (char *)&byte, 1, 0) == 0);
+    VERIFY(cnet_manager_release_context(&manager, bank.managed[i]) == SALTS_OK);
+  }
+  VERIFY(cnet_manager_advance(&manager, 2u, &work) == SALTS_OK && work == 2u);
+  VERIFY(probes[0].recycled == 1u && probes[1].recycled == 1u);
+  VERIFY(cnet_manager_destroy(&manager) == SALTS_OK);
+  VERIFY(cnet_client_stop(&client, 5000u) == SALTS_OK);
+  VERIFY(cnet_client_destroy(&client) == SALTS_OK);
+cleanup:
+  test_close_socket(listener);
+  for (size_t i = 0u; i < 2u; ++i) test_close_socket(peers[i]);
+  if (pool.impl != NULL) {
+    if (rejected.slot != 0u) (void)cnet_pool_release(&pool, rejected);
+    for (size_t i = 0u; i < 4u; ++i)
+      if (leases[i].slot != 0u) (void)cnet_pool_release(&pool, leases[i]);
+  }
+  if (manager.impl != NULL) {
+    (void)cnet_manager_request_close(&manager);
+    (void)cnet_manager_advance(&manager, 2u, &work);
+  }
+  if (client.impl != NULL) (void)cnet_client_stop(&client, 3000u);
+  if (pool.impl != NULL) {
+    for (size_t i = 0u; i < 2u; ++i)
+      if (physical[i].slot != 0u) (void)cnet_pool_terminal(&pool, physical[i]);
+    (void)cnet_pool_destroy(&pool);
+  }
+  if (manager.impl != NULL) {
+    for (size_t i = 0u; i < 2u; ++i)
+      if (bank.managed[i].slot != 0u) (void)cnet_manager_release_context(&manager, bank.managed[i]);
+    (void)cnet_manager_advance(&manager, 2u, &work);
+    (void)cnet_manager_destroy(&manager);
+  }
+  if (client.impl != NULL) (void)cnet_client_destroy(&client);
+  return result;
+}
+
 /* Saturate the production retained-write admission bound before progressing
  * NativeIO. This is queue-capacity backpressure, not a forced partial kernel
  * write. A rejected FINAL must not retain backing or seal send/receive admission.
@@ -2341,7 +2599,210 @@ cleanup:
   return result;
 }
 
+typedef struct phase_probe {
+  cnet_client *client;
+  cnet_connection connection;
+  tcp_probe io;
+  unsigned evaluated, callback_checks;
+  size_t total_operations, connection_operations;
+  int decision, policy_reentry, callback_mutation, wrong_owner;
+} phase_probe;
+
+static int phase_evaluate(void *user, const cnet_send_usage *total,
+                          const cnet_send_usage *connection, size_t bytes, size_t backing) {
+  phase_probe *p = user;
+  const cnet_send_admission_policy empty = {0};
+  (void)bytes; (void)backing;
+  ++p->evaluated;
+  p->total_operations = total->operations;
+  p->connection_operations = connection->operations;
+  p->policy_reentry = cnet_set_send_admission(p->client, p->connection, &empty);
+  return p->decision;
+}
+
+static void phase_state(void *user, cnet_connection connection,
+                         cnet_connection_state state, const cnet_error *error) {
+  phase_probe *p = user;
+  const cnet_send_admission_policy empty = {0};
+  on_state(&p->io, connection, state, error);
+  if (cnet_set_send_admission(p->client, connection, &empty) != SALTS_EBUSY)
+    ++p->io.failed;
+  ++p->callback_checks;
+}
+
+static void phase_complete(void *user, const cnet_send_result *result) {
+  phase_probe *p = user;
+  const cnet_send_admission_policy empty = {0};
+  on_operation(&p->io, result);
+  p->callback_mutation = cnet_set_send_admission(p->client, result->connection, &empty);
+}
+
+static void phase_wrong_owner(void *user) {
+  phase_probe *p = user;
+  const cnet_send_admission_policy empty = {0};
+  p->wrong_owner = cnet_set_send_admission(p->client, p->connection, &empty);
+}
+
+static int saltscore_native_entry_test_cnet_connection_phases(void) {
+  cnet_client client = {0};
+  cnet_listener listener = {0};
+  cnet_client_config config = client_config();
+  const cnet_listener_config listener_config = {backend_kind(), "127.0.0.1", 0u, 2u};
+  const cnet_send_admission_policy empty = {0}, pause = {probe_send_pause, NULL};
+  phase_probe phases[2] = {{0}, {0}};
+  test_socket peers[2] = {TEST_INVALID_SOCKET, TEST_INVALID_SOCKET};
+  cmeta_thread_t thread = NULL;
+  mem_buffer_t *buffer = NULL;
+  mem_slice_t slice = {0};
+  cnet_operation operation = {0};
+  cnet_admission_limit limit = CNET_LIMIT_NONE;
+  struct sockaddr_in remote = {0};
+  uint16_t port = 0u;
+  unsigned char received = 0u;
+  int result = 0, ready = 0;
+  config.send_limits.connection_operations = 1u;
+  VERIFY(cnet_client_init(&client, &config) == SALTS_OK);
+  VERIFY(cnet_listener_init(&listener, &listener_config) == SALTS_OK);
+  VERIFY(cnet_listener_port(&listener, &port) == SALTS_OK);
+  remote.sin_family = AF_INET;
+  remote.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+  remote.sin_port = htons(port);
+  for (size_t i = 0u; i < 2u; ++i) {
+    phase_probe *p = &phases[i];
+    p->client = &client;
+    p->decision = i == 0u ? SALTS_ENOBUFS : SALTS_OK;
+    cnet_observer observer = {phase_state, NULL, p, NULL};
+    cnet_send_admission_policy policy = {phase_evaluate, p};
+    peers[i] = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    VERIFY(peers[i] != TEST_INVALID_SOCKET && test_recv_timeout(peers[i]) == 0);
+    VERIFY(connect(peers[i], (const struct sockaddr *)&remote, (int)sizeof(remote)) == 0);
+    VERIFY(cnet_listener_wait(&listener, 5000u, &ready) == SALTS_OK && ready == 1);
+    VERIFY(cnet_listener_accept(&listener, &client, &observer, &p->connection) == SALTS_OK);
+    /* Bind before the first CONNECTED notification; the binding is copied. */
+    VERIFY(cnet_set_send_admission(&client, p->connection, &policy) == SALTS_OK);
+    policy = empty;
+    VERIFY(poll_until(&client, &p->io.connected, 1u) == SALTS_OK);
+  }
+  VERIFY(cmeta_thread_create(&thread, phase_wrong_owner, &phases[0]) == SALTS_OK);
+  VERIFY(cmeta_thread_join(&thread) == SALTS_OK);
+  cmeta_thread_destroy(&thread);
+  VERIFY(phases[0].wrong_owner == SALTS_EPERM);
+  const cnet_send_admission_policy invalid = {NULL, &phases[0]};
+  VERIFY(cnet_set_send_admission(&client, phases[0].connection, &invalid) == SALTS_EINVAL);
+  VERIFY(cnet_set_send_admission(&client, phases[0].connection, NULL) == SALTS_EINVAL);
+  VERIFY(cnet_set_send_admission(&client, (cnet_connection){0}, &empty) == SALTS_ENOENT);
+  buffer = mem_get_buffer(mem_global(), 1u);
+  VERIFY(buffer != NULL);
+  *mem_buffer_data(buffer) = 0x69u;
+  mem_set_used(buffer, 1u);
+  slice = mem_slice(buffer, 0u, 1u);
+  cnet_send_options options = {&slice, 1u, false, phase_complete, &phases[0]};
+  operation.id = UINT64_MAX;
+  VERIFY(cnet_send(&client, phases[0].connection, &options, &operation, &limit) == SALTS_ENOBUFS);
+  VERIFY(operation.id == 0u && limit == CNET_LIMIT_CONNECTION_POLICY &&
+         mem_buffer_ref_count(buffer) == 2u && phases[0].io.completed == 0u);
+  VERIFY(phases[0].evaluated == 1u && phases[0].policy_reentry == SALTS_EINVAL);
+
+  /* First phase now allows admission. Switch again with a live retained send. */
+  VERIFY(cnet_set_send_admission(&client, phases[0].connection, &empty) == SALTS_OK);
+  VERIFY(cnet_send(&client, phases[0].connection, &options, &operation, &limit) == SALTS_OK);
+  const uint64_t first_operation = operation.id;
+  VERIFY(cnet_set_send_admission(&client, phases[0].connection, &pause) == SALTS_OK);
+  VERIFY(cnet_send(&client, phases[0].connection, &options, &operation, &limit) == SALTS_ENOBUFS);
+  VERIFY(limit == CNET_LIMIT_CONNECTION_OPERATIONS && operation.id == 0u);
+  options.user = &phases[1];
+  VERIFY(cnet_send(&client, phases[1].connection, &options, &operation, &limit) == SALTS_OK);
+  VERIFY(phases[1].evaluated == 1u && phases[1].total_operations == 1u &&
+         phases[1].connection_operations == 0u && phases[1].policy_reentry == SALTS_EINVAL);
+  const unsigned gate_calls = phases[1].evaluated;
+  VERIFY(cnet_send(&client, phases[1].connection, &options, &operation, &limit) == SALTS_ENOBUFS);
+  VERIFY(limit == CNET_LIMIT_CONNECTION_OPERATIONS && phases[1].evaluated == gate_calls);
+  mem_slice_release(&slice);
+  mem_buffer_release(buffer);
+  buffer = NULL;
+  for (size_t i = 0u; i < 2u; ++i) {
+    VERIFY(poll_until(&client, &phases[i].io.completed, 1u) == SALTS_OK);
+    VERIFY(phases[i].io.completion.status == SALTS_OK &&
+           phases[i].callback_mutation == SALTS_EBUSY);
+    VERIFY(recv(peers[i], (char *)&received, 1, 0) == 1 && received == 0x69u);
+  }
+  VERIFY(phases[0].io.completion.operation.id == first_operation);
+  cnet_send_usage usage = {0};
+  VERIFY(cnet_client_send_usage(&client, (cnet_connection){0}, &usage) == SALTS_OK &&
+         usage.operations == 0u && usage.bytes == 0u && usage.backing_bytes == 0u);
+
+  buffer = mem_get_buffer(mem_global(), 1u);
+  VERIFY(buffer != NULL);
+  *mem_buffer_data(buffer) = 0x96u;
+  mem_set_used(buffer, 1u);
+  slice = mem_slice(buffer, 0u, 1u);
+  VERIFY(cnet_client_set_send_admission(&client, &pause) == SALTS_OK);
+  for (size_t i = 0u; i < 2u; ++i) {
+    options.user = &phases[i];
+    VERIFY(cnet_send(&client, phases[i].connection, &options, &operation, &limit) == SALTS_ENOBUFS);
+    VERIFY(limit == CNET_LIMIT_POLICY && operation.id == 0u && mem_buffer_ref_count(buffer) == 2u);
+  }
+  VERIFY(phases[1].evaluated == gate_calls);
+  VERIFY(cnet_client_set_send_admission(&client, &empty) == SALTS_OK);
+  options.user = &phases[0];
+  VERIFY(cnet_send(&client, phases[0].connection, &options, &operation, &limit) == SALTS_ENOBUFS);
+  VERIFY(limit == CNET_LIMIT_CONNECTION_POLICY && mem_buffer_ref_count(buffer) == 2u);
+
+  /* Close a gated generation and reuse only its slot while its neighbor lives. */
+  const cnet_connection stale = phases[0].connection;
+  VERIFY(cnet_close(&client, stale) == SALTS_OK);
+  VERIFY(cnet_set_send_admission(&client, stale, &empty) == SALTS_ESHUTDOWN);
+  VERIFY(poll_until(&client, &phases[0].io.terminal, 1u) == SALTS_OK);
+  VERIFY(recv(peers[0], (char *)&received, 1, 0) == 0);
+  test_close_socket(peers[0]);
+  peers[0] = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+  VERIFY(peers[0] != TEST_INVALID_SOCKET && test_recv_timeout(peers[0]) == 0);
+  VERIFY(connect(peers[0], (const struct sockaddr *)&remote, (int)sizeof(remote)) == 0);
+  VERIFY(cnet_listener_wait(&listener, 5000u, &ready) == SALTS_OK && ready == 1);
+  const cnet_observer observer = {phase_state, NULL, &phases[0], NULL};
+  VERIFY(cnet_listener_accept(&listener, &client, &observer, &phases[0].connection) == SALTS_OK);
+  VERIFY(phases[0].connection.slot == stale.slot && phases[0].connection.generation != stale.generation);
+  VERIFY(cnet_set_send_admission(&client, stale, &pause) == SALTS_ENOENT);
+  VERIFY(poll_until(&client, &phases[0].io.connected, 2u) == SALTS_OK);
+  options.close_after_send = true;
+  for (size_t i = 0u; i < 2u; ++i) {
+    options.user = &phases[i];
+    VERIFY(cnet_send(&client, phases[i].connection, &options, &operation, &limit) == SALTS_OK);
+    VERIFY(cnet_set_send_admission(&client, phases[i].connection, &empty) == SALTS_ESHUTDOWN);
+  }
+  VERIFY(phases[0].evaluated == 1u && phases[1].evaluated == gate_calls + 1u);
+  mem_slice_release(&slice);
+  mem_buffer_release(buffer);
+  buffer = NULL;
+  for (size_t i = 0u; i < 2u; ++i) {
+    VERIFY(poll_until(&client, &phases[i].io.terminal, i == 0u ? 2u : 1u) == SALTS_OK);
+    VERIFY(phases[i].io.failed == 0u && phases[i].io.completed == 2u &&
+           phases[i].io.completions_at_terminal == 2u && phases[i].io.completion.status == SALTS_OK);
+    VERIFY(phases[i].callback_checks >= 2u && phases[i].callback_mutation == SALTS_EBUSY);
+    VERIFY(recv(peers[i], (char *)&received, 1, 0) == 1 && received == 0x96u);
+    VERIFY(recv(peers[i], (char *)&received, 1, 0) == 0);
+    VERIFY(cnet_set_send_admission(&client, phases[i].connection, &empty) == SALTS_ENOENT);
+  }
+  VERIFY(cnet_client_stop(&client, 5000u) == SALTS_OK);
+  VERIFY(cnet_set_send_admission(&client, phases[0].connection, &empty) == SALTS_ESHUTDOWN);
+  VERIFY(cnet_client_destroy(&client) == SALTS_OK);
+  VERIFY(cnet_listener_close(&listener) == SALTS_OK);
+  VERIFY(cnet_listener_destroy(&listener) == SALTS_OK);
+cleanup:
+  if (thread != NULL) { (void)cmeta_thread_join(&thread); cmeta_thread_destroy(&thread); }
+  mem_slice_release(&slice);
+  if (buffer != NULL) mem_buffer_release(buffer);
+  for (size_t i = 0u; i < 2u; ++i) test_close_socket(peers[i]);
+  if (client.impl != NULL) { (void)cnet_client_stop(&client, 3000u); (void)cnet_client_destroy(&client); }
+  if (listener.impl != NULL) { (void)cnet_listener_close(&listener); (void)cnet_listener_destroy(&listener); }
+  return result;
+}
+
 spec("CNet real TCP loopback and retained slice") {
+  it("changes one connection phase without bypassing client budgets or leaking into reused slots") {
+    const int result = saltscore_native_entry_test_cnet_connection_phases();
+    check(result == 0, "native connection phases returned %d", result);
+  }
   it("preserves the real owner lifecycle and original failure code") {
     const int result = saltscore_original_entry_test_cnet_tcp_loopback_c(0u);
     check(result == 0, "native integration returned %d", result);
@@ -2365,6 +2826,10 @@ spec("CNet real TCP loopback and retained slice") {
       const int result = saltscore_native_entry_test_cnet_pool_reuse(close_mode);
       check(result == 0, "native pool close admission returned %d", result);
     }
+  }
+  it("switches pool selectors across real connections without losing protocol token authority") {
+    const int result = saltscore_native_entry_test_cnet_pool_composition();
+    check(result == 0, "native pool policy composition returned %d", result);
   }
   it("recovers bounded send credits after rejected FINAL and rejects stale connection generations") {
     const int result = saltscore_native_entry_test_cnet_send_backpressure();
