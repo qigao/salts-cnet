@@ -287,6 +287,30 @@ lifetime, not certificate-authentication coverage or scheduler fairness. Existin
 trust/SAN negatives and the separate sustained-progress regression keep their
 own acceptance. Qualification follows this change's formal LLVM CI result.
 
+### Packet session close, reuse and retransmission stop
+
+Packet endpoints currently own their NativeIO polling; they do not expose the
+datagram API's borrowed-backend completion routing. Qualification must use that
+actual boundary. One owner thread admits copied messages into fixed session,
+datagram and tagged-send capacities. A closing session stays reserved until its
+real UDP sends and terminal callbacks drain; only then may its slot be reused
+with a new generation. Old handles must reject without changing the replacement
+or a neighboring session. UDP local completion still does not prove peer receipt.
+
+For KCP, a bound UDP peer withholds ACKs and observes the same logical segment
+retransmitted on the wire. Local datagram completion must leave the logical tag
+pending. Endpoint stop then disables admission/timers, cancels that logical tag
+exactly once, drains native writes and publishes CLOSED before destruction.
+These scenarios belong to the existing formal policy test, with no replacement
+clock, injected native completion, new target or external-polling claim.
+
+Session generations protect local handles and completion ownership. They are not
+wire anti-replay identities: UDP has no generation field, and plain KCP's peer
+and conversation identity does not authenticate packets. Applications must not
+infer that reopening an identical wire identity rejects delayed old packets.
+Authenticated-session security retains its separate handshake/identity contract.
+The new lifecycle qualification remains pending its exact-head formal CI.
+
 ### Multi-connection pool policy composition
 
 Pool acquisition copies its protocol callback/user binding before entering

@@ -388,6 +388,8 @@ typedef struct policy_loopback_probe {
   unsigned closed;
   unsigned received;
   unsigned terminals;
+  unsigned terminals_at_close;
+  cnet_packet_session closed_session;
   unsigned errors;
   int last_error;
   int terminal_status;
@@ -429,6 +431,8 @@ static void policy_loopback_state(void *user, cnet_packet_endpoint *endpoint,
     ++probe->connecting;
   } else if (state == CNET_PACKET_SESSION_CLOSED) {
     ++probe->closed;
+    probe->terminals_at_close = probe->terminals;
+    probe->closed_session = session;
   }
 }
 
@@ -634,6 +638,210 @@ cleanup:
   }
 #undef PAIR_REQUIRE
   return failure;
+}
+
+/* Keep callback storage alive even if an unexpected stop timeout prevents
+ * destruction. All normal paths must stop and destroy every real endpoint. */
+typedef struct policy_packet_lifecycle {
+  cnet_packet_endpoint endpoints[3];
+  policy_loopback_probe probes[3];
+  cnet_datagram wire_peer;
+  uint16_t source_port;
+  unsigned pushes, wire_errors;
+} policy_packet_lifecycle;
+
+static int policy_lifecycle_init(policy_packet_lifecycle *fixture, size_t index,
+                                  cnet_packet_protocol protocol) {
+  cnet_packet_endpoint_config config = policy_packet_config(protocol);
+  cnet_packet_terminal_config terminal = CNET_PACKET_TERMINAL_CONFIG_INIT;
+  policy_loopback_probe *probe = &fixture->probes[index];
+  probe->protocol = protocol;
+  config.observer = (cnet_packet_observer){policy_loopback_admit, policy_loopback_state,
+      policy_loopback_receive, policy_loopback_error, probe};
+  terminal.send_capacity = 2u;
+  terminal.on_send = policy_loopback_terminal;
+  terminal.user = probe;
+  return cnet_packet_endpoint_init_ex(&fixture->endpoints[index], &config, &terminal);
+}
+
+static int policy_lifecycle_cleanup(policy_packet_lifecycle *fixture, int failure) {
+  bool drained = true;
+  for (size_t i = 0u; i < 3u; ++i) {
+    if (fixture->endpoints[i].impl == NULL) continue;
+    const int status = cnet_packet_endpoint_stop(&fixture->endpoints[i], 4000u);
+    if (status != SALTS_OK && failure == 0) failure = __LINE__;
+    if (cnet_packet_endpoint_destroy(&fixture->endpoints[i]) != SALTS_OK) {
+      drained = false;
+      if (failure == 0) failure = __LINE__;
+    }
+  }
+  if (fixture->wire_peer.impl != NULL) {
+    const int status = cnet_datagram_stop(&fixture->wire_peer, 4000u);
+    if (status != SALTS_OK && failure == 0) failure = __LINE__;
+    if (cnet_datagram_destroy(&fixture->wire_peer) != SALTS_OK) {
+      drained = false;
+      if (failure == 0) failure = __LINE__;
+    }
+  }
+  if (drained) free(fixture);
+  return failure;
+}
+
+static bool policy_same_session(cnet_packet_session a, cnet_packet_session b) {
+  return a.slot == b.slot && a.generation == b.generation;
+}
+
+static int policy_udp_generation_drain(void) {
+  policy_packet_lifecycle *fixture = calloc(1u, sizeof(*fixture));
+  cnet_packet_session old = {0}, neighbor = {0}, replacement = {0}, rejected = {0};
+  cnet_packet_session_info info;
+  cnet_datagram_peer peers[3];
+  const unsigned char payloads[] = {0xa1u, 0xb2u, 0xc3u};
+  uint64_t deadline;
+  int failure = 0;
+  if (fixture == NULL) return __LINE__;
+  cnet_packet_endpoint *client = &fixture->endpoints[0];
+  policy_loopback_probe *probe = &fixture->probes[0];
+#define LIFECYCLE_REQUIRE(expr) do { if (!(expr)) { failure = __LINE__; goto cleanup; } } while (0)
+  for (size_t i = 0u; i < 3u; ++i) {
+    uint16_t port = 0u;
+    LIFECYCLE_REQUIRE(policy_lifecycle_init(fixture, i, CNET_PACKET_UDP) == SALTS_OK);
+    LIFECYCLE_REQUIRE(cnet_packet_endpoint_port(&fixture->endpoints[i], &port) == SALTS_OK && port != 0u);
+    peers[i] = policy_loopback_peer(port);
+  }
+  LIFECYCLE_REQUIRE(cnet_packet_session_open(client, &peers[1], 0u, &old) == SALTS_OK);
+  LIFECYCLE_REQUIRE(cnet_packet_session_open(client, &peers[2], 0u, &neighbor) == SALTS_OK);
+  LIFECYCLE_REQUIRE(cnet_packet_send_tagged(client, old, &payloads[0], 1u, 101u) == SALTS_OK);
+  /* No owner poll has observed the real UDP terminal yet. Closing must keep
+   * its key/slot reserved instead of recycling storage under that write. */
+  LIFECYCLE_REQUIRE(probe->terminals == 0u && probe->closed == 0u);
+  LIFECYCLE_REQUIRE(cnet_packet_session_close(client, old) == SALTS_OK);
+  LIFECYCLE_REQUIRE(probe->terminals == 0u && probe->closed == 0u);
+  LIFECYCLE_REQUIRE(cnet_packet_session_get_info(client, old, &info) == SALTS_ENOENT);
+  LIFECYCLE_REQUIRE(cnet_packet_send_tagged(client, old, &payloads[0], 1u, 999u) == SALTS_ESHUTDOWN);
+  LIFECYCLE_REQUIRE(cnet_packet_session_close(client, old) == SALTS_EALREADY);
+  LIFECYCLE_REQUIRE(cnet_packet_session_open(client, &peers[1], 0u, &rejected) == SALTS_EALREADY);
+  LIFECYCLE_REQUIRE(!cnet_packet_session_valid(rejected));
+  LIFECYCLE_REQUIRE(cnet_packet_session_open(client, &peers[0], 0u, &rejected) == SALTS_ENOBUFS);
+  LIFECYCLE_REQUIRE(!cnet_packet_session_valid(rejected));
+  LIFECYCLE_REQUIRE(cnet_packet_endpoint_destroy(client) == SALTS_EBUSY);
+  deadline = cmeta_monotonic_ms() + 5000u;
+  while (probe->closed == 0u && cmeta_monotonic_ms() < deadline)
+    LIFECYCLE_REQUIRE(policy_loopback_drive(client) == SALTS_OK);
+  LIFECYCLE_REQUIRE(probe->closed == 1u && probe->terminals == 1u && probe->terminals_at_close == 1u);
+  LIFECYCLE_REQUIRE(policy_same_session(probe->closed_session, old) &&
+      policy_same_session(probe->terminal_session, old) && probe->terminal_tag == 101u &&
+      probe->terminal_status == SALTS_OK && probe->terminal_size == 1u);
+  LIFECYCLE_REQUIRE(cnet_packet_session_open(client, &peers[1], 0u, &replacement) == SALTS_OK);
+  LIFECYCLE_REQUIRE(replacement.slot == old.slot && replacement.generation != old.generation);
+  LIFECYCLE_REQUIRE(cnet_packet_session_get_info(client, old, &info) == SALTS_ENOENT);
+  LIFECYCLE_REQUIRE(cnet_packet_session_close(client, old) == SALTS_ENOENT);
+  LIFECYCLE_REQUIRE(cnet_packet_send(client, old, &payloads[0], 1u) == SALTS_ENOENT);
+  LIFECYCLE_REQUIRE(cnet_packet_send_tagged(client, old, &payloads[0], 1u, 999u) == SALTS_ENOENT);
+  LIFECYCLE_REQUIRE(probe->terminals == 1u && probe->closed == 1u);
+  LIFECYCLE_REQUIRE(cnet_packet_session_get_info(client, replacement, &info) == SALTS_OK && info.peer.port == peers[1].port);
+  LIFECYCLE_REQUIRE(cnet_packet_session_get_info(client, neighbor, &info) == SALTS_OK && info.peer.port == peers[2].port);
+  /* Prove the old copied datagram really reached its peer independently of
+   * local completion, then use both the neighbor and the recycled slot. */
+  deadline = cmeta_monotonic_ms() + 5000u;
+  while (fixture->probes[1].received == 0u && cmeta_monotonic_ms() < deadline)
+    LIFECYCLE_REQUIRE(policy_loopback_drive(&fixture->endpoints[1]) == SALTS_OK);
+  LIFECYCLE_REQUIRE(fixture->probes[1].received == 1u && fixture->probes[1].receive_size == 1u &&
+      fixture->probes[1].receive_data[0] == payloads[0]);
+  for (size_t i = 1u; i < 3u; ++i) {
+    const size_t receiver = i == 1u ? 2u : 1u;
+    const cnet_packet_session session = i == 1u ? neighbor : replacement;
+    LIFECYCLE_REQUIRE(cnet_packet_send_tagged(client, session, &payloads[i], 1u, 101u + i) == SALTS_OK);
+    deadline = cmeta_monotonic_ms() + 5000u;
+    while ((probe->terminals != i + 1u || fixture->probes[receiver].received != i) &&
+           cmeta_monotonic_ms() < deadline) {
+      LIFECYCLE_REQUIRE(policy_loopback_drive(client) == SALTS_OK);
+      LIFECYCLE_REQUIRE(policy_loopback_drive(&fixture->endpoints[receiver]) == SALTS_OK);
+    }
+    LIFECYCLE_REQUIRE(probe->terminals == i + 1u && probe->terminal_tag == 101u + i &&
+        probe->terminal_status == SALTS_OK && policy_same_session(probe->terminal_session, session));
+    LIFECYCLE_REQUIRE(fixture->probes[receiver].received == i &&
+        fixture->probes[receiver].receive_size == 1u && fixture->probes[receiver].receive_data[0] == payloads[i]);
+  }
+  LIFECYCLE_REQUIRE(cnet_packet_endpoint_stop(client, 4000u) == SALTS_OK);
+  LIFECYCLE_REQUIRE(probe->closed == 3u && probe->terminals == 3u && probe->terminals_at_close == 3u);
+  for (size_t i = 0u; i < 3u; ++i) LIFECYCLE_REQUIRE(fixture->probes[i].errors == 0u);
+cleanup:
+#undef LIFECYCLE_REQUIRE
+  return policy_lifecycle_cleanup(fixture, failure);
+}
+
+static void policy_kcp_unacked_wire(void *user, cnet_datagram *datagram,
+                                    const cnet_datagram_peer *peer, const cnet_receive_view *view) {
+  policy_packet_lifecycle *fixture = user;
+  const unsigned char *bytes = view->data;
+  (void)datagram;
+  /* One real single-segment PUSH, conversation 0x12345678, SN 0. Its timestamp
+   * may change on retransmission; the payload and logical sequence do not. */
+  const unsigned char conversation[] = {0x78u, 0x56u, 0x34u, 0x12u};
+  if (peer->port != fixture->source_port || view->size != 25u ||
+      memcmp(bytes, conversation, sizeof(conversation)) != 0 || bytes[4] != 81u || bytes[5] != 0u ||
+      bytes[12] != 0u || bytes[13] != 0u || bytes[14] != 0u || bytes[15] != 0u ||
+      bytes[20] != 1u || bytes[21] != 0u || bytes[22] != 0u || bytes[23] != 0u || bytes[24] != 0xadu) {
+    ++fixture->wire_errors;
+    return;
+  }
+  ++fixture->pushes; /* Deliberately no ACK: a local UDP terminal is insufficient. */
+}
+
+static void policy_kcp_unexpected_send(void *user, cnet_datagram *datagram,
+                                       const cnet_datagram_peer *peer, size_t size, int status, uint64_t tag) {
+  policy_packet_lifecycle *fixture = user;
+  (void)datagram; (void)peer; (void)size; (void)status; (void)tag;
+  ++fixture->wire_errors; /* This independent peer only receives, never ACKs. */
+}
+
+static int policy_kcp_retransmission_stop(void) {
+  policy_packet_lifecycle *fixture = calloc(1u, sizeof(*fixture));
+  cnet_packet_endpoint_config config = policy_packet_config(CNET_PACKET_KCP);
+  cnet_datagram_config wire_config = config.datagram;
+  cnet_packet_session session = {0}, rejected = {0};
+  const unsigned char payload = 0xadu;
+  cnet_datagram_peer peer;
+  uint16_t port = 0u;
+  uint64_t deadline;
+  size_t events = 0u;
+  int failure = 0;
+  if (fixture == NULL) return __LINE__;
+  cnet_packet_endpoint *client = &fixture->endpoints[0];
+  policy_loopback_probe *probe = &fixture->probes[0];
+#define LIFECYCLE_REQUIRE(expr) do { if (!(expr)) { failure = __LINE__; goto cleanup; } } while (0)
+  LIFECYCLE_REQUIRE(policy_lifecycle_init(fixture, 0u, CNET_PACKET_KCP) == SALTS_OK);
+  LIFECYCLE_REQUIRE(cnet_packet_endpoint_port(client, &fixture->source_port) == SALTS_OK);
+  wire_config.observer = (cnet_datagram_observer){policy_kcp_unacked_wire, policy_kcp_unexpected_send, fixture};
+  LIFECYCLE_REQUIRE(cnet_datagram_init(&fixture->wire_peer, &wire_config) == SALTS_OK);
+  LIFECYCLE_REQUIRE(cnet_datagram_port(&fixture->wire_peer, &port) == SALTS_OK && port != 0u);
+  LIFECYCLE_REQUIRE(cnet_datagram_receive(&fixture->wire_peer, 8u) == SALTS_OK);
+  peer = policy_loopback_peer(port);
+  LIFECYCLE_REQUIRE(cnet_packet_session_open(client, &peer, UINT32_C(0x12345678), &session) == SALTS_OK);
+  LIFECYCLE_REQUIRE(cnet_packet_send_tagged(client, session, &payload, 1u, 201u) == SALTS_OK);
+  deadline = cmeta_monotonic_ms() + 5000u;
+  while (fixture->pushes < 2u && cmeta_monotonic_ms() < deadline) {
+    LIFECYCLE_REQUIRE(policy_loopback_drive(client) == SALTS_OK);
+    LIFECYCLE_REQUIRE(cnet_datagram_poll(&fixture->wire_peer, 5u, &events) == SALTS_OK);
+    LIFECYCLE_REQUIRE(fixture->wire_errors == 0u && probe->terminals == 0u && probe->errors == 0u);
+  }
+  LIFECYCLE_REQUIRE(fixture->pushes >= 2u && probe->closed == 0u);
+  LIFECYCLE_REQUIRE(cnet_packet_endpoint_destroy(client) == SALTS_EBUSY);
+  LIFECYCLE_REQUIRE(cnet_packet_endpoint_stop(client, 4000u) == SALTS_OK);
+  LIFECYCLE_REQUIRE(probe->terminals == 1u && probe->terminal_status == SALTS_ECANCELED &&
+      probe->terminal_tag == 201u && probe->terminal_size == 1u && policy_same_session(probe->terminal_session, session));
+  LIFECYCLE_REQUIRE(probe->closed == 1u && probe->terminals_at_close == 1u &&
+      policy_same_session(probe->closed_session, session) && probe->errors == 0u);
+  LIFECYCLE_REQUIRE(cnet_packet_poll(client, 0u, &events) == SALTS_ESHUTDOWN && events == 0u);
+  LIFECYCLE_REQUIRE(cnet_packet_session_open(client, &peer, UINT32_C(0x12345678), &rejected) == SALTS_ESHUTDOWN);
+  LIFECYCLE_REQUIRE(!cnet_packet_session_valid(rejected));
+  LIFECYCLE_REQUIRE(cnet_packet_send_tagged(client, session, &payload, 1u, 999u) == SALTS_ENOENT);
+  LIFECYCLE_REQUIRE(cnet_packet_endpoint_stop(client, 0u) == SALTS_OK);
+  LIFECYCLE_REQUIRE(probe->terminals == 1u && probe->closed == 1u);
+cleanup:
+#undef LIFECYCLE_REQUIRE
+  return policy_lifecycle_cleanup(fixture, failure);
 }
 
 static int select_destination_index(void *user, const cnet_destination_selection *input, size_t *out) {
@@ -1020,6 +1228,14 @@ spec("CNet native policy and channel admission") {
   it("requires real KCP peer ACK before logical-send terminal") {
     const int failed = policy_loopback_pair(CNET_PACKET_KCP, false);
     check(failed == 0, "KCP packet endpoint: failed source line %d", failed);
+  }
+  it("drains a closing UDP generation before reuse and preserves its neighbor") {
+    const int failed = policy_udp_generation_drain();
+    check(failed == 0, "UDP generation drain: failed source line %d", failed);
+  }
+  it("cancels one unacknowledged KCP tag after real wire retransmission before CLOSED") {
+    const int failed = policy_kcp_retransmission_stop();
+    check(failed == 0, "KCP retransmission stop: failed source line %d", failed);
   }
   it("requires secure KCP handshake READY and authenticated protocol ACK") {
     const int failed = policy_loopback_pair(CNET_PACKET_KCP, true);
