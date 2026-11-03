@@ -1,5 +1,6 @@
 #include <cnet/client_pool.h>
 #include "cnet_resources.h"
+#include "cnet_reuse.h"
 #include <thread.h>
 
 #include <stdatomic.h>
@@ -107,10 +108,19 @@ int cnet_pool_init(cnet_client_pool *pool, const cnet_pool_config *config) {
   impl = (pool_impl *)cnet_storage_alloc(&config->storage, 1u, sizeof(*impl));
   if (impl == NULL) return SALTS_ENOMEM;
   impl->physical = (pool_physical *)cnet_storage_alloc(&config->storage, config->max_connections, sizeof(*impl->physical));
+  if (impl->physical == NULL) {
+    cnet_storage_free(impl);
+    return SALTS_ENOMEM;
+  }
   impl->leases = (pool_lease_record *)cnet_storage_alloc(&config->storage, config->max_leases, sizeof(*impl->leases));
+  if (impl->leases == NULL) {
+    cnet_storage_free(impl->physical);
+    cnet_storage_free(impl);
+    return SALTS_ENOMEM;
+  }
   impl->selection = config->selection;
   impl->candidates = cnet_storage_alloc(&config->storage, config->max_connections, sizeof(*impl->candidates));
-  if (impl->physical == NULL || impl->leases == NULL || impl->candidates == NULL) {
+  if (impl->candidates == NULL) {
     cnet_storage_free(impl->physical); cnet_storage_free(impl->leases); cnet_storage_free(impl->candidates); cnet_storage_free(impl);
     return SALTS_ENOMEM;
   }
@@ -166,16 +176,14 @@ int cnet_pool_bind_ready(cnet_client_pool *pool, cnet_pool_connection connection
                          cnet_managed_connection managed, size_t capacity) {
   pool_impl *impl;
   pool_physical *entry;
-  cnet_manager_entry manager_entry;
   int status = get_physical(pool, connection, &impl, &entry);
   if (status != SALTS_OK) return status;
   if (entry->state != POOL_CONNECTING) return SALTS_EALREADY;
   if (entry->draining || impl->sealed) return SALTS_ESHUTDOWN;
   if (capacity == 0u || capacity > impl->max_leases || managed.slot == 0u)
     return SALTS_EINVAL;
-  status = cnet_manager_lookup(impl->manager, managed, &manager_entry);
+  status = cnet_manager_reuse_status(impl->manager, managed);
   if (status != SALTS_OK) return status;
-  if (manager_entry.state != CNET_MANAGER_BOUND) return SALTS_EBUSY;
   for (size_t i = 0u; i < impl->max_physical; ++i) {
     pool_physical *other = &impl->physical[i];
     if (other != entry && other->state != POOL_FREE && other->state != POOL_TERMINAL &&
@@ -228,12 +236,20 @@ int cnet_pool_try_acquire(cnet_client_pool *pool, const cnet_pool_key *key,
                           cnet_pool_lease *out_lease, cnet_managed_connection *out_managed) {
   pool_impl *impl;
   size_t free_lease = SIZE_MAX;
+  cnet_pool_protocol_ops binding;
   int status;
   if (out_lease == NULL || out_managed == NULL) return SALTS_EINVAL;
   *out_lease = (cnet_pool_lease){0};
   *out_managed = (cnet_managed_connection){0};
   status = pool_owner(pool, &impl);
   if (status != SALTS_OK) return status;
+  /* Capture callback authority before entering selector/reserve user code.
+   * Preparing a future host binding cannot redirect this acquire's token or
+   * the release callback copied into its eventual lease. */
+  if (protocol != NULL) {
+    binding = *protocol;
+    protocol = &binding;
+  }
   if (!key_valid(key) || key->owner_id != impl->owner_id ||
       (protocol != NULL && (protocol->reserve == NULL || protocol->release == NULL)))
     return SALTS_EINVAL;
@@ -253,11 +269,11 @@ int cnet_pool_try_acquire(cnet_client_pool *pool, const cnet_pool_key *key,
         .leases = entry->leases, .capacity = entry->protocol_capacity};
     if (entry->state != POOL_READY || entry->draining || !key_equal(&entry->key, key) ||
         entry->leases >= entry->protocol_capacity) continue;
-    cnet_manager_entry managed_entry = {0};
-    status = cnet_manager_lookup(impl->manager, entry->managed, &managed_entry);
-    if (status == SALTS_ENOENT || (status == SALTS_OK && managed_entry.state != CNET_MANAGER_BOUND)) {
+    status = cnet_manager_reuse_status(impl->manager, entry->managed);
+    if (status == SALTS_ENOENT || status == SALTS_ESHUTDOWN) {
       entry->draining = true; continue;
     }
+    if (status == SALTS_EBUSY) continue;
     if (status != SALTS_OK) return status;
     candidate->eligible = true;
   }

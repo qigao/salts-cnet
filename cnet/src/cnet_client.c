@@ -4,6 +4,7 @@
 
 #include "cnet_client_internal.h"
 #include "cnet_resources.h"
+#include "cnet_reuse.h"
 #include "cnet_dispatcher.h"
 #include "cnet_module.h"
 #include "cnet_shards.h"
@@ -119,6 +120,12 @@ static SALTS_THREAD_LOCAL cnet_client_impl *cnet_active_policy_client;
 static cnet_client_impl *cnet_client_get(cnet_client *client) {
   cnet_client_impl *impl = client != NULL ? (cnet_client_impl *)client->impl : NULL;
   return impl != NULL && impl == cnet_active_policy_client ? NULL : impl;
+}
+
+int cnet_client_check_owner(cnet_client *client) {
+  cnet_client_impl *impl = cnet_client_get(client);
+  if (impl == NULL) return SALTS_EINVAL;
+  return impl->owner_thread == cmeta_thread_current_token() ? SALTS_OK : SALTS_EPERM;
 }
 
 static bool cnet_power_of_two(size_t value) { return value != 0u && (value & (value - 1u)) == 0u; }
@@ -585,6 +592,25 @@ static int cnet_client_record_session_state(cnet_client_impl *impl,
   if (impl == NULL || record == NULL || out_state == NULL || !record->active)
     return SALTS_ENOENT;
   return cnet_shards_state(&impl->shards, record->internal, out_state);
+}
+
+int cnet_client_reuse_status(cnet_client *client, cnet_connection connection) {
+  cnet_client_impl *impl = cnet_client_get(client);
+  cnet_session_state state = CNET_SESSION_FREE;
+  if (impl == NULL) return SALTS_EINVAL;
+  if (impl->owner_thread != cmeta_thread_current_token()) return SALTS_EPERM;
+  if (!impl->admission_open) return SALTS_ESHUTDOWN;
+  cnet_client_record *record = cnet_client_find_record(impl, connection, NULL);
+  if (record == NULL) return SALTS_ENOENT;
+  if (record->close_command_pending || record->tcp_shutdown_mask != 0u)
+    return SALTS_ESHUTDOWN;
+  if (record->tls_command_pending) return SALTS_EBUSY;
+  int status = cnet_client_record_session_state(impl, record, &state);
+  if (status != SALTS_OK) return status;
+  if (state == CNET_SESSION_DRAINING || state == CNET_SESSION_TERMINAL ||
+      state == CNET_SESSION_RETIRED)
+    return SALTS_ESHUTDOWN;
+  return state == CNET_SESSION_OPEN ? SALTS_OK : SALTS_EBUSY;
 }
 
 static int cnet_client_admit(cnet_client_impl *impl, const cnet_owner_connect_payload *payload,

@@ -1,4 +1,7 @@
 #include "cnet_resources.h"
+#include "cnet_manager_internal.h"
+#include "cnet_reuse.h"
+#include "cnet_client_internal.h"
 #include <cnet/manager.h>
 #include <thread.h>
 #include <stdatomic.h>
@@ -36,6 +39,12 @@ static int get_manager(cnet_manager *manager, manager_impl **out) {
   if (manager == NULL || manager->impl == NULL) return SALTS_EINVAL;
   *out = manager->impl;
   return (*out)->thread == cmeta_thread_current_token() ? SALTS_OK : SALTS_EPERM;
+}
+int cnet_manager_validate_client(cnet_manager *manager, cnet_client *client) {
+  manager_impl *impl;
+  int status = get_manager(manager, &impl);
+  if (status != SALTS_OK) return status;
+  return impl->client == client ? SALTS_OK : SALTS_EINVAL;
 }
 static manager_record *find_record(manager_impl *impl, cnet_managed_connection id) {
   manager_record *record;
@@ -102,6 +111,7 @@ static cnet_observer bridge(manager_record *record) {
 int cnet_manager_init(cnet_manager *manager, const cnet_manager_config *config) {
   manager_impl *impl;
   uint_fast64_t incarnation;
+  int status;
   if (manager == NULL || config == NULL) return SALTS_EINVAL;
   if (manager->impl != NULL) return SALTS_EALREADY;
   if (!cnet_allocator_valid(&config->storage) || config->size != sizeof(*config) || config->version != CNET_MANAGER_VERSION ||
@@ -109,6 +119,8 @@ int cnet_manager_init(cnet_manager *manager, const cnet_manager_config *config) 
       config->connection_capacity == 0u || config->connection_capacity > config->record_capacity)
     return SALTS_EINVAL;
   if (config->record_capacity > SIZE_MAX / sizeof(manager_record)) return SALTS_ERANGE;
+  status = cnet_client_check_owner(config->client);
+  if (status != SALTS_OK) return status;
   impl = cnet_storage_alloc(&config->storage, 1u, sizeof(*impl));
   if (impl == NULL) return SALTS_ENOMEM;
   impl->records = cnet_storage_alloc(&config->storage, config->record_capacity, sizeof(*impl->records));
@@ -274,6 +286,15 @@ int cnet_manager_lookup(cnet_manager *manager, cnet_managed_connection id,
   status = get_record(manager, id, &impl, &record);
   if (status == SALTS_OK) entry_for(record, out);
   return status;
+}
+int cnet_manager_reuse_status(cnet_manager *manager, cnet_managed_connection id) {
+  manager_impl *impl;
+  manager_record *record;
+  int status = get_record(manager, id, &impl, &record);
+  if (status != SALTS_OK) return status;
+  if (impl->closing || record->state == CNET_MANAGER_RETIRED) return SALTS_ESHUTDOWN;
+  if (record->state != CNET_MANAGER_BOUND) return SALTS_EBUSY;
+  return cnet_client_reuse_status(impl->client, record->connection);
 }
 int cnet_manager_inspect(cnet_manager *manager, size_t index, cnet_manager_entry *out) {
   manager_impl *impl;

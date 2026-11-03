@@ -6,6 +6,7 @@
 #include <tinytest.h>
 #include <cnet/cnet.h>
 #include <cnet/client_pool.h>
+#include <cnet/managed_dial.h>
 #include <cnet/ipc.h>
 #include <cnet/sg_host.h>
 #include <clock.h>
@@ -626,7 +627,7 @@ static int pool_acquire_rejected(cnet_client_pool *pool, const cnet_pool_key *ke
  * peer's greeting; transport CONNECTED is insufficient. One physical slot and
  * one protocol slot bound reuse. Leases survive transport terminal until the
  * host releases them; Manager's context hold outlives those pool obligations. */
-static int saltscore_native_entry_test_cnet_pool_reuse(void) {
+static int saltscore_native_entry_test_cnet_pool_reuse(unsigned close_mode) {
   cnet_client client = {0};
   cnet_manager manager = {0};
   cnet_client_pool pool = {0};
@@ -681,6 +682,7 @@ static int saltscore_native_entry_test_cnet_pool_reuse(void) {
   VERIFY(cnet_manager_reserve(&manager, &attachment, &managed) == SALTS_OK);
   VERIFY(pool_acquire_rejected(&pool, &key, SALTS_ENOBUFS));
   VERIFY(cnet_manager_connect(&manager, managed, &connect_options, &connection) == SALTS_OK);
+  VERIFY(cnet_pool_bind_ready(&pool, physical, managed, 1u) == SALTS_EBUSY);
   VERIFY(poll_until(&client, &probe.connected, 1u) == SALTS_OK);
   VERIFY(probe.connected == 1u && probe.terminal == 0u && probe.failed == 0u);
   peer = accept(listener, NULL, NULL);
@@ -703,6 +705,8 @@ static int saltscore_native_entry_test_cnet_pool_reuse(void) {
   VERIFY(cnet_pool_get_snapshot(&pool, &pool_snapshot) == SALTS_OK);
   VERIFY(pool_snapshot.connecting == 0u && pool_snapshot.ready == 1u &&
          pool_snapshot.physical_in_use == 1u);
+  /* Sealing new Manager reservations alone must preserve existing reuse. */
+  VERIFY(cnet_manager_seal(&manager) == SALTS_OK);
 
   /* Each changed identity must deny reuse. Optional security IDs remain zero
    * for this plaintext recipe; setting one is a different key, not TLS proof. */
@@ -758,23 +762,60 @@ static int saltscore_native_entry_test_cnet_pool_reuse(void) {
   }
 
   VERIFY(cnet_pool_terminal(&pool, physical) == SALTS_EBUSY);
-  VERIFY(cnet_pool_begin_drain(&pool, physical) == SALTS_OK);
-  VERIFY(pool_acquire_rejected(&pool, &key, SALTS_ENOBUFS));
-  VERIFY(cnet_close(&client, connection) == SALTS_OK);
+  if (close_mode == 0u) {
+    VERIFY(cnet_pool_begin_drain(&pool, physical) == SALTS_OK);
+    VERIFY(pool_acquire_rejected(&pool, &key, SALTS_ENOBUFS));
+    VERIFY(cnet_close(&client, connection) == SALTS_OK);
+  } else {
+    /* Leave a real lease slot available: rejection must come from transport
+     * closure, not from lease exhaustion or an explicit pool drain. */
+    VERIFY(cnet_pool_release(&pool, lease) == SALTS_OK);
+    lease = (cnet_pool_lease){0};
+    if (close_mode == 1u) {
+      VERIFY(cnet_close(&client, connection) == SALTS_OK);
+    } else if (close_mode == 2u) {
+      pending = mem_get_buffer(mem_global(), 1u);
+      VERIFY(pending != NULL);
+      *mem_buffer_data(pending) = 0xf1u;
+      mem_set_used(pending, 1u);
+      VERIFY(cnet_send_buffer_and_close(&client, connection, pending) == SALTS_OK);
+      mem_buffer_release(pending);
+      pending = NULL;
+    } else if (close_mode == 3u) {
+      VERIFY(cnet_manager_request_close(&manager) == SALTS_OK);
+    } else {
+      VERIFY(cnet_connection_shutdown(&client, connection, CNET_TCP_SHUTDOWN_SEND) == SALTS_OK);
+    }
+    VERIFY(probe.terminal == 0u);
+    VERIFY(cnet_manager_lookup(&manager, managed, &entry) == SALTS_OK &&
+           entry.state == CNET_MANAGER_BOUND);
+    VERIFY(pool_acquire_rejected(&pool, &key, SALTS_ENOBUFS));
+    VERIFY(cnet_pool_get_snapshot(&pool, &pool_snapshot) == SALTS_OK &&
+           pool_snapshot.draining == 1u && pool_snapshot.ready == 0u &&
+           pool_snapshot.physical_in_use == 1u && pool_snapshot.active_leases == 0u);
+    VERIFY(cnet_pool_terminal(&pool, physical) == SALTS_EBUSY);
+    if (close_mode == 3u) VERIFY(cnet_manager_advance(&manager, 1u, &work) == SALTS_OK && work == 1u);
+    if (close_mode == 4u) VERIFY(cnet_close(&client, connection) == SALTS_OK);
+  }
   VERIFY(poll_until(&client, &probe.terminal, 1u) == SALTS_OK);
-  VERIFY(probe.terminal == 1u && probe.failed == 0u && probe.sent == 2u);
+  VERIFY(probe.terminal == 1u && probe.failed == 0u && probe.sent == (close_mode == 2u ? 3u : 2u));
+  if (close_mode == 2u) VERIFY(recv(peer, (char *)&byte, 1, 0) == 1 && byte == 0xf1u);
   VERIFY(recv(peer, (char *)&byte, 1, 0) == 0);
   VERIFY(cnet_manager_lookup(&manager, managed, &entry) == SALTS_OK);
   VERIFY(entry.state == CNET_MANAGER_RETIRED && entry.context_held);
   VERIFY(cnet_pool_terminal(&pool, physical) == SALTS_OK);
   VERIFY(cnet_pool_get_snapshot(&pool, &pool_snapshot) == SALTS_OK);
-  VERIFY(pool_snapshot.physical_in_use == 1u && pool_snapshot.active_leases == 1u &&
-         pool_snapshot.terminal_waiting_for_leases == 1u && !pool_snapshot.drained);
-  VERIFY(cnet_pool_destroy(&pool) == SALTS_EBUSY);
+  if (close_mode == 0u) {
+    VERIFY(pool_snapshot.physical_in_use == 1u && pool_snapshot.active_leases == 1u &&
+           pool_snapshot.terminal_waiting_for_leases == 1u && !pool_snapshot.drained);
+    VERIFY(cnet_pool_destroy(&pool) == SALTS_EBUSY);
+  } else VERIFY(pool_snapshot.drained && pool_snapshot.physical_in_use == 0u);
   VERIFY(cnet_manager_advance(&manager, 1u, &work) == SALTS_OK);
   VERIFY(probe.recycled == 0u);
-  VERIFY(cnet_pool_release(&pool, lease) == SALTS_OK);
-  VERIFY(cnet_pool_release(&pool, lease) == SALTS_ENOENT);
+  if (lease.slot != 0u) {
+    VERIFY(cnet_pool_release(&pool, lease) == SALTS_OK);
+    VERIFY(cnet_pool_release(&pool, lease) == SALTS_ENOENT);
+  }
   lease = (cnet_pool_lease){0};
   VERIFY(cnet_pool_get_snapshot(&pool, &pool_snapshot) == SALTS_OK);
   VERIFY(pool_snapshot.drained && pool_snapshot.physical_in_use == 0u &&
@@ -834,12 +875,16 @@ typedef struct pool_protocol_bank {
   cnet_managed_connection managed[2];
   uint64_t tokens[2][2], next_token;
   size_t capacity[2], attempts, attempted_mask;
+  int reject_status;
   unsigned errors;
 } pool_protocol_bank;
 typedef struct pool_protocol_provider {
   pool_protocol_bank *bank;
   size_t acquired, released, last_index;
   uint64_t last_token;
+  cnet_pool_protocol_ops *rebind;
+  void *next_user;
+  bool rebind_on_full;
 } pool_protocol_provider;
 
 static int composition_reserve(void *user, cnet_managed_connection managed, uint64_t *out) {
@@ -852,6 +897,7 @@ static int composition_reserve(void *user, cnet_managed_connection managed, uint
     ++bank->errors;
     return SALTS_EPROTO;
   }
+  if (bank->reject_status != SALTS_OK) return bank->reject_status;
   for (size_t i = 0u; i < 2u; ++i) {
     const cnet_managed_connection expected = bank->managed[i];
     if (managed.manager != expected.manager || managed.incarnation != expected.incarnation ||
@@ -863,7 +909,17 @@ static int composition_reserve(void *user, cnet_managed_connection managed, uint
       provider->last_token = *out;
       provider->last_index = i;
       ++provider->acquired;
+      /* A host can prepare its next binding during reservation. The accepted
+       * token must keep the provider that actually admitted this acquire. */
+      if (provider->rebind != NULL) {
+        provider->rebind->user = provider->next_user;
+        provider->rebind = NULL;
+      }
       return SALTS_OK;
+    }
+    if (provider->rebind_on_full && provider->rebind != NULL) {
+      provider->rebind->user = provider->next_user;
+      provider->rebind = NULL;
     }
     return SALTS_ENOBUFS;
   }
@@ -894,6 +950,22 @@ static int composition_pause(void *user, const cnet_pool_candidate *candidates,
   (void)candidates; (void)count; (void)sequence;
   *out = SIZE_MAX;
   return cnet_pool_set_selection(user, &normal) == SALTS_EBUSY ? SALTS_EBUSY : SALTS_EPROTO;
+}
+
+typedef struct pool_selection_probe {
+  cnet_client_pool *pool;
+  size_t index, calls;
+  int status;
+} pool_selection_probe;
+
+static int composition_select_probe(void *user, const cnet_pool_candidate *candidates,
+                                     size_t count, uint64_t sequence, size_t *out) {
+  pool_selection_probe *probe = user;
+  (void)candidates; (void)count; (void)sequence;
+  ++probe->calls;
+  *out = probe->index;
+  if (cnet_pool_seal(probe->pool) != SALTS_EBUSY) return SALTS_EPROTO;
+  return probe->status;
 }
 
 static int composition_exchange(cnet_client *client, cnet_connection connection,
@@ -972,10 +1044,52 @@ static int saltscore_native_entry_test_cnet_pool_composition(void) {
     VERIFY(probes[i].borrowed_data[0] == byte);
     VERIFY(cnet_pool_bind_ready(&pool, physical[i], bank.managed[i], 2u) == SALTS_OK);
   }
+  /* Selection cannot publish a bad/filtered/repeated index, and a hard error
+   * from either callback must leave both leases and real protocol slots free. */
+  pool_selection_probe selection_probe = {.pool = &pool};
+  const cnet_pool_selection_policy custom = {composition_select_probe, &selection_probe};
+  VERIFY(cnet_pool_set_selection(&pool, &custom) == SALTS_OK);
+  for (unsigned negative = 0u; negative < 4u; ++negative) {
+    cnet_pool_key requested = key;
+    const size_t attempts_before = bank.attempts;
+    selection_probe.calls = 0u;
+    selection_probe.status = negative == 0u ? SALTS_EIO : SALTS_OK;
+    selection_probe.index = negative == 1u ? 2u : 0u;
+    if (negative == 2u) ++requested.authority_id;
+    if (negative == 3u) bank.capacity[0] = 0u;
+    rejected = (cnet_pool_lease){1u, 1u, 1u, 1u};
+    leased = (cnet_managed_connection){1u, 1u, 1u, 1u};
+    VERIFY(cnet_pool_try_acquire(&pool, &requested, &protocol, &rejected, &leased) ==
+           (negative == 0u ? SALTS_EIO : SALTS_EINVAL));
+    VERIFY(rejected.pool == 0u && rejected.incarnation == 0u && rejected.generation == 0u && rejected.slot == 0u);
+    VERIFY(leased.manager == 0u && leased.incarnation == 0u && leased.generation == 0u && leased.slot == 0u);
+    VERIFY(selection_probe.calls == (negative == 3u ? 2u : 1u));
+    VERIFY(bank.attempts == attempts_before + (negative == 3u ? 1u : 0u));
+    VERIFY(providers[0].acquired == 0u && providers[0].released == 0u &&
+           providers[1].acquired == 0u && providers[1].released == 0u);
+    VERIFY(cnet_pool_get_snapshot(&pool, &snapshot) == SALTS_OK &&
+           snapshot.active_leases == 0u && snapshot.ready == 2u && snapshot.physical_in_use == 2u);
+    VERIFY(bank.tokens[0][0] == 0u && bank.tokens[0][1] == 0u &&
+           bank.tokens[1][0] == 0u && bank.tokens[1][1] == 0u);
+    bank.capacity[0] = 1u;
+  }
+  VERIFY(cnet_pool_set_selection(&pool, &first) == SALTS_OK);
+  bank.reject_status = SALTS_EIO;
+  const size_t hard_error_attempts = bank.attempts;
+  VERIFY(cnet_pool_try_acquire(&pool, &key, &protocol, &rejected, &leased) == SALTS_EIO);
+  VERIFY(bank.attempts == hard_error_attempts + 1u && rejected.slot == 0u && leased.slot == 0u);
+  VERIFY(cnet_pool_get_snapshot(&pool, &snapshot) == SALTS_OK && snapshot.active_leases == 0u && snapshot.ready == 2u);
+  VERIFY(providers[0].acquired == 0u && providers[0].released == 0u);
+  bank.reject_status = SALTS_OK;
   for (size_t i = 0u; i < 2u; ++i) {
     VERIFY(cnet_pool_set_selection(&pool, i == 0u ? &first : &round_robin) == SALTS_OK);
+    if (i == 1u) {
+      providers[0].rebind = &protocol;
+      providers[0].next_user = &providers[1];
+    }
     VERIFY(cnet_pool_try_acquire(&pool, &key, &protocol, &leases[i], &leased) == SALTS_OK);
     VERIFY(providers[0].last_index == i && leased.slot == bank.managed[i].slot);
+    if (i == 1u) VERIFY(protocol.user == &providers[1] && providers[1].acquired == 0u);
     VERIFY(composition_exchange(&client, connections[i], &probes[i], peers[i], providers[0].last_token) == 0);
   }
   VERIFY(cnet_pool_set_selection(&pool, &first) == SALTS_OK);
@@ -987,6 +1101,7 @@ static int saltscore_native_entry_test_cnet_pool_composition(void) {
   VERIFY(cnet_pool_get_snapshot(&pool, &snapshot) == SALTS_OK && snapshot.active_leases == 2u);
   stale = leases[1];
   VERIFY(cnet_pool_release(&pool, leases[1]) == SALTS_OK);
+  VERIFY(providers[0].released == 1u && providers[1].released == 0u);
   leases[1] = (cnet_pool_lease){0};
   protocol.user = &providers[1];
   for (size_t j = 1u; j < 4u; ++j) {
@@ -994,9 +1109,18 @@ static int saltscore_native_entry_test_cnet_pool_composition(void) {
     if (j == 2u) bank.capacity[0] = bank.capacity[1] = 2u;
     attempts = bank.attempts;
     bank.attempted_mask = 0u;
+    if (j == 1u) {
+      providers[1].rebind = &protocol;
+      providers[1].next_user = &providers[0];
+      providers[1].rebind_on_full = true;
+    }
     VERIFY(cnet_pool_set_selection(&pool, j < 3u ? &first : &least_used) == SALTS_OK);
     VERIFY(cnet_pool_try_acquire(&pool, &key, &protocol, &leases[j], &leased) == SALTS_OK);
-    if (j == 1u) VERIFY(bank.attempts == attempts + 2u && bank.attempted_mask == 3u);
+    if (j == 1u) {
+      VERIFY(bank.attempts == attempts + 2u && bank.attempted_mask == 3u);
+      VERIFY(protocol.user == &providers[0] && providers[1].acquired == 1u && providers[0].acquired == 2u);
+      protocol.user = &providers[1];
+    }
     VERIFY(providers[1].last_index == expected && leased.slot == bank.managed[expected].slot);
     VERIFY(composition_exchange(&client, connections[expected], &probes[expected], peers[expected],
                                 providers[1].last_token) == 0);
@@ -1079,6 +1203,395 @@ cleanup:
     (void)cnet_manager_advance(&manager, 2u, &work);
     (void)cnet_manager_destroy(&manager);
   }
+  if (client.impl != NULL) (void)cnet_client_destroy(&client);
+  return result;
+}
+
+typedef struct dial_admission_probe {
+  cnet_managed_dial *dial;
+  unsigned calls;
+  int decision, recursive_seal;
+} dial_admission_probe;
+
+static int dial_admit_probe(void *user) {
+  dial_admission_probe *probe = user;
+  ++probe->calls;
+  probe->recursive_seal = cnet_managed_dial_seal(probe->dial);
+  return probe->decision;
+}
+
+/* Two same-thread clients deliberately have overlapping public handle values.
+ * Manager/Dial must use the exact same wrapper, not merely a live client or a
+ * matching thread. A gate defers without an attempt; accepted work drains via
+ * the original Manager, while the independent native peer remains usable. */
+static int saltscore_native_entry_test_cnet_dial_owner(void) {
+  cnet_client clients[2] = {{0}, {0}};
+  cnet_manager manager = {0};
+  cnet_managed_dial dial = {0};
+  cnet_client_config config = client_config();
+  const cnet_manager_config manager_config = {
+      sizeof(cnet_manager_config), CNET_MANAGER_VERSION, &clients[0], 1u, 1u};
+  tcp_probe probes[2] = {{0}, {0}};
+  resource_probe storage = {0};
+  dial_admission_probe admission = {.dial = &dial, .decision = SALTS_ENOBUFS};
+  tcp_probe retired_probe = {0};
+  cnet_managed_connection retired = {0};
+  const cnet_manager_attachment retired_attachment = {
+      {on_state, NULL, &retired_probe, NULL}, on_recycled, true};
+  cnet_managed_dial_snapshot snapshot = {0};
+  cnet_manager_snapshot manager_snapshot = {0};
+  cnet_connection neighbor = {0};
+  test_socket listener = TEST_INVALID_SOCKET, peers[2] = {TEST_INVALID_SOCKET, TEST_INVALID_SOCKET};
+  uint16_t port = 0u;
+  unsigned char byte = 0x52u;
+  char uri[80];
+  uint64_t wait_ms = UINT64_MAX;
+  size_t work = 0u;
+  int result = 0;
+  config.connection_capacity = 1u;
+  VERIFY(cnet_client_init(&clients[0], &config) == SALTS_OK);
+  VERIFY(cnet_client_init(&clients[1], &config) == SALTS_OK);
+  VERIFY(cnet_manager_init(&manager, &manager_config) == SALTS_OK);
+  listener = test_native_listener(&port);
+  VERIFY(listener != TEST_INVALID_SOCKET && port != 0u);
+  VERIFY(snprintf(uri, sizeof(uri), "tcp://127.0.0.1:%u", (unsigned)port) > 0);
+  const cnet_connect_options neighbor_options = {
+      .uri = uri, .observer = {on_state, on_borrowed, &probes[1], on_sent}};
+  VERIFY(cnet_connect(&clients[1], &neighbor_options, &neighbor) == SALTS_OK);
+  VERIFY(poll_until(&clients[1], &probes[1].connected, 1u) == SALTS_OK);
+  peers[1] = accept(listener, NULL, NULL);
+  VERIFY(peers[1] != TEST_INVALID_SOCKET && test_recv_timeout(peers[1]) == 0);
+
+  cnet_managed_dial_config dial_config = {
+      .size = sizeof(cnet_managed_dial_config), .version = CNET_MANAGED_DIAL_VERSION,
+      .manager = &manager, .client = &clients[1],
+      .connection = {.uri = uri, .observer = {on_state, on_borrowed, &probes[0], on_sent}},
+      .recovery = {.size = sizeof(cnet_reconnect_config), .version = CNET_RECOVERY_POLICY_VERSION,
+          .max_attempts = 2u, .deadline_ms = cmeta_monotonic_ms() + 5000u,
+          .initial_backoff_ms = 1u, .maximum_backoff_ms = 8u, .jitter_seed = 7u},
+      .recovery_episode_ms = 5000u,
+      .storage = {probe_allocate, probe_deallocate, &storage}};
+  VERIFY(cnet_managed_dial_init(&dial, &dial_config) == SALTS_EINVAL);
+  VERIFY(dial.impl == NULL && storage.allocated == 0u && storage.released == 0u);
+  VERIFY(cnet_managed_dial_init_admitted(&dial, &dial_config, dial_admit_probe, &admission) == SALTS_EINVAL);
+  VERIFY(dial.impl == NULL && storage.allocated == 0u && admission.calls == 0u);
+  VERIFY(cnet_manager_get_snapshot(&manager, &manager_snapshot) == SALTS_OK && manager_snapshot.drained);
+  VERIFY(composition_exchange(&clients[1], neighbor, &probes[1], peers[1], 1u) == 0);
+
+  dial_config.client = &clients[0];
+  VERIFY(cnet_managed_dial_init_admitted(&dial, &dial_config, dial_admit_probe, &admission) == SALTS_OK);
+  /* Connection credits return on cancel, but the sole record remains borrowed
+   * through context release and a later bounded Manager advance. Neither phase
+   * may invoke admission or consume/seal the Dial's recovery episode. */
+  VERIFY(cnet_manager_reserve(&manager, &retired_attachment, &retired) == SALTS_OK);
+  VERIFY(cnet_manager_cancel(&manager, retired) == SALTS_OK);
+  VERIFY(cnet_manager_get_snapshot(&manager, &manager_snapshot) == SALTS_OK &&
+         manager_snapshot.reserved == 0u && manager_snapshot.bound == 0u &&
+         manager_snapshot.retired == 1u && manager_snapshot.context_holds == 1u);
+  admission.decision = SALTS_OK;
+  VERIFY(cnet_managed_dial_advance(&dial, cmeta_monotonic_ms(), &wait_ms) == SALTS_ENOBUFS);
+  VERIFY(wait_ms == 0u && admission.calls == 0u);
+  VERIFY(cnet_managed_dial_get_snapshot(&dial, &snapshot) == SALTS_OK &&
+         snapshot.recovery.attempts == 0u && snapshot.recovery.generation == 0u &&
+         !snapshot.recovery.sealed && snapshot.managed.slot == 0u);
+  VERIFY(cnet_manager_advance(&manager, 1u, &work) == SALTS_OK && work == 0u);
+  VERIFY(retired_probe.recycled == 0u);
+  VERIFY(cnet_manager_release_context(&manager, retired) == SALTS_OK);
+  VERIFY(cnet_managed_dial_advance(&dial, cmeta_monotonic_ms(), &wait_ms) == SALTS_ENOBUFS);
+  VERIFY(wait_ms == 0u && admission.calls == 0u);
+  VERIFY(cnet_managed_dial_get_snapshot(&dial, &snapshot) == SALTS_OK &&
+         snapshot.recovery.attempts == 0u && snapshot.recovery.generation == 0u &&
+         !snapshot.recovery.sealed && snapshot.managed.slot == 0u);
+  VERIFY(cnet_manager_advance(&manager, 1u, &work) == SALTS_OK && work == 1u);
+  VERIFY(retired_probe.recycled == 1u);
+  retired = (cnet_managed_connection){0};
+  admission.decision = SALTS_ENOBUFS;
+  VERIFY(cnet_managed_dial_advance(&dial, cmeta_monotonic_ms(), &wait_ms) == SALTS_ENOBUFS);
+  VERIFY(wait_ms == 0u && admission.calls == 1u && admission.recursive_seal == SALTS_EBUSY);
+  VERIFY(cnet_managed_dial_get_snapshot(&dial, &snapshot) == SALTS_OK &&
+         snapshot.recovery.attempts == 0u && snapshot.managed.slot == 0u &&
+         snapshot.connection.slot == 0u && !snapshot.stopping);
+  admission.decision = SALTS_OK;
+  VERIFY(cnet_managed_dial_advance(&dial, cmeta_monotonic_ms(), &wait_ms) == SALTS_OK);
+  VERIFY(admission.calls == 2u && admission.recursive_seal == SALTS_EBUSY);
+  VERIFY(cnet_managed_dial_get_snapshot(&dial, &snapshot) == SALTS_OK && snapshot.recovery.attempts == 1u);
+  VERIFY(cnet_managed_dial_protocol_ready(&dial, snapshot.recovery_ticket, cmeta_monotonic_ms()) == SALTS_EBUSY);
+  VERIFY(poll_until(&clients[0], &probes[0].connected, 1u) == SALTS_OK);
+  peers[0] = accept(listener, NULL, NULL);
+  VERIFY(peers[0] != TEST_INVALID_SOCKET && test_recv_timeout(peers[0]) == 0);
+  VERIFY(cnet_managed_dial_get_snapshot(&dial, &snapshot) == SALTS_OK &&
+         snapshot.recovery.awaiting_protocol && !snapshot.recovery.protocol_ready);
+  VERIFY(snapshot.connection.slot == neighbor.slot && snapshot.connection.generation == neighbor.generation);
+  VERIFY(cnet_receive(&clients[0], snapshot.connection, 1u) == SALTS_OK);
+  VERIFY(send(peers[0], (const char *)&byte, 1, 0) == 1);
+  VERIFY(poll_until(&clients[0], &probes[0].borrowed_bytes, 1u) == SALTS_OK && probes[0].borrowed_data[0] == byte);
+  VERIFY(cnet_managed_dial_protocol_ready(&dial, snapshot.recovery_ticket, cmeta_monotonic_ms()) == SALTS_OK);
+  VERIFY(composition_exchange(&clients[0], snapshot.connection, &probes[0], peers[0], 2u) == 0);
+  VERIFY(cnet_managed_dial_seal(&dial) == SALTS_OK);
+  VERIFY(cnet_managed_dial_seal(&dial) == SALTS_OK);
+  VERIFY(cnet_managed_dial_destroy(&dial) == SALTS_EBUSY);
+  VERIFY(cnet_managed_dial_advance(&dial, cmeta_monotonic_ms(), &wait_ms) == SALTS_ESHUTDOWN && wait_ms == 0u);
+  VERIFY(poll_until(&clients[0], &probes[0].terminal, 1u) == SALTS_OK);
+  VERIFY(probes[0].terminal == 1u && probes[0].failed == 0u && probes[1].terminal == 0u);
+  VERIFY(recv(peers[0], (char *)&byte, 1, 0) == 0);
+  VERIFY(cnet_managed_dial_destroy(&dial) == SALTS_EBUSY);
+  VERIFY(cnet_manager_advance(&manager, 1u, &work) == SALTS_OK && work == 1u);
+  VERIFY(cnet_managed_dial_get_snapshot(&dial, &snapshot) == SALTS_OK &&
+         snapshot.stopping && snapshot.recovery.sealed && snapshot.managed.slot == 0u && snapshot.connection.slot == 0u);
+  VERIFY(cnet_managed_dial_destroy(&dial) == SALTS_OK);
+  VERIFY(storage.allocated == 2u && storage.released == 2u);
+  VERIFY(cnet_manager_destroy(&manager) == SALTS_OK);
+  VERIFY(cnet_client_stop(&clients[0], 5000u) == SALTS_OK);
+  VERIFY(cnet_client_destroy(&clients[0]) == SALTS_OK);
+  VERIFY(composition_exchange(&clients[1], neighbor, &probes[1], peers[1], 3u) == 0);
+  VERIFY(cnet_close(&clients[1], neighbor) == SALTS_OK);
+  VERIFY(poll_until(&clients[1], &probes[1].terminal, 1u) == SALTS_OK);
+  VERIFY(probes[1].terminal == 1u && probes[1].failed == 0u && recv(peers[1], (char *)&byte, 1, 0) == 0);
+  VERIFY(cnet_client_stop(&clients[1], 5000u) == SALTS_OK);
+  VERIFY(cnet_client_destroy(&clients[1]) == SALTS_OK);
+cleanup:
+  test_close_socket(listener);
+  for (size_t i = 0u; i < 2u; ++i) test_close_socket(peers[i]);
+  if (dial.impl != NULL) (void)cnet_managed_dial_seal(&dial);
+  if (manager.impl != NULL) {
+    if (retired.slot != 0u) (void)cnet_manager_release_context(&manager, retired);
+    (void)cnet_manager_request_close(&manager);
+    (void)cnet_manager_advance(&manager, 1u, &work);
+  }
+  for (size_t i = 0u; i < 2u; ++i)
+    if (clients[i].impl != NULL) (void)cnet_client_stop(&clients[i], 3000u);
+  if (manager.impl != NULL) (void)cnet_manager_advance(&manager, 1u, &work);
+  if (dial.impl != NULL) (void)cnet_managed_dial_destroy(&dial);
+  if (manager.impl != NULL) (void)cnet_manager_destroy(&manager);
+  for (size_t i = 0u; i < 2u; ++i)
+    if (clients[i].impl != NULL) (void)cnet_client_destroy(&clients[i]);
+  return result;
+}
+
+typedef struct dial_recovery_probe {
+  cnet_managed_dial *dial;
+  cnet_reconnect_failure_kind decision;
+  unsigned calls;
+  int recursive_advance, recursive_seal;
+} dial_recovery_probe;
+
+static cnet_reconnect_failure_kind dial_classify_probe(
+    void *user, cnet_connection_state state, const cnet_error *error) {
+  dial_recovery_probe *probe = user;
+  uint64_t wait = 0u;
+  (void)state;
+  (void)error;
+  ++probe->calls;
+  probe->recursive_advance = cnet_managed_dial_advance(probe->dial, cmeta_monotonic_ms(), &wait);
+  probe->recursive_seal = cnet_managed_dial_seal(probe->dial);
+  return probe->decision;
+}
+
+/* Three real TCP incarnations: pre-READY loss, READY loss, security stop.
+ * Only explicit protocol readiness resets attempts; every replacement waits
+ * for terminal and Manager recycle, and stale identities never gain authority. */
+static int saltscore_native_entry_test_cnet_dial_recovery(void) {
+  cnet_client client = {0};
+  cnet_manager manager = {0};
+  cnet_managed_dial dial = {0};
+  cnet_client_config config = client_config();
+  const cnet_manager_config manager_config = {
+      sizeof(cnet_manager_config), CNET_MANAGER_VERSION, &client, 1u, 1u};
+  tcp_probe probe = {0};
+  dial_recovery_probe classifier = {.dial = &dial, .decision = CNET_RECONNECT_TRANSIENT};
+  cnet_managed_dial_snapshot snapshot = {0};
+  cnet_reconnect_ticket old_ticket = {0};
+  cnet_connection old_connection = {0};
+  cnet_manager_entry entry = {0};
+  test_socket listener = TEST_INVALID_SOCKET, peer = TEST_INVALID_SOCKET;
+  uint16_t port = 0u;
+  char uri[80];
+  uint64_t wait_ms = UINT64_MAX, initial_deadline = cmeta_monotonic_ms() + 5000u;
+  size_t work = 0u;
+  int result = 0;
+  config.connection_capacity = 1u;
+  VERIFY(cnet_client_init(&client, &config) == SALTS_OK);
+  VERIFY(cnet_manager_init(&manager, &manager_config) == SALTS_OK);
+  listener = test_native_listener(&port);
+  VERIFY(listener != TEST_INVALID_SOCKET && port != 0u);
+  VERIFY(snprintf(uri, sizeof(uri), "tcp://127.0.0.1:%u", (unsigned)port) > 0);
+  const cnet_managed_dial_config dial_config = {
+      .size = sizeof(cnet_managed_dial_config), .version = CNET_MANAGED_DIAL_VERSION,
+      .manager = &manager, .client = &client,
+      .connection = {.uri = uri, .observer = {on_state, on_borrowed, &probe, on_sent}},
+      .recovery = {.size = sizeof(cnet_reconnect_config), .version = CNET_RECOVERY_POLICY_VERSION,
+          .max_attempts = 2u, .deadline_ms = initial_deadline,
+          .backoff = {cnet_backoff_fixed, NULL}},
+      .recovery_episode_ms = 10000u, .classify = dial_classify_probe, .classify_user = &classifier};
+  VERIFY(cnet_managed_dial_init(&dial, &dial_config) == SALTS_OK);
+  for (unsigned round = 0u; round < 3u; ++round) {
+    const unsigned char greeting = (unsigned char)(0x61u + round);
+    VERIFY(cnet_managed_dial_advance(&dial, cmeta_monotonic_ms(), &wait_ms) == SALTS_OK);
+    VERIFY(cnet_managed_dial_get_snapshot(&dial, &snapshot) == SALTS_OK &&
+           snapshot.recovery.in_flight && snapshot.recovery.attempts == (round == 1u ? 2u : 1u));
+    if (round != 0u) {
+      VERIFY(snapshot.connection.slot == old_connection.slot && snapshot.connection.generation > old_connection.generation);
+      VERIFY(snapshot.recovery_ticket.generation > old_ticket.generation);
+      VERIFY(cnet_managed_dial_protocol_ready(&dial, old_ticket, cmeta_monotonic_ms()) == SALTS_ENOENT);
+      VERIFY(cnet_receive(&client, old_connection, 1u) == SALTS_ENOENT);
+    }
+    VERIFY(poll_until(&client, &probe.connected, round + 1u) == SALTS_OK);
+    peer = accept(listener, NULL, NULL);
+    VERIFY(peer != TEST_INVALID_SOCKET && test_recv_timeout(peer) == 0);
+    VERIFY(cnet_receive(&client, snapshot.connection, 1u) == SALTS_OK);
+    VERIFY(send(peer, (const char *)&greeting, 1, 0) == 1);
+    const unsigned target = probe.borrowed_bytes + 1u;
+    VERIFY(poll_until(&client, &probe.borrowed_bytes, target) == SALTS_OK && probe.borrowed_data[target - 1u] == greeting);
+    VERIFY(cnet_managed_dial_get_snapshot(&dial, &snapshot) == SALTS_OK && snapshot.recovery.awaiting_protocol);
+    if (round == 1u) {
+      VERIFY(cnet_managed_dial_protocol_ready(&dial, snapshot.recovery_ticket, cmeta_monotonic_ms()) == SALTS_OK);
+      VERIFY(cnet_managed_dial_get_snapshot(&dial, &snapshot) == SALTS_OK &&
+             snapshot.recovery.protocol_ready && snapshot.recovery.attempts == 0u);
+      VERIFY(composition_exchange(&client, snapshot.connection, &probe, peer, 2u) == 0);
+    }
+    if (round == 2u) classifier.decision = CNET_RECONNECT_SECURITY;
+    old_ticket = snapshot.recovery_ticket;
+    old_connection = snapshot.connection;
+    VERIFY(cnet_receive(&client, snapshot.connection, 1u) == SALTS_OK);
+    test_close_socket(peer);
+    peer = TEST_INVALID_SOCKET;
+    VERIFY(poll_until(&client, &probe.terminal, round + 1u) == SALTS_OK);
+    VERIFY(probe.failed == 0u && classifier.calls == round + 1u &&
+           classifier.recursive_advance == SALTS_EBUSY && classifier.recursive_seal == SALTS_EBUSY);
+    VERIFY(cnet_manager_lookup(&manager, snapshot.managed, &entry) == SALTS_OK && entry.state == CNET_MANAGER_RETIRED);
+    VERIFY(cnet_managed_dial_advance(&dial, cmeta_monotonic_ms(), &wait_ms) == SALTS_EBUSY && wait_ms == 0u);
+    VERIFY(cnet_managed_dial_destroy(&dial) == SALTS_EBUSY);
+    VERIFY(cnet_managed_dial_get_snapshot(&dial, &snapshot) == SALTS_OK &&
+           !snapshot.recovery.in_flight && !snapshot.recovery.awaiting_protocol && !snapshot.recovery.protocol_ready &&
+           snapshot.recovery.sealed == (round == 2u));
+    if (round == 0u) VERIFY(snapshot.recovery.deadline_ms == initial_deadline && snapshot.recovery.attempts == 1u);
+    else VERIFY(snapshot.recovery.deadline_ms > initial_deadline && snapshot.recovery.attempts == (round == 1u ? 0u : 1u));
+    VERIFY(cnet_manager_advance(&manager, 1u, &work) == SALTS_OK && work == 1u);
+    VERIFY(cnet_managed_dial_protocol_ready(&dial, old_ticket, cmeta_monotonic_ms()) == SALTS_ENOENT);
+  }
+  VERIFY(cnet_managed_dial_advance(&dial, cmeta_monotonic_ms(), &wait_ms) == SALTS_ESHUTDOWN && wait_ms == 0u);
+  VERIFY(cnet_managed_dial_seal(&dial) == SALTS_OK);
+  VERIFY(cnet_managed_dial_destroy(&dial) == SALTS_OK);
+  VERIFY(cnet_manager_destroy(&manager) == SALTS_OK);
+  VERIFY(cnet_client_stop(&client, 5000u) == SALTS_OK);
+  VERIFY(cnet_client_destroy(&client) == SALTS_OK);
+cleanup:
+  test_close_socket(peer);
+  test_close_socket(listener);
+  if (dial.impl != NULL) (void)cnet_managed_dial_seal(&dial);
+  if (manager.impl != NULL) {
+    (void)cnet_manager_request_close(&manager);
+    (void)cnet_manager_advance(&manager, 1u, &work);
+  }
+  if (client.impl != NULL) (void)cnet_client_stop(&client, 3000u);
+  if (manager.impl != NULL) (void)cnet_manager_advance(&manager, 1u, &work);
+  if (dial.impl != NULL) (void)cnet_managed_dial_destroy(&dial);
+  if (manager.impl != NULL) (void)cnet_manager_destroy(&manager);
+  if (client.impl != NULL) (void)cnet_client_destroy(&client);
+  return result;
+}
+
+/* Protocol authority cannot revive a transport whose close has already been
+ * admitted, even before the Manager receives its terminal notification. */
+static int saltscore_native_entry_test_cnet_dial_ready(unsigned close_mode) {
+  cnet_client client = {0};
+  cnet_manager manager = {0};
+  cnet_managed_dial dial = {0};
+  cnet_client_config config = client_config();
+  const cnet_manager_config manager_config = {
+      sizeof(cnet_manager_config), CNET_MANAGER_VERSION, &client, 1u, 1u};
+  tcp_probe probe = {0};
+  cnet_managed_dial_snapshot before = {0}, after = {0};
+  cnet_manager_entry entry = {0};
+  test_socket listener = TEST_INVALID_SOCKET, peer = TEST_INVALID_SOCKET;
+  mem_buffer_t *final = NULL;
+  uint16_t port = 0u;
+  unsigned char byte = 0x6au;
+  char uri[80];
+  uint64_t wait_ms = UINT64_MAX;
+  size_t work = 0u;
+  int result = 0;
+  VERIFY(cnet_client_init(&client, &config) == SALTS_OK);
+  VERIFY(cnet_manager_init(&manager, &manager_config) == SALTS_OK);
+  listener = test_native_listener(&port);
+  VERIFY(listener != TEST_INVALID_SOCKET && port != 0u);
+  VERIFY(snprintf(uri, sizeof(uri), "tcp://127.0.0.1:%u", (unsigned)port) > 0);
+  const cnet_managed_dial_config dial_config = {
+      .size = sizeof(cnet_managed_dial_config), .version = CNET_MANAGED_DIAL_VERSION,
+      .manager = &manager, .client = &client,
+      .connection = {.uri = uri, .observer = {on_state, on_borrowed, &probe, on_sent}},
+      .recovery = {.size = sizeof(cnet_reconnect_config), .version = CNET_RECOVERY_POLICY_VERSION,
+          .max_attempts = 2u, .deadline_ms = cmeta_monotonic_ms() + 5000u,
+          .initial_backoff_ms = 1u, .maximum_backoff_ms = 8u},
+      .recovery_episode_ms = 5000u};
+  VERIFY(cnet_managed_dial_init(&dial, &dial_config) == SALTS_OK);
+  VERIFY(cnet_managed_dial_advance(&dial, cmeta_monotonic_ms(), &wait_ms) == SALTS_OK);
+  VERIFY(cnet_managed_dial_get_snapshot(&dial, &before) == SALTS_OK);
+  VERIFY(cnet_managed_dial_protocol_ready(&dial, before.recovery_ticket, cmeta_monotonic_ms()) == SALTS_EBUSY);
+  VERIFY(poll_until(&client, &probe.connected, 1u) == SALTS_OK);
+  peer = accept(listener, NULL, NULL);
+  VERIFY(peer != TEST_INVALID_SOCKET && test_recv_timeout(peer) == 0);
+  VERIFY(cnet_receive(&client, before.connection, 1u) == SALTS_OK);
+  VERIFY(send(peer, (const char *)&byte, 1, 0) == 1);
+  VERIFY(poll_until(&client, &probe.borrowed_bytes, 1u) == SALTS_OK && probe.borrowed_data[0] == byte);
+  VERIFY(cnet_managed_dial_get_snapshot(&dial, &before) == SALTS_OK &&
+         before.recovery.awaiting_protocol && before.recovery.attempts == 1u);
+  if (close_mode == 0u) {
+    VERIFY(cnet_managed_dial_protocol_ready(&dial, before.recovery_ticket, cmeta_monotonic_ms()) == SALTS_OK);
+    VERIFY(cnet_managed_dial_get_snapshot(&dial, &after) == SALTS_OK &&
+           after.recovery.protocol_ready && after.recovery.attempts == 0u);
+    VERIFY(cnet_managed_dial_protocol_ready(&dial, before.recovery_ticket, cmeta_monotonic_ms()) == SALTS_EALREADY);
+    VERIFY(composition_exchange(&client, before.connection, &probe, peer, 3u) == 0);
+    VERIFY(cnet_close(&client, before.connection) == SALTS_OK);
+  } else {
+    if (close_mode == 1u) VERIFY(cnet_close(&client, before.connection) == SALTS_OK);
+    else if (close_mode == 2u) {
+      final = mem_get_buffer(mem_global(), 1u);
+      VERIFY(final != NULL);
+      *mem_buffer_data(final) = 0xf2u;
+      mem_set_used(final, 1u);
+      VERIFY(cnet_send_buffer_and_close(&client, before.connection, final) == SALTS_OK);
+      mem_buffer_release(final);
+      final = NULL;
+    } else if (close_mode == 3u) VERIFY(cnet_manager_request_close(&manager) == SALTS_OK);
+    else VERIFY(cnet_connection_shutdown(&client, before.connection, CNET_TCP_SHUTDOWN_SEND) == SALTS_OK);
+    VERIFY(probe.terminal == 0u);
+    VERIFY(cnet_manager_lookup(&manager, before.managed, &entry) == SALTS_OK && entry.state == CNET_MANAGER_BOUND);
+    VERIFY(cnet_managed_dial_protocol_ready(&dial, before.recovery_ticket, cmeta_monotonic_ms()) == SALTS_ESHUTDOWN);
+    VERIFY(cnet_managed_dial_get_snapshot(&dial, &after) == SALTS_OK &&
+           after.recovery.awaiting_protocol && !after.recovery.protocol_ready &&
+           after.recovery.attempts == 1u && !after.recovery.sealed &&
+           after.recovery.generation == before.recovery.generation &&
+           after.recovery.deadline_ms == before.recovery.deadline_ms);
+    if (close_mode == 3u) VERIFY(cnet_manager_advance(&manager, 1u, &work) == SALTS_OK && work == 1u);
+    if (close_mode == 4u) VERIFY(cnet_close(&client, before.connection) == SALTS_OK);
+  }
+  VERIFY(poll_until(&client, &probe.terminal, 1u) == SALTS_OK);
+  VERIFY(probe.terminal == 1u && probe.failed == 0u);
+  if (close_mode == 2u) VERIFY(recv(peer, (char *)&byte, 1, 0) == 1 && byte == 0xf2u && probe.sent == 1u);
+  VERIFY(recv(peer, (char *)&byte, 1, 0) == 0);
+  VERIFY(cnet_managed_dial_get_snapshot(&dial, &after) == SALTS_OK && after.recovery.sealed && !after.recovery.protocol_ready);
+  if (close_mode != 0u) VERIFY(after.recovery.attempts == 1u && after.recovery.deadline_ms == before.recovery.deadline_ms);
+  VERIFY(cnet_managed_dial_seal(&dial) == SALTS_OK);
+  VERIFY(cnet_managed_dial_destroy(&dial) == SALTS_EBUSY);
+  VERIFY(cnet_manager_advance(&manager, 1u, &work) == SALTS_OK && work == 1u);
+  VERIFY(cnet_managed_dial_destroy(&dial) == SALTS_OK);
+  VERIFY(cnet_manager_destroy(&manager) == SALTS_OK);
+  VERIFY(cnet_client_stop(&client, 5000u) == SALTS_OK);
+  VERIFY(cnet_client_destroy(&client) == SALTS_OK);
+cleanup:
+  if (final != NULL) mem_buffer_release(final);
+  test_close_socket(peer);
+  test_close_socket(listener);
+  if (dial.impl != NULL) (void)cnet_managed_dial_seal(&dial);
+  if (manager.impl != NULL) {
+    (void)cnet_manager_request_close(&manager);
+    (void)cnet_manager_advance(&manager, 1u, &work);
+  }
+  if (client.impl != NULL) (void)cnet_client_stop(&client, 3000u);
+  if (manager.impl != NULL) (void)cnet_manager_advance(&manager, 1u, &work);
+  if (dial.impl != NULL) (void)cnet_managed_dial_destroy(&dial);
+  if (manager.impl != NULL) (void)cnet_manager_destroy(&manager);
   if (client.impl != NULL) (void)cnet_client_destroy(&client);
   return result;
 }
@@ -2566,6 +3079,9 @@ typedef struct phase_probe {
   unsigned evaluated, callback_checks;
   size_t total_operations, connection_operations;
   int decision, policy_reentry, callback_mutation, wrong_owner;
+  int wrong_manager_owner;
+  size_t wrong_manager_allocated, wrong_manager_released;
+  bool wrong_manager_published;
 } phase_probe;
 
 static int phase_evaluate(void *user, const cnet_send_usage *total,
@@ -2601,6 +3117,17 @@ static void phase_wrong_owner(void *user) {
   phase_probe *p = user;
   const cnet_send_admission_policy empty = {0};
   p->wrong_owner = cnet_set_send_admission(p->client, p->connection, &empty);
+  cnet_manager manager = {0};
+  resource_probe storage = {0};
+  const cnet_manager_config config = {
+      .size = sizeof(cnet_manager_config), .version = CNET_MANAGER_VERSION,
+      .client = p->client, .record_capacity = 1u, .connection_capacity = 1u,
+      .storage = {probe_allocate, probe_deallocate, &storage}};
+  p->wrong_manager_owner = cnet_manager_init(&manager, &config);
+  p->wrong_manager_published = manager.impl != NULL;
+  if (manager.impl != NULL) (void)cnet_manager_destroy(&manager);
+  p->wrong_manager_allocated = storage.allocated;
+  p->wrong_manager_released = storage.released;
 }
 
 static int saltscore_native_entry_test_cnet_connection_phases(void) {
@@ -2647,6 +3174,8 @@ static int saltscore_native_entry_test_cnet_connection_phases(void) {
   VERIFY(cmeta_thread_join(&thread) == SALTS_OK);
   cmeta_thread_destroy(&thread);
   VERIFY(phases[0].wrong_owner == SALTS_EPERM);
+  VERIFY(phases[0].wrong_manager_owner == SALTS_EPERM && !phases[0].wrong_manager_published);
+  VERIFY(phases[0].wrong_manager_allocated == 0u && phases[0].wrong_manager_released == 0u);
   const cnet_send_admission_policy invalid = {NULL, &phases[0]};
   VERIFY(cnet_set_send_admission(&client, phases[0].connection, &invalid) == SALTS_EINVAL);
   VERIFY(cnet_set_send_admission(&client, phases[0].connection, NULL) == SALTS_EINVAL);
@@ -2778,12 +3307,32 @@ spec("CNet real TCP loopback and retained slice") {
     check(result == 0, "native stream transfer returned %d", result);
   }
   it("leases one exact-key TCP connection only after protocol READY and drains retained leases") {
-    const int result = saltscore_native_entry_test_cnet_pool_reuse();
+    const int result = saltscore_native_entry_test_cnet_pool_reuse(0u);
     check(result == 0, "native pool reuse returned %d", result);
+  }
+  for (unsigned close_mode = 1u; close_mode <= 4u; ++close_mode) {
+    it("rejects pool reuse before transport terminal after close mode %u", close_mode) {
+      const int result = saltscore_native_entry_test_cnet_pool_reuse(close_mode);
+      check(result == 0, "native pool close admission returned %d", result);
+    }
   }
   it("switches pool selectors across real connections without losing protocol token authority") {
     const int result = saltscore_native_entry_test_cnet_pool_composition();
     check(result == 0, "native pool policy composition returned %d", result);
+  }
+  it("rejects a foreign Dial client and stops only its Manager-owned connection") {
+    const int result = saltscore_native_entry_test_cnet_dial_owner();
+    check(result == 0, "native Dial owner returned %d", result);
+  }
+  it("recovers real TCP incarnations across handshake loss and READY loss, then seals on security failure") {
+    const int result = saltscore_native_entry_test_cnet_dial_recovery();
+    check(result == 0, "native Dial recovery returned %d", result);
+  }
+  for (unsigned close_mode = 0u; close_mode <= 4u; ++close_mode) {
+    it("admits Dial protocol READY only on a live transport, close mode %u", close_mode) {
+      const int result = saltscore_native_entry_test_cnet_dial_ready(close_mode);
+      check(result == 0, "native Dial READY returned %d", result);
+    }
   }
   it("recovers bounded send credits after rejected FINAL and rejects stale connection generations") {
     const int result = saltscore_native_entry_test_cnet_send_backpressure();

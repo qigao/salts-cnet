@@ -49,9 +49,12 @@ int cnet_handoff_init(cnet_handoff *handoff, const cnet_handoff_config *config) 
   impl = cnet_storage_alloc(&config->storage, 1u, sizeof(*impl));
   if (impl == NULL) return SALTS_ENOMEM;
   impl->records = cnet_storage_alloc(&config->storage, config->connection_capacity, sizeof(*impl->records));
+  if (impl->records == NULL) {
+    cnet_storage_free(impl);
+    return SALTS_ENOMEM;
+  }
   impl->queue.data = cnet_storage_alloc(&config->storage, config->queue_capacity + 1u, sizeof(size_t));
-  if (impl->records == NULL || impl->queue.data == NULL) {
-    cnet_storage_free(impl->queue.data);
+  if (impl->queue.data == NULL) {
     cnet_storage_free(impl->records);
     cnet_storage_free(impl);
     return SALTS_ENOMEM;

@@ -115,6 +115,23 @@ add per-connection mutable hard limits or change resource-provider lifetime.
 
 ### Memory and terminal accounting
 
+Pool READY admission and each new lease also inspect the existing CNet session
+through Manager. Manager BOUND alone does not prove the transport is OPEN:
+connect/handshake may still be pending, or final-send/direct close may already
+have sealed admission before the terminal observer retires the Manager record.
+Opening/handshaking candidates are temporarily ineligible. Closing, directional
+shutdown, stopped and stale connections are marked draining without closing
+anything or fabricating terminal notification. A closing Manager likewise
+cannot issue new pool leases; merely sealing new Manager reservations does not
+stop an otherwise live pool connection.
+
+The Owner performs these checks synchronously before selector/protocol-token
+admission, without progress, callbacks, allocation or another lifecycle state
+machine. Exact pool keys, host-declared protocol READY and actual protocol slot
+reservations remain required. Existing leases keep their original release
+authority and physical records stay charged until real terminal and final lease
+release. This is an internal CNet/Manager/Pool check, with no new public API.
+
 `storage` covers CNet client/Owner/session/dispatcher/command/event/write
 records and the WebSocket transport bridge, plus explicitly configured
 Manager/Handoff/ManagedDial/Pool objects. It does not replace dependency-owned
@@ -175,7 +192,70 @@ not substitute the narrower versioned Crypto qualification adapter or claim
 DTLS support. Local Windows LLVM tests passed; the cutover remains pending
 its own exact-head cross-platform CI.
 
+### ManagedDial READY on a live transport
+
+ManagedDial protocol READY also requires its Manager-owned transport to remain
+OPEN at the call. A matching attempt ticket cannot reset recovery accounting
+after direct close, retained FINAL admission, Manager request_close or directional
+shutdown, even before the terminal callback retires the Manager record. These
+paths return `ESHUTDOWN`; opening/handshaking returns `EBUSY`. The same private
+transport-state check guards Pool reuse and Dial READY. Protocol authentication
+and handshake authority remain with the host.
+
+The formal TCP suite covers a real peer greeting followed by each of those four
+close admissions, asserting rejection before terminal without changing the
+attempt count, generation, deadline or READY state. Real terminal/FIN and Manager
+recycle still drain normally. A live-transport control case admits READY, resets
+the episode and completes a real request/reply. Cross-platform qualification
+follows the exact-head formal CI result.
+
+### Manager initialization Owner
+
+Manager initialization must execute on its borrowed client's fixed Owner. A live
+client wrapper alone is insufficient: a foreign thread receives `EPERM` before
+the Manager storage provider runs or an implementation is published. Manager
+progress and transport callbacks therefore share the same Owner from admission.
+The formal real TCP phase case attempts foreign-thread initialization with a
+counting allocator, requires zero allocations and an unpublished wrapper, then
+continues real traffic and teardown on the original client Owner.
+
+### Management allocation failure
+
+Management storage initialization stops after its first allocator failure.
+Handoff no longer attempts queue allocation after record allocation fails;
+Pool no longer attempts later lease/candidate arrays after an earlier allocation
+fails. Both return `ENOMEM`, free prior allocations through their original
+providers and leave the wrapper unpublished.
+
+The formal policy suite injects failure at each successive storage allocation
+for Manager, Handoff, ManagedDial and Pool until initialization succeeds. It
+requires no later allocation call after failure, zero remaining provider-owned
+allocations and an unchanged borrowed Manager. Successful instances exercise
+reserve/cancel/recycle, handoff credit release, idle Dial sealing or Pool
+reservation abort before destruction. This qualifies initialization rollback
+and bounded helper lifecycle, without dialing a peer or claiming transport drain.
+
 ### Multi-connection pool policy composition
+
+Pool acquisition copies its protocol callback/user binding before entering
+selection or reservation callbacks. The same binding applies across bounded
+candidate retries and becomes the successful lease's release authority. A host
+may prepare its next binding during reserve without redirecting the token just
+admitted. The real TCP composition case rebinds the host's user from provider A
+to provider B inside A's successful reservation, transmits that token to its
+peer, then requires A to release it exactly once. Later acquisitions use B;
+terminal/drain and final lease release leave both providers balanced.
+
+The same formal TCP case checks selector errors, out-of-range and filtered
+indices, and repeated selection of a candidate already excluded by protocol
+ENOBUFS. Rejections leave empty output identities, unchanged lease/physical
+counts, no protocol tokens and no release calls. A protocol hard error returns
+unchanged after one reservation call, without trying the neighbor. A failed
+reserve owns no protocol slot; only ENOBUFS permits a bounded alternative.
+During a successful alternate-candidate acquire, the first full candidate
+rebinds the host's future provider, but the second candidate and accepted lease
+retain the provider captured at entry. The actual peer exchange and final
+provider balances verify settlement after those rejected paths.
 
 The existing real TCP loopback suite includes two physical connections with
 the same exact pool key. Each completes a real peer protocol greeting before
@@ -199,6 +279,71 @@ both providers then have exactly matched acquisitions/releases and both
 Manager attachments recycle once. This qualifies the generic host token
 contract, not HTTP multiplexing, MQTT QoS, a scheduler fairness or throughput
 claim. Cross-platform qualification follows the exact-head formal CI result.
+
+### ManagedDial client ownership and admission
+
+ManagedDial checks both Manager connection credits and attachment records before
+calling host admission or consuming an attempt. A cancelled/terminal record
+returns its connection credit before its context hold and deferred recycle end.
+If those records fill the table, `advance` returns `ENOBUFS` with zero wait and
+leaves the recovery generation, attempt budget and seal state unchanged. Releasing
+the hold alone is insufficient; the host must also advance Manager recycle.
+The formal TCP case holds the sole cancelled record through both phases, then
+recycles it and completes a real Dial connection and protocol exchange.
+
+ManagedDial borrows the exact client wrapper used to initialize its Manager.
+Both init variants reject a different wrapper with `EINVAL` before allocating
+storage or invoking admission. A shared Owner thread or matching connection
+slot/generation does not establish client identity: connect and close must
+reach the same client. The host keeps both borrowed wrappers live until Dial
+destruction and continues their existing progress/recycle loop.
+
+The formal TCP loopback suite uses two clients with overlapping public handle
+values and real native peers. It checks allocation-free mismatch rejection,
+admission deferral without consuming an attempt, callback reentry rejection,
+explicit protocol READY after transport connection and a real peer greeting,
+and idempotent seal. Dial destruction remains busy through transport terminal
+until Manager recycle; destroying that Dial and its client leaves the neighbor
+able to complete another request/reply. Cross-platform qualification follows
+the exact-head formal CI result.
+
+### Real ManagedDial recovery lifecycle
+
+The formal TCP loopback suite exercises three sequential physical connections
+through one Manager record and one client slot. A native peer supplies a greeting
+and closes each socket while CNet has a real receive pending. The host classifier
+authorizes transient recovery for the first two losses, then selects SECURITY
+for the last. This checks host classification handling, not a TLS authentication
+failure or permission to replay application data.
+
+The first loss occurs before protocol READY and preserves its consumed attempt
+and original deadline. The second connection explicitly reaches READY and performs
+a request/reply; its later loss starts a new bounded episode with reset attempts.
+Each replacement waits for actual terminal and Manager recycle, receives fresh
+transport and recovery generations, and rejects old connection handles and READY
+tickets. Classifier callback mutation is rejected. The final security decision
+seals recovery and admits no fourth connection. Zero-delay fixed backoff keeps
+this case focused on lifecycle composition; delay and jitter bounds belong to
+the existing recovery policy tests. Cross-platform qualification follows the
+exact-head formal CI result.
+
+### Custom backoff authority boundaries
+
+The formal policy suite checks eleven deterministic custom-backoff cases:
+bounded, zero and maximum delay; excessive delay and a provider error; exact
+deadline equality and clock-addition overflow; exhausted attempts; security,
+permanent and already-expired failures. Strategy selection never bypasses the
+core attempt/deadline/identity checks. Invalid delay or a policy error seals
+recovery; the original policy error is preserved. A delay reaching the deadline
+or overflowing the clock cannot produce a wrapped, immediately eligible retry.
+
+During evaluation, recursive begin/seal and snapshot access return `EBUSY`;
+rejected begin outputs remain empty. Security, permanent and expired failures
+do not invoke the strategy. Valid custom delays permit another attempt only at
+their admitted time, and old tickets cannot settle that new generation. These
+are pure policy contracts using explicit timestamps, without sleeping or claiming
+transport/protocol execution. Cross-platform qualification follows the exact-head
+formal CI result.
 
 ### CMeta integration above Core
 

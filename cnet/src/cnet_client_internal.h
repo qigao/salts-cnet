@@ -11,6 +11,9 @@
 
 #include <stdint.h>
 
+/* Validate the fixed initializing Owner without progress or allocation. */
+int cnet_client_check_owner(cnet_client *client);
+
 /** Consumes one connected TCP socket, closing it on immediate admission failure. */
 int cnet_client_adopt_tcp(cnet_client *client, uintptr_t native_socket,
                           const cnet_observer *observer, cnet_connection *out_connection);

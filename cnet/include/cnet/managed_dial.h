@@ -24,7 +24,7 @@ typedef struct cnet_managed_dial_config {
   size_t size;
   uint32_t version;
   cnet_manager *manager;  /* Borrowed. Host owns manager progress/recycle. */
-  cnet_client *client;    /* Same CNet client passed to manager initialization. */
+  cnet_client *client;    /* Exact client wrapper passed to manager initialization. */
   cnet_connect_options connection; /* URI copied; TLS profile pointers borrowed. */
   cnet_reconnect_config recovery;
   uint64_t recovery_episode_ms; /* New absolute budget after a READY peer is lost. */
@@ -47,7 +47,10 @@ typedef struct cnet_managed_dial_snapshot {
 
 /* One physical connection at a time, fixed initializing Owner. No implicit
  * NativeIO observe, worker/timer, retrying application DATA or new Manager.
- * The whole link + observer lifetime is kept until Manager on_recycle. */
+ * The whole link + observer lifetime is kept until Manager on_recycle.
+ * Both init variants reject a different client wrapper with EINVAL before
+ * storage allocation or admission; matching thread/connection IDs do not
+ * establish client identity. */
 int cnet_managed_dial_init(cnet_managed_dial *dial,
                             const cnet_managed_dial_config *config);
 
@@ -71,6 +74,9 @@ int cnet_managed_dial_init_admitted(cnet_managed_dial *dial,
  * recycled Manager record returns EBUSY. The single ready-to-dial transition
  * actually calls manager_reserve/connect, with a generation-safe attempt
  * ticket. Local admission failures fail fast, not hidden recovery attempts.
+ * Exhausted Manager connection credits or attachment records return ENOBUFS
+ * before the admission hook or attempt accounting. Retired records still count
+ * until context holds end and manager_advance recycles them.
  * EBUSY out_wait_ms describes remaining backoff only, never sleeps. */
 int cnet_managed_dial_advance(cnet_managed_dial *dial, uint64_t now_ms,
                               uint64_t *out_wait_ms);
@@ -79,7 +85,11 @@ int cnet_managed_dial_advance(cnet_managed_dial *dial, uint64_t now_ms,
  * protocol authentication/handshake/admission is READY. CONNECTED alone
  * never resets backoff or grants application replay. Obtain the current
  * snapshot.recovery_ticket after observing CONNECTED; copy it unchanged.
- * Zero/stale/future attempt tickets fail closed (ENOENT/EALREADY). */
+ * Zero/stale/future attempt tickets fail closed (ENOENT/EALREADY).
+ * Requires the current transport to remain OPEN: opening/handshaking returns
+ * EBUSY; admitted close, FINAL send, directional shutdown, stopped client or
+ * Manager request_close returns ESHUTDOWN before changing recovery accounting.
+ * A rejected READY does not replace transport terminal or Manager recycle. */
 int cnet_managed_dial_protocol_ready(cnet_managed_dial *dial,
                                      cnet_reconnect_ticket ticket,
                                      uint64_t now_ms);
