@@ -36,6 +36,10 @@ static int test_nonblocking(test_socket s) {
   u_long enabled = 1u;
   return ioctlsocket(s, FIONBIO, &enabled);
 }
+static int test_blocking(test_socket s) {
+  u_long enabled = 0u;
+  return ioctlsocket(s, FIONBIO, &enabled);
+}
 static bool test_would_block(void) {
   return WSAGetLastError() == WSAEWOULDBLOCK;
 }
@@ -45,6 +49,7 @@ static bool test_would_block(void) {
 #  include <poll.h>
 #  include <arpa/inet.h>
 #  include <netinet/in.h>
+#  include <netinet/tcp.h>
 #  include <sys/socket.h>
 #  include <sys/time.h>
 #  include <sys/stat.h>
@@ -61,6 +66,10 @@ static int test_recv_timeout(test_socket s) {
 static int test_nonblocking(test_socket s) {
   const int flags = fcntl(s, F_GETFL, 0);
   return flags < 0 ? -1 : fcntl(s, F_SETFL, flags | O_NONBLOCK);
+}
+static int test_blocking(test_socket s) {
+  const int flags = fcntl(s, F_GETFL, 0);
+  return flags < 0 ? -1 : fcntl(s, F_SETFL, flags & ~O_NONBLOCK);
 }
 static bool test_would_block(void) {
   return errno == EAGAIN || errno == EWOULDBLOCK;
@@ -2614,7 +2623,10 @@ cleanup:
 #endif
 
 enum { SG_CASE_START, SG_CASE_STEP, SG_CASE_CLOSE_BULK, SG_CASE_CHECK_BORROW,
-       SG_CASE_FINAL_CONTROL, SG_CASE_FINISH, SG_CASE_CLEANUP, SG_BULK_BYTES = 32768 };
+       SG_CASE_FINAL_CONTROL, SG_CASE_FINISH, SG_CASE_CLEANUP,
+       SG_CASE_LOAD, SG_CASE_NEXT_CONTROL, SG_CASE_FINISH_LOAD,
+       SG_BULK_BYTES = 32768, SG_LOAD_OPERATIONS = 8, SG_CONTROL_EXCHANGES = 8,
+       SG_CONTROL_PROGRESS_BOUND = 256 };
 
 typedef struct sg_owner_case {
   cnet_listener listener;
@@ -2629,6 +2641,8 @@ typedef struct sg_owner_case {
   size_t shard, owner_count, observations;
   int command, failure;
   bool host_active;
+  bool sustained;
+  size_t bulk_admitted, saturated_rounds;
   /* Optional mixed-ownership case. Owner retains the receive byte/address
    * until SG terminal+finalize; main owns only the unassociated UDP peer.
    * Two sequential admissions (success, then cancellation) reuse one endpoint.
@@ -2841,6 +2855,13 @@ static void sg_case_task(native_io_sharded_context *context, void *user) {
                                       &owner->connections[i]) == SALTS_OK);
       SG_REQUIRE(cnet_client_advance_external(&owner->clients[i], &events) == SALTS_OK);
       SG_REQUIRE(owner->probes[i].connected == 1u && owner->probes[i].failed == 0u);
+      if (owner->sustained && i == 1u) {
+        const int enabled = 1;
+        SG_REQUIRE(cnet_connection_tcp_option_set(&owner->clients[i], owner->connections[i],
+                                                   CNET_TCP_SOCKET_NODELAY, 1u) == SALTS_OK);
+        SG_REQUIRE(setsockopt(owner->peers[i], IPPROTO_TCP, TCP_NODELAY,
+                              (const char *)&enabled, sizeof(enabled)) == 0);
+      }
       const size_t bytes = i == 0u ? SG_BULK_BYTES : 1u;
       owner->pending[i] = mem_get_buffer(mem_global(), bytes);
       SG_REQUIRE(owner->pending[i] != NULL);
@@ -2849,8 +2870,12 @@ static void sg_case_task(native_io_sharded_context *context, void *user) {
             (char)(i == 0u ? (j * 29u + 3u + owner->shard * 17u) & 0xffu : 0x60u + owner->shard);
       mem_set_used(owner->pending[i], bytes);
       SG_REQUIRE(cnet_send_buffer(&owner->clients[i], owner->connections[i], owner->pending[i]) == SALTS_OK);
-      mem_buffer_release(owner->pending[i]);
-      owner->pending[i] = NULL;
+      if (i == 0u && owner->sustained) {
+        owner->bulk_admitted = 1u; /* One immutable source, retained per admitted write. */
+      } else {
+        mem_buffer_release(owner->pending[i]);
+        owner->pending[i] = NULL;
+      }
     }
     SG_REQUIRE(cnet_receive(&owner->clients[1], owner->connections[1], 1u) == SALTS_OK);
     if (owner->mixed) {
@@ -2875,6 +2900,48 @@ static void sg_case_task(native_io_sharded_context *context, void *user) {
       SG_REQUIRE(owner->sg_active && owner->sg_terminals == 0u && owner->sg_finalized == 0u);
     }
     SG_REQUIRE(native_io_sharded_context_release_host(context, owner->lease) == SALTS_EBUSY);
+  } else if (owner->command == SG_CASE_LOAD) {
+    cnet_send_usage usage = {0};
+    bool full = false;
+    SG_REQUIRE(owner->sustained && owner->pending[0] != NULL);
+    SG_REQUIRE(sg_case_progress(context, owner) == SALTS_OK);
+    /* Replenish only after one complete observe/route pass. Never spin inside
+     * callbacks; the fixed WriteQueue owns all accepted immutable references. */
+    for (size_t i = 0u; i <= SG_LOAD_OPERATIONS; ++i) {
+      const int status = cnet_send_buffer(&owner->clients[0], owner->connections[0], owner->pending[0]);
+      if (status == SALTS_ENOBUFS) { full = true; break; }
+      SG_REQUIRE(status == SALTS_OK);
+      ++owner->bulk_admitted;
+    }
+    SG_REQUIRE(full);
+    ++owner->saturated_rounds;
+    SG_REQUIRE(cnet_client_send_usage(&owner->clients[0], owner->connections[0], &usage) == SALTS_OK);
+    SG_REQUIRE(usage.operations == SG_LOAD_OPERATIONS && usage.bytes == SG_LOAD_OPERATIONS * SG_BULK_BYTES);
+    SG_REQUIRE(owner->probes[0].failed == 0u && owner->probes[1].failed == 0u &&
+               owner->probes[0].terminal == 0u && owner->probes[1].terminal == 0u);
+  } else if (owner->command == SG_CASE_NEXT_CONTROL) {
+    SG_REQUIRE(owner->sustained && owner->probes[1].borrowed_bytes < SG_CONTROL_EXCHANGES);
+    owner->pending[1] = mem_get_buffer(mem_global(), 1u);
+    SG_REQUIRE(owner->pending[1] != NULL);
+    *mem_buffer_data(owner->pending[1]) = (unsigned char)(0x60u + owner->shard);
+    mem_set_used(owner->pending[1], 1u);
+    SG_REQUIRE(cnet_receive(&owner->clients[1], owner->connections[1], 1u) == SALTS_OK);
+    SG_REQUIRE(cnet_send_buffer(&owner->clients[1], owner->connections[1], owner->pending[1]) == SALTS_OK);
+    mem_buffer_release(owner->pending[1]);
+    owner->pending[1] = NULL;
+  } else if (owner->command == SG_CASE_FINISH_LOAD) {
+    native_io_backend *backend = owner->backend;
+    SG_REQUIRE(owner->sustained && owner->saturated_rounds >= SG_CONTROL_EXCHANGES);
+    SG_REQUIRE(owner->probes[0].sent == owner->bulk_admitted && owner->bulk_admitted > SG_LOAD_OPERATIONS);
+    SG_REQUIRE(owner->probes[1].sent == SG_CONTROL_EXCHANGES &&
+               owner->probes[1].borrowed_bytes == SG_CONTROL_EXCHANGES);
+    SG_REQUIRE(mem_buffer_ref_count(owner->pending[0]) == 1u);
+    SG_REQUIRE(native_io_sharded_context_release_host(context, owner->lease) == SALTS_EBUSY);
+    sg_case_cleanup(context, owner);
+    SG_REQUIRE(owner->clients[0].impl == NULL && owner->clients[1].impl == NULL && !owner->host_active);
+    SG_REQUIRE(owner->probes[0].terminal == 1u && owner->probes[1].terminal == 1u &&
+               owner->probes[0].failed == 0u && owner->probes[1].failed == 0u);
+    SG_REQUIRE(native_io_backend_get_stats(backend, &stats) && stats.active_requests == 0u && stats.endpoint_count == 0u);
   } else if (owner->command == SG_CASE_STEP) {
     SG_REQUIRE(sg_case_progress(context, owner) == SALTS_OK);
     SG_REQUIRE(owner->probes[0].failed == 0u && owner->probes[1].failed == 0u);
@@ -3069,6 +3136,135 @@ cleanup:
    * a borrowed host-quiescence pointer dangling. The failing test reports it. */
   if (runtime == NULL) free(owners);
   free(received);
+  return result;
+}
+
+/* Main owns unassociated native peers between SG submit/wait boundaries.
+ * Bound peer work per turn too, so an always-readable bulk stream cannot
+ * starve the control peer in the test driver itself. */
+static int sg_load_read_bulk(sg_owner_case *owner, size_t *received) {
+  unsigned char bytes[SG_BULK_BYTES];
+  for (size_t pass = 0u; pass < SG_LOAD_OPERATIONS; ++pass) {
+    const int count = (int)recv(owner->peers[0], (char *)bytes, sizeof(bytes), 0);
+    if (count < 0 && test_would_block()) return SALTS_OK;
+    if (count <= 0) return SALTS_EIO;
+    for (int j = 0; j < count; ++j)
+      if (bytes[j] != (unsigned char)(((*received + (size_t)j) * 29u + 3u + owner->shard * 17u) & 0xffu))
+        return SALTS_EPROTO;
+    *received += (size_t)count;
+    if (*received > owner->bulk_admitted * SG_BULK_BYTES) return SALTS_EPROTO;
+  }
+  return SALTS_OK;
+}
+
+static int saltscore_native_entry_test_cnet_sg_sustained(size_t owner_count) {
+  native_io_sharded *runtime = NULL;
+  const native_io_sharded_config config = {owner_count, 8u, {backend_kind(), 4u, 8u, 8u}};
+  sg_owner_case *owners = NULL;
+  size_t received[4] = {0};
+  native_io_sharded_stats stats = NATIVE_IO_SHARDED_STATS_V1_INITIALIZER;
+  int result = 0;
+  VERIFY(owner_count == 1u || owner_count == 2u || owner_count == 4u);
+  owners = calloc(owner_count, sizeof(*owners));
+  VERIFY(owners != NULL);
+  for (size_t i = 0u; i < owner_count; ++i) {
+    owners[i].shard = i;
+    owners[i].owner_count = owner_count;
+    owners[i].sustained = true;
+    owners[i].peers[0] = owners[i].peers[1] = TEST_INVALID_SOCKET;
+    owners[i].sg_socket = owners[i].sg_peer = TEST_INVALID_SOCKET;
+  }
+  VERIFY(native_io_sharded_create(&config, &runtime) == SALTS_OK);
+  VERIFY(sg_case_run_all(runtime, owners, owner_count, SG_CASE_START) == SALTS_OK);
+  for (size_t i = 0u; i < owner_count; ++i) {
+    VERIFY(test_nonblocking(owners[i].peers[0]) == 0 && test_nonblocking(owners[i].peers[1]) == 0);
+    for (size_t j = 0u; j < i; ++j)
+      VERIFY(owners[i].thread != owners[j].thread && owners[i].backend != owners[j].backend);
+  }
+  VERIFY(native_io_sharded_shutdown(runtime) == SALTS_EBUSY);
+  for (unsigned exchange = 0u; exchange < SG_CONTROL_EXCHANGES; ++exchange) {
+    bool request_seen[4] = {false}, reply_sent[4] = {false}, complete = false;
+    if (exchange != 0u)
+      VERIFY(sg_case_run_all(runtime, owners, owner_count, SG_CASE_NEXT_CONTROL) == SALTS_OK);
+    /* The bound counts existing host observe/route turns, not elapsed latency
+     * or a guarantee about arbitrary OS scheduling and offered workloads. */
+    for (size_t round = 0u; round < SG_CONTROL_PROGRESS_BOUND && !complete; ++round) {
+      VERIFY(sg_case_run_all(runtime, owners, owner_count, SG_CASE_LOAD) == SALTS_OK);
+      complete = true;
+      for (size_t i = 0u; i < owner_count; ++i) {
+        unsigned char byte = 0u;
+        const unsigned char reply = (unsigned char)(0xc0u + exchange + i * SG_CONTROL_EXCHANGES);
+        VERIFY(sg_load_read_bulk(&owners[i], &received[i]) == SALTS_OK);
+        if (!request_seen[i]) {
+          const int count = (int)recv(owners[i].peers[1], (char *)&byte, 1, 0);
+          VERIFY(count == 1 || (count < 0 && test_would_block()));
+          if (count == 1) {
+            VERIFY(byte == (unsigned char)(0x60u + i));
+            request_seen[i] = true;
+          }
+        }
+        if (request_seen[i] && !reply_sent[i]) {
+          const int count = (int)send(owners[i].peers[1], (const char *)&reply, 1, 0);
+          VERIFY(count == 1 || (count < 0 && test_would_block()));
+          reply_sent[i] = count == 1;
+        }
+        if (owners[i].probes[1].borrowed_bytes == exchange + 1u)
+          VERIFY(owners[i].probes[1].borrowed_data[exchange] == reply);
+        complete = complete && reply_sent[i] && owners[i].probes[1].borrowed_bytes == exchange + 1u &&
+                   owners[i].probes[1].sent == exchange + 1u;
+        VERIFY(owners[i].bulk_admitted > owners[i].probes[0].sent);
+      }
+    }
+    if (!complete) {
+      for (size_t i = 0u; i < owner_count; ++i)
+        fprintf(stderr, "SG control exchange %u owner %zu/%zu: request=%d reply=%d sent=%u received=%u bulk=%u/%zu observations=%zu\n",
+                exchange, i, owner_count, (int)request_seen[i], (int)reply_sent[i],
+                owners[i].probes[1].sent, owners[i].probes[1].borrowed_bytes,
+                owners[i].probes[0].sent, owners[i].bulk_admitted, owners[i].observations);
+    }
+    VERIFY(complete);
+  }
+  /* Stop replenishment, then observe every admitted bulk terminal and read
+   * every actual peer byte before closing either client or releasing storage. */
+  const uint64_t deadline = cmeta_monotonic_ms() + 5000u;
+  bool drained = false;
+  do {
+    VERIFY(sg_case_run_all(runtime, owners, owner_count, SG_CASE_STEP) == SALTS_OK);
+    drained = true;
+    for (size_t i = 0u; i < owner_count; ++i) {
+      VERIFY(sg_load_read_bulk(&owners[i], &received[i]) == SALTS_OK);
+      drained = drained && owners[i].probes[0].sent == owners[i].bulk_admitted &&
+                received[i] == owners[i].bulk_admitted * SG_BULK_BYTES;
+    }
+  } while (!drained && cmeta_monotonic_ms() < deadline);
+  VERIFY(drained);
+  VERIFY(native_io_sharded_shutdown(runtime) == SALTS_EBUSY);
+  VERIFY(sg_case_run_all(runtime, owners, owner_count, SG_CASE_FINISH_LOAD) == SALTS_OK);
+  for (size_t i = 0u; i < owner_count; ++i) {
+    for (size_t j = 0u; j < 2u; ++j) {
+      unsigned char byte;
+      VERIFY(test_blocking(owners[i].peers[j]) == 0);
+      VERIFY(recv(owners[i].peers[j], (char *)&byte, 1, 0) == 0);
+    }
+  }
+  VERIFY(native_io_sharded_shutdown(runtime) == SALTS_OK);
+  VERIFY(native_io_sharded_wait(runtime) == SALTS_OK);
+  VERIFY(native_io_sharded_get_stats(runtime, &stats) && stats.active_command_slots == 0u && !stats.accepting);
+  VERIFY(native_io_sharded_destroy(runtime) == SALTS_OK);
+  runtime = NULL;
+cleanup:
+  if (owners != NULL) {
+    for (size_t i = 0u; i < owner_count; ++i)
+      for (size_t j = 0u; j < 2u; ++j) {
+        test_close_socket(owners[i].peers[j]);
+        owners[i].peers[j] = TEST_INVALID_SOCKET;
+      }
+  }
+  if (runtime != NULL) {
+    (void)sg_case_run_all(runtime, owners, owner_count, SG_CASE_CLEANUP);
+    if (native_io_sharded_destroy(runtime) == SALTS_OK) runtime = NULL;
+  }
+  if (runtime == NULL) free(owners);
   return result;
 }
 
@@ -3369,6 +3565,10 @@ spec("CNet real TCP loopback and retained slice") {
     check(result == 0, "native pipe lifetime returned %d", result);
   }
   for (size_t owners = 1u; owners <= 4u; owners *= 2u) {
+    it("keeps control exchanges progressing under sustained bounded bulk on %zu SG Owners", owners) {
+      const int result = saltscore_native_entry_test_cnet_sg_sustained(owners);
+      check(result == 0, "native SG sustained progress returned %d", result);
+    }
     it("isolates bulk/control clients and drains %zu fixed SG Owners", owners) {
       const int result = saltscore_native_entry_test_cnet_sg_owners(owners, false);
       check(result == 0, "SG %zu-owner integration returned %d", owners, result);
