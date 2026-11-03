@@ -235,6 +235,25 @@ reserve/cancel/recycle, handoff credit release, idle Dial sealing or Pool
 reservation abort before destruction. This qualifies initialization rollback
 and bounded helper lifecycle, without dialing a peer or claiming transport drain.
 
+### SG TLS handshake failure isolation
+
+The formal TCP suite also hosts a TLS server connection and an independent
+plain TCP client on the same SG backend/host lease, on 1/2/4 fixed Owners. The
+public TLS server handle is released after admission; the handshaking session
+retains its own context. Application send before TLS readiness rejects without
+retaining the buffer. The native peer sends an invalid TLS record while the
+plain neighbor exchanges real request/reply bytes.
+
+Only the TLS connection fails, exactly once at the handshake stage rather than
+by timeout, with no CONNECTED or application-data/send notification. Any fatal
+handshake wire output drains before native peer EOF. Destroying that client
+leaves the shared backend open and the neighbor able to admit a final send.
+Both clients, endpoints, native requests, host leases and runtime then drain.
+This qualifies malformed-record handshake isolation and retained TLS context
+lifetime, not certificate-authentication coverage or scheduler fairness. Existing
+trust/SAN negatives and the separate sustained-progress regression keep their
+own acceptance. Qualification follows this change's formal LLVM CI result.
+
 ### Multi-connection pool policy composition
 
 Pool acquisition copies its protocol callback/user binding before entering

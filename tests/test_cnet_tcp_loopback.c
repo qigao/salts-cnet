@@ -82,6 +82,7 @@ typedef struct tcp_probe {
   unsigned sent;
   unsigned sends_at_terminal;
   int last_error_status;
+  char failure_stage[32];
   unsigned owned_received;
   unsigned borrowed_received;
   unsigned borrowed_bytes;
@@ -96,7 +97,10 @@ static void on_state(void *user, cnet_connection connection,
                      cnet_connection_state state, const cnet_error *error) {
   tcp_probe *p = (tcp_probe *)user;
   (void)connection;
-  if (error != NULL) p->last_error_status = error->status;
+  if (error != NULL) {
+    p->last_error_status = error->status;
+    (void)snprintf(p->failure_stage, sizeof(p->failure_stage), "%s", error->stage != NULL ? error->stage : "");
+  }
   if (state == CNET_CONNECTION_CONNECTED) ++p->connected;
   if (state == CNET_CONNECTION_FAILED || error != NULL) ++p->failed;
   if (state == CNET_CONNECTION_CLOSED || state == CNET_CONNECTION_FAILED) {
@@ -2614,7 +2618,8 @@ cleanup:
 #endif
 
 enum { SG_CASE_START, SG_CASE_STEP, SG_CASE_CLOSE_BULK, SG_CASE_CHECK_BORROW,
-       SG_CASE_FINAL_CONTROL, SG_CASE_FINISH, SG_CASE_CLEANUP, SG_BULK_BYTES = 32768 };
+       SG_CASE_FINAL_CONTROL, SG_CASE_FINISH, SG_CASE_CLEANUP,
+       SG_CASE_TLS_STEP, SG_CASE_TLS_RELEASE, SG_BULK_BYTES = 32768 };
 
 typedef struct sg_owner_case {
   cnet_listener listener;
@@ -2629,6 +2634,8 @@ typedef struct sg_owner_case {
   size_t shard, owner_count, observations;
   int command, failure;
   bool host_active;
+  bool tls_failure;
+  cnet_tls_server tls_server;
   /* Optional mixed-ownership case. Owner retains the receive byte/address
    * until SG terminal+finalize; main owns only the unassociated UDP peer.
    * Two sequential admissions (success, then cancellation) reuse one endpoint.
@@ -2772,6 +2779,7 @@ static void sg_case_cleanup(native_io_sharded_context *context, sg_owner_case *o
     if (owner->pending[i]) mem_buffer_release(owner->pending[i]);
     owner->pending[i] = NULL;
   }
+  (void)cnet_tls_server_destroy(&owner->tls_server);
   if (owner->host_active &&
       native_io_sharded_context_release_host(context, owner->lease) == SALTS_OK) {
     owner->host_active = false;
@@ -2809,6 +2817,14 @@ static void sg_case_task(native_io_sharded_context *context, void *user) {
     size_t count = 0u;
     config.connection_capacity = 1u;
     config.max_send_bytes = SG_BULK_BYTES;
+    if (owner->tls_failure) {
+      const cnet_tls_server_config tls_config = {
+          .size = sizeof(cnet_tls_server_config), .cert_file = CORE_TLS_TEST_P384_LEAF,
+          .key_file = CORE_TLS_TEST_P384_KEY};
+      config.tls_io_buffer_bytes = CNET_TLS_MIN_IO_BUFFER_BYTES;
+      config.tls_handshake_timeout_ms = 2500u;
+      SG_REQUIRE(cnet_tls_server_init(&owner->tls_server, &tls_config) == SALTS_OK);
+    }
     SG_REQUIRE(native_io_sharded_context_acquire_host(context, sg_case_quiescent, owner,
                                                       &owner->lease, &owner->backend) == SALTS_OK);
     owner->host_active = true;
@@ -2837,10 +2853,18 @@ static void sg_case_task(native_io_sharded_context *context, void *user) {
       SG_REQUIRE(test_recv_timeout(owner->peers[i]) == 0);
       SG_REQUIRE(connect(owner->peers[i], (const struct sockaddr *)&remote, (int)sizeof(remote)) == 0);
       SG_REQUIRE(cnet_listener_wait(&owner->listener, 5000u, &ready) == SALTS_OK && ready == 1);
-      SG_REQUIRE(cnet_listener_accept(&owner->listener, &owner->clients[i], &observer,
-                                      &owner->connections[i]) == SALTS_OK);
+      if (owner->tls_failure && i == 0u) {
+        SG_REQUIRE(cnet_listener_accept_tls(&owner->listener, &owner->clients[i], &owner->tls_server,
+                                             &observer, &owner->connections[i]) == SALTS_OK);
+        /* The admitted session retains the context until its true terminal. */
+        SG_REQUIRE(cnet_tls_server_destroy(&owner->tls_server) == SALTS_OK);
+      } else {
+        SG_REQUIRE(cnet_listener_accept(&owner->listener, &owner->clients[i], &observer,
+                                        &owner->connections[i]) == SALTS_OK);
+      }
       SG_REQUIRE(cnet_client_advance_external(&owner->clients[i], &events) == SALTS_OK);
-      SG_REQUIRE(owner->probes[i].connected == 1u && owner->probes[i].failed == 0u);
+      SG_REQUIRE(owner->probes[i].connected == (owner->tls_failure && i == 0u ? 0u : 1u) &&
+                 owner->probes[i].failed == 0u);
       const size_t bytes = i == 0u ? SG_BULK_BYTES : 1u;
       owner->pending[i] = mem_get_buffer(mem_global(), bytes);
       SG_REQUIRE(owner->pending[i] != NULL);
@@ -2848,7 +2872,9 @@ static void sg_case_task(native_io_sharded_context *context, void *user) {
         mem_buffer_data(owner->pending[i])[j] =
             (char)(i == 0u ? (j * 29u + 3u + owner->shard * 17u) & 0xffu : 0x60u + owner->shard);
       mem_set_used(owner->pending[i], bytes);
-      SG_REQUIRE(cnet_send_buffer(&owner->clients[i], owner->connections[i], owner->pending[i]) == SALTS_OK);
+      SG_REQUIRE(cnet_send_buffer(&owner->clients[i], owner->connections[i], owner->pending[i]) ==
+                 (owner->tls_failure && i == 0u ? SALTS_EBUSY : SALTS_OK));
+      if (owner->tls_failure && i == 0u) SG_REQUIRE(mem_buffer_ref_count(owner->pending[i]) == 1u);
       mem_buffer_release(owner->pending[i]);
       owner->pending[i] = NULL;
     }
@@ -2874,6 +2900,23 @@ static void sg_case_task(native_io_sharded_context *context, void *user) {
       SG_REQUIRE(sg_case_submit_owned(context, owner) == SALTS_OK);
       SG_REQUIRE(owner->sg_active && owner->sg_terminals == 0u && owner->sg_finalized == 0u);
     }
+    SG_REQUIRE(native_io_sharded_context_release_host(context, owner->lease) == SALTS_EBUSY);
+  } else if (owner->command == SG_CASE_TLS_STEP) {
+    SG_REQUIRE(owner->tls_failure);
+    SG_REQUIRE(sg_case_progress(context, owner) == SALTS_OK);
+    SG_REQUIRE(owner->probes[0].failed <= 1u && owner->probes[0].connected == 0u &&
+               owner->probes[0].sent == 0u && owner->probes[0].borrowed_bytes == 0u &&
+               owner->probes[1].failed == 0u);
+  } else if (owner->command == SG_CASE_TLS_RELEASE) {
+    SG_REQUIRE(owner->tls_failure && owner->probes[0].terminal == 1u && owner->probes[0].failed == 1u);
+    SG_REQUIRE(owner->probes[0].last_error_status != SALTS_OK &&
+               owner->probes[0].last_error_status != SALTS_ETIMEDOUT &&
+               strcmp(owner->probes[0].failure_stage, "handshake") == 0);
+    SG_REQUIRE(cnet_client_stop_external(&owner->clients[0]) == SALTS_OK);
+    SG_REQUIRE(cnet_client_destroy(&owner->clients[0]) == SALTS_OK);
+    SG_REQUIRE(owner->probes[1].borrowed_bytes == 1u && owner->probes[1].terminal == 0u);
+    SG_REQUIRE(native_io_backend_get_stats(owner->backend, &stats) && stats.active_requests == 0u &&
+               stats.endpoint_count == 1u && stats.admission_open);
     SG_REQUIRE(native_io_sharded_context_release_host(context, owner->lease) == SALTS_EBUSY);
   } else if (owner->command == SG_CASE_STEP) {
     SG_REQUIRE(sg_case_progress(context, owner) == SALTS_OK);
@@ -2915,8 +2958,13 @@ static void sg_case_task(native_io_sharded_context *context, void *user) {
     mem_buffer_release(owner->pending[1]);
     owner->pending[1] = NULL;
   } else if (owner->command == SG_CASE_FINISH) {
-    SG_REQUIRE(owner->probes[0].connected == 1u && owner->probes[0].sent == 1u &&
-               owner->probes[0].terminal == 1u && owner->probes[0].failed == 0u);
+    if (owner->tls_failure) {
+      SG_REQUIRE(owner->probes[0].connected == 0u && owner->probes[0].sent == 0u &&
+                 owner->probes[0].terminal == 1u && owner->probes[0].failed == 1u);
+    } else {
+      SG_REQUIRE(owner->probes[0].connected == 1u && owner->probes[0].sent == 1u &&
+                 owner->probes[0].terminal == 1u && owner->probes[0].failed == 0u);
+    }
     SG_REQUIRE(owner->probes[1].connected == 1u && owner->probes[1].sent == 2u &&
                owner->probes[1].terminal == 1u && owner->probes[1].sends_at_terminal == 2u &&
                owner->probes[1].failed == 0u && owner->observations != 0u);
@@ -3069,6 +3117,108 @@ cleanup:
    * a borrowed host-quiescence pointer dangling. The failing test reports it. */
   if (runtime == NULL) free(owners);
   free(received);
+  return result;
+}
+
+/* A native peer sends an invalid TLS record after its plain TCP neighbor has
+ * already made progress. Failure is real parser/handshake admission, not a
+ * fabricated NativeIO completion or a certificate-authentication claim. */
+static int saltscore_native_entry_test_cnet_sg_tls_failure(size_t owner_count) {
+  native_io_sharded *runtime = NULL;
+  const native_io_sharded_config config = {owner_count, 8u, {backend_kind(), 4u, 8u, 8u}};
+  const unsigned char malformed_record[] = {0x7fu, 0x03u, 0x03u, 0x00u, 0x01u, 0x00u};
+  sg_owner_case *owners = NULL;
+  native_io_sharded_stats stats = NATIVE_IO_SHARDED_STATS_V1_INITIALIZER;
+  unsigned char bytes[256];
+  uint64_t deadline;
+  bool complete;
+  int result = 0;
+  owners = calloc(owner_count, sizeof(*owners));
+  VERIFY(owners != NULL);
+  for (size_t i = 0u; i < owner_count; ++i) {
+    owners[i].shard = i;
+    owners[i].owner_count = owner_count;
+    owners[i].tls_failure = true;
+    owners[i].peers[0] = owners[i].peers[1] = TEST_INVALID_SOCKET;
+    owners[i].sg_socket = owners[i].sg_peer = TEST_INVALID_SOCKET;
+  }
+  VERIFY(native_io_sharded_create(&config, &runtime) == SALTS_OK);
+  VERIFY(sg_case_run_all(runtime, owners, owner_count, SG_CASE_START) == SALTS_OK);
+  for (size_t i = 0u; i < owner_count; ++i)
+    for (size_t j = 0u; j < i; ++j)
+      VERIFY(owners[i].thread != owners[j].thread && owners[i].backend != owners[j].backend);
+  VERIFY(native_io_sharded_shutdown(runtime) == SALTS_EBUSY);
+  deadline = cmeta_monotonic_ms() + 5000u;
+  do {
+    VERIFY(sg_case_run_all(runtime, owners, owner_count, SG_CASE_TLS_STEP) == SALTS_OK);
+    complete = true;
+    for (size_t i = 0u; i < owner_count; ++i) {
+      VERIFY(owners[i].probes[0].terminal == 0u);
+      complete = complete && owners[i].probes[1].sent == 1u;
+    }
+  } while (!complete && cmeta_monotonic_ms() < deadline);
+  VERIFY(complete);
+  for (size_t i = 0u; i < owner_count; ++i) {
+    const unsigned char reply = (unsigned char)(0xc0u + i);
+    VERIFY(test_recv_exact(owners[i].peers[1], bytes, 1u) == 0 && bytes[0] == (unsigned char)(0x60u + i));
+    VERIFY(send(owners[i].peers[0], (const char *)malformed_record, sizeof(malformed_record), 0) == sizeof(malformed_record));
+    VERIFY(send(owners[i].peers[1], (const char *)&reply, 1, 0) == 1);
+  }
+  deadline = cmeta_monotonic_ms() + 5000u;
+  do {
+    VERIFY(sg_case_run_all(runtime, owners, owner_count, SG_CASE_TLS_STEP) == SALTS_OK);
+    complete = true;
+    for (size_t i = 0u; i < owner_count; ++i)
+      complete = complete && owners[i].probes[0].terminal == 1u && owners[i].probes[1].borrowed_bytes == 1u;
+  } while (!complete && cmeta_monotonic_ms() < deadline);
+  VERIFY(complete);
+  VERIFY(sg_case_run_all(runtime, owners, owner_count, SG_CASE_TLS_RELEASE) == SALTS_OK);
+  for (size_t i = 0u; i < owner_count; ++i) {
+    size_t wire_bytes = 0u;
+    int count;
+    /* Drain any fatal handshake alert before requiring EOF. No handshake
+     * ciphertext is interpreted as successful CNet application delivery. */
+    do {
+      count = (int)recv(owners[i].peers[0], (char *)bytes, sizeof(bytes), 0);
+      VERIFY(count >= 0);
+      wire_bytes += (size_t)count;
+      VERIFY(wire_bytes <= CNET_TLS_MIN_IO_BUFFER_BYTES);
+    } while (count != 0);
+    VERIFY(owners[i].probes[0].borrowed_bytes == 0u && owners[i].probes[0].sent == 0u);
+  }
+  VERIFY(native_io_sharded_shutdown(runtime) == SALTS_EBUSY);
+  VERIFY(sg_case_run_all(runtime, owners, owner_count, SG_CASE_FINAL_CONTROL) == SALTS_OK);
+  deadline = cmeta_monotonic_ms() + 5000u;
+  do {
+    VERIFY(sg_case_run_all(runtime, owners, owner_count, SG_CASE_TLS_STEP) == SALTS_OK);
+    complete = true;
+    for (size_t i = 0u; i < owner_count; ++i)
+      complete = complete && owners[i].probes[1].terminal == 1u;
+  } while (!complete && cmeta_monotonic_ms() < deadline);
+  VERIFY(complete);
+  for (size_t i = 0u; i < owner_count; ++i) {
+    VERIFY(test_recv_exact(owners[i].peers[1], bytes, 1u) == 0 && bytes[0] == (unsigned char)(0xe0u + i));
+    VERIFY(recv(owners[i].peers[1], (char *)bytes, 1, 0) == 0);
+  }
+  VERIFY(sg_case_run_all(runtime, owners, owner_count, SG_CASE_FINISH) == SALTS_OK);
+  VERIFY(native_io_sharded_shutdown(runtime) == SALTS_OK);
+  VERIFY(native_io_sharded_wait(runtime) == SALTS_OK);
+  VERIFY(native_io_sharded_get_stats(runtime, &stats) && stats.active_command_slots == 0u && !stats.accepting);
+  VERIFY(native_io_sharded_destroy(runtime) == SALTS_OK);
+  runtime = NULL;
+cleanup:
+  if (owners != NULL) {
+    for (size_t i = 0u; i < owner_count; ++i)
+      for (size_t j = 0u; j < 2u; ++j) {
+        test_close_socket(owners[i].peers[j]);
+        owners[i].peers[j] = TEST_INVALID_SOCKET;
+      }
+  }
+  if (runtime != NULL) {
+    (void)sg_case_run_all(runtime, owners, owner_count, SG_CASE_CLEANUP);
+    if (native_io_sharded_destroy(runtime) == SALTS_OK) runtime = NULL;
+  }
+  if (runtime == NULL) free(owners);
   return result;
 }
 
@@ -3369,6 +3519,10 @@ spec("CNet real TCP loopback and retained slice") {
     check(result == 0, "native pipe lifetime returned %d", result);
   }
   for (size_t owners = 1u; owners <= 4u; owners *= 2u) {
+    it("isolates TLS handshake failure and drains its surviving neighbor on %zu SG Owners", owners) {
+      const int result = saltscore_native_entry_test_cnet_sg_tls_failure(owners);
+      check(result == 0, "native SG TLS failure returned %d", result);
+    }
     it("isolates bulk/control clients and drains %zu fixed SG Owners", owners) {
       const int result = saltscore_native_entry_test_cnet_sg_owners(owners, false);
       check(result == 0, "SG %zu-owner integration returned %d", owners, result);
