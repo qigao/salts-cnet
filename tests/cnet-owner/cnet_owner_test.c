@@ -1087,6 +1087,137 @@ static void cnet_owner_test_expired_partial_vector_send(
   mem_destroy(&pool);
 }
 
+static void cnet_owner_test_close_observed_receive(native_io_backend_kind backend_kind) {
+  cnet_session_table sessions = {0};
+  cnet_command_queue commands = {0};
+  cnet_event_queue events = {0};
+  cnet_owner owner = {0};
+  const cnet_command_queue_config command_config = {8u, sizeof(cnet_owner_connect_payload)};
+  const cnet_event_queue_config event_config = {8u, 2u, 64u};
+  const cnet_owner_config config = {
+      .backend_kind = backend_kind, .connection_capacity = 1u,
+      .request_capacity = 2u, .completion_batch_capacity = 2u,
+      .receive_buffer_bytes = 64u, .receive_buffer_count = 1u,
+      .write_capacity = 8u, .max_write_bytes = 256u,
+      .sessions = &sessions, .commands = &commands, .events = &events};
+  cnet_owner_test_socket listener = CNET_OWNER_TEST_INVALID_SOCKET;
+  cnet_owner_test_socket accepted = CNET_OWNER_TEST_INVALID_SOCKET;
+  struct sockaddr_in address;
+  cnet_session_handle session = {0};
+  cnet_owner_connect_payload peer = {.scheme = CNET_URI_TCP, .read_timeout_ms = 1000u};
+  cnet_event_view event = {0};
+  cnet_session_terminal terminal = {0};
+  native_io_completion observed[2] = {{0}};
+  native_io_backend_stats stats = {0};
+  native_io_coroutine_stats coroutine = NATIVE_IO_COROUTINE_STATS_V1_INITIALIZER;
+  uintptr_t send_token = 0u;
+  size_t count = 0u;
+  unsigned char received = 0u;
+  const unsigned char payload = 0x47u;
+  mem_buffer_t *buffer = NULL;
+  uint64_t deadline;
+
+  check_equal(cnet_session_table_init(&sessions, 1u), SALTS_OK);
+  check_equal(cnet_command_queue_init(&commands, &command_config), SALTS_OK);
+  check_equal(cnet_event_queue_init(&events, &event_config), SALTS_OK);
+  check_equal(cnet_owner_init(&owner, &config), SALTS_OK);
+  check_equal(cnet_owner_test_listener(&listener, &address), SALTS_OK);
+  check_equal(cnet_session_table_reserve(&sessions, &session), SALTS_OK);
+  peer.address_length = sizeof(address);
+  memcpy(peer.address, &address, sizeof(address));
+  {
+    const cnet_command command = {CNET_COMMAND_CONNECT, session, &peer, sizeof(peer), 0u};
+    check_equal(cnet_command_queue_publish(&commands, &command), SALTS_OK);
+  }
+  check_equal(cnet_owner_test_drive_to_state(&owner, &sessions, session, CNET_SESSION_OPEN),
+              SALTS_OK);
+  check_equal(cnet_event_queue_take(&events, &event), SALTS_OK);
+  check_equal(event.state, CNET_EVENT_STATE_CONNECTED);
+  check_equal(cnet_event_queue_release(&events, &event), SALTS_OK);
+  accepted = accept(listener, NULL, NULL);
+  check_true(accepted != CNET_OWNER_TEST_INVALID_SOCKET);
+
+  buffer = mem_get_buffer(mem_global(), 1u);
+  check_not_null(buffer);
+  *mem_buffer_data(buffer) = payload;
+  mem_set_used(buffer, 1u);
+  check_equal(cnet_owner_send_buffer_close_direct(&owner, session, buffer), SALTS_OK);
+  check_equal(cnet_owner_test_process_session_work(&owner), SALTS_OK);
+  for (size_t index = 0u; index < config.request_capacity; ++index) {
+    cnet_owner_test_request_snapshot request = {0};
+    check_true(cnet_owner_test_get_request_snapshot(&owner, index, &request));
+    if (request.active) send_token = request.token;
+  }
+  check_not_equal(send_token, (uintptr_t)0u);
+  check_equal(cnet_owner_receive_direct(&owner, session, 1u), SALTS_OK);
+  check_equal(cnet_owner_test_process_session_work(&owner), SALTS_OK);
+  check_equal(send(accepted, (const char *)&payload, 1, 0), 1);
+  check_equal(cnet_owner_test_receive_all(accepted, &received, 1u), SALTS_OK);
+  check_equal(received, payload);
+
+  /* Observe two REAL native terminals before routing either one. Their
+   * NativeIO slots are retired, but CNet still owns both generations and
+   * their backing. Route the final send first to exercise close cancelling
+   * the already-observed receive, independent of kernel completion order. */
+  deadline = cmeta_monotonic_ms() + CNET_OWNER_TEST_TIMEOUT_MS;
+  while (count < 2u && cmeta_monotonic_ms() < deadline) {
+    size_t next = 0u;
+    const int status = cnet_owner_test_observe_raw(
+        &owner, &observed[count], 2u - count, 10u, &next);
+    check_true(status == SALTS_OK || status == SALTS_ETIMEDOUT);
+    count += next;
+  }
+  check_equal(count, (size_t)2u);
+  if (observed[1].user_data == send_token) {
+    const native_io_completion swap = observed[0];
+    observed[0] = observed[1];
+    observed[1] = swap;
+  }
+  check_equal(observed[0].user_data, send_token);
+  check_not_equal(observed[1].user_data, send_token);
+  for (size_t index = 0u; index < count; ++index) {
+    check_equal(observed[index].kind, NATIVE_IO_COMPLETION_OK);
+    check_equal(observed[index].bytes, (size_t)1u);
+  }
+  check_equal(mem_buffer_ref_count(buffer), UINT32_C(2));
+  check_true(cnet_owner_test_backend_stats(&owner, &stats, &coroutine));
+  check_equal(stats.active_requests, 0u);
+  check_equal(cnet_owner_test_process_completion_batch(&owner, observed, count), SALTS_OK);
+  check_equal(mem_buffer_ref_count(buffer), UINT32_C(1));
+  mem_buffer_release(buffer);
+  check_equal(cnet_session_table_take_terminal(&sessions, session, &terminal), SALTS_OK);
+  check_equal(terminal.kind, CNET_SESSION_TERMINAL_CLOSED);
+  check_equal(terminal.status, SALTS_OK);
+  check_equal(cnet_event_queue_take(&events, &event), SALTS_OK);
+  check_equal(event.kind, CNET_EVENT_SEND);
+  check_equal(event.argument, (size_t)1u);
+  check_equal(cnet_event_queue_release(&events, &event), SALTS_OK);
+  check_equal(cnet_event_queue_take(&events, &event), SALTS_OK);
+  check_equal(event.state, CNET_EVENT_STATE_CLOSING);
+  check_equal(cnet_event_queue_release(&events, &event), SALTS_OK);
+  check_equal(cnet_event_queue_take(&events, &event), SALTS_OK);
+  check_equal(event.state, CNET_EVENT_STATE_CLOSED);
+  check_equal(cnet_event_queue_release(&events, &event), SALTS_OK);
+  check_equal(cnet_owner_drive(&owner, 0u), SALTS_OK);
+  check_equal(cnet_event_queue_take(&events, &event), SALTS_ETIMEDOUT);
+  check_true(cnet_owner_test_backend_stats(&owner, &stats, &coroutine));
+  check_equal(stats.active_requests, 0u);
+  check_equal(stats.endpoint_count, 0u);
+  check_equal(coroutine.active, 0u);
+  check_equal(coroutine.retained_frames, 0u);
+  check_equal(cnet_session_table_recycle(&sessions, session), SALTS_OK);
+  check_equal(cnet_owner_release_session(&owner, session), SALTS_OK);
+  cnet_owner_test_close_socket(accepted);
+  cnet_owner_test_close_socket(listener);
+  check_equal(cnet_command_queue_close(&commands), SALTS_OK);
+  check_equal(cnet_owner_close(&owner), SALTS_OK);
+  check_equal(cnet_owner_destroy(&owner), SALTS_OK);
+  check_equal(cnet_event_queue_close(&events), SALTS_OK);
+  check_equal(cnet_event_queue_destroy(&events), SALTS_OK);
+  check_equal(cnet_command_queue_destroy(&commands), SALTS_OK);
+  check_equal(cnet_session_table_destroy(&sessions), SALTS_OK);
+}
+
 static void cnet_owner_test_cancel_ealready(native_io_backend_kind backend_kind) {
   cnet_session_table sessions = {0};
   cnet_command_queue commands = {0};
@@ -2168,6 +2299,15 @@ spec("CNet owner shard") {
       cnet_owner_test_expired_partial_vector_send(backends[index], true, false);
       cnet_owner_test_expired_partial_vector_send(backends[index], true, true);
     }
+    check_equal(cnet_module_shutdown(), SALTS_OK);
+  }
+
+  it("closes after a final send while its receive terminal awaits batch routing") {
+    native_io_backend_kind backends[CNET_OWNER_TEST_MAX_BACKENDS];
+    const size_t count = cnet_owner_test_backends(backends);
+    check_equal(cnet_module_init(), SALTS_OK);
+    for (size_t index = 0u; index < count; ++index)
+      cnet_owner_test_close_observed_receive(backends[index]);
     check_equal(cnet_module_shutdown(), SALTS_OK);
   }
 

@@ -118,6 +118,9 @@ struct cnet_owner_impl {
   cnet_session_handle *session_work;
   cnet_owner_pending_event *pending_events;
   native_io_completion *completions;
+  /** Borrowed suffix of the observed batch; never owns a second I/O queue. */
+  const native_io_completion *observed_batch;
+  size_t observed_batch_remaining;
   size_t connection_capacity;
   size_t request_capacity;
   size_t completion_batch_capacity;
@@ -668,6 +671,20 @@ static int cnet_owner_process_session_work(cnet_owner_impl *impl) {
   return SALTS_OK;
 }
 
+static bool cnet_owner_completion_owned(
+    const cnet_owner_impl *impl, const native_io_completion *completion);
+
+static bool cnet_owner_observed_request_pending(const cnet_owner_impl *impl,
+                                                const cnet_owner_request *request) {
+  const uintptr_t token = (uintptr_t)(request - impl->request_records) + 1u;
+  for (size_t index = 0u; index < impl->observed_batch_remaining; ++index) {
+    const native_io_completion *completion = &impl->observed_batch[index];
+    if (completion->user_data == token && cnet_owner_completion_owned(impl, completion))
+      return true;
+  }
+  return false;
+}
+
 static int cnet_owner_cancel_native_request(cnet_owner_impl *impl,
                                             cnet_owner_request *request) {
   int status;
@@ -675,11 +692,13 @@ static int cnet_owner_cancel_native_request(cnet_owner_impl *impl,
       !native_io_request_valid(request->native_request))
     return SALTS_EPROTO;
   status = native_io_backend_cancel(&impl->backend, request->native_request);
-  if (status == SALTS_ENOENT && impl->backend_borrowed) {
-    /* The host may already have observed this native terminal without routing
-     * it to CNet. Observation invalidates the NativeIO identity, but this active
-     * CNet request and its backing still await that exact completion. Treat
-     * cancellation as already completing; never retire or fail it here. */
+  if (status == SALTS_ENOENT &&
+      (impl->backend_borrowed || cnet_owner_observed_request_pending(impl, request))) {
+    /* Observation retires NativeIO identities for the WHOLE returned batch.
+     * Closing from an earlier completion can therefore cancel a later one
+     * that CNet still owns. An external host can hold that terminal too.
+     * Preserve its lease/backing until routing; an owned backend requires
+     * matching token, request generation and endpoint in the pending suffix. */
     status = SALTS_EALREADY;
   }
   if (status == SALTS_OK || status == SALTS_EALREADY) {
@@ -2736,11 +2755,19 @@ static int cnet_owner_process_completion_batch(cnet_owner_impl *impl,
                                                 size_t count) {
   int first_error = SALTS_OK;
   size_t index;
+  const native_io_completion *previous_batch;
+  size_t previous_remaining;
   if (impl == NULL || (events == NULL && count != 0u)) return SALTS_EINVAL;
+  previous_batch = impl->observed_batch;
+  previous_remaining = impl->observed_batch_remaining;
   for (index = 0u; index < count; ++index) {
+    impl->observed_batch = &events[index];
+    impl->observed_batch_remaining = count - index;
     const int status = cnet_owner_route_completion(impl, &events[index]);
     if (status != SALTS_OK && first_error == SALTS_OK) first_error = status;
   }
+  impl->observed_batch = previous_batch;
+  impl->observed_batch_remaining = previous_remaining;
   return first_error;
 }
 
