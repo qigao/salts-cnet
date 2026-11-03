@@ -1152,8 +1152,6 @@ static void cnet_owner_test_close_observed_receive(native_io_backend_kind backen
   check_equal(cnet_owner_receive_direct(&owner, session, 1u), SALTS_OK);
   check_equal(cnet_owner_test_process_session_work(&owner), SALTS_OK);
   check_equal(send(accepted, (const char *)&payload, 1, 0), 1);
-  check_equal(cnet_owner_test_receive_all(accepted, &received, 1u), SALTS_OK);
-  check_equal(received, payload);
 
   /* Observe two REAL native terminals before routing either one. Their
    * NativeIO slots are retired, but CNet still owns both generations and
@@ -1179,6 +1177,10 @@ static void cnet_owner_test_close_observed_receive(native_io_backend_kind backen
     check_equal(observed[index].kind, NATIVE_IO_COMPLETION_OK);
     check_equal(observed[index].bytes, (size_t)1u);
   }
+  /* io_uring submits its prepared SQEs while observing. Never block the
+   * independent peer on a send before the sole NativeIO owner has run. */
+  check_equal(cnet_owner_test_receive_all(accepted, &received, 1u), SALTS_OK);
+  check_equal(received, payload);
   check_equal(mem_buffer_ref_count(buffer), UINT32_C(2));
   check_true(cnet_owner_test_backend_stats(&owner, &stats, &coroutine));
   check_equal(stats.active_requests, 0u);
