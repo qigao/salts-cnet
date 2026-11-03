@@ -206,6 +206,8 @@ of at most eight completions, routes the whole batch, then replenishes bulk to
 the existing eight-write admission bound. Each write retains the same immutable
 32-KiB source; ENOBUFS terminates replenishment. Peer reads are bounded per turn.
 
+Both ends of the latency-sensitive control connection enable TCP_NODELAY so
+TCP small-write coalescing does not consume an observation-round budget.
 Eight sequential one-byte control request/reply exchanges must each finish
 within 256 host progress rounds while bulk writes remain admitted. The bound is
 part of this workload's formal acceptance, not an OS scheduling guarantee,

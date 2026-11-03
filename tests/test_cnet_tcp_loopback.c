@@ -49,6 +49,7 @@ static bool test_would_block(void) {
 #  include <poll.h>
 #  include <arpa/inet.h>
 #  include <netinet/in.h>
+#  include <netinet/tcp.h>
 #  include <sys/socket.h>
 #  include <sys/time.h>
 #  include <sys/stat.h>
@@ -2854,6 +2855,13 @@ static void sg_case_task(native_io_sharded_context *context, void *user) {
                                       &owner->connections[i]) == SALTS_OK);
       SG_REQUIRE(cnet_client_advance_external(&owner->clients[i], &events) == SALTS_OK);
       SG_REQUIRE(owner->probes[i].connected == 1u && owner->probes[i].failed == 0u);
+      if (owner->sustained && i == 1u) {
+        const int enabled = 1;
+        SG_REQUIRE(cnet_connection_tcp_option_set(&owner->clients[i], owner->connections[i],
+                                                   CNET_TCP_SOCKET_NODELAY, 1u) == SALTS_OK);
+        SG_REQUIRE(setsockopt(owner->peers[i], IPPROTO_TCP, TCP_NODELAY,
+                              (const char *)&enabled, sizeof(enabled)) == 0);
+      }
       const size_t bytes = i == 0u ? SG_BULK_BYTES : 1u;
       owner->pending[i] = mem_get_buffer(mem_global(), bytes);
       SG_REQUIRE(owner->pending[i] != NULL);
@@ -3206,6 +3214,13 @@ static int saltscore_native_entry_test_cnet_sg_sustained(size_t owner_count) {
                    owners[i].probes[1].sent == exchange + 1u;
         VERIFY(owners[i].bulk_admitted > owners[i].probes[0].sent);
       }
+    }
+    if (!complete) {
+      for (size_t i = 0u; i < owner_count; ++i)
+        fprintf(stderr, "SG control exchange %u owner %zu/%zu: request=%d reply=%d sent=%u received=%u bulk=%u/%zu observations=%zu\n",
+                exchange, i, owner_count, (int)request_seen[i], (int)reply_sent[i],
+                owners[i].probes[1].sent, owners[i].probes[1].borrowed_bytes,
+                owners[i].probes[0].sent, owners[i].bulk_admitted, owners[i].observations);
     }
     VERIFY(complete);
   }
