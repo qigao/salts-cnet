@@ -371,6 +371,10 @@ int native_io_backend_cancel(native_io_backend *backend, native_io_request reque
  * SALTS_ETIMEDOUT with out_count == 0. Failed I/O is a successfully observed
  * event whose kind/status carry the terminal error. A returned event ends the
  * payload borrow and invalidates that request handle.
+ * Readiness backends sample pending OS readiness without blocking when local
+ * terminals are queued, so a stream of immediate completions cannot prevent
+ * other ready endpoints from producing their terminal. Terminal delivery stays
+ * bounded by the configured batch and preserves queued completion order.
  */
 int native_io_backend_observe(native_io_backend *backend, native_io_completion *events,
                               size_t event_capacity, uint32_t timeout_ms, size_t *out_count);

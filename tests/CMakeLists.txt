@@ -289,6 +289,9 @@ if(TARGET Salts::CNet)
     "CORE_TLS_TEST_P384_LEAF=\"${_cnet_test_cert}\""
     "CORE_TLS_TEST_P384_KEY=\"${_cnet_test_key}\""
     "CORE_TLS_TEST_EXTERNAL_CA=\"${PROJECT_SOURCE_DIR}/crypto/tests/fixtures/external-io-ca-cert.pem\"")
+  target_compile_definitions(saltscore_cnet_tcp_loopback_test PRIVATE
+    "CORE_TLS_TEST_P384_LEAF=\"${_cnet_test_cert}\""
+    "CORE_TLS_TEST_P384_KEY=\"${_cnet_test_key}\"")
   add_test(NAME saltscore.cnet_tls_ca_san
     COMMAND saltscore_cnet_tls_ca_san_test)
   set_tests_properties(saltscore.cnet_tls_ca_san PROPERTIES TIMEOUT 65)

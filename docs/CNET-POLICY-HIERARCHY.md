@@ -13,10 +13,15 @@ Large-vector POSIX kernel-pressure tests and the observed-vector-prefix close
 regression fix merged in PRs #169/#170. Resource/policy separation merged in
 PR #171. Authenticated TLS shutdown and native Windows pkg-config merged in
 PR #172 after all ten LLVM qualification jobs passed.
-The rest of M2 and M3 remain open in
-[SaltsCore #156](https://github.com/qigao/salts-core/issues/156).
-Baseline: SaltsCore master bc070affca0afbc5cad6e060b9c60a7a22abad10,
-reconciled with the native-testing merge. This RFC supersedes the earlier
+Opaque production TLS ownership merged in #173; connection-phase send admission
+merged in #175. The ten policy/ownership/rollback PRs #176 and #178–#186 merged
+through #187, qualified together by [CI #210](https://github.com/qigao/salts-core/actions/runs/41584295038).
+Baseline: SaltsCore master `24a7788aef9e876b6dfb6449ede588de9015a8bb`.
+[SaltsCore #156](https://github.com/qigao/salts-core/issues/156) now enumerates
+the remaining SG/lifecycle/backend evidence. Production DTLS/SCTP is tracked
+separately in [#188](https://github.com/qigao/salts-core/issues/188), and matched
+performance benchmarks in [#189](https://github.com/qigao/salts-core/issues/189).
+This RFC supersedes the earlier
 ACE/Configurator-oriented draft in PR #157. **Core has no CMeta/ACE dependency,
 second event loop, generic strategy registry, or new runtime.** Optional
 reflection and lexical cleanup adapters belong to `qigao/cmeta`, above Core.
@@ -189,8 +194,36 @@ the session and its I/O buffers are destroyed.
 
 This cutover preserves the production TLS/TLCP/ShangMi implementation. It does
 not substitute the narrower versioned Crypto qualification adapter or claim
-DTLS support. Local Windows LLVM tests passed; the cutover remains pending
-its own exact-head cross-platform CI.
+DTLS support. The cutover passed its exact-head LLVM CI #189 and is included
+in the combined CI #210 qualification.
+
+### Sustained bulk and bounded control progress
+
+The formal TCP suite includes a host progress contract on 1/2/4 fixed SG Owners.
+Each Owner shares its existing backend and single host observer between two
+external CNet clients. The host advances both clients once, observes one batch
+of at most eight completions, routes the whole batch, then replenishes bulk to
+the existing eight-write admission bound. Each write retains the same immutable
+32-KiB source; ENOBUFS terminates replenishment. Peer reads are bounded per turn.
+
+Both ends of the latency-sensitive control connection enable TCP_NODELAY so
+TCP small-write coalescing does not consume an observation-round budget.
+Eight sequential one-byte control request/reply exchanges must each finish
+within 256 host progress rounds while bulk writes remain admitted. The bound is
+part of this workload's formal acceptance, not an OS scheduling guarantee,
+latency percentile, weighted scheduler or throughput claim. Once control finishes,
+the host stops replenishing and verifies every bulk peer byte and logical send
+terminal. Source storage reaches its sole host reference before teardown; both
+clients, endpoints, requests, host leases and runtime must drain. Existing finite
+bulk/isolation and mixed SG-owned completion cases remain separate tests.
+Cross-platform qualification is recorded by this change's formal LLVM CI.
+
+This workload exposed POSIX readiness starvation: immediate bulk completions
+kept the local NativeIO terminal queue nonempty, and observe returned without
+sampling the OS for an already-ready control receive. Readiness observe now
+performs one nonblocking driver wait when queued terminals coexist with pending
+requests, then drains completions in queue order. No pending request is settled
+without its real syscall result; no second observer or queue is introduced.
 
 ### ManagedDial READY on a live transport
 
@@ -234,6 +267,25 @@ allocations and an unchanged borrowed Manager. Successful instances exercise
 reserve/cancel/recycle, handoff credit release, idle Dial sealing or Pool
 reservation abort before destruction. This qualifies initialization rollback
 and bounded helper lifecycle, without dialing a peer or claiming transport drain.
+
+### SG TLS handshake failure isolation
+
+The formal TCP suite also hosts a TLS server connection and an independent
+plain TCP client on the same SG backend/host lease, on 1/2/4 fixed Owners. The
+public TLS server handle is released after admission; the handshaking session
+retains its own context. Application send before TLS readiness rejects without
+retaining the buffer. The native peer sends an invalid TLS record while the
+plain neighbor exchanges real request/reply bytes.
+
+Only the TLS connection fails, exactly once at the handshake stage rather than
+by timeout, with no CONNECTED or application-data/send notification. Any fatal
+handshake wire output drains before native peer EOF. Destroying that client
+leaves the shared backend open and the neighbor able to admit a final send.
+Both clients, endpoints, native requests, host leases and runtime then drain.
+This qualifies malformed-record handshake isolation and retained TLS context
+lifetime, not certificate-authentication coverage or scheduler fairness. Existing
+trust/SAN negatives and the separate sustained-progress regression keep their
+own acceptance. Qualification follows this change's formal LLVM CI result.
 
 ### Multi-connection pool policy composition
 
@@ -788,6 +840,9 @@ write amplification, retained bytes and fair shutdown evidence.
 | Pipe TCP-policy rejection and native FIFO/named-pipe retained transfer | #166 `1d26cd1439c77061abfca3242455089bae437539` | [CI #171](https://github.com/qigao/salts-core/actions/runs/41408786504), ten LLVM jobs passed |
 | Fixed 1/2/4-Owner SG cohosting, bulk/control isolation and host-lease drain | #167 `74e405472109280ae621d0bc2bea350aec18c6d2` | [CI #173](https://github.com/qigao/salts-core/actions/runs/41415636265), ten LLVM jobs passed |
 | Mixed SG-owned/CNet terminals, owned receive cancellation and error-batch drain | #168 `0b4d781d14c3e2deb185537842be7ab4543e2025` | [CI #175](https://github.com/qigao/salts-core/actions/runs/41419975647), ten LLVM jobs passed |
+| Large retained vectors, POSIX pressure and bounded vector-prefix close | #169/#170, included in merged #187 | [CI #210](https://github.com/qigao/salts-core/actions/runs/41584295038), combined native/sanitizer qualification |
+| Opaque production TLS and per-connection phase admission | #173/#175, included in merged #187 | [CI #210](https://github.com/qigao/salts-core/actions/runs/41584295038), combined native/sanitizer qualification |
+| Integrated Pool/Dial admission, recovery, Owner identity, provider authority and allocation rollback | #187 `e263ccf364ace9fa561fca91b3df75427e43b879` | [CI #210](https://github.com/qigao/salts-core/actions/runs/41584295038), ten LLVM jobs plus aggregate passed |
 
 PR #161 extends the existing `saltscore.cnet_tcp_loopback`
 TinyTest/CTest against production `Salts::CNet`: one Manager/Pool connection
@@ -893,8 +948,8 @@ socket buffers. Its large-vector case therefore holds that real full terminal
 before routing and checks retained backing, exact bytes, FIFO callbacks and FIN;
 it does not require or claim short writes or kernel-pressure cancellation on
 IOCP. No synthetic short completion, private descriptor mutation or alternate
-backend is used. These new cases are pending exact-head CI; POSIX pressure and
-cancellation have not been locally executed on Windows.
+backend is used. These cases merged in #169 after CI #177 and are also exercised
+by the combined CI #210. POSIX pressure/cancellation does not qualify IOCP pressure.
 
 The next close-ordering regression holds a real NativeIO vector prefix terminal
 before requesting CNet close. Seventeen nonadjacent retained ranges exceed the
@@ -911,7 +966,8 @@ retains its separate record/shutdown drain behavior. The regression checks the
 unchanged native submission count, retained backing and EBUSY stop/destroy before
 routing, one clean terminal, exact peer prefix followed immediately by FIN,
 released backing and rejected replay. It failed before the fix and passed locally
-on Windows afterward; its own exact-head cross-platform CI remains pending.
+on Windows afterward. It merged in #170 after its exact-head CI #178 passed,
+and is also exercised by the combined CI #210.
 
 **Nonclaim:** each successful matrix qualifies only its tested slice. Android
 x64/ARM64 jobs build the SDK without device runtime tests. Windows kernel
