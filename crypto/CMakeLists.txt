@@ -14,11 +14,6 @@ find_package(GmSSL CONFIG REQUIRED)
 if(NOT TARGET GmSSL::GmSSL)
   message(FATAL_ERROR "Pinned vcpkg GmSSL target not available")
 endif()
-get_target_property(_crypto_native_include GmSSL::GmSSL INTERFACE_INCLUDE_DIRECTORIES)
-if(NOT _crypto_native_include OR
-    NOT EXISTS "${_crypto_native_include}/gmssl/tls.h")
-  message(FATAL_ERROR "Pinned vcpkg GmSSL TLS headers unavailable")
-endif()
 if(NOT CMAKE_SIZEOF_VOID_P EQUAL 8)
   message(FATAL_ERROR "Ed448 libecc source uses the reviewed 64-bit WORDSIZE ABI")
 endif()
@@ -46,6 +41,7 @@ add_subdirectory(vendor/libecc)
 # Crypto retains only ECDSA DER and RFC 8410 key-format functions.
 add_library(salts_crypto STATIC
   src/crypto_tls_gmssl.c
+  src/crypto_tls_stream.c
   src/crypto_tls_cipher_bio.c
   src/crypto_ed448.c
   src/crypto_sha256.c
@@ -64,8 +60,7 @@ target_link_libraries(salts_crypto PUBLIC Threads::Threads Salts::ASN1
 target_include_directories(salts_crypto
   PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
          $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
-  PRIVATE "${_crypto_native_include}"
-          "${_libecc}/include")
+  PRIVATE "${_libecc}/include")
 target_compile_definitions(salts_crypto PRIVATE
   ENABLE_TLS ENABLE_SECP256R1 ENABLE_SECP384R1
   ENABLE_SHA1 ENABLE_SHA2 ENABLE_AES)
@@ -77,6 +72,9 @@ if(BUILD_TESTING AND CRYPTO_TLS_TEST_HANDSHAKE_DIAGNOSTICS)
   target_compile_definitions(salts_crypto PRIVATE
     CRYPTO_TLS_PRIVATE_TEST_HANDSHAKE_TRACE)
 endif()
+if(BUILD_TESTING)
+  target_compile_definitions(salts_crypto PRIVATE CRYPTO_TLS_STREAM_TESTING)
+endif()
 
 # Keep the Ed448 facade's configuration consistent with the private object
 # target. No SHA256/SM3 libecc implementation or alternate RNG is built.
@@ -86,11 +84,11 @@ set_source_files_properties(src/crypto_ed448.c
 
 if(MSVC)
   target_compile_options(salts_crypto PRIVATE /experimental:c11atomics)
-  target_link_libraries(salts_crypto PUBLIC bcrypt ws2_32)
+  target_link_libraries(salts_crypto PUBLIC bcrypt ws2_32 crypt32)
 elseif(WIN32)
-  target_link_libraries(salts_crypto PUBLIC bcrypt ws2_32)
+  target_link_libraries(salts_crypto PUBLIC bcrypt ws2_32 crypt32)
 elseif(APPLE)
-  target_link_libraries(salts_crypto PUBLIC "-framework Security")
+  target_link_libraries(salts_crypto PUBLIC "-framework Security" "-framework CoreFoundation")
 elseif(UNIX)
   target_link_libraries(salts_crypto PUBLIC m "${CMAKE_DL_LIBS}")
 endif()

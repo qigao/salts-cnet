@@ -4,11 +4,139 @@
 #include <tinytest.h>
 #include <crypto/tls_close.h>
 #include <crypto/cipher_bio.h>
+#include <crypto/tls_stream.h>
 #include <gmssl/tls.h>
 #include <stdint.h>
 #include <stddef.h>
 #include <stdio.h>
 #include <string.h>
+
+static crypto_tls_stream_context *stream_context[2];
+static crypto_tls_stream *stream_pair[2];
+
+static void transfer_stream_cipher(unsigned from, unsigned to) {
+  uint8_t wire[32768];
+  size_t size = 0u;
+  int result = crypto_tls_stream_take_cipher(stream_pair[from], wire, sizeof(wire), &size);
+  check(result == CRYPTO_TLS_STREAM_OK || result == CRYPTO_TLS_STREAM_ENOENT);
+  if (size != 0u)
+    check_equal(crypto_tls_stream_feed_cipher(stream_pair[to], wire, size),
+                CRYPTO_TLS_STREAM_OK);
+}
+
+spec("Opaque Crypto streams retain policy and bounded storage") {
+  before_each() {
+    memset(stream_context, 0, sizeof(stream_context));
+    memset(stream_pair, 0, sizeof(stream_pair));
+  }
+  after_each() {
+    for (unsigned i = 0; i < 2u; ++i) {
+      crypto_tls_stream_destroy(stream_pair[i]);
+      crypto_tls_stream_context_release(stream_context[i]);
+    }
+  }
+  for (unsigned version = 0; version < 2u; ++version) {
+    it("TLS1.%u survives creator release and preserves authenticated shutdown", version + 2u) {
+      char alpn_name[] = "stream-test";
+      const char *alpn[] = {alpn_name};
+      crypto_tls_stream_client_config client = {sizeof(client)};
+      crypto_tls_stream_server_config server = {sizeof(server)};
+      crypto_tls_stream_protocol_version protocol = version
+          ? CRYPTO_TLS_STREAM_PROTOCOL_VERSION_1_3 : CRYPTO_TLS_STREAM_PROTOCOL_VERSION_1_2;
+      bool complete[2] = {false, false};
+      client.ca_file = CRYPTO_CLOSE_TEST_CA;
+      client.server_name = "localhost";
+      client.alpn_protocols = alpn;
+      client.alpn_protocol_count = 1u;
+      server.cert_file = CRYPTO_CLOSE_TEST_SERVER_CERT;
+      server.key_file = CRYPTO_CLOSE_TEST_SERVER_KEY;
+      server.alpn_protocols = alpn;
+      server.alpn_protocol_count = 1u;
+      check_equal(crypto_tls_stream_client_context_create(&client, &stream_context[0]),
+                  CRYPTO_TLS_STREAM_OK);
+      check_equal(crypto_tls_stream_server_context_create(&server, &stream_context[1]),
+                  CRYPTO_TLS_STREAM_OK);
+      memset(alpn_name, 'x', sizeof(alpn_name) - 1u); /* policy must own its copy */
+      check_equal(crypto_tls_stream_create(stream_context[0], true, "localhost",
+                    32768u, &stream_pair[0]), CRYPTO_TLS_STREAM_EINVAL);
+      check_null(stream_pair[0]);
+      check_equal(crypto_tls_stream_create(stream_context[0], false, "localhost",
+                    SIZE_MAX, &stream_pair[0]), CRYPTO_TLS_STREAM_ERANGE);
+      check_null(stream_pair[0]);
+      for (unsigned i = 0; i < 2u; ++i) {
+        check_equal(crypto_tls_stream_create(stream_context[i], i != 0u,
+                      i == 0u ? "localhost" : NULL, 32768u, &stream_pair[i]),
+                    CRYPTO_TLS_STREAM_OK);
+        crypto_tls_stream_context_release(stream_context[i]);
+        stream_context[i] = NULL; /* stream's retained context is now the only owner */
+        check_equal(crypto_tls_stream_set_protocol_range(stream_pair[i], protocol, protocol),
+                    CRYPTO_TLS_STREAM_OK);
+        check_not_null(crypto_tls_stream_read_buffer(stream_pair[i]));
+        check_not_null(crypto_tls_stream_write_buffer(stream_pair[i]));
+        check_not_equal(crypto_tls_stream_read_buffer(stream_pair[i]),
+                        crypto_tls_stream_write_buffer(stream_pair[i]));
+      }
+      for (unsigned step = 0; step < 128u && !(complete[0] && complete[1]); ++step) {
+        for (unsigned i = 0; i < 2u; ++i) {
+          check_equal(crypto_tls_stream_handshake(stream_pair[i], &complete[i]), CRYPTO_TLS_STREAM_OK);
+          if (step == 0u)
+            check_equal(crypto_tls_stream_set_protocol_range(stream_pair[i], protocol, protocol),
+                        CRYPTO_TLS_STREAM_EINVAL);
+          transfer_stream_cipher(i, 1u - i);
+        }
+      }
+      check(complete[0] && complete[1]);
+      for (unsigned i = 0; i < 2u; ++i) {
+        const unsigned char *selected = NULL;
+        size_t size = 0u;
+        check_equal(crypto_tls_stream_set_protocol_range(stream_pair[i], protocol, protocol),
+                    CRYPTO_TLS_STREAM_EINVAL);
+        check_equal(crypto_tls_stream_get_negotiated_alpn(stream_pair[i], &selected, &size),
+                    CRYPTO_TLS_STREAM_OK);
+        check_equal(size, sizeof("stream-test") - 1u);
+        check_equal(selected, "stream-test", size);
+      }
+      {
+        uint8_t overflow[32769] = {0};
+        size_t capacity = crypto_tls_stream_cipher_input_capacity(stream_pair[1]);
+        check_equal(crypto_tls_stream_feed_cipher(stream_pair[1], overflow, sizeof(overflow)),
+                    CRYPTO_TLS_STREAM_ENOBUFS);
+        check_equal(crypto_tls_stream_cipher_input_capacity(stream_pair[1]), capacity);
+      }
+      {
+        const uint8_t payload[] = "retained-policy";
+        uint8_t received[32] = {0};
+        size_t size = 0u;
+        bool written = false, peer_closed = false;
+        check_equal(crypto_tls_stream_write(stream_pair[0], payload, sizeof(payload), &written),
+                    CRYPTO_TLS_STREAM_OK);
+        check_true(written);
+        transfer_stream_cipher(0, 1);
+        check_equal(crypto_tls_stream_read(stream_pair[1], received, sizeof(received), &size, &peer_closed),
+                    CRYPTO_TLS_STREAM_OK);
+        check_false(peer_closed);
+        check_equal(size, sizeof(payload));
+        check_equal(received, payload, size);
+      }
+      {
+        bool generated = false, peer = false, pending = false;
+        check_equal(crypto_tls_stream_shutdown(stream_pair[0], &generated, &peer), CRYPTO_TLS_STREAM_OK);
+        check_true(generated);
+        check_false(peer);
+        transfer_stream_cipher(0, 1);
+        check_equal(crypto_tls_stream_probe_peer_close(stream_pair[1], &peer, &pending), CRYPTO_TLS_STREAM_OK);
+        check_true(peer);
+        check_false(pending);
+        check_equal(crypto_tls_stream_shutdown(stream_pair[1], &generated, &peer), CRYPTO_TLS_STREAM_OK);
+        check_true(generated);
+        check_true(peer);
+        transfer_stream_cipher(1, 0);
+        check_equal(crypto_tls_stream_shutdown(stream_pair[0], &generated, &peer), CRYPTO_TLS_STREAM_OK);
+        check_true(peer);
+      }
+    }
+  }
+}
 
 typedef struct tls_io_probe {
   size_t sent;

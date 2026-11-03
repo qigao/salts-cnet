@@ -11,11 +11,6 @@ if(NOT TARGET saltscore_cnet OR NOT TARGET Salts::TinyTest OR
    NOT TARGET salts_crypto OR NOT TARGET Salts::Crypto)
   message(FATAL_ERROR "Need actual CNet, local Crypto and native TinyTest")
 endif()
-get_target_property(_core_owner_native_include GmSSL::GmSSL INTERFACE_INCLUDE_DIRECTORIES)
-if(NOT _core_owner_native_include OR
-   NOT EXISTS "${_core_owner_native_include}/gmssl/tls.h")
-  message(FATAL_ERROR "Original CNet Owner requires installed vcpkg GmSSL native headers")
-endif()
 # _saltscore_cnet_sources is declared by Core at the repository root.
 # Relative entries must not be interpreted relative to tests/cnet-owner;
 # preserve generator-expression OBJECTS references unchanged.
@@ -31,8 +26,6 @@ endforeach()
 add_library(saltscore_cnet_original_test_owner STATIC
   ${_core_owner_native_sources})
 target_compile_features(saltscore_cnet_original_test_owner PUBLIC c_std_11)
-target_compile_definitions(saltscore_cnet_original_test_owner PRIVATE
-  ENABLE_TLS ENABLE_SECP256R1 ENABLE_SECP384R1 ENABLE_SHA1 ENABLE_SHA2 ENABLE_AES)
 # Match the original first-party CNet test-profile flags exactly.
 # None are installed, exported or applied to the real Salts::CNet DSO.
 target_compile_definitions(saltscore_cnet_original_test_owner PUBLIC
@@ -53,17 +46,11 @@ target_include_directories(saltscore_cnet_original_test_owner
     "${PROJECT_SOURCE_DIR}/native-io/src"
     "${PROJECT_SOURCE_DIR}/vendor/monocypher"
     "${PROJECT_SOURCE_DIR}/vendor/reed"
-    "${_core_owner_native_include}")
+    "${PROJECT_SOURCE_DIR}/crypto/src")
 target_link_libraries(saltscore_cnet_original_test_owner
   PUBLIC Salts::Core Salts::NativeIO Salts::Concurrency
   PRIVATE Salts::URI Salts::Platform saltscore_cnet_monocypher
-    saltscore_cnet_reed c-ares::cares kcp::kcp Salts::Crypto
-    $<$<PLATFORM_ID:Windows>:crypt32>)
-if(APPLE)
-  target_link_libraries(saltscore_cnet_original_test_owner PRIVATE
-    "${SALTSCORE_CNET_COREFOUNDATION}"
-    "${SALTSCORE_CNET_SECURITY}")
-endif()
+    saltscore_cnet_reed c-ares::cares kcp::kcp Salts::Crypto)
 
 add_executable(saltscore_cnet_owner_original_test cnet_owner_test.c)
 target_compile_features(saltscore_cnet_owner_original_test PRIVATE c_std_11)
