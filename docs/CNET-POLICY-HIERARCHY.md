@@ -16,9 +16,14 @@ PR #172 after all ten LLVM qualification jobs passed.
 Opaque production TLS ownership merged in #173; connection-phase send admission
 merged in #175. The ten policy/ownership/rollback PRs #176 and #178–#186 merged
 through #187, qualified together by [CI #210](https://github.com/qigao/salts-core/actions/runs/41584295038).
-Baseline: SaltsCore master `24a7788aef9e876b6dfb6449ede588de9015a8bb`.
-[SaltsCore #156](https://github.com/qigao/salts-core/issues/156) now enumerates
-the remaining SG/lifecycle/backend evidence. Production DTLS/SCTP is tracked
+The sustained SG progress fix and TLS neighbor isolation merged through #192,
+qualified together by [CI #216](https://github.com/qigao/salts-core/actions/runs/41591989053).
+Packet generation drain and real KCP retransmission/stop merged in #193 after
+[CI #218](https://github.com/qigao/salts-core/actions/runs/41593676226).
+Baseline: SaltsCore master `8604d1978054fb8607d4edb4e353a9425a88a83d`.
+[SaltsCore #156](https://github.com/qigao/salts-core/issues/156) records the final
+Windows pressure/cancellation qualification and native policy acceptance.
+Production DTLS/SCTP is tracked
 separately in [#188](https://github.com/qigao/salts-core/issues/188), and matched
 performance benchmarks in [#189](https://github.com/qigao/salts-core/issues/189).
 This RFC supersedes the earlier
@@ -309,7 +314,7 @@ wire anti-replay identities: UDP has no generation field, and plain KCP's peer
 and conversation identity does not authenticate packets. Applications must not
 infer that reopening an identical wire identity rejects delayed old packets.
 Authenticated-session security retains its separate handshake/identity contract.
-The new lifecycle qualification remains pending its exact-head formal CI.
+This lifecycle qualification merged in #193 after its exact-head CI #218 passed.
 
 ### Multi-connection pool policy composition
 
@@ -867,6 +872,8 @@ write amplification, retained bytes and fair shutdown evidence.
 | Large retained vectors, POSIX pressure and bounded vector-prefix close | #169/#170, included in merged #187 | [CI #210](https://github.com/qigao/salts-core/actions/runs/41584295038), combined native/sanitizer qualification |
 | Opaque production TLS and per-connection phase admission | #173/#175, included in merged #187 | [CI #210](https://github.com/qigao/salts-core/actions/runs/41584295038), combined native/sanitizer qualification |
 | Integrated Pool/Dial admission, recovery, Owner identity, provider authority and allocation rollback | #187 `e263ccf364ace9fa561fca91b3df75427e43b879` | [CI #210](https://github.com/qigao/salts-core/actions/runs/41584295038), ten LLVM jobs plus aggregate passed |
+| Sustained bounded SG control progress and shared-backend TLS handshake isolation | #192 `193ca97d5a0371a4b7ed83f3aa20523e769baa32` | [CI #216](https://github.com/qigao/salts-core/actions/runs/41591989053), ten LLVM jobs plus aggregate passed |
+| Packet generation close/drain/reuse and plain-KCP stop after real retransmission | #193 `51f145e5ec22e992a00c1961c87c3af58f3e3d96` | [CI #218](https://github.com/qigao/salts-core/actions/runs/41593676226), ten LLVM jobs plus aggregate passed |
 
 PR #161 extends the existing `saltscore.cnet_tcp_loopback`
 TinyTest/CTest against production `Salts::CNet`: one Manager/Pool connection
@@ -975,6 +982,20 @@ IOCP. No synthetic short completion, private descriptor mutation or alternate
 backend is used. These cases merged in #169 after CI #177 and are also exercised
 by the combined CI #210. POSIX pressure/cancellation does not qualify IOCP pressure.
 
+The Windows cancellation variant now replenishes the same immutable 8-MiB
+source after each fully completed write, for at most four replenishments. Peer
+reads stay paused. It must reach two consecutive 25-ms observation timeouts
+with one real NativeIO STREAM_SEND still active; a held full completion cannot
+satisfy this gate. The fixed two-write FIFO then admits an ordinary one-byte
+tail. Explicit close must produce a real CANCELLED/ECANCELED IOCP terminal,
+with bulk backing retained and stop/destroy busy until that terminal is routed.
+Routing publishes one connection terminal without reporting the cancelled bulk
+or tail as successful, releases both retained sources and submits no remainder.
+Replaying the observed terminal is unconsumed. Backend cancellation count is
+exactly one; requests, endpoints and borrowed backend then drain. This qualifies
+actual pending-send cancellation on IOCP, without requiring Winsock to report a
+POSIX-style short successful send. Its exact-head matrix is recorded in #156.
+
 The next close-ordering regression holds a real NativeIO vector prefix terminal
 before requesting CNet close. Seventeen nonadjacent retained ranges exceed the
 existing sixteen-span NativeIO submission bound, so the observed native terminal
@@ -994,7 +1015,9 @@ on Windows afterward. It merged in #170 after its exact-head CI #178 passed,
 and is also exercised by the combined CI #210.
 
 **Nonclaim:** each successful matrix qualifies only its tested slice. Android
-x64/ARM64 jobs build the SDK without device runtime tests. Windows kernel
-backpressure/short-write cancellation, other cancellation orderings,
-fixed SG multi-Owner fairness, DTLS/SCTP, adaptive batching and per-connection
-stream deadlines retain separate gates. Keep M2/M3 independent. Track exact HEAD.
+x64/ARM64 jobs build the SDK without device runtime tests. IOCP pending-send
+cancellation does not promise short successful native writes. SG control progress
+is bounded for the specified workload, not general scheduler QoS. Production
+DTLS/SCTP (#188), matched performance (#189), adaptive batching and new independent
+per-connection stream deadlines remain separate work. Existing host-owned timers
+and protocol READY/replay authority do not move into CNet.
