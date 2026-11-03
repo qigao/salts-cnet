@@ -64,12 +64,14 @@ typedef enum cnet_admission_limit {
   CNET_LIMIT_CONNECTION_OPERATIONS,
   CNET_LIMIT_CONNECTION_BYTES,
   CNET_LIMIT_CONNECTION_BACKING_BYTES,
-  CNET_LIMIT_POLICY
+  CNET_LIMIT_POLICY,
+  CNET_LIMIT_CONNECTION_POLICY
 } cnet_admission_limit;
 
 /* Pure extra admission gate. Hard limits are enforced before this callback;
  * returning OK cannot override them. No ownership transfers to this callback.
- * Configuration is copied; user is borrowed until replacement or destruction.
+ * Configuration is copied; user is borrowed until replacement or destruction
+ * (connection binding: until replacement or connection terminal notification).
  * Usage pointers are callback-local views and must not be retained. */
 typedef struct cnet_send_admission_policy {
   int (*evaluate)(void *user, const cnet_send_usage *total,

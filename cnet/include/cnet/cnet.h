@@ -936,9 +936,20 @@ int cnet_client_send_usage(cnet_client *client, cnet_connection connection,
 /* Owner-only, outside callbacks/progress. Copied policy applies to subsequent
  * sends; accepted operations retain their original completion obligations.
  * Old policy user can be released after replacement returns. Hard limits and
- * resource providers are immutable for this client lifetime. */
+ * resource providers are immutable for this client lifetime. Replacing this
+ * client gate leaves all connection-specific gates in place. */
 int cnet_client_set_send_admission(cnet_client *client,
                                    const cnet_send_admission_policy *policy);
+/* Extra gate for one live connection generation, initially empty. Hard limits,
+ * then the client gate, then this gate must all accept each send. A zero binding
+ * clears only this gate. Owner-only, outside callbacks/progress; may be set
+ * after connect/adopt and before CONNECTED. Does not grant transport readiness.
+ * Policy is copied; user is borrowed until successful replacement or terminal
+ * notification. Existing operations keep their retained storage and completion.
+ * Stale/unknown handle: ENOENT; sealed connection: ESHUTDOWN; invalid binding:
+ * EINVAL; wrong owner: EPERM; callbacks/progress: EBUSY. No change on failure. */
+int cnet_set_send_admission(cnet_client *client, cnet_connection connection,
+                             const cnet_send_admission_policy *policy);
 int cnet_send_buffer(cnet_client *client, cnet_connection connection, mem_buffer_t *buffer);
 
 /**

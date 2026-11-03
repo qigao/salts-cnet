@@ -64,6 +64,7 @@ typedef struct cnet_client_record {
   size_t pending_writes;
   size_t send_head, send_tail;
   cnet_send_usage send_usage;
+  cnet_send_admission_policy send_admission;
   /* Same-owner command reservations only; canonical lifecycle lives in cnet_session_table. */
   bool close_command_pending;
   bool tls_command_pending;
@@ -274,6 +275,7 @@ static void cnet_client_observe(void *context, const cnet_dispatch_view *view) {
   cnet_active_callback_client = impl;
   if (view->kind == CNET_EVENT_STATE && cnet_client_terminal(view->state)) {
     record->close_command_pending = true;
+    record->send_admission = (cnet_send_admission_policy){0};
     while (record->send_head != 0u)
       cnet_client_send_settle(record, view->state == CNET_EVENT_STATE_FAILED
           ? (cnet_client_cmeta_status(view->status) ? view->status : SALTS_EIO)
@@ -620,6 +622,7 @@ static int cnet_client_admit(cnet_client_impl *impl, const cnet_owner_connect_pa
   record->active = true;
   record->pending_writes = 0u;
   record->receive_pending = 0u;
+  record->send_admission = (cnet_send_admission_policy){0};
   record->tcp_shutdown_mask = 0u;
   record->preserve_send_on_eof = false;
   record->close_command_pending = false;
@@ -1538,15 +1541,19 @@ static int cnet_client_send_charge(cnet_client_impl *impl, cnet_client_record *r
     if (input->out_limit != NULL) *input->out_limit = limit;
     return SALTS_ENOBUFS;
   }
-  if (impl->send_admission.evaluate != NULL) {
+  const cnet_send_admission_policy *policies[] = {&impl->send_admission, &record->send_admission};
+  for (size_t i = 0u; i < 2u; ++i) {
+    const cnet_send_admission_policy *policy = policies[i];
+    if (policy->evaluate == NULL) continue;
     cnet_client_impl *previous_policy = cnet_active_policy_client;
     cnet_active_policy_client = impl;
     impl->evaluating_policy = true;
-    int status = impl->send_admission.evaluate(impl->send_admission.user, a, c, input->size, *backing);
+    int status = policy->evaluate(policy->user, a, c, input->size, *backing);
     impl->evaluating_policy = false;
     cnet_active_policy_client = previous_policy;
     if (status != SALTS_OK) {
-      if (input->out_limit != NULL) *input->out_limit = CNET_LIMIT_POLICY;
+      if (input->out_limit != NULL)
+        *input->out_limit = i == 0u ? CNET_LIMIT_POLICY : CNET_LIMIT_CONNECTION_POLICY;
       return status;
     }
   }
@@ -1708,6 +1715,24 @@ int cnet_client_set_send_admission(cnet_client *client,
     return SALTS_EBUSY;
   if (!impl->admission_open) return SALTS_ESHUTDOWN;
   impl->send_admission = *policy;
+  return SALTS_OK;
+}
+
+int cnet_set_send_admission(cnet_client *client, cnet_connection connection,
+                             const cnet_send_admission_policy *policy) {
+  cnet_client_impl *impl = cnet_client_get(client);
+  if (impl == NULL || policy == NULL ||
+      (policy->evaluate == NULL && policy->user != NULL)) return SALTS_EINVAL;
+  if (impl->owner_thread != cmeta_thread_current_token()) return SALTS_EPERM;
+  if (cnet_active_callback_client == impl || impl->poll_active || impl->stop_active)
+    return SALTS_EBUSY;
+  if (!impl->admission_open) return SALTS_ESHUTDOWN;
+  cnet_client_record *record = cnet_client_find_record(impl, connection, NULL);
+  if (record == NULL) return SALTS_ENOENT;
+  if (record->close_command_pending ||
+      (record->tcp_shutdown_mask & (uint8_t)CNET_TCP_SHUTDOWN_SEND) != 0u)
+    return SALTS_ESHUTDOWN;
+  record->send_admission = *policy;
   return SALTS_OK;
 }
 
