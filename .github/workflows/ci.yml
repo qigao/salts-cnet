@@ -138,6 +138,8 @@ jobs:
     name: LLVM / ${{ matrix.rid }} / ${{ matrix.preset }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 120
+    env:
+      VCPKG_DOWNLOADS: ${{ github.workspace }}/build/vcpkg-downloads
     strategy:
       fail-fast: false
       matrix:
@@ -157,6 +159,13 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Prepare vcpkg download cache
+        id: cache-paths
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path $env:VCPKG_DOWNLOADS | Out-Null
+          "runner-image=$env:ImageOS-$env:ImageVersion" >> $env:GITHUB_OUTPUT
+
       - name: Set up native LLVM
         if: runner.os != 'Windows'
         uses: qigao/vcpkg-cache/.github/actions/setup-llvm-native@v0.1.0
@@ -165,6 +174,7 @@ jobs:
           obfuscator: "false"
 
       - name: Set up Windows LLVM-MinGW
+        id: windows-llvm
         if: runner.os == 'Windows'
         uses: qigao/vcpkg-cache/.github/actions/setup-llvm-mingw@v0.1.0
         with:
@@ -257,6 +267,17 @@ jobs:
             echo "SALTSCORE_INSTALL_PREFIX=$GITHUB_WORKSPACE/package/sdk/$RID"
           } >> "$GITHUB_ENV"
 
+      - name: Restore vcpkg binaries and downloads
+        id: vcpkg-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ${{ env.VCPKG_BINARY_CACHE }}
+            ${{ env.VCPKG_DOWNLOADS }}
+          key: vcpkg-v1-${{ runner.os }}-${{ runner.arch }}-${{ matrix.rid }}-${{ matrix.preset }}-${{ steps.vcpkg.outputs.cache_revision }}-${{ steps.cache-paths.outputs.runner-image }}-${{ steps.windows-llvm.outputs.version }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', 'CMakeOptions.cmake', 'CMakePresets.json', 'CMakeUserPresets.json', 'presets/**', '.github/workflows/ci.yml') }}
+          restore-keys: |
+            vcpkg-v1-${{ runner.os }}-${{ runner.arch }}-${{ matrix.rid }}-${{ matrix.preset }}-${{ steps.vcpkg.outputs.cache_revision }}-
+
       - name: Configure full graph
         shell: bash
         run: |
@@ -278,6 +299,17 @@ jobs:
             tls_options+=(-DCNET_SCTP_TEST_OWNER_THREADS=ON)
           fi
           cmake --preset "${{ matrix.preset }}" "${tls_options[@]}"
+
+      # Configure completes vcpkg installation and local binary-cache writes.
+      # Save now so a later project build/test failure does not discard them.
+      - name: Save vcpkg binaries and downloads
+        if: steps.vcpkg-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ${{ env.VCPKG_BINARY_CACHE }}
+            ${{ env.VCPKG_DOWNLOADS }}
+          key: ${{ steps.vcpkg-cache.outputs.cache-primary-key }}
 
       - name: Build full graph
         shell: bash

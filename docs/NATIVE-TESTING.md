@@ -111,6 +111,25 @@ project or test framework to the Core build. Their retirement/in-tree
 rehosting must preserve the actual independent peer oracle and owner boundary
 rather than dropping the behavior to satisfy a CMake naming rule.
 
+## CI dependency cache
+
+The LLVM workflow persists the shared action's writable local vcpkg binary
+cache and `VCPKG_DOWNLOADS` with GitHub Actions cache. The remote NuGet feed
+remains read-only. Each OS/architecture, matrix lane, preset and shared cache
+revision has its own namespace. Runner image, Windows LLVM-MinGW version,
+dependency manifests, options, presets and workflow changes produce a new
+save key. Earlier entries in that namespace can seed a new run; vcpkg still
+checks package ABI hashes before reuse.
+
+CMake configure always resolves and installs the requested dependencies.
+After successful configure, CI saves a new cache entry before building and
+running the formal CTest suite, so a later project failure does not discard
+newly compiled dependencies. Exact cache hits are not uploaded again. The
+cache contains only downloads and binary archives, not CMake build trees,
+installed SDKs or the temporary NuGet credentials. A cold or evicted cache
+still requires normal dependency downloads/builds; vcpkg itself is set up by
+the existing shared action on every runner.
+
 ## Merge gate
 
 Require the **exact PR HEAD**, not an earlier green commit: Linux/macOS/
