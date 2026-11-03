@@ -23,6 +23,7 @@
 #if defined(_WIN32)
 #  include <winsock2.h>
 #  include <ws2tcpip.h>
+#  include <windows.h>
 typedef SOCKET test_socket;
 #  define TEST_INVALID_SOCKET INVALID_SOCKET
 static void test_close_socket(test_socket s) {
@@ -52,6 +53,7 @@ static bool test_would_block(void) {
 #  include <netinet/tcp.h>
 #  include <sys/socket.h>
 #  include <sys/time.h>
+#  include <sys/resource.h>
 #  include <sys/stat.h>
 #  include <unistd.h>
 typedef int test_socket;
@@ -3471,6 +3473,246 @@ cleanup:
   return result;
 }
 
+enum { MATCHED_BYTES = 32768, MATCHED_MAX_OPERATIONS = 2048 };
+typedef struct matched_fixture {
+  tcp_probe io;
+  resource_probe storage;
+  cnet_listener listener;
+  cnet_client client;
+  native_io_backend backend;
+  cnet_connection connection;
+  test_socket peer;
+  mem_buffer_t *source;
+  size_t window, calls, offered, completed;
+  uint64_t starts[MATCHED_MAX_OPERATIONS], latency[MATCHED_MAX_OPERATIONS];
+} matched_fixture;
+typedef struct matched_result {
+  uint64_t elapsed_ns, cpu_ns, p50_ns, p95_ns, p99_ns, drain_ns;
+  size_t bytes, rejected, peak_bytes, peak_backing, allocations, policy_calls;
+} matched_result;
+
+static size_t matched_size(size_t index) { return index % 8u == 0u ? 1u : MATCHED_BYTES; }
+static void matched_state(void *user, cnet_connection connection, cnet_connection_state state,
+                            const cnet_error *error) {
+  on_state(&((matched_fixture *)user)->io, connection, state, error);
+}
+static void matched_sent(void *user, cnet_connection connection, size_t bytes) {
+  matched_fixture *f = user;
+  (void)connection;
+  if (f->completed >= f->offered || f->completed >= MATCHED_MAX_OPERATIONS ||
+      bytes != matched_size(f->completed)) { ++f->io.failed; return; }
+  f->latency[f->completed] = cmeta_hrtime() - f->starts[f->completed];
+  ++f->completed;
+}
+static int matched_admit(void *user, const cnet_send_usage *total,
+                           const cnet_send_usage *connection, size_t bytes, size_t backing) {
+  matched_fixture *f = user;
+  (void)backing;
+  ++f->calls;
+  return total->operations < f->window && connection->operations < f->window &&
+         bytes <= f->window * MATCHED_BYTES - total->bytes ? SALTS_OK : SALTS_ENOBUFS;
+}
+static int matched_cpu_ns(uint64_t *out) {
+#if defined(_WIN32)
+  FILETIME created, exited, kernel, user;
+  if (!GetProcessTimes(GetCurrentProcess(), &created, &exited, &kernel, &user)) return SALTS_EIO;
+  *out = ((((uint64_t)kernel.dwHighDateTime << 32u) | kernel.dwLowDateTime) +
+          (((uint64_t)user.dwHighDateTime << 32u) | user.dwLowDateTime)) * UINT64_C(100);
+#else
+  struct rusage usage;
+  if (getrusage(RUSAGE_SELF, &usage) != 0) return SALTS_EIO;
+  *out = ((uint64_t)usage.ru_utime.tv_sec + (uint64_t)usage.ru_stime.tv_sec) * UINT64_C(1000000000) +
+         ((uint64_t)usage.ru_utime.tv_usec + (uint64_t)usage.ru_stime.tv_usec) * UINT64_C(1000);
+#endif
+  return SALTS_OK;
+}
+static int matched_compare_ns(const void *a, const void *b) {
+  const uint64_t x = *(const uint64_t *)a, y = *(const uint64_t *)b;
+  return (x > y) - (x < y);
+}
+
+/* Setup/warm-up and close are outside this measured transfer. Both modes
+ * include the same bounded host/peer progress and exact byte checks. */
+static int matched_transfer(matched_fixture *f, size_t operations, matched_result *out) {
+  unsigned char bytes[65536];
+  size_t received = 0u, expected = 0u, events = 0u, receive_operation = 0u, receive_offset = 0u;
+  const size_t allocations = f->storage.allocated, calls = f->calls;
+  uint64_t cpu_start, cpu_end;
+  const uint64_t start = cmeta_hrtime(), deadline = start + UINT64_C(10000000000);
+  *out = (matched_result){0};
+  f->offered = f->completed = 0u;
+  if (operations == 0u || operations > MATCHED_MAX_OPERATIONS || matched_cpu_ns(&cpu_start) != SALTS_OK)
+    return SALTS_EINVAL;
+  for (size_t i = 0u; i < operations; ++i) expected += matched_size(i);
+  while ((f->completed != operations || received != expected) && cmeta_hrtime() < deadline) {
+    while (f->offered < operations && f->offered - f->completed < f->window) {
+      mem_slice_t slice = mem_slice(f->source, 0u, matched_size(f->offered));
+      f->starts[f->offered] = cmeta_hrtime();
+      const int status = cnet_send_slice(&f->client, f->connection, &slice);
+      mem_slice_release(&slice);
+      if (status != SALTS_OK) return status;
+      ++f->offered;
+    }
+    cnet_send_usage usage = {0};
+    if (cnet_client_send_usage(&f->client, f->connection, &usage) != SALTS_OK) return SALTS_EIO;
+    if (usage.bytes > out->peak_bytes) out->peak_bytes = usage.bytes;
+    if (usage.backing_bytes > out->peak_backing) out->peak_backing = usage.backing_bytes;
+    if (f->window == 8u && f->offered < operations && usage.operations == f->window) {
+      const unsigned references = mem_buffer_ref_count(f->source);
+      mem_slice_t slice = mem_slice(f->source, 0u, matched_size(f->offered));
+      const int status = cnet_send_slice(&f->client, f->connection, &slice);
+      mem_slice_release(&slice);
+      if (status != SALTS_ENOBUFS || mem_buffer_ref_count(f->source) != references) return SALTS_EPROTO;
+      ++out->rejected;
+    }
+    if (cnet_client_advance_external(&f->client, &events) != SALTS_OK) return SALTS_EIO;
+    native_io_completion completions[4];
+    size_t count = 0u;
+    const int status = native_io_backend_observe(&f->backend, completions, 4u, 0u, &count);
+    if (status != SALTS_OK && status != SALTS_ETIMEDOUT) return status;
+    int route_status = SALTS_OK;
+    for (size_t i = 0u; i < count; ++i) {
+      bool consumed = false;
+      const int routed = cnet_client_route_external_completion(&f->client, &completions[i], &consumed, &events);
+      if ((routed != SALTS_OK || !consumed) && route_status == SALTS_OK)
+        route_status = routed != SALTS_OK ? routed : SALTS_EPROTO;
+    }
+    if (route_status != SALTS_OK) return route_status;
+    for (size_t pass = 0u; pass < 16u; ++pass) {
+      const int count_read = (int)recv(f->peer, (char *)bytes, sizeof(bytes), 0);
+      if (count_read < 0 && test_would_block()) break;
+      if (count_read <= 0 || (size_t)count_read > expected - received) return SALTS_EIO;
+      for (int i = 0; i < count_read; ++i) {
+        if (receive_operation >= operations ||
+            bytes[i] != (unsigned char)((0x5au + receive_offset * 29u) & 0xffu)) return SALTS_EPROTO;
+        if (++receive_offset == matched_size(receive_operation)) { ++receive_operation; receive_offset = 0u; }
+      }
+      received += (size_t)count_read;
+    }
+    if (f->io.failed != 0u || f->io.terminal != 0u) return SALTS_EPROTO;
+  }
+  out->elapsed_ns = cmeta_hrtime() - start;
+  if (matched_cpu_ns(&cpu_end) != SALTS_OK || cpu_end < cpu_start) return SALTS_EIO;
+  out->cpu_ns = cpu_end - cpu_start;
+  if (f->completed != operations || received != expected || receive_operation != operations || receive_offset != 0u)
+    return SALTS_ETIMEDOUT;
+  cnet_send_usage usage = {0};
+  if (cnet_client_send_usage(&f->client, f->connection, &usage) != SALTS_OK || usage.operations != 0u ||
+      usage.bytes != 0u || usage.backing_bytes != 0u || mem_buffer_ref_count(f->source) != 1u) return SALTS_EPROTO;
+  out->allocations = f->storage.allocated - allocations;
+  out->policy_calls = f->calls - calls;
+  out->bytes = expected;
+  qsort(f->latency, operations, sizeof(f->latency[0]), matched_compare_ns);
+  out->p50_ns = f->latency[(operations * 50u + 99u) / 100u - 1u];
+  out->p95_ns = f->latency[(operations * 95u + 99u) / 100u - 1u];
+  out->p99_ns = f->latency[(operations * 99u + 99u) / 100u - 1u];
+  return SALTS_OK;
+}
+
+static int matched_sample(bool composed, size_t window, size_t operations, bool report, unsigned repetition) {
+  matched_fixture *f = calloc(1u, sizeof(*f));
+  cnet_client_config config = client_config();
+  const native_io_backend_config backend_config = {backend_kind(), 2u, 4u, 4u};
+  const cnet_listener_config listener_config = {backend_kind(), "127.0.0.1", 0u, 2u};
+  matched_result warm, measured;
+  struct sockaddr_in remote = {0};
+  native_io_backend_stats stats;
+  uint16_t port = 0u;
+  size_t events = 0u;
+  int ready = 0, result = 0, transfer_status = SALTS_EIO;
+  if (f == NULL) return __LINE__;
+  f->peer = TEST_INVALID_SOCKET;
+  f->window = window;
+  config.connection_capacity = 1u;
+  config.max_send_bytes = MATCHED_BYTES;
+  config.send_limits.operations = window;
+  config.resources.storage = (cnet_allocator){probe_allocate, probe_deallocate, &f->storage};
+  const cnet_observer observer = {matched_state, NULL, f, matched_sent};
+  VERIFY(window == 1u || window == 8u);
+  VERIFY(cnet_listener_init(&f->listener, &listener_config) == SALTS_OK);
+  VERIFY(cnet_listener_port(&f->listener, &port) == SALTS_OK);
+  VERIFY(native_io_backend_init(&f->backend, &backend_config) == SALTS_OK);
+  VERIFY(cnet_client_init_external(&f->client, &config, &f->backend) == SALTS_OK);
+  f->peer = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+  VERIFY(f->peer != TEST_INVALID_SOCKET && test_recv_timeout(f->peer) == 0);
+  remote.sin_family = AF_INET;
+  remote.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+  remote.sin_port = htons(port);
+  VERIFY(connect(f->peer, (const struct sockaddr *)&remote, sizeof(remote)) == 0);
+  VERIFY(cnet_listener_wait(&f->listener, 5000u, &ready) == SALTS_OK && ready == 1);
+  VERIFY(cnet_listener_accept(&f->listener, &f->client, &observer, &f->connection) == SALTS_OK);
+  VERIFY(cnet_client_advance_external(&f->client, &events) == SALTS_OK && f->io.connected == 1u);
+  VERIFY(cnet_connection_tcp_option_set(&f->client, f->connection, CNET_TCP_SOCKET_NODELAY, 1u) == SALTS_OK);
+  VERIFY(test_nonblocking(f->peer) == 0);
+  if (composed) {
+    const cnet_send_admission_policy policy = {matched_admit, f};
+    VERIFY(cnet_set_send_admission(&f->client, f->connection, &policy) == SALTS_OK);
+  }
+  f->source = mem_get_buffer(mem_global(), MATCHED_BYTES);
+  VERIFY(f->source != NULL);
+  for (size_t i = 0u; i < MATCHED_BYTES; ++i)
+    mem_buffer_data(f->source)[i] = (char)((0x5au + i * 29u) & 0xffu);
+  mem_set_used(f->source, MATCHED_BYTES);
+  VERIFY(matched_transfer(f, report ? 64u : 8u, &warm) == SALTS_OK);
+  if (report) {
+    const size_t expected_bytes = operations / 8u * (7u * MATCHED_BYTES + 1u);
+    benchmark_io("matched TCP admission transfer", 1, operations, expected_bytes) {
+      transfer_status = matched_transfer(f, operations, &measured);
+    }
+  } else transfer_status = matched_transfer(f, operations, &measured);
+  VERIFY(transfer_status == SALTS_OK && measured.elapsed_ns != 0u && measured.allocations == 0u);
+  VERIFY(measured.policy_calls == (composed ? operations : 0u));
+  VERIFY((window == 8u) == (measured.rejected != 0u));
+  const uint64_t drain_start = cmeta_hrtime();
+  VERIFY(cnet_close(&f->client, f->connection) == SALTS_OK);
+  VERIFY(cnet_client_advance_external(&f->client, &events) == SALTS_OK && f->io.terminal == 1u);
+  VERIFY(test_blocking(f->peer) == 0);
+  unsigned char byte;
+  VERIFY(recv(f->peer, (char *)&byte, 1u, 0) == 0);
+  VERIFY(cnet_client_stop_external(&f->client) == SALTS_OK);
+  VERIFY(cnet_client_destroy(&f->client) == SALTS_OK);
+  VERIFY(native_io_backend_get_stats(&f->backend, &stats) && stats.active_requests == 0u && stats.endpoint_count == 0u);
+  VERIFY(native_io_backend_close(&f->backend) == SALTS_OK && native_io_backend_destroy(&f->backend) == SALTS_OK);
+  measured.drain_ns = cmeta_hrtime() - drain_start;
+  VERIFY(f->storage.allocated == f->storage.released && mem_buffer_ref_count(f->source) == 1u);
+  if (report) {
+    printf("CNET_POLICY_CSV,%s,%u,%zu,%zu,%zu,%llu,%llu,%llu,%llu,%llu,%zu,%zu,%zu,%zu,%zu,%zu,%llu\n",
+      composed ? "callback" : "native", repetition, window, operations, measured.bytes,
+      (unsigned long long)measured.elapsed_ns, (unsigned long long)measured.cpu_ns,
+      (unsigned long long)measured.p50_ns, (unsigned long long)measured.p95_ns, (unsigned long long)measured.p99_ns,
+      measured.rejected, measured.peak_bytes, measured.peak_backing, mem_buffer_capacity(f->source),
+      measured.allocations, measured.policy_calls, (unsigned long long)measured.drain_ns);
+  }
+cleanup:
+  test_close_socket(f->peer);
+  if (f->client.impl != NULL) {
+    const uint64_t deadline = cmeta_monotonic_ms() + 3000u;
+    while (cnet_client_stop_external(&f->client) == SALTS_EBUSY && cmeta_monotonic_ms() < deadline) {
+      native_io_completion completions[4];
+      size_t count = 0u;
+      (void)cnet_client_advance_external(&f->client, &events);
+      (void)native_io_backend_observe(&f->backend, completions, 4u, 10u, &count);
+      for (size_t i = 0u; i < count; ++i) {
+        bool consumed;
+        (void)cnet_client_route_external_completion(&f->client, &completions[i], &consumed, &events);
+      }
+    }
+    (void)cnet_client_destroy(&f->client);
+  }
+  (void)cnet_listener_close(&f->listener);
+  (void)cnet_listener_destroy(&f->listener);
+  if (f->client.impl == NULL) {
+    (void)native_io_backend_close(&f->backend);
+    (void)native_io_backend_destroy(&f->backend);
+    if (f->backend.impl == NULL && f->listener.impl == NULL) {
+      if (f->source) mem_buffer_release(f->source);
+      free(f);
+      return result;
+    }
+  }
+  return result != 0 ? result : __LINE__; /* Preserve live callback/native storage on failed cleanup. */
+}
+
 typedef struct phase_probe {
   cnet_client *client;
   cnet_connection connection;
@@ -3687,6 +3929,27 @@ cleanup:
 }
 
 spec("CNet real TCP loopback and retained slice") {
+  for (size_t window = 1u; window <= 8u; window *= 8u) {
+    for (unsigned composed = 0u; composed < 2u; ++composed) {
+      it("drains matched retained TCP transfers at window %zu with callback %u", window, composed) {
+        const int result = matched_sample(composed != 0u, window, 16u, false, 0u);
+        check(result == 0, "matched measurement correctness returned %d", result);
+      }
+    }
+  }
+  if (getenv("SALTSCORE_CNET_POLICY_BENCHMARK") != NULL) {
+    it("measures matched native and callback TCP admission") {
+      check_equal(getenv("SALTSCORE_CNET_POLICY_BENCHMARK"), "1");
+      printf("CNET_POLICY_CSV,mode,repeat,window,operations,bytes,elapsed_ns,cpu_ns,p50_ns,p95_ns,p99_ns,rejected,peak_logical_bytes,peak_accounted_backing_bytes,physical_source_bytes,storage_allocations,policy_calls,drain_ns\n");
+      for (unsigned repetition = 0u; repetition < 5u; ++repetition)
+        for (size_t window = 1u; window <= 8u; window *= 8u)
+          for (unsigned order = 0u; order < 2u; ++order) {
+            const int result = matched_sample(((repetition + order) & 1u) != 0u, window,
+                                               MATCHED_MAX_OPERATIONS, true, repetition);
+            check(result == 0, "matched benchmark returned %d", result);
+          }
+    }
+  }
   it("changes one connection phase without bypassing client budgets or leaking into reused slots") {
     const int result = saltscore_native_entry_test_cnet_connection_phases();
     check(result == 0, "native connection phases returned %d", result);
