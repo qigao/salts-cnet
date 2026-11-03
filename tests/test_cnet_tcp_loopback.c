@@ -3842,7 +3842,7 @@ cleanup:
   return result != 0 ? result : __LINE__; /* Preserve live callback/native storage on failed cleanup. */
 }
 
-enum { MIXED_EXCHANGES = 512 };
+enum { MIXED_EXCHANGES = 4096 };
 typedef struct mixed_fixture {
   matched_fixture lanes[2]; /* bulk, control; both borrow backend below */
   native_io_backend backend;
@@ -4110,7 +4110,7 @@ static int mixed_sample(bool composed, size_t bulk_window, size_t exchanges, boo
   }
   VERIFY(native_io_backend_close(&f->backend) == SALTS_OK && native_io_backend_destroy(&f->backend) == SALTS_OK);
   if (report) {
-    printf("CNET_MIXED_CSV,%s,%u,%zu,%zu,%llu,%llu,%llu,%llu,%llu,%zu,%zu,%zu,%zu,%zu,%zu,%zu,%zu,%zu,%zu,%llu,%llu,%llu\n",
+    printf("CNET_MIXED_CSV,%s,%u,%zu,%zu,%llu,%llu,%llu,%llu,%llu,%zu,%zu,%zu,%zu,%zu,%zu,%zu,%zu,%zu,%zu,%llu,%llu,%llu,%zu\n",
       composed ? "callback" : "native", repetition, bulk_window, exchanges,
       (unsigned long long)measured.elapsed_ns, (unsigned long long)measured.cpu_ns,
       (unsigned long long)measured.p50_ns, (unsigned long long)measured.p95_ns, (unsigned long long)measured.p99_ns,
@@ -4118,7 +4118,7 @@ static int mixed_sample(bool composed, size_t bulk_window, size_t exchanges, boo
       measured.allocations, measured.receives, measured.peak_bytes, measured.peak_backing,
       mem_buffer_capacity(f->lanes[0].source) + mem_buffer_capacity(f->lanes[1].source),
       (unsigned long long)measured.native_submissions, (unsigned long long)measured.bulk_drain_ns,
-      (unsigned long long)measured.close_ns);
+      (unsigned long long)measured.close_ns, warm.receives);
   }
 cleanup:
   for (size_t i = 0u; i < 2u; ++i) test_close_socket(f->lanes[i].peer);
@@ -4374,7 +4374,7 @@ spec("CNet real TCP loopback and retained slice") {
   if (getenv("SALTSCORE_CNET_MIXED_BENCHMARK") != NULL) {
     it("measures independent control RTT with sustained bulk") {
       check_equal(getenv("SALTSCORE_CNET_MIXED_BENCHMARK"), "1");
-      printf("CNET_MIXED_CSV,mode,repeat,bulk_depth,exchanges,elapsed_ns,cpu_ns,p50_rtt_ns,p95_rtt_ns,p99_rtt_ns,bulk_peer_bytes,bulk_admitted,host_rounds,rejected,policy_calls,storage_allocations,receive_acquires,peak_logical_bytes,peak_backing_bytes,physical_source_bytes,native_submissions,bulk_drain_ns,close_ns\n");
+      printf("CNET_MIXED_CSV,mode,repeat,bulk_depth,exchanges,elapsed_ns,cpu_ns,p50_rtt_ns,p95_rtt_ns,p99_rtt_ns,bulk_peer_bytes,bulk_admitted,host_rounds,rejected,policy_calls,storage_allocations,receive_acquires,peak_logical_bytes,peak_backing_bytes,physical_source_bytes,native_submissions,bulk_drain_ns,close_ns,warm_receive_acquires\n");
       for (unsigned repetition = 0u; repetition < 5u; ++repetition)
         for (size_t depth = 1u; depth <= 8u; depth *= 8u)
           for (unsigned order = 0u; order < 2u; ++order) {

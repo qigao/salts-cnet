@@ -61,7 +61,7 @@ Remove-Item Env:SALTSCORE_CNET_MIXED_BENCHMARK
 
 Five repetitions alternate native/callback order at each bulk depth, yielding
 20 rows. Every fresh sample warms eight exchanges and fully drains that phase,
-then measures 512 sequential exchanges with sustained bulk. No performance
+then measures 4,096 sequential exchanges with sustained bulk. No performance
 threshold is asserted. Existing native and sanitizer CI qualifies the small
 transfer/RTT/drain scenarios; optional timing runs qualify only their recorded
 host/compiler/source revision.
@@ -70,7 +70,8 @@ host/compiler/source revision.
 p50/p95/p99, bulk bytes actually read during the control interval, total admitted
 bulk writes, host rounds, full refusals, policy evaluations, CNet storage-provider
 allocations, pooled receive acquisitions, peak logical/backing usage, physical
-source capacity, native submissions and separate bulk/connection drain times.
+source capacity, native submissions, separate bulk/connection drain times and
+warm-up receive acquisitions (to distinguish warmed reuse from no acquisition).
 Native submission counts cover the control interval, including its outstanding
 bulk request at cutoff. Bulk drain covers the remaining admitted writes.
 
