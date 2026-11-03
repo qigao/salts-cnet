@@ -97,7 +97,6 @@ int salts_capture_list_audio_devices(salts_capture_device_t *devices, int max_co
     }
 
     int count = 0;
-    int has_default = 0;
     for (ma_uint32 i = 0; i < capture_count && count < max_count; i++) {
         salts_capture_device_t *dev = &devices[count];
         memset(dev, 0, sizeof(*dev));
@@ -105,7 +104,6 @@ int salts_capture_list_audio_devices(salts_capture_device_t *devices, int max_co
         dev->index = count;
         dev->type = SALTS_CAPTURE_TYPE_AUDIO;
         dev->is_default = capture_infos[i].isDefault ? 1 : 0;
-        has_default |= dev->is_default;
 
         strncpy(dev->name, capture_infos[i].name, sizeof(dev->name) - 1);
         dev->name[sizeof(dev->name) - 1] = '\0';
@@ -114,11 +112,6 @@ int salts_capture_list_audio_devices(salts_capture_device_t *devices, int max_co
         snprintf(dev->id, sizeof(dev->id), "%u", i);
 
         count++;
-    }
-
-    /* Some backends expose a usable fallback entry without flagging it. */
-    if (count > 0 && !has_default) {
-        devices[0].is_default = 1;
     }
 
     ma_context_uninit(&context);

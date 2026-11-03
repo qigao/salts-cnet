@@ -2,14 +2,12 @@
  * Android Audio Capture
  *
  * Uses OpenSL ES for low-latency audio capture
- * Falls back to miniaudio if OpenSL ES not available
+ * OpenSL ES is required: no alternative audio provider.
  */
 #include <SLES/OpenSLES.h>
 #include <SLES/OpenSLES_Android.h>
 #include <stdlib.h>
 #include <string.h>
-
-#include "miniaudio.h"
 
 #include <tlog.h>
 
@@ -31,7 +29,6 @@ typedef struct android_audio_ctx_t {
     /* Configuration */
     int sample_rate;
     int channels;
-    int use_opensles;
 
     /* Buffers */
     int16_t *buffers[BUFFER_COUNT];
@@ -40,9 +37,6 @@ typedef struct android_audio_ctx_t {
 
     /* State */
     int capturing;
-
-    /* Miniaudio fallback */
-    ma_device miniaudio_device;
 
     /* Callback */
     void (*on_audio)(void *user_data, const int16_t *data, size_t frames);
@@ -228,68 +222,15 @@ static void opensles_cleanup(android_audio_ctx_t *ctx) {
 }
 
 /* =============================================================================
- * Miniaudio Fallback Implementation
- * ============================================================================= */
-
-static void miniaudio_data_callback(ma_device *device, void *output,
-                                   const void *input, ma_uint32 frame_count) {
-    (void)output;
-    android_audio_ctx_t *ctx = (android_audio_ctx_t *)device->pUserData;
-
-    if (ctx->on_audio && input) {
-        ctx->on_audio(ctx->user_data, (const int16_t *)input, frame_count);
-    }
-}
-
-static int miniaudio_init(android_audio_ctx_t *ctx) {
-    ma_device_config config = ma_device_config_init(ma_device_type_capture);
-    config.capture.format = ma_format_s16;
-    config.capture.channels = ctx->channels;
-    config.sampleRate = ctx->sample_rate;
-    config.dataCallback = miniaudio_data_callback;
-    config.pUserData = ctx;
-
-    if (ma_device_init(NULL, &config, &ctx->miniaudio_device) != MA_SUCCESS) {
-        SALTS_LOG_ERROR(tlog_get_default(), "capture", "Failed to initialize miniaudio");
-        return -1;
-    }
-
-
-    return 0;
-}
-
-static int miniaudio_start(android_audio_ctx_t *ctx) {
-    if (ma_device_start(&ctx->miniaudio_device) != MA_SUCCESS) {
-        SALTS_LOG_ERROR(tlog_get_default(), "capture", "Failed to start miniaudio");
-        return -1;
-    }
-
-
-    return 0;
-}
-
-static int miniaudio_stop(android_audio_ctx_t *ctx) {
-    ma_device_stop(&ctx->miniaudio_device);
-
-
-    return 0;
-}
-
-static void miniaudio_cleanup(android_audio_ctx_t *ctx) {
-    ma_device_uninit(&ctx->miniaudio_device);
-}
-
-/* =============================================================================
  * Public API
  * ============================================================================= */
 
-android_audio_ctx_t *android_audio_create(int sample_rate, int channels, int use_opensles) {
+android_audio_ctx_t *android_audio_create(int sample_rate, int channels) {
     android_audio_ctx_t *ctx = (android_audio_ctx_t *)calloc(1, sizeof(android_audio_ctx_t));
     if (!ctx) return NULL;
 
     ctx->sample_rate = sample_rate;
     ctx->channels = channels;
-    ctx->use_opensles = use_opensles;
     ctx->capturing = 0;
     ctx->current_buffer = 0;
 
@@ -306,19 +247,11 @@ android_audio_ctx_t *android_audio_create(int sample_rate, int channels, int use
         }
     }
 
-    /* Initialize audio backend */
-    int ret;
-    if (use_opensles) {
-        ret = opensles_init(ctx);
-        if (ret != 0) {
-            ctx->use_opensles = 0;
-            ret = miniaudio_init(ctx);
-        }
-    } else {
-        ret = miniaudio_init(ctx);
-    }
+    /* The single configured native backend must initialize successfully. */
+    int ret = opensles_init(ctx);
 
     if (ret != 0) {
+        opensles_cleanup(ctx);
         for (int i = 0; i < BUFFER_COUNT; i++) {
             free(ctx->buffers[i]);
         }
@@ -337,11 +270,7 @@ void android_audio_destroy(android_audio_ctx_t *ctx) {
         android_audio_stop(ctx);
     }
 
-    if (ctx->use_opensles) {
-        opensles_cleanup(ctx);
-    } else {
-        miniaudio_cleanup(ctx);
-    }
+    opensles_cleanup(ctx);
 
     for (int i = 0; i < BUFFER_COUNT; i++) {
         free(ctx->buffers[i]);
@@ -353,12 +282,7 @@ void android_audio_destroy(android_audio_ctx_t *ctx) {
 int android_audio_start(android_audio_ctx_t *ctx) {
     if (!ctx || ctx->capturing) return -1;
 
-    int ret;
-    if (ctx->use_opensles) {
-        ret = opensles_start(ctx);
-    } else {
-        ret = miniaudio_start(ctx);
-    }
+    int ret = opensles_start(ctx);
 
     if (ret == 0) {
         ctx->capturing = 1;
@@ -370,11 +294,7 @@ int android_audio_start(android_audio_ctx_t *ctx) {
 int android_audio_stop(android_audio_ctx_t *ctx) {
     if (!ctx || !ctx->capturing) return -1;
 
-    if (ctx->use_opensles) {
-        opensles_stop(ctx);
-    } else {
-        miniaudio_stop(ctx);
-    }
+    opensles_stop(ctx);
 
     ctx->capturing = 0;
 

@@ -8,7 +8,7 @@ One **static** native C11 owner for the original audio/video/screen Capture and 
 - The public C function names and installed header spellings `<capture.h>`, `<capture_android.h>`, `<playback.h>` remain unchanged. Their `*_API` macros are no-ops for static linkage.
 - `capture/src/miniaudio_impl.c` is the **single** `MINIAUDIO_IMPLEMENTATION` translation unit used by both production subsystems. The duplicate Playback TU was deleted.
 - Native producer and device ownership remain in `capture/src/`, the Playback PCM sink remains in `playback/src/`. Tests live in the associated subtrees. Nothing under the old root-level `capture/` or `playback/` paths is built.
-- Windows: Media Foundation / DirectShow / DXGI / D3D11; Linux: V4L2, PipeWire, X11; macOS/iOS: AVFoundation plus respective native frameworks; Android: NDK Camera2/Media, OpenSL ES, NativeWindow. iOS unsupported operations are explicit source definitions; no generated C unit.
+- Windows: Media Foundation / DirectShow / DXGI / D3D11; Linux: V4L2, PipeWire, X11; macOS/iOS: AVFoundation plus respective native frameworks; Android: NDK Camera2/Media, required OpenSL ES, NativeWindow. OpenSL ES initialization errors are terminal and never select a different audio provider. iOS unsupported operations are explicit source definitions; no generated C unit.
 - Media is a static archive, **not** a guarantee that every vcpkg runtime provider is statically linked into the SDK. Installed consumers must satisfy the explicitly exported static link dependencies. No fallback to a shared Media runtime exists.
 
 ## Build

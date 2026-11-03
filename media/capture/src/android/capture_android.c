@@ -44,8 +44,7 @@ extern void android_camera_set_callback(android_camera_ctx_t *ctx,
                                                          int64_t timestamp_us),
                                         void *user_data);
 
-extern android_audio_ctx_t *android_audio_create(int sample_rate, int channels,
-                                                 int use_opensles);
+extern android_audio_ctx_t *android_audio_create(int sample_rate, int channels);
 extern void android_audio_destroy(android_audio_ctx_t *ctx);
 extern int android_audio_start(android_audio_ctx_t *ctx);
 extern int android_audio_stop(android_audio_ctx_t *ctx);
@@ -393,7 +392,7 @@ salts_capture_t *salts_audio_capture_create(const char *device_id,
 
     int sample_rate = (config && config->sample_rate > 0) ? config->sample_rate : 48000;
     int channels = (config && config->channels > 0) ? config->channels : 1;
-    platform->native = android_audio_create(sample_rate, channels, 1);
+    platform->native = android_audio_create(sample_rate, channels);
     platform->channels = channels;
     if (!platform->native) {
         free(platform);
