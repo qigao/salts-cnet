@@ -219,6 +219,22 @@ The formal real TCP phase case attempts foreign-thread initialization with a
 counting allocator, requires zero allocations and an unpublished wrapper, then
 continues real traffic and teardown on the original client Owner.
 
+### Management allocation failure
+
+Management storage initialization stops after its first allocator failure.
+Handoff no longer attempts queue allocation after record allocation fails;
+Pool no longer attempts later lease/candidate arrays after an earlier allocation
+fails. Both return `ENOMEM`, free prior allocations through their original
+providers and leave the wrapper unpublished.
+
+The formal policy suite injects failure at each successive storage allocation
+for Manager, Handoff, ManagedDial and Pool until initialization succeeds. It
+requires no later allocation call after failure, zero remaining provider-owned
+allocations and an unchanged borrowed Manager. Successful instances exercise
+reserve/cancel/recycle, handoff credit release, idle Dial sealing or Pool
+reservation abort before destruction. This qualifies initialization rollback
+and bounded helper lifecycle, without dialing a peer or claiming transport drain.
+
 ### Multi-connection pool policy composition
 
 Pool acquisition copies its protocol callback/user binding before entering

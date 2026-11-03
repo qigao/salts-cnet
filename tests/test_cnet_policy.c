@@ -1,5 +1,7 @@
 #include <cnet/cnet.h>
 #include <cnet/client_pool.h>
+#include <cnet/handoff.h>
+#include <cnet/managed_dial.h>
 #include <stdlib.h>
 #include <clock.h>
 #include <cnet/destination_policy.h>
@@ -842,6 +844,124 @@ static void allocation_rollback_contract(bool external) {
   }
   check_true(completed);
 }
+static int management_allocation_contract(unsigned kind) {
+  cnet_client client = {0};
+  cnet_manager owner = {0};
+  const cnet_client_config client_config = policy_client_config();
+  const cnet_manager_config owner_config = {
+      sizeof(cnet_manager_config), CNET_MANAGER_VERSION, &client, 2u, 2u};
+  bool completed = false;
+  int result = 0;
+  failed_storage storage = {0};
+  cnet_manager manager = {0};
+  cnet_handoff handoff = {0};
+  cnet_managed_dial dial = {0};
+  cnet_client_pool pool = {0};
+  cnet_handoff_ticket ticket = {0};
+  cnet_pool_connection pool_connection = {0};
+#define MANAGEMENT_REQUIRE(expr) do { if (!(expr)) { result = __LINE__; goto cleanup; } } while (0)
+  MANAGEMENT_REQUIRE(cnet_client_init(&client, &client_config) == SALTS_OK);
+  MANAGEMENT_REQUIRE(cnet_manager_init(&owner, &owner_config) == SALTS_OK);
+  for (size_t failure = 1u; failure < 16u; ++failure) {
+    storage = (failed_storage){0, failure, 0};
+    const cnet_allocator allocator = {fail_allocate, fail_free, &storage};
+    int status;
+    if (kind == 0u) {
+      cnet_manager_config config = owner_config;
+      config.storage = allocator;
+      status = cnet_manager_init(&manager, &config);
+    } else if (kind == 1u) {
+      const cnet_handoff_config config = {
+          .size = sizeof(config), .version = CNET_HANDOFF_VERSION,
+          .connection_capacity = 2u, .queue_capacity = 1u, .storage = allocator};
+      status = cnet_handoff_init(&handoff, &config);
+    } else if (kind == 2u) {
+      const cnet_managed_dial_config config = {
+          .size = sizeof(config), .version = CNET_MANAGED_DIAL_VERSION,
+          .manager = &owner, .client = &client,
+          .connection = {.uri = "tcp://127.0.0.1:9", .observer = {.on_state = policy_connection_state}},
+          .recovery = {.size = sizeof(cnet_reconnect_config), .version = CNET_RECOVERY_POLICY_VERSION,
+              .max_attempts = 1u, .deadline_ms = 1000u},
+          .recovery_episode_ms = 1000u, .storage = allocator};
+      status = cnet_managed_dial_init(&dial, &config);
+    } else {
+      const cnet_pool_config config = {
+          .size = sizeof(config), .version = CNET_CLIENT_POOL_VERSION,
+          .manager = &owner, .owner_id = 1u, .max_connections = 2u,
+          .max_connecting = 1u, .max_leases = 2u, .storage = allocator};
+      status = cnet_pool_init(&pool, &config);
+    }
+    MANAGEMENT_REQUIRE(status == SALTS_OK || status == SALTS_ENOMEM);
+    if (status != SALTS_OK) {
+      MANAGEMENT_REQUIRE(storage.calls == failure);
+      MANAGEMENT_REQUIRE(manager.impl == NULL);
+      MANAGEMENT_REQUIRE(handoff.impl == NULL);
+      MANAGEMENT_REQUIRE(dial.impl == NULL);
+      MANAGEMENT_REQUIRE(pool.impl == NULL);
+    } else {
+      completed = true;
+      if (kind == 0u) {
+        cnet_managed_connection connection = {0};
+        const cnet_manager_attachment attachment = {.observer = {.on_state = policy_connection_state}};
+        size_t work = 0u;
+        MANAGEMENT_REQUIRE(cnet_manager_reserve(&manager, &attachment, &connection) == SALTS_OK);
+        MANAGEMENT_REQUIRE(cnet_manager_cancel(&manager, connection) == SALTS_OK);
+        MANAGEMENT_REQUIRE(cnet_manager_advance(&manager, 2u, &work) == SALTS_OK);
+        MANAGEMENT_REQUIRE(work == (size_t)1u);
+        MANAGEMENT_REQUIRE(cnet_manager_destroy(&manager) == SALTS_OK);
+      } else if (kind == 1u) {
+        MANAGEMENT_REQUIRE(cnet_handoff_reserve(&handoff, &ticket) == SALTS_OK);
+        MANAGEMENT_REQUIRE(cnet_handoff_release(&handoff, ticket) == SALTS_OK);
+        MANAGEMENT_REQUIRE(cnet_handoff_seal(&handoff) == SALTS_OK);
+        MANAGEMENT_REQUIRE(cnet_handoff_destroy(&handoff) == SALTS_OK);
+      } else if (kind == 2u) {
+        MANAGEMENT_REQUIRE(cnet_managed_dial_seal(&dial) == SALTS_OK);
+        MANAGEMENT_REQUIRE(cnet_managed_dial_destroy(&dial) == SALTS_OK);
+      } else {
+        const cnet_pool_key key = {.size = sizeof(key), .version = CNET_CLIENT_POOL_VERSION,
+            .runtime_id = 1u, .owner_id = 1u, .endpoint_id = 1u, .authority_id = 1u,
+            .transport_id = 1u, .protocol_id = 1u};
+        MANAGEMENT_REQUIRE(cnet_pool_reserve_connecting(&pool, &key, &pool_connection) == SALTS_OK);
+        MANAGEMENT_REQUIRE(cnet_pool_terminal(&pool, pool_connection) == SALTS_OK);
+        MANAGEMENT_REQUIRE(cnet_pool_destroy(&pool) == SALTS_OK);
+      }
+    }
+    MANAGEMENT_REQUIRE(storage.live == (size_t)0u);
+    cnet_manager_snapshot snapshot = {0};
+    MANAGEMENT_REQUIRE(cnet_manager_get_snapshot(&owner, &snapshot) == SALTS_OK);
+    MANAGEMENT_REQUIRE(snapshot.drained);
+    if (completed) break;
+  }
+  MANAGEMENT_REQUIRE(completed);
+cleanup:
+  if (dial.impl != NULL) {
+    (void)cnet_managed_dial_seal(&dial);
+    (void)cnet_managed_dial_destroy(&dial);
+  }
+  if (pool.impl != NULL) {
+    if (pool_connection.slot != 0u) (void)cnet_pool_terminal(&pool, pool_connection);
+    (void)cnet_pool_destroy(&pool);
+  }
+  if (handoff.impl != NULL) {
+    if (ticket.slot != 0u) (void)cnet_handoff_release(&handoff, ticket);
+    (void)cnet_handoff_destroy(&handoff);
+  }
+  if (manager.impl != NULL) {
+    size_t work = 0u;
+    (void)cnet_manager_request_close(&manager);
+    (void)cnet_manager_advance(&manager, 2u, &work);
+    (void)cnet_manager_advance(&manager, 2u, &work);
+    (void)cnet_manager_destroy(&manager);
+  }
+  if (owner.impl != NULL && cnet_manager_destroy(&owner) != SALTS_OK && result == 0) result = __LINE__;
+  if (client.impl != NULL) {
+    if (cnet_client_stop(&client, 2000u) != SALTS_OK && result == 0) result = __LINE__;
+    if (cnet_client_destroy(&client) != SALTS_OK && result == 0) result = __LINE__;
+  }
+#undef MANAGEMENT_REQUIRE
+  return result;
+}
+
 static void pool_selection_contract(void) {
   cnet_pool_candidate candidates[3] = {{0}};
   size_t selected = SIZE_MAX;
@@ -868,6 +988,12 @@ spec("CNet native policy and channel admission") {
   }
   it("returns every provider allocation after each initialization failure") { allocation_rollback_contract(false); }
   it("preserves the borrowed backend after every initialization failure") { allocation_rollback_contract(true); }
+  for (unsigned kind = 0u; kind < 4u; ++kind) {
+    it("stops at the first management allocation failure and returns all storage, kind %u", kind) {
+      const int result = management_allocation_contract(kind);
+      check(result == 0, "management allocation kind %u failed at line %d", kind, result);
+    }
+  }
   it("selects pool candidates through interchangeable bounded strategies") { pool_selection_contract(); }
   it("preserves destination policy validation and strict-key no-downgrade") {
     destination_contract();
