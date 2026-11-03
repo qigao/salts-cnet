@@ -71,9 +71,10 @@ p50/p95/p99, bulk bytes actually read during the control interval, total admitte
 bulk writes, host rounds, full refusals, policy evaluations, CNet storage-provider
 allocations, pooled receive acquisitions, peak logical/backing usage, physical
 source capacity, native submissions, separate bulk/connection drain times and
-warm-up receive acquisitions (to distinguish warmed reuse from no acquisition).
-Native submission counts cover the control interval, including its outstanding
-bulk request at cutoff. Bulk drain covers the remaining admitted writes.
+warm-up-phase receive acquisitions. Session-admission acquisitions precede both
+intervals, so zero in both does not mean the provider was never used.
+Native submission counts cover requests submitted during the control interval,
+including any still outstanding at cutoff. Bulk drain covers the remaining admitted writes.
 
 Bulk throughput uses verified peer bytes during the control interval, counted
 once. RTT is a real fixture request/reply on a separate connection, not a local
