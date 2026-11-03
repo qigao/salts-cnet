@@ -146,6 +146,31 @@ not substitute the narrower versioned Crypto qualification adapter or claim
 DTLS support. Local Windows LLVM tests passed; the cutover remains pending
 its own exact-head cross-platform CI.
 
+### Multi-connection pool policy composition
+
+The existing real TCP loopback suite includes two physical connections with
+the same exact pool key. Each completes a real peer protocol greeting before
+READY binding. The host owns a bounded protocol token bank, independently of
+the pool's advertised per-connection capacity; every accepted token is sent to
+its native peer and receives a matching reply before the host releases it.
+
+The case switches first, round-robin and least-used selection while leases are
+live. It checks bounded candidate exclusion after protocol ENOBUFS, both
+all-candidates-full rejection and successful selection of another connection,
+aggregate lease saturation, paused acquisition, stale lease rejection and
+callback reentry guards. Two protocol provider bindings share the token bank;
+changing the caller's binding or the pool selector cannot change an existing
+lease's copied release callback/user.
+
+Draining one connection preserves its outstanding tokens through transport
+terminal, reclaims its physical record only after the final lease release,
+and allows the neighboring connection to complete another real exchange.
+Final pool seal/transport close leaves tokens live until explicit release;
+both providers then have exactly matched acquisitions/releases and both
+Manager attachments recycle once. This qualifies the generic host token
+contract, not HTTP multiplexing, MQTT QoS, a scheduler fairness or throughput
+claim. Cross-platform qualification follows the exact-head formal CI result.
+
 ### CMeta integration above Core
 
 `qigao/cmeta` supplies the optional `<cmeta/cnet_policy.h>` adapter. It exposes
