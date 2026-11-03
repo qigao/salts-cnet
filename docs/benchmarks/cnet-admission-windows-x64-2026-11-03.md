@@ -1,9 +1,13 @@
 # Native versus callback admission: Windows x64, 2026-11-03
 
+Historical two-mode run. The later [three-way NativeIO/CNet comparison](cnet-nativeio-windows-x64-2026-11-03.md)
+uses one matched source revision and an aligned connection-drain interval. Do not
+pool these cohorts or use the earlier callback difference as a stable penalty.
+
 Measured source: `5397736dca92e13abd7589b9e1a75c545c29d784`, based on master
 `c888705263dffbcb93a480e074d8e8d450635645`. Later commits add this evidence and
 an explicit clean-close assertion outside the measured transfer. See the
-[protocol and invocation](../CNET-POLICY-BENCHMARK.md)
+[protocol at the measured revision](https://github.com/qigao/salts-core/blob/5397736dca92e13abd7589b9e1a75c545c29d784/docs/CNET-POLICY-BENCHMARK.md)
 and [all 20 raw samples](cnet-admission-windows-x64-2026-11-03.csv).
 
 ## Configuration
