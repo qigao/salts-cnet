@@ -12,22 +12,54 @@ reader and owned Value Tree are under [../asn1/](../asn1/), exported as
 `Salts::ASN1` and consumed directly. All public APIs are `Salts::XXX`
 CMake targets, C11 source and C++17-usable C headers.
 
-Use the repo root for the default ASN1/Crypto/CNet build or `cmake -S crypto`
-to compile just Crypto against a previously installed ASN1 module. The native GmSSL implementation is installed from the immutable `gmssl 3.2.0#18` vcpkg port, whose extension sources are pinned from `gmssl-extensions/`. `Salts::Crypto` links the imported `GmSSL::GmSSL` static library; it never compiles a duplicate GmSSL implementation.
+Use the repository's user presets for the ASN1/Crypto/CNet build and formal
+CTest suite. The native GmSSL implementation is installed from the immutable
+`gmssl 3.2.0#18` vcpkg port, whose extension sources are pinned from
+`gmssl-extensions/`. `Salts::Crypto` links the imported `GmSSL::GmSSL` static
+library; it never compiles a duplicate GmSSL implementation.
 Private Ed448 libecc objects live under `vendor/libecc/` in this module.
 No backwards-compatibility alias, fallback or duplicate BER/DER owner.
 
-Run `python3 crypto/tools/check_local_native_source.py` from the repository
-root to verify the locked input bytes before building. The retained
-GmSSL-derived implementation and its licenses remain explicit; local source
-ownership does not imply independent TLS reimplementation or completed
-platform/security qualification. Production CNet links both the Crypto
-facade archive and the external GmSSL archive into its one shared owner.
+GmSSL provenance and licenses remain explicit. Production CNet calls only the
+opaque Crypto stream API; Crypto's external GmSSL archive is linked transitively
+into the single CNet shared owner. Runtime consumers still link `Salts::CNet`
+without importing the private provider package.
 
 Installed consumers require `find_package(Crypto 0.1 CONFIG REQUIRED)`
 and link `Salts::Crypto`. This imports the sibling `Salts::ASN1` via
 `find_dependency(ASN1)`. Direct protocol consumers should instead use only
 `find_package(ASN1 0.1 CONFIG REQUIRED)` and `Salts::ASN1`.
+
+## Opaque TLS streams for transport owners
+
+`<crypto/tls_stream.h>` owns the production context and session implementation
+previously in CNet. It retains the established TLS 1.2/1.3 range and exact-version
+profiles, ShangMi TLS 1.3, TLCP 1.1, ALPN, mTLS, DNS/IP identity checks, explicit
+CA file/directory loading and platform trust stores. Unsupported TLCP client
+identity/required client authentication remains rejected. The original versioned
+`tls.h` APIs and their qualification tests remain available; this change does
+not broaden their advertised capabilities.
+
+Contexts consume configuration synchronously and are immutable reference-counted
+objects. Each stream retains its context, so the creator may release its own
+reference immediately. A stream has one exclusive progress owner and fixed-size
+ciphertext/plaintext storage. Native receive/transmit buffers are separate from
+plaintext staging and remain valid until stream destruction. The host must stop
+admission and drain native completions before destroying the stream; Crypto does
+not own sockets, cancellation completion, timers or a progress thread.
+
+Protocol range selection is rejected after the first handshake call. TLS errors
+cannot trigger plaintext fallback or a new trust source. A local shutdown record
+is distinct from authenticated peer close_notify. CNet translates stream results
+to its existing error/terminal contract and retains its send and receive resource
+policies. Those policies do not replace Crypto-owned allocations.
+
+The existing TLS I/O formal test now exercises both exact versions through this
+opaque API, including failed creation, creator-reference release, copied ALPN,
+bounded input rejection, application data and reciprocal shutdown. Production
+CNet/NativeIO and independent Python peer tests exercise the same stream
+implementation through the shared runtime. Cross-platform acceptance requires
+the new exact-head LLVM CI; local results alone do not complete that gate.
 
 ## X.509 certificate inspection for TLS callers
 

@@ -9,8 +9,10 @@ PR #164 after CI #167. Local IPC admission/transfer merged in PR #165 after
 CI #169. Pipe policy admission and POSIX FIFO transfer merged in PR #166 after
 CI #171. Fixed 1/2/4-Owner SG cohosting/isolation merged in PR #167 after CI #173.
 Mixed SG-owned/CNet terminal routing merged in PR #168 after CI #175.
-Large-vector POSIX kernel-pressure tests are pending their own exact-head CI.
-An observed-vector-prefix close regression fix is also pending qualification.
+Large-vector POSIX kernel-pressure tests and the observed-vector-prefix close
+regression fix merged in PRs #169/#170. Resource/policy separation merged in
+PR #171. Authenticated TLS shutdown and native Windows pkg-config merged in
+PR #172 after all ten LLVM qualification jobs passed.
 The rest of M2 and M3 remain open in
 [SaltsCore #156](https://github.com/qigao/salts-core/issues/156).
 Baseline: SaltsCore master bc070affca0afbc5cad6e060b9c60a7a22abad10,
@@ -21,10 +23,10 @@ reflection and lexical cleanup adapters belong to `qigao/cmeta`, above Core.
 
 ## Implemented resource and policy contracts
 
-The `refactor/cnet-policy-contracts` change introduces the following native
+PR #171 introduced the following native
 contracts. This is a source/ABI change: rebuild CNet and its consumers together.
-The tests described below are local Windows LLVM evidence, not multi-OS CI
-qualification. The historical milestones above retain their own evidence.
+Its exact-head ten-job LLVM qualification passed before merge. The historical
+milestones above retain their own evidence.
 
 | Concern | Configuration / API | Authority that cannot be overridden |
 | --- | --- | --- |
@@ -121,6 +123,28 @@ survival, cross-DSO release after client destruction, and real NativeIO prefix
 completion held across close. Pool reuse and protocol reservation are exercised
 against real TCP connections. TLS and original Owner tests remain separate
 regression gates. No new standalone test target or runtime is introduced.
+
+### TLS policy and provider ownership
+
+The production adapter in `cnet/src/cnet_tls.c` now calls the opaque
+`crypto/tls_stream.h` interface. Crypto owns immutable security contexts,
+handshake/record state, certificate inspection, platform trust and bounded TLS
+buffers. CNet owns the progress thread, NativeIO requests, deadlines, write
+admission and terminal/drain accounting. GmSSL headers and platform trust
+libraries are private to Crypto; no backend context pointer crosses into CNet.
+
+Security policy is fixed when the reusable context is created. A new connection
+may select its standard TLS version range before the first handshake attempt.
+An established connection cannot replace trust, identity or security profile.
+Send admission and pool selection may still change at their documented Owner
+control boundaries. Existing sessions retain their context even if the caller
+releases the public CNet TLS handle, and native completions must drain before
+the session and its I/O buffers are destroyed.
+
+This cutover preserves the production TLS/TLCP/ShangMi implementation. It does
+not substitute the narrower versioned Crypto qualification adapter or claim
+DTLS support. Local Windows LLVM tests passed; the cutover remains pending
+its own exact-head cross-platform CI.
 
 ### CMeta integration above Core
 

@@ -10,9 +10,8 @@ set_target_properties(saltscore_wsparser PROPERTIES
 target_include_directories(saltscore_wsparser PRIVATE
   "${CMAKE_CURRENT_SOURCE_DIR}/src/wsparser")
 
-# Production CNet retains its complete original TLS implementation. Its
-# private GmSSL C headers/library are imported from the pinned vcpkg package.
-# The narrower qualification facade is never substituted for production TLS.
+# Production CNet drives the opaque Crypto stream API. Backend protocol state,
+# certificates and platform trust stores belong to Crypto.
 if(NOT TARGET Salts::URI OR NOT TARGET saltscore_wsparser)
   message(FATAL_ERROR "CNet requires native Core URI and WebSocket parser targets")
 endif()
@@ -27,14 +26,9 @@ endif()
 get_target_property(_cnet_crypto_alias Salts::Crypto ALIASED_TARGET)
 get_target_property(_cnet_crypto_type salts_crypto TYPE)
 get_target_property(_cnet_crypto_imported salts_crypto IMPORTED)
-get_target_property(_cnet_native_include GmSSL::GmSSL INTERFACE_INCLUDE_DIRECTORIES)
 if(NOT _cnet_crypto_alias STREQUAL "salts_crypto" OR
    NOT _cnet_crypto_type STREQUAL "STATIC_LIBRARY" OR _cnet_crypto_imported)
   message(FATAL_ERROR "CNet requires exactly one local non-imported STATIC Crypto owner")
-endif()
-if(NOT _cnet_native_include OR
-   NOT EXISTS "${_cnet_native_include}/gmssl/tls.h")
-  message(FATAL_ERROR "Pinned vcpkg GmSSL native TLS headers are missing")
 endif()
 
 # Never fold a second copy of any stateful runtime into CNet. Core/Platform/
@@ -108,10 +102,6 @@ endforeach()
 add_library(saltscore_cnet SHARED ${_saltscore_cnet_local_sources})
 add_library(Salts::CNet ALIAS saltscore_cnet)
 target_compile_features(saltscore_cnet PUBLIC c_std_11)
-# These native header switches previously came from the imported provider.
-# They remain private, but must match the local Crypto object ABI exactly.
-target_compile_definitions(saltscore_cnet PRIVATE
-  ENABLE_TLS ENABLE_SECP256R1 ENABLE_SECP384R1 ENABLE_SHA1 ENABLE_SHA2 ENABLE_AES)
 set_target_properties(saltscore_cnet PROPERTIES
   VERSION "${PROJECT_VERSION}" SOVERSION "${SALTSCORE_NATIVE_SOVERSION}"
   EXPORT_NAME CNet C_STANDARD_REQUIRED ON C_EXTENSIONS OFF
@@ -129,8 +119,7 @@ target_include_directories(saltscore_cnet
     "${CMAKE_CURRENT_SOURCE_DIR}/src/wsparser"
     "${PROJECT_SOURCE_DIR}/native-io/src"
     "${PROJECT_SOURCE_DIR}/vendor/monocypher"
-    "${PROJECT_SOURCE_DIR}/vendor/reed"
-    "${_cnet_native_include}")
+    "${PROJECT_SOURCE_DIR}/vendor/reed")
 target_link_libraries(saltscore_cnet
   PUBLIC
     Salts::Core
@@ -143,16 +132,7 @@ target_link_libraries(saltscore_cnet
     saltscore_cnet_reed
     c-ares::cares
     kcp::kcp
-    Salts::Crypto
-    GmSSL::GmSSL
-    $<$<PLATFORM_ID:Windows>:crypt32>)
-if(APPLE)
-  find_library(SALTSCORE_CNET_COREFOUNDATION CoreFoundation REQUIRED)
-  find_library(SALTSCORE_CNET_SECURITY Security REQUIRED)
-  target_link_libraries(saltscore_cnet PRIVATE
-    "${SALTSCORE_CNET_COREFOUNDATION}"
-    "${SALTSCORE_CNET_SECURITY}")
-endif()
+    Salts::Crypto)
 
 install(TARGETS saltscore_cnet EXPORT SaltsCoreTargets
   RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
