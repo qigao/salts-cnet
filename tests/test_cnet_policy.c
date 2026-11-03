@@ -691,6 +691,112 @@ static void replaceable_backoff_contract(void) {
     }
   }
 }
+typedef struct backoff_boundary_probe {
+  cnet_reconnect_state *state;
+  cnet_backoff_input input;
+  uint64_t delay;
+  int result, begin_status, seal_status, snapshot_status;
+  unsigned calls;
+  cnet_reconnect_ticket nested_ticket;
+  uint64_t nested_wait;
+} backoff_boundary_probe;
+
+static int boundary_backoff(void *user, const cnet_backoff_input *input, uint64_t *delay) {
+  backoff_boundary_probe *probe = user;
+  cnet_reconnect_snapshot snapshot = {0};
+  ++probe->calls;
+  probe->input = *input;
+  probe->nested_ticket = (cnet_reconnect_ticket){1u, 1u, 1u};
+  probe->nested_wait = UINT64_MAX;
+  probe->begin_status = cnet_reconnect_begin(probe->state, 1u, &probe->nested_ticket, &probe->nested_wait);
+  probe->seal_status = cnet_reconnect_seal(probe->state);
+  probe->snapshot_status = cnet_reconnect_get_snapshot(probe->state, &snapshot);
+  *delay = probe->delay;
+  return probe->result;
+}
+
+typedef struct backoff_boundary_case {
+  const char *name;
+  uint64_t delay, now, deadline, next;
+  uint32_t attempts;
+  cnet_reconnect_failure_kind kind;
+  int callback_status, failed_status, begin_status;
+  unsigned calls;
+  bool sealed;
+} backoff_boundary_case;
+
+static const backoff_boundary_case backoff_boundaries[] = {
+  {"bounded delay", 5u, 2u, 1000u, 7u, 2u, CNET_RECONNECT_TRANSIENT, SALTS_OK, SALTS_OK, SALTS_EBUSY, 1u, false},
+  {"zero delay", 0u, 2u, 1000u, 2u, 2u, CNET_RECONNECT_TRANSIENT, SALTS_OK, SALTS_OK, SALTS_OK, 1u, false},
+  {"maximum delay", 20u, 2u, 1000u, 22u, 2u, CNET_RECONNECT_TRANSIENT, SALTS_OK, SALTS_OK, SALTS_EBUSY, 1u, false},
+  {"excessive delay", 21u, 2u, 1000u, 0u, 2u, CNET_RECONNECT_TRANSIENT, SALTS_OK, SALTS_EINVAL, SALTS_ESHUTDOWN, 1u, true},
+  {"policy error", 5u, 2u, 1000u, 0u, 2u, CNET_RECONNECT_TRANSIENT, SALTS_EIO, SALTS_EIO, SALTS_ESHUTDOWN, 1u, true},
+  {"deadline equality", 10u, 990u, 1000u, UINT64_MAX, 2u, CNET_RECONNECT_TRANSIENT, SALTS_OK, SALTS_OK, SALTS_ETIMEDOUT, 1u, false},
+  {"clock overflow", 10u, UINT64_MAX - 5u, UINT64_MAX, UINT64_MAX, 2u, CNET_RECONNECT_TRANSIENT, SALTS_OK, SALTS_OK, SALTS_ETIMEDOUT, 1u, false},
+  {"attempt exhaustion", 5u, 2u, 1000u, 7u, 1u, CNET_RECONNECT_TRANSIENT, SALTS_OK, SALTS_OK, SALTS_ENOBUFS, 1u, false},
+  {"security failure", 0u, 2u, 1000u, 0u, 2u, CNET_RECONNECT_SECURITY, SALTS_OK, SALTS_OK, SALTS_ESHUTDOWN, 0u, true},
+  {"permanent failure", 0u, 2u, 1000u, 0u, 2u, CNET_RECONNECT_PERMANENT, SALTS_OK, SALTS_OK, SALTS_ESHUTDOWN, 0u, true},
+  {"expired failure", 0u, 1000u, 1000u, 0u, 2u, CNET_RECONNECT_TRANSIENT, SALTS_OK, SALTS_OK, SALTS_ESHUTDOWN, 0u, true}
+};
+
+static void backoff_boundary_contract(const backoff_boundary_case *test) {
+  cnet_reconnect_state state = {0};
+  cnet_reconnect_ticket first = {0}, next = {0};
+  cnet_reconnect_snapshot snapshot = {0};
+  backoff_boundary_probe probe = {.state = &state, .delay = test->delay, .result = test->callback_status};
+  const cnet_reconnect_config config = {
+      .size = sizeof(config), .version = CNET_RECOVERY_POLICY_VERSION,
+      .max_attempts = test->attempts, .deadline_ms = test->deadline,
+      .initial_backoff_ms = 10u, .maximum_backoff_ms = 20u,
+      .backoff = {boundary_backoff, &probe}};
+  uint64_t wait = UINT64_MAX;
+  check_equal(cnet_reconnect_init(&state, &config), SALTS_OK);
+  check_equal(cnet_reconnect_begin(&state, 1u, &first, &wait), SALTS_OK);
+  check_equal(cnet_reconnect_failed(&state, first, test->kind, test->now), test->failed_status);
+  check_equal(probe.calls, test->calls);
+  if (probe.calls != 0u) {
+    check_equal(probe.input.attempts, (uint32_t)1u);
+    check_equal(probe.input.initial_ms, (uint64_t)10u);
+    check_equal(probe.input.maximum_ms, (uint64_t)20u);
+    check_equal(probe.input.exponential_ms, (uint64_t)10u);
+    check_equal(probe.begin_status, SALTS_EBUSY);
+    check_equal(probe.seal_status, SALTS_EBUSY);
+    check_equal(probe.snapshot_status, SALTS_EBUSY);
+    check_equal(probe.nested_ticket.state, (uintptr_t)0u);
+    check_equal(probe.nested_ticket.incarnation, (uint64_t)0u);
+    check_equal(probe.nested_ticket.generation, (uint64_t)0u);
+    check_equal(probe.nested_wait, (uint64_t)0u);
+  }
+  check_equal(cnet_reconnect_get_snapshot(&state, &snapshot), SALTS_OK);
+  check_equal(snapshot.next_attempt_ms, test->next);
+  check_equal(snapshot.attempts, (uint32_t)1u);
+  check_equal(snapshot.generation, first.generation);
+  check_equal(snapshot.sealed, test->sealed);
+  check(!snapshot.in_flight && !snapshot.awaiting_protocol && !snapshot.protocol_ready);
+  next = (cnet_reconnect_ticket){1u, 1u, 1u};
+  wait = UINT64_MAX;
+  check_equal(cnet_reconnect_begin(&state, test->now, &next, &wait), test->begin_status);
+  check_equal(wait, test->begin_status == SALTS_EBUSY ? test->delay : (uint64_t)0u);
+  if (test->begin_status != SALTS_OK) {
+    check_equal(next.state, (uintptr_t)0u);
+    check_equal(next.incarnation, (uint64_t)0u);
+    check_equal(next.generation, (uint64_t)0u);
+  }
+  if (test->begin_status == SALTS_EBUSY) {
+    check_equal(cnet_reconnect_begin(&state, test->next, &next, &wait), SALTS_OK);
+    check_equal(wait, (uint64_t)0u);
+  }
+  if (test->begin_status == SALTS_OK || test->begin_status == SALTS_EBUSY) {
+    check(next.generation > first.generation);
+    check_equal(cnet_reconnect_failed(&state, first, CNET_RECONNECT_TRANSIENT, test->next), SALTS_ENOENT);
+    check_equal(cnet_reconnect_get_snapshot(&state, &snapshot), SALTS_OK);
+    check(snapshot.in_flight && snapshot.attempts == 2u && snapshot.generation == next.generation);
+  } else {
+    check_equal(cnet_reconnect_get_snapshot(&state, &snapshot), SALTS_OK);
+    check(snapshot.attempts == 1u && snapshot.generation == first.generation && !snapshot.in_flight);
+  }
+}
+
 typedef struct failed_storage { size_t calls, fail_at, live; } failed_storage;
 static void *fail_allocate(void *user, size_t bytes) {
   failed_storage *s = user;
@@ -755,6 +861,11 @@ static void pool_selection_contract(void) {
 spec("CNet native policy and channel admission") {
   it("validates custom destination and Owner choices against authoritative eligibility") { custom_selection_contract(); }
   it("replaces recovery backoff without bypassing bounds or security sealing") { replaceable_backoff_contract(); }
+  for (size_t i = 0u; i < sizeof(backoff_boundaries) / sizeof(backoff_boundaries[0]); ++i) {
+    it("enforces custom backoff authority for %s", backoff_boundaries[i].name) {
+      backoff_boundary_contract(&backoff_boundaries[i]);
+    }
+  }
   it("returns every provider allocation after each initialization failure") { allocation_rollback_contract(false); }
   it("preserves the borrowed backend after every initialization failure") { allocation_rollback_contract(true); }
   it("selects pool candidates through interchangeable bounded strategies") { pool_selection_contract(); }
