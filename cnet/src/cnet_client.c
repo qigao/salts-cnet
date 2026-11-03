@@ -1732,6 +1732,12 @@ int cnet_set_send_admission(cnet_client *client, cnet_connection connection,
   if (record->close_command_pending ||
       (record->tcp_shutdown_mask & (uint8_t)CNET_TCP_SHUTDOWN_SEND) != 0u)
     return SALTS_ESHUTDOWN;
+  cnet_session_state state = CNET_SESSION_FREE;
+  int status = cnet_client_record_session_state(impl, record, &state);
+  if (status != SALTS_OK) return status;
+  if (state == CNET_SESSION_DRAINING || state == CNET_SESSION_TERMINAL ||
+      state == CNET_SESSION_RETIRED)
+    return SALTS_ESHUTDOWN;
   record->send_admission = *policy;
   return SALTS_OK;
 }
