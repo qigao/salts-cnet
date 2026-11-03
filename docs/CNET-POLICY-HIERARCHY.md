@@ -192,6 +192,23 @@ not substitute the narrower versioned Crypto qualification adapter or claim
 DTLS support. Local Windows LLVM tests passed; the cutover remains pending
 its own exact-head cross-platform CI.
 
+### ManagedDial READY on a live transport
+
+ManagedDial protocol READY also requires its Manager-owned transport to remain
+OPEN at the call. A matching attempt ticket cannot reset recovery accounting
+after direct close, retained FINAL admission, Manager request_close or directional
+shutdown, even before the terminal callback retires the Manager record. These
+paths return `ESHUTDOWN`; opening/handshaking returns `EBUSY`. The same private
+transport-state check guards Pool reuse and Dial READY. Protocol authentication
+and handshake authority remain with the host.
+
+The formal TCP suite covers a real peer greeting followed by each of those four
+close admissions, asserting rejection before terminal without changing the
+attempt count, generation, deadline or READY state. Real terminal/FIN and Manager
+recycle still drain normally. A live-transport control case admits READY, resets
+the episode and completes a real request/reply. Cross-platform qualification
+follows the exact-head formal CI result.
+
 ### Multi-connection pool policy composition
 
 The existing real TCP loopback suite includes two physical connections with
