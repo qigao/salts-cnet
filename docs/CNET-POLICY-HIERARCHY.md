@@ -218,6 +218,26 @@ until Manager recycle; destroying that Dial and its client leaves the neighbor
 able to complete another request/reply. Cross-platform qualification follows
 the exact-head formal CI result.
 
+### Real ManagedDial recovery lifecycle
+
+The formal TCP loopback suite exercises three sequential physical connections
+through one Manager record and one client slot. A native peer supplies a greeting
+and closes each socket while CNet has a real receive pending. The host classifier
+authorizes transient recovery for the first two losses, then selects SECURITY
+for the last. This checks host classification handling, not a TLS authentication
+failure or permission to replay application data.
+
+The first loss occurs before protocol READY and preserves its consumed attempt
+and original deadline. The second connection explicitly reaches READY and performs
+a request/reply; its later loss starts a new bounded episode with reset attempts.
+Each replacement waits for actual terminal and Manager recycle, receives fresh
+transport and recovery generations, and rejects old connection handles and READY
+tickets. Classifier callback mutation is rejected. The final security decision
+seals recovery and admits no fourth connection. Zero-delay fixed backoff keeps
+this case focused on lifecycle composition; delay and jitter bounds belong to
+the existing recovery policy tests. Cross-platform qualification follows the
+exact-head formal CI result.
+
 ### CMeta integration above Core
 
 `qigao/cmeta` supplies the optional `<cmeta/cnet_policy.h>` adapter. It exposes
