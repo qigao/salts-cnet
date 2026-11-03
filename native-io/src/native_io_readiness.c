@@ -1050,15 +1050,25 @@ static int readiness_observe(cmeta_io_impl *base, native_io_completion *events,
                            ? event_capacity
                            : impl->completion_batch_capacity;
   const uint64_t started_ms = cmeta_monotonic_ms();
-  uint32_t wait_timeout = timeout_ms;
-  readiness_drain_terminals(impl, events, limit, out_count);
-  if (*out_count != 0u) return SALTS_OK;
+  uint32_t wait_timeout = impl->terminal_count != 0u ? 0u : timeout_ms;
+  /* An immediately completed producer can refill the terminal queue before
+   * every observe. If other requests still await readiness, sample the OS
+   * nonblocking before draining FIFO terminals so those endpoints can finish.
+   * When all active requests are already terminal, no readiness work is due. */
+  if (impl->active_requests == impl->terminal_count) {
+    readiness_drain_terminals(impl, events, limit, out_count);
+    if (*out_count != 0u) return SALTS_OK;
+  }
   for (;;) {
     size_t ready_count = 0u;
     bool saw_wake = false;
     int status =
         impl->driver_ops->wait(impl->driver_state, impl->ready_events,
                                impl->completion_batch_capacity, wait_timeout, &ready_count);
+    if (status == SALTS_ETIMEDOUT && impl->terminal_count != 0u) {
+      readiness_drain_terminals(impl, events, limit, out_count);
+      return SALTS_OK;
+    }
     if (status != SALTS_OK) return status;
     for (size_t cursor = 0u; cursor < ready_count; ++cursor) {
       const cmeta_io_ready_event *ready = &impl->ready_events[cursor];

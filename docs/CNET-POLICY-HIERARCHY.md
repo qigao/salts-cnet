@@ -218,6 +218,13 @@ clients, endpoints, requests, host leases and runtime must drain. Existing finit
 bulk/isolation and mixed SG-owned completion cases remain separate tests.
 Cross-platform qualification is recorded by this change's formal LLVM CI.
 
+This workload exposed POSIX readiness starvation: immediate bulk completions
+kept the local NativeIO terminal queue nonempty, and observe returned without
+sampling the OS for an already-ready control receive. Readiness observe now
+performs one nonblocking driver wait when queued terminals coexist with pending
+requests, then drains completions in queue order. No pending request is settled
+without its real syscall result; no second observer or queue is introduced.
+
 ### ManagedDial READY on a live transport
 
 ManagedDial protocol READY also requires its Manager-owned transport to remain
