@@ -1,6 +1,7 @@
 /* Test the production entry points without opening or changing a real camera. */
 #include "../src/capture_video_win32.c"
 #include <tinytest.h>
+#include <playback.h>
 
 static const salts_camera_control_t auto_exposure = SALTS_CAMERA_CONTROL_AUTO_EXPOSURE;
 
@@ -188,5 +189,10 @@ suite("Windows automatic exposure") {
         device.range_result = E_FAIL;
         check_equal(salts_video_capture_set_control(&camera, auto_exposure, 0), SALTS_CAPTURE_ERR_DEVICE);
         check_equal(device.sets, 0);
+    }
+
+    it("verifies static Media playback API invalid-owner state without a device") {
+        check_equal(salts_playback_get_state(NULL), SALTS_PLAYBACK_STATE_ERROR);
+        check_equal(salts_playback_start(NULL), SALTS_PLAYBACK_ERR_FORMAT);
     }
 }
