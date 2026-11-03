@@ -301,6 +301,24 @@ this case focused on lifecycle composition; delay and jitter bounds belong to
 the existing recovery policy tests. Cross-platform qualification follows the
 exact-head formal CI result.
 
+### Custom backoff authority boundaries
+
+The formal policy suite checks eleven deterministic custom-backoff cases:
+bounded, zero and maximum delay; excessive delay and a provider error; exact
+deadline equality and clock-addition overflow; exhausted attempts; security,
+permanent and already-expired failures. Strategy selection never bypasses the
+core attempt/deadline/identity checks. Invalid delay or a policy error seals
+recovery; the original policy error is preserved. A delay reaching the deadline
+or overflowing the clock cannot produce a wrapped, immediately eligible retry.
+
+During evaluation, recursive begin/seal and snapshot access return `EBUSY`;
+rejected begin outputs remain empty. Security, permanent and expired failures
+do not invoke the strategy. Valid custom delays permit another attempt only at
+their admitted time, and old tickets cannot settle that new generation. These
+are pure policy contracts using explicit timestamps, without sleeping or claiming
+transport/protocol execution. Cross-platform qualification follows the exact-head
+formal CI result.
+
 ### CMeta integration above Core
 
 `qigao/cmeta` supplies the optional `<cmeta/cnet_policy.h>` adapter. It exposes
