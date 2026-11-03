@@ -32,7 +32,7 @@ milestones above retain their own evidence.
 | --- | --- | --- |
 | Control storage | `cnet_resources.storage`; separate `storage` bindings on Manager, Handoff, ManagedDial and Pool | Original provider receives every allocation back, including init rollback |
 | Receive payloads | `cnet_resources.receive` returning canonical `mem_buffer_t` | Buffer owns its release authority through the last reference, even after client destruction |
-| Send admission | `cnet_send_limits`, `cnet_send_admission_policy`, `cnet_client_set_send_admission` | Aggregate and per-connection operation, logical-byte and backing-capacity limits; actual WriteQueue/NativeIO admission |
+| Send admission | `cnet_send_limits`, `cnet_send_admission_policy`, `cnet_client_set_send_admission`, `cnet_set_send_admission` | Aggregate and per-connection operation, logical-byte and backing-capacity limits; actual WriteQueue/NativeIO admission |
 | Logical send completion | `cnet_send`, `cnet_operation`, `cnet_send_result`, `cnet_client_send_usage` | One terminal per accepted operation, no terminal or lasting retain on rejection |
 | Destination / Owner choice | Existing built-ins or `CUSTOM` callback in the typed selection input | Snapshot freshness, eligibility and index validation; actual resource reservation follows selection |
 | Connection reuse | `cnet_pool_selection_policy`, first / round-robin / least-used, `cnet_pool_set_selection` | Exact pool key, Manager BOUND, protocol READY, physical capacity and real protocol-token reservation |
@@ -53,9 +53,9 @@ binding with `cnet_client_set_send_admission` or the reuse selector with
 borrowed. An old policy user may be released once replacement returns. Existing
 sends and pool leases keep their original completion/release obligations.
 
-For example, an HTTP server can use an admission gate with a small byte window
-while reading/authenticating a request, then change the gate for streaming the
-response. An HTTP client can choose least-used READY connections for normal
+For example, an HTTP server can bind a connection gate with a small byte window
+while reading/authenticating a request, then change that connection's gate for
+streaming the response. An HTTP client can choose least-used READY connections for normal
 traffic, then reject new acquisitions during explicit drain. MQTT/FlowMQ
 handshake, READY, application ACK, QoS and replay authorization remain with
 their protocol/session layer. A transport write terminal cannot establish
@@ -70,11 +70,13 @@ config.send_limits.backing_bytes = 8u * 1024u * 1024u;
 config.send_limits.connection_operations = 8u;
 config.send_limits.connection_bytes = 256u * 1024u;
 config.send_limits.connection_backing_bytes = 512u * 1024u;
-config.send_admission = handshake_gate; /* callback + borrowed user */
+config.send_admission = service_gate; /* applies to every connection */
 
+/* After connect/adopt, outside callbacks, check each returned status. */
+int status = cnet_set_send_admission(&client, connection, &handshake_gate);
 /* Later, after returning from protocol callbacks to the Owner loop: */
-int status = cnet_client_set_send_admission(&client, &streaming_gate);
-/* Check status before submitting new work. Resources and limits stay fixed. */
+status = cnet_set_send_admission(&client, connection, &streaming_gate);
+/* Other connections keep their gates; resources and hard limits stay fixed. */
 ```
 
 The gates in this example are application-supplied `cnet_send_admission_policy`
@@ -83,6 +85,33 @@ live trust/protocol mutation are not supported. A different resource lifetime
 or hard budget requires a new owner/client and explicit drain of the old one.
 Recovery backoff is bound at state initialization; destination and placement
 inputs are supplied per decision.
+
+#### Independent connection phases
+
+`cnet_set_send_admission(client, connection, policy)` binds a copied extra gate
+to one live connection generation. The Owner calls it outside progress and
+callbacks, including after connect/adopt returns and before the first send.
+Hard limits run first, then the client gate, then the connection gate; each
+must accept. A zero binding removes only the connection gate. Replacing the
+client gate never removes connection gates. Thus one HTTP connection can pause
+new response writes while another connection on the same client keeps streaming.
+The protocol host defines these phases and supplies the callback/user binding.
+
+The gate borrows its user until successful replacement or the connection's
+terminal notification. Replacement does not cancel, reprice or reorder accepted
+writes: their FIFO completion, retained buffers and charged usage remain until
+the original terminal. Rejection retains nothing and publishes no operation;
+`CNET_LIMIT_POLICY` identifies client rejection and
+`CNET_LIMIT_CONNECTION_POLICY` identifies connection rejection. Clearing a gate
+does not bypass aggregate/per-connection hard budgets, transport readiness or
+final-send/close sealing. Closed or stale handles cannot change a reused slot;
+new generations start with no connection gate. Wrong-owner mutation is EPERM,
+mutation during callbacks/progress is EBUSY, and a sealed connection is
+ESHUTDOWN. The existing policy callback reentry prohibition also applies.
+
+This adds one fixed-size binding to each existing connection record, with no
+new queue, allocation during replacement, timer or progress owner. It does not
+add per-connection mutable hard limits or change resource-provider lifetime.
 
 ### Memory and terminal accounting
 

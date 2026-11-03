@@ -2559,7 +2559,210 @@ cleanup:
   return result;
 }
 
+typedef struct phase_probe {
+  cnet_client *client;
+  cnet_connection connection;
+  tcp_probe io;
+  unsigned evaluated, callback_checks;
+  size_t total_operations, connection_operations;
+  int decision, policy_reentry, callback_mutation, wrong_owner;
+} phase_probe;
+
+static int phase_evaluate(void *user, const cnet_send_usage *total,
+                          const cnet_send_usage *connection, size_t bytes, size_t backing) {
+  phase_probe *p = user;
+  const cnet_send_admission_policy empty = {0};
+  (void)bytes; (void)backing;
+  ++p->evaluated;
+  p->total_operations = total->operations;
+  p->connection_operations = connection->operations;
+  p->policy_reentry = cnet_set_send_admission(p->client, p->connection, &empty);
+  return p->decision;
+}
+
+static void phase_state(void *user, cnet_connection connection,
+                         cnet_connection_state state, const cnet_error *error) {
+  phase_probe *p = user;
+  const cnet_send_admission_policy empty = {0};
+  on_state(&p->io, connection, state, error);
+  if (cnet_set_send_admission(p->client, connection, &empty) != SALTS_EBUSY)
+    ++p->io.failed;
+  ++p->callback_checks;
+}
+
+static void phase_complete(void *user, const cnet_send_result *result) {
+  phase_probe *p = user;
+  const cnet_send_admission_policy empty = {0};
+  on_operation(&p->io, result);
+  p->callback_mutation = cnet_set_send_admission(p->client, result->connection, &empty);
+}
+
+static void phase_wrong_owner(void *user) {
+  phase_probe *p = user;
+  const cnet_send_admission_policy empty = {0};
+  p->wrong_owner = cnet_set_send_admission(p->client, p->connection, &empty);
+}
+
+static int saltscore_native_entry_test_cnet_connection_phases(void) {
+  cnet_client client = {0};
+  cnet_listener listener = {0};
+  cnet_client_config config = client_config();
+  const cnet_listener_config listener_config = {backend_kind(), "127.0.0.1", 0u, 2u};
+  const cnet_send_admission_policy empty = {0}, pause = {probe_send_pause, NULL};
+  phase_probe phases[2] = {{0}, {0}};
+  test_socket peers[2] = {TEST_INVALID_SOCKET, TEST_INVALID_SOCKET};
+  cmeta_thread_t thread = NULL;
+  mem_buffer_t *buffer = NULL;
+  mem_slice_t slice = {0};
+  cnet_operation operation = {0};
+  cnet_admission_limit limit = CNET_LIMIT_NONE;
+  struct sockaddr_in remote = {0};
+  uint16_t port = 0u;
+  unsigned char received = 0u;
+  int result = 0, ready = 0;
+  config.send_limits.connection_operations = 1u;
+  VERIFY(cnet_client_init(&client, &config) == SALTS_OK);
+  VERIFY(cnet_listener_init(&listener, &listener_config) == SALTS_OK);
+  VERIFY(cnet_listener_port(&listener, &port) == SALTS_OK);
+  remote.sin_family = AF_INET;
+  remote.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+  remote.sin_port = htons(port);
+  for (size_t i = 0u; i < 2u; ++i) {
+    phase_probe *p = &phases[i];
+    p->client = &client;
+    p->decision = i == 0u ? SALTS_ENOBUFS : SALTS_OK;
+    cnet_observer observer = {phase_state, NULL, p, NULL};
+    cnet_send_admission_policy policy = {phase_evaluate, p};
+    peers[i] = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    VERIFY(peers[i] != TEST_INVALID_SOCKET && test_recv_timeout(peers[i]) == 0);
+    VERIFY(connect(peers[i], (const struct sockaddr *)&remote, (int)sizeof(remote)) == 0);
+    VERIFY(cnet_listener_wait(&listener, 5000u, &ready) == SALTS_OK && ready == 1);
+    VERIFY(cnet_listener_accept(&listener, &client, &observer, &p->connection) == SALTS_OK);
+    /* Bind before the first CONNECTED notification; the binding is copied. */
+    VERIFY(cnet_set_send_admission(&client, p->connection, &policy) == SALTS_OK);
+    policy = empty;
+    VERIFY(poll_until(&client, &p->io.connected, 1u) == SALTS_OK);
+  }
+  VERIFY(cmeta_thread_create(&thread, phase_wrong_owner, &phases[0]) == SALTS_OK);
+  VERIFY(cmeta_thread_join(&thread) == SALTS_OK);
+  cmeta_thread_destroy(&thread);
+  VERIFY(phases[0].wrong_owner == SALTS_EPERM);
+  const cnet_send_admission_policy invalid = {NULL, &phases[0]};
+  VERIFY(cnet_set_send_admission(&client, phases[0].connection, &invalid) == SALTS_EINVAL);
+  VERIFY(cnet_set_send_admission(&client, phases[0].connection, NULL) == SALTS_EINVAL);
+  VERIFY(cnet_set_send_admission(&client, (cnet_connection){0}, &empty) == SALTS_ENOENT);
+  buffer = mem_get_buffer(mem_global(), 1u);
+  VERIFY(buffer != NULL);
+  *mem_buffer_data(buffer) = 0x69u;
+  mem_set_used(buffer, 1u);
+  slice = mem_slice(buffer, 0u, 1u);
+  cnet_send_options options = {&slice, 1u, false, phase_complete, &phases[0]};
+  operation.id = UINT64_MAX;
+  VERIFY(cnet_send(&client, phases[0].connection, &options, &operation, &limit) == SALTS_ENOBUFS);
+  VERIFY(operation.id == 0u && limit == CNET_LIMIT_CONNECTION_POLICY &&
+         mem_buffer_ref_count(buffer) == 2u && phases[0].io.completed == 0u);
+  VERIFY(phases[0].evaluated == 1u && phases[0].policy_reentry == SALTS_EINVAL);
+
+  /* First phase now allows admission. Switch again with a live retained send. */
+  VERIFY(cnet_set_send_admission(&client, phases[0].connection, &empty) == SALTS_OK);
+  VERIFY(cnet_send(&client, phases[0].connection, &options, &operation, &limit) == SALTS_OK);
+  const uint64_t first_operation = operation.id;
+  VERIFY(cnet_set_send_admission(&client, phases[0].connection, &pause) == SALTS_OK);
+  VERIFY(cnet_send(&client, phases[0].connection, &options, &operation, &limit) == SALTS_ENOBUFS);
+  VERIFY(limit == CNET_LIMIT_CONNECTION_OPERATIONS && operation.id == 0u);
+  options.user = &phases[1];
+  VERIFY(cnet_send(&client, phases[1].connection, &options, &operation, &limit) == SALTS_OK);
+  VERIFY(phases[1].evaluated == 1u && phases[1].total_operations == 1u &&
+         phases[1].connection_operations == 0u && phases[1].policy_reentry == SALTS_EINVAL);
+  const unsigned gate_calls = phases[1].evaluated;
+  VERIFY(cnet_send(&client, phases[1].connection, &options, &operation, &limit) == SALTS_ENOBUFS);
+  VERIFY(limit == CNET_LIMIT_CONNECTION_OPERATIONS && phases[1].evaluated == gate_calls);
+  mem_slice_release(&slice);
+  mem_buffer_release(buffer);
+  buffer = NULL;
+  for (size_t i = 0u; i < 2u; ++i) {
+    VERIFY(poll_until(&client, &phases[i].io.completed, 1u) == SALTS_OK);
+    VERIFY(phases[i].io.completion.status == SALTS_OK &&
+           phases[i].callback_mutation == SALTS_EBUSY);
+    VERIFY(recv(peers[i], (char *)&received, 1, 0) == 1 && received == 0x69u);
+  }
+  VERIFY(phases[0].io.completion.operation.id == first_operation);
+  cnet_send_usage usage = {0};
+  VERIFY(cnet_client_send_usage(&client, (cnet_connection){0}, &usage) == SALTS_OK &&
+         usage.operations == 0u && usage.bytes == 0u && usage.backing_bytes == 0u);
+
+  buffer = mem_get_buffer(mem_global(), 1u);
+  VERIFY(buffer != NULL);
+  *mem_buffer_data(buffer) = 0x96u;
+  mem_set_used(buffer, 1u);
+  slice = mem_slice(buffer, 0u, 1u);
+  VERIFY(cnet_client_set_send_admission(&client, &pause) == SALTS_OK);
+  for (size_t i = 0u; i < 2u; ++i) {
+    options.user = &phases[i];
+    VERIFY(cnet_send(&client, phases[i].connection, &options, &operation, &limit) == SALTS_ENOBUFS);
+    VERIFY(limit == CNET_LIMIT_POLICY && operation.id == 0u && mem_buffer_ref_count(buffer) == 2u);
+  }
+  VERIFY(phases[1].evaluated == gate_calls);
+  VERIFY(cnet_client_set_send_admission(&client, &empty) == SALTS_OK);
+  options.user = &phases[0];
+  VERIFY(cnet_send(&client, phases[0].connection, &options, &operation, &limit) == SALTS_ENOBUFS);
+  VERIFY(limit == CNET_LIMIT_CONNECTION_POLICY && mem_buffer_ref_count(buffer) == 2u);
+
+  /* Close a gated generation and reuse only its slot while its neighbor lives. */
+  const cnet_connection stale = phases[0].connection;
+  VERIFY(cnet_close(&client, stale) == SALTS_OK);
+  VERIFY(cnet_set_send_admission(&client, stale, &empty) == SALTS_ESHUTDOWN);
+  VERIFY(poll_until(&client, &phases[0].io.terminal, 1u) == SALTS_OK);
+  VERIFY(recv(peers[0], (char *)&received, 1, 0) == 0);
+  test_close_socket(peers[0]);
+  peers[0] = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+  VERIFY(peers[0] != TEST_INVALID_SOCKET && test_recv_timeout(peers[0]) == 0);
+  VERIFY(connect(peers[0], (const struct sockaddr *)&remote, (int)sizeof(remote)) == 0);
+  VERIFY(cnet_listener_wait(&listener, 5000u, &ready) == SALTS_OK && ready == 1);
+  const cnet_observer observer = {phase_state, NULL, &phases[0], NULL};
+  VERIFY(cnet_listener_accept(&listener, &client, &observer, &phases[0].connection) == SALTS_OK);
+  VERIFY(phases[0].connection.slot == stale.slot && phases[0].connection.generation != stale.generation);
+  VERIFY(cnet_set_send_admission(&client, stale, &pause) == SALTS_ENOENT);
+  VERIFY(poll_until(&client, &phases[0].io.connected, 2u) == SALTS_OK);
+  options.close_after_send = true;
+  for (size_t i = 0u; i < 2u; ++i) {
+    options.user = &phases[i];
+    VERIFY(cnet_send(&client, phases[i].connection, &options, &operation, &limit) == SALTS_OK);
+    VERIFY(cnet_set_send_admission(&client, phases[i].connection, &empty) == SALTS_ESHUTDOWN);
+  }
+  VERIFY(phases[0].evaluated == 1u && phases[1].evaluated == gate_calls + 1u);
+  mem_slice_release(&slice);
+  mem_buffer_release(buffer);
+  buffer = NULL;
+  for (size_t i = 0u; i < 2u; ++i) {
+    VERIFY(poll_until(&client, &phases[i].io.terminal, i == 0u ? 2u : 1u) == SALTS_OK);
+    VERIFY(phases[i].io.failed == 0u && phases[i].io.completed == 2u &&
+           phases[i].io.completions_at_terminal == 2u && phases[i].io.completion.status == SALTS_OK);
+    VERIFY(phases[i].callback_checks >= 2u && phases[i].callback_mutation == SALTS_EBUSY);
+    VERIFY(recv(peers[i], (char *)&received, 1, 0) == 1 && received == 0x96u);
+    VERIFY(recv(peers[i], (char *)&received, 1, 0) == 0);
+    VERIFY(cnet_set_send_admission(&client, phases[i].connection, &empty) == SALTS_ENOENT);
+  }
+  VERIFY(cnet_client_stop(&client, 5000u) == SALTS_OK);
+  VERIFY(cnet_set_send_admission(&client, phases[0].connection, &empty) == SALTS_ESHUTDOWN);
+  VERIFY(cnet_client_destroy(&client) == SALTS_OK);
+  VERIFY(cnet_listener_close(&listener) == SALTS_OK);
+  VERIFY(cnet_listener_destroy(&listener) == SALTS_OK);
+cleanup:
+  if (thread != NULL) { (void)cmeta_thread_join(&thread); cmeta_thread_destroy(&thread); }
+  mem_slice_release(&slice);
+  if (buffer != NULL) mem_buffer_release(buffer);
+  for (size_t i = 0u; i < 2u; ++i) test_close_socket(peers[i]);
+  if (client.impl != NULL) { (void)cnet_client_stop(&client, 3000u); (void)cnet_client_destroy(&client); }
+  if (listener.impl != NULL) { (void)cnet_listener_close(&listener); (void)cnet_listener_destroy(&listener); }
+  return result;
+}
+
 spec("CNet real TCP loopback and retained slice") {
+  it("changes one connection phase without bypassing client budgets or leaking into reused slots") {
+    const int result = saltscore_native_entry_test_cnet_connection_phases();
+    check(result == 0, "native connection phases returned %d", result);
+  }
   it("preserves the real owner lifecycle and original failure code") {
     const int result = saltscore_original_entry_test_cnet_tcp_loopback_c(0u);
     check(result == 0, "native integration returned %d", result);
