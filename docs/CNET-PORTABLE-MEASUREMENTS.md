@@ -81,6 +81,9 @@ capacity/RSS. Heaptrack does not measure copies. The precise adapter copy
 counters remain separate; provider-internal/compiler-generated copies and
 kernel traffic are still outside them.
 
+The subsequent [GmSSL copy protocol](CNET-PROVIDER-COPY-MEASUREMENTS.md) adds
+separate source-level provider counters and a distinct diagnostic cohort.
+
 Upstream contracts: [CTest ordering](https://cmake.org/cmake/help/v3.25/prop_test/DEPENDS.html),
 [serial execution](https://cmake.org/cmake/help/v3.25/prop_test/RUN_SERIAL.html),
 [heaptrack](https://github.com/KDE/heaptrack).

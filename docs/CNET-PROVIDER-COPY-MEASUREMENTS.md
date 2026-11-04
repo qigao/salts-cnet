@@ -9,6 +9,8 @@ the compiler. It does not measure assignments, handwritten copy loops,
 compiler-generated copies, libc internals, cryptographic transformations,
 kernel traffic or memory-bus activity. Keep diagnostic timings in a separate
 cohort; they do not establish overhead or a speedup against ordinary builds.
+The [collected report and raw rows](benchmarks/cnet-provider-copies-2026-11-04.md)
+record the qualified source and every diagnostic sample.
 
 One fixed C11 thread-local counter object belongs to each calling thread.
 Counters are monotonic, saturate on overflow and expose a sticky overflow bit.
