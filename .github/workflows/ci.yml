@@ -123,6 +123,10 @@ on:
         description: "Run existing TLS measurement CTests; also heaptrack them on Linux x64"
         type: boolean
         default: false
+      gmssl_copy_profile:
+        description: "Run the full Linux x64 graph with explicit GmSSL copy counters"
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -355,13 +359,6 @@ jobs:
         shell: bash
         run: ccache --show-stats --verbose
 
-      - name: Save compiler cache
-        if: success() && steps.compiler-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
-        with:
-          path: ${{ env.CCACHE_DIR }}
-          key: ${{ steps.compiler-cache.outputs.cache-primary-key }}
-
       - name: Run formal CTest suite
         if: matrix.preset != 'ci-android'
         shell: bash
@@ -421,6 +418,83 @@ jobs:
             build/${{ matrix.preset }}/tests/tls-mixed-heaptrack
           if-no-files-found: error
           retention-days: 14
+
+      - name: Restore diagnostic GmSSL package cache
+        if: success() && inputs.gmssl_copy_profile && matrix.rid == 'linux-x64'
+        id: gmssl-copy-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ${{ env.VCPKG_BINARY_CACHE }}
+            ${{ env.VCPKG_DOWNLOADS }}
+          key: gmssl-copy-v1-${{ steps.vcpkg-cache.outputs.cache-primary-key }}-${{ hashFiles('tests/gmssl-copy-profile/**', 'crypto/src/crypto_gmssl_copy_test.*') }}
+          restore-keys: |
+            gmssl-copy-v1-vcpkg-v1-${{ runner.os }}-${{ runner.arch }}-${{ matrix.rid }}-${{ matrix.preset }}-${{ steps.vcpkg.outputs.cache_revision }}-
+
+      - name: Configure full graph with GmSSL copy counters
+        if: success() && inputs.gmssl_copy_profile && matrix.rid == 'linux-x64'
+        id: gmssl-copy-configure
+        shell: bash
+        env:
+          CMAKE_C_COMPILER_LAUNCHER: ccache
+          CMAKE_CXX_COMPILER_LAUNCHER: ccache
+        run: |
+          cmake --preset gmssl-copy-user \
+            "-DPython3_EXECUTABLE=${{ steps.test-python.outputs.python-path }}" \
+            -DSALTSCORE_CNET_PRODUCTION_REQUIRED_MTLS_TEST=ON \
+            -DSALTSCORE_TEST_CNET_CRYPTO_QUALIFICATION=ON \
+            -DSALTSCORE_CNET_M6_SHARED_DSO_TEST=ON \
+            "-DSALTSCORE_CRYPTO_TEST_FIXTURES=${GITHUB_WORKSPACE}/crypto/tests/fixtures" \
+            -DCNET_SCTP_TEST_OWNER_THREADS=ON
+
+      - name: Save diagnostic GmSSL package cache
+        if: success() && steps.gmssl-copy-configure.outcome == 'success' && steps.gmssl-copy-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ${{ env.VCPKG_BINARY_CACHE }}
+            ${{ env.VCPKG_DOWNLOADS }}
+          key: ${{ steps.gmssl-copy-cache.outputs.cache-primary-key }}
+
+      - name: Build and run the full formal suite with GmSSL copy counters
+        if: success() && inputs.gmssl_copy_profile && matrix.rid == 'linux-x64'
+        shell: bash
+        run: |
+          set -euo pipefail
+          cmake --build --preset gmssl-copy-user
+          ctest --preset gmssl-copy-user
+          ccache --show-stats --verbose
+
+      - name: Preserve provider-copy output and provenance
+        if: always() && steps.gmssl-copy-configure.outcome == 'success'
+        shell: bash
+        run: |
+          set -euo pipefail
+          output=build/gmssl-copy-measurements
+          mkdir -p "$output"
+          cp build/gmssl-copy-user/Testing/Temporary/LastTest.log "$output/ctest.log"
+          cp build/gmssl-copy-user/tests/tls-mixed-compiler.txt "$output/compiler.txt"
+          {
+            git rev-parse HEAD
+            uname -a
+            lscpu
+          } > "$output/host.txt"
+          cp build/gmssl-copy-user/vcpkg_installed/vcpkg/status "$output/vcpkg-status.txt"
+
+      - uses: actions/upload-artifact@v4
+        if: always() && steps.gmssl-copy-configure.outcome == 'success'
+        with:
+          name: gmssl-copy-measurements-linux-x64
+          path: build/gmssl-copy-measurements
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Save compiler cache
+        if: success() && steps.compiler-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: ${{ steps.compiler-cache.outputs.cache-primary-key }}
 
       - name: Install release SDK
         if: matrix.package && github.ref == 'refs/tags/v0.1.002'

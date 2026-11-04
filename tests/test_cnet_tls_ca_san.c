@@ -1695,6 +1695,7 @@ static int tls_mixed_cnet_sample(bool callback, size_t window, bool report, unsi
   }
   REQUIRE(strcmp(f->pair[0].ends[0].state.tls_version, f->pair[1].ends[0].state.tls_version) == 0);
   REQUIRE(strcmp(f->pair[0].ends[0].state.tls_cipher, f->pair[1].ends[0].state.tls_cipher) == 0);
+  f->state.tls13 = strcmp(f->pair[0].ends[0].state.tls_version, "TLSv1.3") == 0;
   REQUIRE(cnet_test_tls_memory_snapshot(&setup_memory));
   REQUIRE(tls_mixed_memory_delta(&start_memory, &setup_memory, &setup_delta) == SALTS_OK);
   REQUIRE(setup_delta.allocation_calls > 0u && setup_delta.requested_bytes > 0u && setup_delta.failures == 0u);

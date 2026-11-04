@@ -5,6 +5,20 @@
   ],
   "configurePresets": [
     {
+      "name": "gmssl-copy-user",
+      "displayName": "Linux x64 full graph with GmSSL explicit-copy counters",
+      "inherits": "full-native",
+      "condition": {"type": "equals", "lhs": "${hostSystemName}", "rhs": "Linux"},
+      "environment": {
+        "SALTSCORE_VCPKG_TARGET_TRIPLET": "salts-gmssl-copy-x64-linux"
+      },
+      "cacheVariables": {
+        "VCPKG_OVERLAY_TRIPLETS": "${sourceDir}/tests/gmssl-copy-profile/triplets",
+        "SALTSCORE_GMSSL_COPY_PROFILE": "ON",
+        "SALTSCORE_CNET_TLS_MIXED_MEASUREMENTS": "ON"
+      }
+    },
+    {
       "name": "native-release-user",
       "displayName": "Native LLVM Release",
       "inherits": "full-native"
@@ -31,6 +45,11 @@
     }
   ],
   "buildPresets": [
+    {
+      "name": "gmssl-copy-user",
+      "configurePreset": "gmssl-copy-user",
+      "jobs": 2
+    },
     {
       "name": "native-release-user",
       "configurePreset": "native-release-user",
@@ -88,6 +107,12 @@
     }
   ],
   "testPresets": [
+    {
+      "name": "gmssl-copy-user",
+      "configurePreset": "gmssl-copy-user",
+      "output": {"outputOnFailure": true},
+      "execution": {"noTestsAction": "error", "stopOnFailure": false}
+    },
     {
       "name": "native-release-user",
       "configurePreset": "native-release-user",
