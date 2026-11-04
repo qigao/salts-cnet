@@ -60,6 +60,7 @@ process cost must not be called isolated CNet overhead.
 
 Sampling uses user-mode `cpu-clock` at a strict requested 4,000 Hz, DWARF stack
 dump 8,192 bytes, without provider-copy instrumentation, heaptrack or sanitizers.
+Existing formal-test adapter diagnostics remain enabled in both cohorts.
 All 100,743 captured samples have a 250,000-ns period. The flat self histogram
 and complete captured-stack export agree exactly on sample counts and period
 sums for every recording. All 25 report zero lost samples; the stack exports
