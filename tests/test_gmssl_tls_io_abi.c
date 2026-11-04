@@ -1,5 +1,5 @@
-/* Provider ABI and real paired CipherBIO TLS close semantics.
- * CNet/NativeIO and independent-peer conformance have separate formal tests.
+/* Provider ABI, paired CipherBIO TLS close and direct NativeIO qualification.
+ * CNet and independent-peer conformance have separate formal tests.
  * This executable links the actual pinned GmSSL provider. */
 #include <tinytest.h>
 #include <crypto/tls_close.h>
