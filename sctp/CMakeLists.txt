@@ -414,7 +414,9 @@ endif()
 # Go implementation of SCTP (RFC8260); no DTLS in this deliberately isolated
 # first oracle slice. NEVER export, install or link this adapter into Salts.
 if(CNET_SCTP_TEST_PION_ORACLE)
-  if(NOT BUILD_TESTING OR NOT CMAKE_SYSTEM_NAME STREQUAL "Linux" OR CMAKE_CROSSCOMPILING)
+  if(NOT BUILD_TESTING OR NOT CMAKE_SYSTEM_NAME STREQUAL "Linux" OR
+     NOT CMAKE_HOST_SYSTEM_NAME STREQUAL "Linux" OR
+     NOT CMAKE_SYSTEM_PROCESSOR STREQUAL CMAKE_HOST_SYSTEM_PROCESSOR)
     message(FATAL_ERROR "Independent Pion SCTP tests require a native Linux test build")
   endif()
   find_program(SALTSCORE_GO_EXECUTABLE go REQUIRED)
