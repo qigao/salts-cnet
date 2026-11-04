@@ -87,7 +87,7 @@ def one_session(ctx, binary, protocol, identity, *, ip_ca=None, expect_success=N
     ip_mode = ip_ca is not None
     positive = identity == "localhost" if expect_success is None else expect_success
     observed = {"accepted": False, "sni": None, "completed": False, "version": None,
-                "failure": None}
+                "closed": False, "failure": None}
 
     def on_sni(_conn, requested, _context):
         observed["sni"] = requested  # evidence only; never reject/select cert
@@ -105,7 +105,7 @@ def one_session(ctx, binary, protocol, identity, *, ip_ca=None, expect_success=N
                 observed["accepted"] = True
                 conn.settimeout(12.0)
                 with conn:
-                    with ctx.wrap_socket(conn, server_side=True) as tls:
+                    with ctx.wrap_socket(conn, server_side=True, suppress_ragged_eofs=False) as tls:
                         observed["completed"] = True
                         observed["version"] = tls.version()
                         # This is a real authenticated Finished and app-data
@@ -113,10 +113,23 @@ def one_session(ctx, binary, protocol, identity, *, ip_ca=None, expect_success=N
                         # precede the peer seeing the final TLS1.3 Finished.
                         tls.sendall(b"ok")
                         tls.settimeout(3.0)
-                        try:
-                            tls.recv(1)
-                        except (socket.timeout, ssl.SSLError, OSError):
-                            pass
+                        if positive:
+                            if tls.recv(1) != b"F":
+                                raise ssl.SSLError("missing native application request")
+                            # Keep this success peer alive until CNet has
+                            # observed BOTH its send and the authenticated
+                            # reply, then initiates close_notify. recv EOF
+                            # must be authenticated: ragged EOFs raise above.
+                            if tls.recv(1) != b"":
+                                raise ssl.SSLError("unexpected application data before close")
+                            raw = tls.unwrap()
+                            observed["closed"] = True
+                            raw.close()
+                        else:
+                            try:
+                                tls.recv(1)
+                            except (socket.timeout, ssl.SSLError, OSError):
+                                pass
             except (ssl.SSLError, socket.timeout, OSError) as exc:
                 observed["failure"] = type(exc).__name__ + ": " + str(exc)
 
@@ -151,7 +164,8 @@ def one_session(ctx, binary, protocol, identity, *, ip_ca=None, expect_success=N
               and observed["accepted"] and observed["sni"] == expected_sni)
     if positive:
         passed = (passed and observed["completed"]
-                  and observed["version"] == expected_version)
+                  and observed["version"] == expected_version
+                  and observed["closed"] and observed["failure"] is None)
     # A wrong-SAN negative may trigger an alert before the server completes
     # its own handshake; the *client* must reject after observing the valid
     # unrelated SAN. We never accept absent TCP/SNI as negative evidence.

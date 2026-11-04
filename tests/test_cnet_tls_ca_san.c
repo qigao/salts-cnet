@@ -814,11 +814,23 @@ static int run_python_ssl_server(const char *port_text,
            !probe.terminal_count && cmeta_monotonic_ms() < deadline)
       REQUIRE(cnet_client_poll(&client, 1u, &events) == SALTS_OK);
     /* Independent Python ssl writes "ok" over the negotiated record;
-     * one byte of explicit NativeIO receive demand must deliver 'o'. */
+     * one receive-event credit must deliver that complete record. The
+     * peer waits for our authenticated shutdown after BOTH local events. */
+    if (probe.received_count != 1u || probe.received_byte != 'o' || probe.failed)
+      fprintf(stderr, "Python TLS success data received=%u byte=%u sent=%u terminal=%u failed=%u status=%d native=%d stage=%s\n",
+              probe.received_count, (unsigned)probe.received_byte, probe.sent_count, probe.terminal_count,
+              probe.failed, probe.last_error_status, probe.last_native_status, probe.failure_stage);
     REQUIRE(probe.received_count == 1u && probe.received_byte == 'o' &&
             probe.failed == 0u);
     REQUIRE(probe.sent_count == 1u && probe.failed == 0u);
     REQUIRE(cnet_close(&client, outbound) == SALTS_OK);
+    deadline = cmeta_monotonic_ms() + 9000u;
+    while (!probe.terminal_count && cmeta_monotonic_ms() < deadline)
+      REQUIRE(cnet_client_poll(&client, 1u, &events) == SALTS_OK);
+    REQUIRE(probe.terminal_count == 1u && probe.failed == 0u &&
+            probe.last_connection_state == CNET_CONNECTION_CLOSED);
+    REQUIRE(cnet_client_poll(&client, 0u, &events) == SALTS_OK);
+    REQUIRE(probe.terminal_count == 1u && probe.sent_count == 1u && probe.received_count == 1u && probe.failed == 0u);
   }
 
 cleanup:
