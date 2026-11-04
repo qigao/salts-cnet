@@ -41,6 +41,8 @@ as per-RID workflow artifacts. Do not replace existing correctness evidence
 with timing or treat runner hardware/load as controlled. Compare only the
 documented configuration cohorts. Preserve every sample, partial native write,
 rejection, drain and boundary count; closed-loop paths can do different work.
+Compiler provenance is generated from the configured CMake graph; a different
+compiler found on the host shell PATH must not be used as the build identity.
 
 ## Linux process heap profile
 

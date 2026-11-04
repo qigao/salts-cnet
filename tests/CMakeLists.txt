@@ -306,6 +306,9 @@ if(TARGET Salts::CNet)
   # Reuse the actual opt-in TinyTest cases, one fresh process per sample. The
   # dependency chain rotates all five modes and preserves order with ctest -j.
   if(SALTSCORE_CNET_TLS_MIXED_MEASUREMENTS)
+    # Compiler provenance belongs to the configured graph, not the shell PATH.
+    file(GENERATE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/tls-mixed-compiler.txt" CONTENT
+      "compiler=${CMAKE_C_COMPILER}\ncompiler-id=${CMAKE_C_COMPILER_ID}\ncompiler-version=${CMAKE_C_COMPILER_VERSION}\ncompiler-target=${CMAKE_C_COMPILER_TARGET}\nbuild-type=${CMAKE_BUILD_TYPE}\ngenerator=${CMAKE_GENERATOR}\n")
     if(SALTSCORE_CNET_TLS_MIXED_HEAPTRACK)
       find_program(SALTSCORE_HEAPTRACK_EXECUTABLE NAMES heaptrack REQUIRED)
       file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/tls-mixed-heaptrack")

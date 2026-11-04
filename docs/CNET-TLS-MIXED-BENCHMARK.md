@@ -125,3 +125,8 @@ gap only; global/provider-internal allocation/copy and other-platform timing
 evidence remain outstanding in #189.
 
 Evidence: [instrumented Windows x64 cohort, 2026-11-04](benchmarks/cnet-tls-adapter-memory-windows-x64-2026-11-04.md).
+
+The [portable formal collection](CNET-PORTABLE-MEASUREMENTS.md) adds opt-in
+CTest registration and Linux process profiling through the same native CI.
+[Six-platform timing and process-heap evidence](benchmarks/cnet-portable-tls-2026-11-04.md)
+records provider allocation beyond the adapter counter scope.

@@ -386,9 +386,7 @@ jobs:
             'protection=none'
             'affinity-frequency-background-load=uncontrolled'
           ) | Set-Content -Encoding utf8 "$output/host.txt"
-          $compilerVersion = clang --version
-          if ($LASTEXITCODE -ne 0) { throw 'Could not record the active LLVM version' }
-          $compilerVersion | Add-Content "$output/host.txt"
+          Copy-Item -LiteralPath 'build/${{ matrix.preset }}/tests/tls-mixed-compiler.txt' -Destination "$output/compiler.txt"
           if ($IsLinux) { lscpu | Add-Content "$output/host.txt" }
           elseif ($IsMacOS) { sysctl machdep.cpu.brand_string hw.ncpu hw.memsize | Add-Content "$output/host.txt" }
           else { Get-CimInstance Win32_Processor | Select-Object Name,NumberOfCores,NumberOfLogicalProcessors | Out-String | Add-Content "$output/host.txt" }
