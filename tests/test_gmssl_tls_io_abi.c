@@ -42,6 +42,7 @@ static int native_tls_nonblocking(native_tls_socket s) {
 }
 static bool native_tls_would_block(void) { return errno == EAGAIN || errno == EWOULDBLOCK; }
 #endif
+#include "tls_mixed_workload.h"
 
 static crypto_tls_stream_context *stream_context[2];
 static crypto_tls_stream *stream_pair[2];
@@ -458,9 +459,12 @@ typedef struct native_tls_end {
   crypto_tls_stream *stream;
   size_t read_size, wire_size, wire_offset, submitted;
   bool connected, ready, peer_closed, notify_generated, drained;
+  mem_buffer_t *mixed_payload;
+  bool mixed_accepted;
   char version[24], cipher[128];
 } native_tls_end;
 typedef struct native_tls_fixture {
+  tls_mixed_lane *mixed; /* Borrowed from parent until full native disposal. */
   native_tls_end ends[2];
   native_tls_socket listener;
   struct sockaddr_in address;
@@ -554,6 +558,19 @@ static int native_tls_pump(native_tls_fixture *f, size_t index) {
       end->notify_generated |= generated;
       end->peer_closed |= received;
     }
+  } else if (f->mixed) {
+    if (end->mixed_payload && !end->mixed_accepted) {
+      status = crypto_tls_stream_write(end->stream, mem_buffer_data(end->mixed_payload),
+          mem_buffer_used(end->mixed_payload), &end->mixed_accepted);
+      if (status != CRYPTO_TLS_STREAM_OK) return SALTS_EPROTO;
+    }
+    if (f->mixed->credit[index]) {
+      size_t bytes = 0u;
+      bool peer_closed = false;
+      status = crypto_tls_stream_read(end->stream, f->plaintext, sizeof(f->plaintext), &bytes, &peer_closed);
+      if (status != CRYPTO_TLS_STREAM_OK || peer_closed) return SALTS_EPROTO;
+      if (bytes != 0u) tls_mixed_received(f->mixed, index, f->plaintext, bytes);
+    }
   } else {
     if (index == 0u && f->retained && !f->accepted) {
       status = crypto_tls_stream_write(end->stream, mem_buffer_data(f->source),
@@ -577,6 +594,14 @@ static int native_tls_pump(native_tls_fixture *f, size_t index) {
   }
   status = native_tls_flush(f, end);
   if (status != SALTS_OK) return status;
+  if (f->mixed && end->mixed_payload && end->mixed_accepted && end->drained) {
+    mem_buffer_t *source = end->mixed_payload;
+    const size_t bytes = mem_buffer_used(source);
+    end->mixed_payload = NULL;
+    end->mixed_accepted = false;
+    mem_buffer_release(source);
+    tls_mixed_sent(f->mixed, index, bytes);
+  }
   if (index == 0u && f->retained && f->accepted && end->drained) {
     if (f->completed >= f->offered || mem_buffer_ref_count(f->source) != 2u) return SALTS_EPROTO;
     f->latency[f->completed] = cmeta_hrtime() - f->starts[f->completed];
@@ -714,13 +739,8 @@ static int native_tls_drain(native_tls_fixture *f) {
   fprintf(stderr, "Native TLS benchmark failed at %d: %s\n", __LINE__, #expr); \
   result = __LINE__; goto cleanup; } } while (0)
 
-static int native_tls_sample(bool report, unsigned repetition, size_t chunk) {
-  native_tls_fixture *f = calloc(1u, sizeof(*f));
-  int result = 0, transfer_status = SALTS_EIO;
-  native_tls_result warm, measured;
-  const size_t operations = report ? NATIVE_TLS_WRITES : 16u;
-  uint64_t handshake_ns = 0u, close_ns = 0u;
-  if (!f) return __LINE__;
+static int native_tls_setup(native_tls_fixture *f, size_t chunk, uint64_t *handshake_ns) {
+  int result = 0;
   f->listener = NATIVE_TLS_INVALID;
   for (size_t i = 0u; i < 2u; ++i) f->ends[i].socket = NATIVE_TLS_INVALID;
   f->chunk = chunk;
@@ -779,18 +799,20 @@ static int native_tls_sample(bool report, unsigned repetition, size_t chunk) {
     NATIVE_TLS_REQUIRE(crypto_tls_stream_create(f->ends[i].context, i == 1u,
         i == 0u ? "localhost" : NULL, NATIVE_TLS_IO, &f->ends[i].stream) == CRYPTO_TLS_STREAM_OK);
   }
-  f->source = mem_get_buffer(mem_global(), NATIVE_TLS_BYTES);
+  f->source = f->mixed ? f->mixed->source[0] : mem_get_buffer(mem_global(), NATIVE_TLS_BYTES);
   NATIVE_TLS_REQUIRE(f->source != NULL);
-  for (size_t i = 0u; i < NATIVE_TLS_BYTES; ++i)
-    mem_buffer_data(f->source)[i] = (char)((0x5au + i * 29u) & 0xffu);
-  mem_set_used(f->source, NATIVE_TLS_BYTES);
+  if (!f->mixed) {
+    for (size_t i = 0u; i < NATIVE_TLS_BYTES; ++i)
+      mem_buffer_data(f->source)[i] = (char)((0x5au + i * 29u) & 0xffu);
+    mem_set_used(f->source, NATIVE_TLS_BYTES);
+  }
   NATIVE_TLS_REQUIRE(native_tls_offer(f) == SALTS_EBUSY && mem_buffer_ref_count(f->source) == 1u);
   const uint64_t handshake_start = cmeta_hrtime();
   deadline = cmeta_monotonic_ms() + 7000u;
   while ((!f->ends[0].ready || !f->ends[1].ready || !f->ends[0].drained || !f->ends[1].drained) &&
          cmeta_monotonic_ms() < deadline)
     NATIVE_TLS_REQUIRE(native_tls_progress(f) == SALTS_OK);
-  handshake_ns = cmeta_hrtime() - handshake_start;
+  *handshake_ns = cmeta_hrtime() - handshake_start;
   for (size_t i = 0u; i < 2u; ++i) {
     native_tls_end *end = &f->ends[i];
     size_t size;
@@ -804,15 +826,14 @@ static int native_tls_sample(bool report, unsigned repetition, size_t chunk) {
   }
   NATIVE_TLS_REQUIRE(strcmp(f->ends[0].version, f->ends[1].version) == 0 &&
                      strcmp(f->ends[0].cipher, f->ends[1].cipher) == 0);
-  NATIVE_TLS_REQUIRE(native_tls_transfer(f, report ? 64u : 8u, !report, &warm) == SALTS_OK);
-  if (report) {
-    benchmark_io("direct NativeIO retained TLS transfer", 1, operations,
-                 operations / 8u * (7u * NATIVE_TLS_BYTES + 1u)) {
-      transfer_status = native_tls_transfer(f, operations, false, &measured);
-    }
-  } else transfer_status = native_tls_transfer(f, operations, true, &measured);
-  NATIVE_TLS_REQUIRE(transfer_status == SALTS_OK && measured.elapsed != 0u && measured.submissions > 0u);
-  if (chunk < NATIVE_TLS_IO) NATIVE_TLS_REQUIRE(measured.continuations > 0u);
+  return SALTS_OK;
+cleanup:
+  return result;
+}
+
+static int native_tls_close(native_tls_fixture *f, uint64_t *close_ns) {
+  int result = 0;
+  uint64_t deadline;
   const uint64_t close_start = cmeta_hrtime();
   f->closing = true;
   deadline = cmeta_monotonic_ms() + 7000u;
@@ -833,14 +854,13 @@ static int native_tls_sample(bool report, unsigned repetition, size_t chunk) {
     end->endpoint = (native_io_endpoint){0};
     NATIVE_TLS_REQUIRE(native_io_backend_get_stats(&end->backend, &stats) && stats.endpoint_count == 0u);
   }
-  close_ns = cmeta_hrtime() - close_start;
-  if (report) printf("CNET_TLS_CSV,nativeio,%u,1,%zu,%s,%s,%llu,%zu,%llu,%llu,%llu,%llu,%llu,0,0,0,0,%zu,%zu,%zu,%llu,%llu\n",
-      repetition, operations, f->ends[0].version, f->ends[0].cipher, (unsigned long long)handshake_ns,
-      measured.bytes, (unsigned long long)measured.elapsed, (unsigned long long)measured.cpu,
-      (unsigned long long)measured.p50, (unsigned long long)measured.p95, (unsigned long long)measured.p99,
-      measured.peak_bytes, measured.peak_backing, mem_buffer_capacity(f->source),
-      (unsigned long long)measured.submissions, (unsigned long long)close_ns);
+  *close_ns = cmeta_hrtime() - close_start;
+  return SALTS_OK;
 cleanup:
+  return result;
+}
+
+static bool native_tls_dispose(native_tls_fixture *f) {
   native_tls_socket_close(f->listener);
   if (native_tls_drain(f) == SALTS_OK) {
     bool released = true;
@@ -848,8 +868,10 @@ cleanup:
       native_tls_end *end = &f->ends[i];
       native_tls_socket_close(end->socket);
       end->socket = NATIVE_TLS_INVALID;
-      if (native_io_endpoint_valid(end->endpoint) &&
-          native_io_backend_release_socket(&end->backend, end->endpoint) != SALTS_OK) released = false;
+      if (native_io_endpoint_valid(end->endpoint)) {
+        if (native_io_backend_release_socket(&end->backend, end->endpoint) != SALTS_OK) released = false;
+        else end->endpoint = (native_io_endpoint){0};
+      }
       (void)native_io_backend_close(&end->backend);
       if (native_io_backend_destroy(&end->backend) != SALTS_OK && end->backend.impl != NULL) released = false;
     }
@@ -857,18 +879,146 @@ cleanup:
       for (size_t i = 0u; i < 2u; ++i) {
         crypto_tls_stream_destroy(f->ends[i].stream);
         crypto_tls_stream_context_release(f->ends[i].context);
+        f->ends[i].stream = NULL;
+        f->ends[i].context = NULL;
+        if (f->ends[i].mixed_payload) {
+          mem_buffer_release(f->ends[i].mixed_payload);
+          f->ends[i].mixed_payload = NULL;
+        }
       }
       if (f->retained) mem_buffer_release(f->source);
-      if (f->source) mem_buffer_release(f->source);
-      free(f);
-      return result;
+      if (f->source && !f->mixed) mem_buffer_release(f->source);
+      f->source = NULL;
+      f->retained = false;
+      return true;
     }
   }
-  return result ? result : __LINE__; /* Keep live stream/native backing. */
+  return false; /* Keep live stream/native backing. */
+}
+
+static int native_tls_sample(bool report, unsigned repetition, size_t chunk) {
+  native_tls_fixture *f = calloc(1u, sizeof(*f));
+  int result = 0, transfer_status = SALTS_EIO;
+  native_tls_result warm, measured;
+  const size_t operations = report ? NATIVE_TLS_WRITES : 16u;
+  uint64_t handshake_ns = 0u, close_ns = 0u;
+  if (!f) return __LINE__;
+  NATIVE_TLS_REQUIRE(native_tls_setup(f, chunk, &handshake_ns) == SALTS_OK);
+  NATIVE_TLS_REQUIRE(native_tls_transfer(f, report ? 64u : 8u, !report, &warm) == SALTS_OK);
+  if (report) {
+    benchmark_io("direct NativeIO retained TLS transfer", 1, operations,
+                 operations / 8u * (7u * NATIVE_TLS_BYTES + 1u)) {
+      transfer_status = native_tls_transfer(f, operations, false, &measured);
+    }
+  } else transfer_status = native_tls_transfer(f, operations, true, &measured);
+  NATIVE_TLS_REQUIRE(transfer_status == SALTS_OK && measured.elapsed != 0u && measured.submissions > 0u);
+  if (chunk < NATIVE_TLS_IO) NATIVE_TLS_REQUIRE(measured.continuations > 0u);
+  NATIVE_TLS_REQUIRE(native_tls_close(f, &close_ns) == SALTS_OK);
+  if (report) printf("CNET_TLS_CSV,nativeio,%u,1,%zu,%s,%s,%llu,%zu,%llu,%llu,%llu,%llu,%llu,0,0,0,0,%zu,%zu,%zu,%llu,%llu\n",
+      repetition, operations, f->ends[0].version, f->ends[0].cipher, (unsigned long long)handshake_ns,
+      measured.bytes, (unsigned long long)measured.elapsed, (unsigned long long)measured.cpu,
+      (unsigned long long)measured.p50, (unsigned long long)measured.p95, (unsigned long long)measured.p99,
+      measured.peak_bytes, measured.peak_backing, mem_buffer_capacity(f->source),
+      (unsigned long long)measured.submissions, (unsigned long long)close_ns);
+cleanup:
+  if (native_tls_dispose(f)) { free(f); return result; }
+  return result ? result : __LINE__;
+}
+
+typedef struct tls_mixed_native_fixture {
+  tls_mixed_state state;
+  native_tls_fixture pair[2];
+  size_t initialized;
+} tls_mixed_native_fixture;
+static int tls_mixed_native_send(void *user, size_t lane, size_t index, mem_buffer_t *source) {
+  native_tls_fixture *f = &((tls_mixed_native_fixture *)user)->pair[lane];
+  native_tls_end *end = &f->ends[index];
+  if (f->closing || f->stopping || !f->ends[0].ready || !f->ends[1].ready) return SALTS_EBUSY;
+  if (end->mixed_payload) return SALTS_ENOBUFS;
+  if (!source || source != f->mixed->source[index]) return SALTS_EINVAL;
+  end->mixed_payload = mem_buffer_retain(source);
+  end->mixed_accepted = false;
+  return SALTS_OK;
+}
+static int tls_mixed_native_receive(void *user, size_t lane, size_t end) {
+  (void)user; (void)lane; (void)end;
+  return SALTS_OK; /* Shared caller grants the credit consumed by the pump. */
+}
+static int tls_mixed_native_progress(void *user, size_t lane) {
+  return native_tls_progress(&((tls_mixed_native_fixture *)user)->pair[lane]);
+}
+static int tls_mixed_native_snapshot(void *user, tls_mixed_stats *out) {
+  tls_mixed_native_fixture *f = user;
+  *out = (tls_mixed_stats){0};
+  for (size_t i = 0u; i < 2u; ++i) {
+    for (size_t e = 0u; e < 2u; ++e) {
+      native_tls_end *end = &f->pair[i].ends[e];
+      native_io_backend_stats stats;
+      if (!native_io_backend_get_stats(&end->backend, &stats)) return SALTS_EIO;
+      out->native_submissions[i] += stats.submitted;
+      if (end->mixed_payload) out->usage[i][e] = (tls_mixed_usage){1u,
+          mem_buffer_used(end->mixed_payload), mem_buffer_capacity(end->mixed_payload)};
+    }
+  }
+  return SALTS_OK;
+}
+static int tls_mixed_native_sample(bool report, unsigned repetition, size_t chunk) {
+  tls_mixed_native_fixture *f = calloc(1u, sizeof(*f));
+  int result = 0, phase_status = SALTS_EIO;
+  uint64_t handshake_ns, close_ns[2] = {0};
+  tls_mixed_result warm, measured;
+  const size_t exchanges = report ? TLS_MIXED_EXCHANGES : 8u;
+  if (!f) return __LINE__;
+  NATIVE_TLS_REQUIRE(tls_mixed_init(&f->state, 1u) == SALTS_OK);
+  for (size_t i = 0u; i < 2u; ++i) {
+    f->pair[i].mixed = &f->state.lane[i];
+    ++f->initialized;
+    NATIVE_TLS_REQUIRE(native_tls_setup(&f->pair[i], chunk, &handshake_ns) == SALTS_OK);
+  }
+  NATIVE_TLS_REQUIRE(strcmp(f->pair[0].ends[0].version, f->pair[1].ends[0].version) == 0);
+  NATIVE_TLS_REQUIRE(strcmp(f->pair[0].ends[0].cipher, f->pair[1].ends[0].cipher) == 0);
+  const tls_mixed_ops ops = {f, tls_mixed_native_send, tls_mixed_native_receive,
+      tls_mixed_native_progress, tls_mixed_native_snapshot};
+  NATIVE_TLS_REQUIRE(tls_mixed_phase(&f->state, &ops, 8u, &warm) == SALTS_OK);
+  const size_t before_continuations = f->pair[0].continuations + f->pair[1].continuations;
+  if (report) {
+    benchmark_ops("independent direct TLS control RTT under bulk", 1, exchanges) {
+      phase_status = tls_mixed_phase(&f->state, &ops, exchanges, &measured);
+    }
+  } else phase_status = tls_mixed_phase(&f->state, &ops, exchanges, &measured);
+  if (phase_status != SALTS_OK) fprintf(stderr, "direct TLS mixed phase status=%d chunk=%zu\n", phase_status, chunk);
+  NATIVE_TLS_REQUIRE(phase_status == SALTS_OK && measured.calls == 0u);
+  if (chunk < NATIVE_TLS_IO)
+    NATIVE_TLS_REQUIRE(f->pair[0].continuations + f->pair[1].continuations > before_continuations);
+  for (size_t i = 0u; i < 2u; ++i) NATIVE_TLS_REQUIRE(native_tls_close(&f->pair[i], &close_ns[i]) == SALTS_OK);
+  if (report) tls_mixed_print("nativeio", repetition, &f->state, &measured, close_ns[0] + close_ns[1],
+                             f->pair[0].ends[0].version, f->pair[0].ends[0].cipher);
+cleanup:;
+  bool quiet = true;
+  for (size_t i = 0u; i < f->initialized; ++i) if (!native_tls_dispose(&f->pair[i])) quiet = false;
+  if (quiet) { tls_mixed_release(&f->state); free(f); return result; }
+  return result ? result : __LINE__; /* Retain the whole live parent/transport fixture. */
 }
 #undef NATIVE_TLS_REQUIRE
 
 spec("Production Crypto TLS over direct NativeIO") {
+  for (unsigned bound = 0u; bound < 2u; ++bound) {
+    it("drains independent direct TLS bulk/control with native bound %u", bound ? 4096u : NATIVE_TLS_IO) {
+      const int result = tls_mixed_native_sample(false, 0u, bound ? 4096u : NATIVE_TLS_IO);
+      check(result == 0, "direct TLS mixed correctness returned %d", result);
+    }
+  }
+  const char *mixed_measure = getenv("SALTSCORE_NATIVE_TLS_MIXED_BENCHMARK");
+  if (mixed_measure != NULL) {
+    it("uses the explicit native TLS mixed benchmark switch") { check_equal(mixed_measure, "1"); }
+    if (strcmp(mixed_measure, "1") == 0)
+      for (unsigned repetition = 0u; repetition < 5u; ++repetition) {
+        it("measures direct mixed TLS control, repetition %u", repetition) {
+          const int result = tls_mixed_native_sample(true, repetition, NATIVE_TLS_IO);
+          check(result == 0, "direct TLS mixed sample returned %d", result);
+        }
+      }
+  }
   for (unsigned bound = 0u; bound < 2u; ++bound) {
     it("drains direct TLS with native write bound %u", bound ? 4096u : NATIVE_TLS_IO) {
       const int result = native_tls_sample(false, 0u, bound ? 4096u : NATIVE_TLS_IO);

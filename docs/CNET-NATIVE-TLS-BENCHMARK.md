@@ -65,3 +65,7 @@ before interpreting timing. Independent TLS bulk/control, global allocation/
 copy instrumentation and other-platform timing cohorts remain open in #189.
 
 Evidence: [Windows x64, 2026-11-04](benchmarks/cnet-native-tls-windows-x64-2026-11-04.md).
+
+The subsequent [independent TLS bulk/control cohort](CNET-TLS-MIXED-BENCHMARK.md)
+adds a shared workload across the existing formal executables, with two
+connections and separately scoped control, bulk and drain progress.

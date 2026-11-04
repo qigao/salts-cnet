@@ -1,0 +1,77 @@
+# Independent TLS bulk/control workload
+
+This #189 cohort compares direct NativeIO + production Crypto with CNet native
+admission and an extra per-connection admission callback. Reuse the existing
+Crypto TLS ABI and CNet TLS formal executables. Each process has one physical
+TLS provider; do not link Crypto into the CNet executable or add a test project.
+
+## Protocol before implementation
+
+One fixed caller Owner progresses two independent TLS connections and both
+peer ends. Each endpoint has its own 2-endpoint / 8-request / batch-4 NativeIO
+backend: four backends total, budgets 8/32/16. This is not a shared-single-backend
+cohort. Both modes use the production standard TLS profile, the same p384
+CA/certificate/key and localhost SAN, NODELAY, 17-KiB TLS I/O and 32-KiB
+plaintext receive capacity. Require matching authenticated versions/ciphers
+at all four ends. Setup and handshakes finish before warm-up and measurement.
+
+The shared private workload owns three canonical Core buffers: immutable 32-KiB
+bulk, one-byte request and one-byte reply. The transport adapter retains one
+reference per admitted logical send until local terminal; rejection retains
+nothing. Raw retains plaintext through whole Crypto acceptance and complete
+ciphertext transmission. Native buffers remain borrowed until actual matching
+NativeIO completion; native prefixes may continue under new request identities.
+Host owns each observer and routes its entire observed batch even after errors.
+
+Bulk replenishes to depth 1 or 8 before each progress round. Depth 8 deliberately
+attempts one additional write and requires ENOBUFS with unchanged references.
+This is admission saturation, not an OS-pressure claim. Raw qualifies depth 1
+without adding an application queue. A separate short raw case limits native
+cipher writes to 4 KiB and requires actual continuation, not synthetic shorts.
+
+Control permits one request/reply exchange at a time. The client sends a
+sequence-derived byte; the server validates it and the host offers a derived
+reply on a later ordinary host step. Receive callbacks only validate/update
+state and never reenter CNet. RTT starts before request admission and ends when
+the client validates the actual reply. Reuse waits for both local send terminals,
+both receive validations and sole source references. At most one receive-demand
+credit is outstanding per receiving end. Bulk receives validate every byte
+across arbitrary TLS record/callback boundaries using the same shared code.
+
+The Owner visits bulk client/server, then control client/server each round in
+all modes. It keeps bulk offered until control exchanges, local terminals and
+references are settled. Record actual bulk application bytes during that
+interval, including partial logical writes. The offered rule is closed-loop;
+different wrappers can perform different bulk work per control interval. This
+is not a fixed open-loop rate or isolated wrapper-cost/fairness experiment.
+
+Warm eight exchanges, seal replenishment, and drain all admitted bulk bytes and
+local terminals before resetting counters. Measure 512 exchanges; five rotated
+repetitions cover raw depth 1, native/callback depth 1 and native/callback depth
+8. Existing formal TinyTest filters select one long case per fresh process.
+Default CI uses eight measured exchanges in the six short scenarios. No extra
+target, consumer/smoke project, CMake verification script or benchmark-only CI.
+
+Record RTT p50/p95/p99, interval/process CPU, verified bulk bytes, admissions,
+host rounds, refusals, scoped provider/policy calls, logical/backing peaks and
+actual physical source capacities. Count native submissions separately for the
+bulk and control connection pairs. Stop interval counters before draining the
+remaining bulk; record its additional bytes/time. Process CPU includes both
+ends of both TLS connections, host adapters, polling and validation. Provider
+zeros do not instrument Crypto/GmSSL, NativeIO/global allocation or copies.
+
+After each phase require all sources at refcount one, zero logical usage,
+exact send terminals and every admitted byte received. Close each pair through
+authenticated reciprocal close_notify, then require zero native requests and
+endpoints before destroying clients/streams, contexts and backends. Keep parent
+state, provider/callback contexts and all sources alive through complete cleanup.
+Every loop has a deadline. On failure stop admission and attempt bounded native
+drain; preserve the whole still-borrowed fixture if quiescence cannot be proved.
+The reported close time sums the two sequential pair close/drain sections,
+excluding object destruction between them, rather than a continuous wall interval.
+
+This cohort supplies the independent TLS workload, not global allocation/copy
+instrumentation or other-platform timing evidence. No production policy API or
+optimization is justified merely by successful correctness tests.
+
+Evidence: [Windows x64, 2026-11-04](benchmarks/cnet-tls-mixed-windows-x64-2026-11-04.md).
