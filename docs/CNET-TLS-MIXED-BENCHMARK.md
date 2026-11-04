@@ -67,7 +67,11 @@ endpoints before destroying clients/streams, contexts and backends. Keep parent
 state, provider/callback contexts and all sources alive through complete cleanup.
 Every loop has a deadline. On failure stop admission and attempt bounded native
 drain; preserve the whole still-borrowed fixture if quiescence cannot be proved.
+The reported close time sums the two sequential pair close/drain sections,
+excluding object destruction between them, rather than a continuous wall interval.
 
 This cohort supplies the independent TLS workload, not global allocation/copy
 instrumentation or other-platform timing evidence. No production policy API or
 optimization is justified merely by successful correctness tests.
+
+Evidence: [Windows x64, 2026-11-04](benchmarks/cnet-tls-mixed-windows-x64-2026-11-04.md).
