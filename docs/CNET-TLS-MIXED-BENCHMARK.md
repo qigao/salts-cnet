@@ -85,8 +85,10 @@ It does not link another Crypto archive. `BUILD_TESTING=OFF` builds expand the i
 sites to the original libc operations and contain no counters or bridge.
 
 One calling thread owns a fixed-size, thread-local set of cumulative saturating
-counters. Snapshots copy values, never reset, allocate, progress a stream or
-borrow stream storage. No worker aggregation, cross-thread publication or
+counters. Snapshots copy values, never reset, explicitly call an allocator,
+progress a stream or borrow stream storage. Compiler-managed thread-local
+storage is outside the counters; the first snapshot precedes setup and timing.
+No worker aggregation, cross-thread publication or
 stream/context ownership change is introduced. Overflow invalidates a sample.
 Allocation counters cover actual malloc/calloc/realloc requests in this source,
 requested/successful request bytes, failures and non-null free calls. Realloc
@@ -121,3 +123,5 @@ instrumented cohort and retain all repetitions. Do not pool their timing with
 the previous uninstrumented copy workload. This closes the TLS adapter accounting
 gap only; global/provider-internal allocation/copy and other-platform timing
 evidence remain outstanding in #189.
+
+Evidence: [instrumented Windows x64 cohort, 2026-11-04](benchmarks/cnet-tls-adapter-memory-windows-x64-2026-11-04.md).

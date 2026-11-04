@@ -25,11 +25,12 @@ typedef struct crypto_tls_test_memory_stats {
   bool overflow;
 } crypto_tls_test_memory_stats;
 
-/* Snapshot only: no reset, allocation, TLS state access or progress. Counters
+/* Snapshot only: no reset, explicit allocator call, TLS state access or progress. Counters
  * saturate and mark overflow rather than silently wrapping. Exclusive to the
  * current thread, including creation/destruction performed on that thread.
  * realloc success bytes are the whole request, not net growth/live capacity.
  * Copy calls count explicit source memcpy operations, including ring splits;
- * compiler inlining/vectorization and provider-internal copies are excluded. */
+ * compiler inlining/vectorization and provider-internal copies are excluded.
+ * Compiler-managed thread-local storage is also outside these counters. */
 bool crypto_tls_stream_test_memory_snapshot(crypto_tls_test_memory_stats *out);
 #endif
