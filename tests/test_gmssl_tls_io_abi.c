@@ -15,6 +15,7 @@
 #include <clock.h>
 #include <cmeta_buffer.h>
 #include <error_codes.h>
+#include <thread.h>
 #if defined(_WIN32)
 #include <winsock2.h>
 #include <ws2tcpip.h>
@@ -131,16 +132,24 @@ spec("Opaque Crypto streams retain policy and bounded storage") {
       }
       {
         uint8_t overflow[32769] = {0};
+        crypto_tls_test_memory_stats before, after, delta;
+        check_true(crypto_tls_stream_test_memory_snapshot(&before));
         size_t capacity = crypto_tls_stream_cipher_input_capacity(stream_pair[1]);
         check_equal(crypto_tls_stream_feed_cipher(stream_pair[1], overflow, sizeof(overflow)),
                     CRYPTO_TLS_STREAM_ENOBUFS);
         check_equal(crypto_tls_stream_cipher_input_capacity(stream_pair[1]), capacity);
+        check_true(crypto_tls_stream_test_memory_snapshot(&after));
+        check_equal(tls_mixed_memory_delta(&before, &after, &delta), SALTS_OK);
+        check_equal(delta.copied_bytes[CRYPTO_TLS_TEST_COPY_CIPHER_INPUT], UINT64_C(0));
+        check_equal(delta.copy_calls[CRYPTO_TLS_TEST_COPY_CIPHER_INPUT], UINT64_C(0));
       }
       {
         const uint8_t payload[] = "retained-policy";
         uint8_t received[32] = {0};
         size_t size = 0u;
         bool written = false, peer_closed = false;
+        crypto_tls_test_memory_stats before, after, delta;
+        check_true(crypto_tls_stream_test_memory_snapshot(&before));
         check_equal(crypto_tls_stream_write(stream_pair[0], payload, sizeof(payload), &written),
                     CRYPTO_TLS_STREAM_OK);
         check_true(written);
@@ -150,6 +159,31 @@ spec("Opaque Crypto streams retain policy and bounded storage") {
         check_false(peer_closed);
         check_equal(size, sizeof(payload));
         check_equal(received, payload, size);
+        check_true(crypto_tls_stream_test_memory_snapshot(&after));
+        check_equal(tls_mixed_memory_delta(&before, &after, &delta), SALTS_OK);
+        check_equal(tls_mixed_memory_check(&delta, sizeof(payload)), SALTS_OK);
+        /* A second record forces real pending-plaintext delivery, including
+         * the short final remainder, in both TLS versions. */
+        check_true(crypto_tls_stream_test_memory_snapshot(&before));
+        written = false;
+        check_equal(crypto_tls_stream_write(stream_pair[0], payload, sizeof(payload), &written), CRYPTO_TLS_STREAM_OK);
+        check_true(written);
+        transfer_stream_cipher(0, 1);
+        size_t total = 0u;
+        for (unsigned step = 0u; total < sizeof(payload) && step < 32u; ++step) {
+          size = 0u;
+          check_equal(crypto_tls_stream_read(stream_pair[1], received + total, 3u, &size, &peer_closed), CRYPTO_TLS_STREAM_OK);
+          check_false(peer_closed);
+          check_less_equal(size, 3u);
+          total += size;
+        }
+        check_equal(total, sizeof(payload));
+        check_equal(received, payload, total);
+        check_true(crypto_tls_stream_test_memory_snapshot(&after));
+        check_equal(tls_mixed_memory_delta(&before, &after, &delta), SALTS_OK);
+        check_equal(tls_mixed_memory_check(&delta, sizeof(payload)), SALTS_OK);
+        check_equal(delta.copied_bytes[CRYPTO_TLS_TEST_COPY_PLAINTEXT], UINT64_C(3));
+        check_equal(delta.copied_bytes[CRYPTO_TLS_TEST_COPY_PENDING_PLAINTEXT], (uint64_t)sizeof(payload) - 3u);
       }
       {
         bool generated = false, peer = false, pending = false;
@@ -167,6 +201,51 @@ spec("Opaque Crypto streams retain policy and bounded storage") {
         check_equal(crypto_tls_stream_shutdown(stream_pair[0], &generated, &peer), CRYPTO_TLS_STREAM_OK);
         check_true(peer);
       }
+    }
+  }
+}
+
+typedef struct tls_memory_worker {
+  crypto_tls_test_memory_stats before, after;
+  int status;
+} tls_memory_worker;
+static void tls_memory_on_worker(void *user) {
+  tls_memory_worker *state = user;
+  crypto_tls_stream_context *context = NULL;
+  crypto_tls_stream *stream = NULL;
+  crypto_tls_stream_client_config config = {sizeof(config)};
+  config.ca_file = CRYPTO_NATIVE_BENCH_CA;
+  if (!crypto_tls_stream_test_memory_snapshot(&state->before)) { state->status = SALTS_EIO; return; }
+  state->status = crypto_tls_stream_client_context_create(&config, &context);
+  if (state->status == CRYPTO_TLS_STREAM_OK)
+    state->status = crypto_tls_stream_create(context, false, "localhost", CRYPTO_TLS_STREAM_MIN_IO_BUFFER_BYTES, &stream);
+  crypto_tls_stream_destroy(stream);
+  crypto_tls_stream_context_release(context);
+  if (!crypto_tls_stream_test_memory_snapshot(&state->after)) state->status = SALTS_EIO;
+}
+spec("TLS adapter memory diagnostics") {
+  it("isolates real TLS construction and destruction on another owner thread") {
+    cmeta_thread_t thread;
+    tls_memory_worker state = {0};
+    crypto_tls_test_memory_stats before, after, delta;
+    check_false(crypto_tls_stream_test_memory_snapshot(NULL));
+    check_true(crypto_tls_stream_test_memory_snapshot(&before));
+    check_equal(cmeta_thread_create(&thread, tls_memory_on_worker, &state), SALTS_OK);
+    check_equal(cmeta_thread_join(&thread), SALTS_OK);
+    check_equal(state.status, CRYPTO_TLS_STREAM_OK);
+    check_equal(state.before.allocation_calls, UINT64_C(0));
+    check_equal(state.before.releases, UINT64_C(0));
+    check_equal(tls_mixed_memory_delta(&state.before, &state.after, &delta), SALTS_OK);
+    check_greater(delta.allocation_calls, UINT64_C(0));
+    check_greater(delta.successful_bytes, UINT64_C(0));
+    check_greater(delta.releases, UINT64_C(0));
+    check_equal(delta.failures, UINT64_C(0));
+    check_true(crypto_tls_stream_test_memory_snapshot(&after));
+    check_equal(tls_mixed_memory_delta(&before, &after, &delta), SALTS_OK);
+    check_equal(tls_mixed_memory_check(&delta, 0u), SALTS_OK);
+    for (size_t i = 0u; i < CRYPTO_TLS_TEST_COPY_COUNT; ++i) {
+      check_equal(delta.copy_calls[i], UINT64_C(0));
+      check_equal(delta.copied_bytes[i], UINT64_C(0));
     }
   }
 }
@@ -470,6 +549,7 @@ typedef struct native_tls_fixture {
   struct sockaddr_in address;
   mem_buffer_t *source;
   size_t chunk, offered, completed, received, receive_offset, target;
+  size_t mixed_plaintext_capacity;
   size_t continuations;
   bool retained, accepted, closing, stopping;
   unsigned char plaintext[NATIVE_TLS_BYTES];
@@ -567,7 +647,8 @@ static int native_tls_pump(native_tls_fixture *f, size_t index) {
     if (f->mixed->credit[index]) {
       size_t bytes = 0u;
       bool peer_closed = false;
-      status = crypto_tls_stream_read(end->stream, f->plaintext, sizeof(f->plaintext), &bytes, &peer_closed);
+      status = crypto_tls_stream_read(end->stream, f->plaintext,
+          f->mixed_plaintext_capacity ? f->mixed_plaintext_capacity : sizeof(f->plaintext), &bytes, &peer_closed);
       if (status != CRYPTO_TLS_STREAM_OK || peer_closed) return SALTS_EPROTO;
       if (bytes != 0u) tls_mixed_received(f->mixed, index, f->plaintext, bytes);
     }
@@ -967,18 +1048,24 @@ static int tls_mixed_native_sample(bool report, unsigned repetition, size_t chun
   int result = 0, phase_status = SALTS_EIO;
   uint64_t handshake_ns, close_ns[2] = {0};
   tls_mixed_result warm, measured;
+  crypto_tls_test_memory_stats start_memory, setup_memory, closing_memory, end_memory, setup_delta, close_delta;
   const size_t exchanges = report ? TLS_MIXED_EXCHANGES : 8u;
   if (!f) return __LINE__;
+  NATIVE_TLS_REQUIRE(crypto_tls_stream_test_memory_snapshot(&start_memory));
   NATIVE_TLS_REQUIRE(tls_mixed_init(&f->state, 1u) == SALTS_OK);
   for (size_t i = 0u; i < 2u; ++i) {
     f->pair[i].mixed = &f->state.lane[i];
+    if (chunk < NATIVE_TLS_IO) f->pair[i].mixed_plaintext_capacity = 1023u;
     ++f->initialized;
     NATIVE_TLS_REQUIRE(native_tls_setup(&f->pair[i], chunk, &handshake_ns) == SALTS_OK);
   }
   NATIVE_TLS_REQUIRE(strcmp(f->pair[0].ends[0].version, f->pair[1].ends[0].version) == 0);
   NATIVE_TLS_REQUIRE(strcmp(f->pair[0].ends[0].cipher, f->pair[1].ends[0].cipher) == 0);
+  NATIVE_TLS_REQUIRE(crypto_tls_stream_test_memory_snapshot(&setup_memory));
+  NATIVE_TLS_REQUIRE(tls_mixed_memory_delta(&start_memory, &setup_memory, &setup_delta) == SALTS_OK);
+  NATIVE_TLS_REQUIRE(setup_delta.allocation_calls > 0u && setup_delta.requested_bytes > 0u && setup_delta.failures == 0u);
   const tls_mixed_ops ops = {f, tls_mixed_native_send, tls_mixed_native_receive,
-      tls_mixed_native_progress, tls_mixed_native_snapshot};
+      tls_mixed_native_progress, tls_mixed_native_snapshot, crypto_tls_stream_test_memory_snapshot};
   NATIVE_TLS_REQUIRE(tls_mixed_phase(&f->state, &ops, 8u, &warm) == SALTS_OK);
   const size_t before_continuations = f->pair[0].continuations + f->pair[1].continuations;
   if (report) {
@@ -989,13 +1076,29 @@ static int tls_mixed_native_sample(bool report, unsigned repetition, size_t chun
   if (phase_status != SALTS_OK) fprintf(stderr, "direct TLS mixed phase status=%d chunk=%zu\n", phase_status, chunk);
   NATIVE_TLS_REQUIRE(phase_status == SALTS_OK && measured.calls == 0u);
   if (chunk < NATIVE_TLS_IO)
-    NATIVE_TLS_REQUIRE(f->pair[0].continuations + f->pair[1].continuations > before_continuations);
+    NATIVE_TLS_REQUIRE(f->pair[0].continuations + f->pair[1].continuations > before_continuations &&
+        measured.memory.copied_bytes[CRYPTO_TLS_TEST_COPY_PENDING_PLAINTEXT] +
+        measured.drain_memory.copied_bytes[CRYPTO_TLS_TEST_COPY_PENDING_PLAINTEXT] > 0u);
+  NATIVE_TLS_REQUIRE(crypto_tls_stream_test_memory_snapshot(&closing_memory));
   for (size_t i = 0u; i < 2u; ++i) NATIVE_TLS_REQUIRE(native_tls_close(&f->pair[i], &close_ns[i]) == SALTS_OK);
   if (report) tls_mixed_print("nativeio", repetition, &f->state, &measured, close_ns[0] + close_ns[1],
                              f->pair[0].ends[0].version, f->pair[0].ends[0].cipher);
 cleanup:;
   bool quiet = true;
   for (size_t i = 0u; i < f->initialized; ++i) if (!native_tls_dispose(&f->pair[i])) quiet = false;
+  if (quiet && result == 0) {
+    if (!crypto_tls_stream_test_memory_snapshot(&end_memory) ||
+        tls_mixed_memory_delta(&closing_memory, &end_memory, &close_delta) != SALTS_OK ||
+        close_delta.failures || close_delta.releases == 0u) result = __LINE__;
+    else if (report) {
+      tls_mixed_memory_print("nativeio", repetition, 1u, "setup", &setup_delta);
+      tls_mixed_memory_print("nativeio", repetition, 1u, "warm", &warm.memory);
+      tls_mixed_memory_print("nativeio", repetition, 1u, "warm_drain", &warm.drain_memory);
+      tls_mixed_memory_print("nativeio", repetition, 1u, "transfer", &measured.memory);
+      tls_mixed_memory_print("nativeio", repetition, 1u, "drain", &measured.drain_memory);
+      tls_mixed_memory_print("nativeio", repetition, 1u, "close_destroy", &close_delta);
+    }
+  }
   if (quiet) { tls_mixed_release(&f->state); free(f); return result; }
   return result ? result : __LINE__; /* Retain the whole live parent/transport fixture. */
 }
