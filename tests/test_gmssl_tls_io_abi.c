@@ -512,7 +512,7 @@ static int native_tls_offer(native_tls_fixture *f) {
   mem_buffer_retain(f->source);
   f->retained = true;
   f->accepted = false;
-  f->starts[f->offered++] = cmeta_hrtime();
+  ++f->offered;
   return SALTS_OK;
 }
 static int native_tls_flush(native_tls_fixture *f, native_tls_end *end) {
@@ -657,6 +657,7 @@ static int native_tls_transfer(native_tls_fixture *f, size_t operations, bool ch
   const uint64_t start = cmeta_hrtime(), deadline = start + UINT64_C(20000000000);
   while ((f->completed != operations || f->received != operations) && cmeta_hrtime() < deadline) {
     if (!f->retained && f->offered < operations) {
+      f->starts[f->offered] = cmeta_hrtime();
       if (native_tls_offer(f) != SALTS_OK) return SALTS_EPROTO;
       if (check_full && (native_tls_offer(f) != SALTS_ENOBUFS ||
           mem_buffer_ref_count(f->source) != 2u)) return SALTS_EPROTO;
