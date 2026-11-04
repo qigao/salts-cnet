@@ -104,6 +104,11 @@ CRYPTO_TLS_API crypto_tls_result crypto_tls_session_create(
     crypto_tls_session **out_session);
 CRYPTO_TLS_API crypto_tls_result crypto_tls_session_handshake(
     crypto_tls_session *session);
+/* AGAIN reserves the pending send: retry with the identical data pointer and
+ * length, keeping the range alive and immutable until success or termination.
+ * A different send range, receive or shutdown returns BUSY while it is pending.
+ * OK reports the consumed prefix in out_sent; only then advance the range.
+ * Once shutdown starts, further sends return CLOSED. */
 CRYPTO_TLS_API crypto_tls_result crypto_tls_session_send(
     crypto_tls_session *session, const uint8_t *data,
     size_t len, size_t *out_sent);

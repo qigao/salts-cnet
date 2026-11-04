@@ -429,6 +429,17 @@ static int run_case(const tls_case_options *options) {
     REQUIRE(cnet_tls_peer_certificate_sha256(&client, outbound,
                                              fingerprint) == SALTS_OK);
     REQUIRE(strlen(fingerprint) == 64u);
+    {
+      uint8_t client_binding[CNET_TLS_SERVER_END_POINT_MAX_BYTES];
+      uint8_t server_binding[CNET_TLS_SERVER_END_POINT_MAX_BYTES];
+      size_t client_size = 0u, server_size = 0u;
+      REQUIRE(cnet_tls_server_end_point_binding(&client, outbound,
+          client_binding, sizeof(client_binding), &client_size) == SALTS_OK);
+      REQUIRE(cnet_tls_server_end_point_binding(&server, server_probe.connection,
+          server_binding, sizeof(server_binding), &server_size) == SALTS_OK);
+      REQUIRE(client_size != 0u && client_size == server_size);
+      REQUIRE(memcmp(client_binding, server_binding, client_size) == 0);
+    }
     if (options->server_ca_file != NULL) {
       char client_certificate_hash[CNET_TLS_PEER_CERTIFICATE_SHA256_CAPACITY] = {0};
       REQUIRE(cnet_tls_peer_certificate_sha256(

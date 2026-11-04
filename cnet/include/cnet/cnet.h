@@ -1312,14 +1312,15 @@ int cnet_tls_peer_certificate_sha256(cnet_client *client, cnet_connection connec
                                      char buffer[CNET_TLS_PEER_CERTIFICATE_SHA256_CAPACITY]);
 
 /**
- * Copies the RFC 5929 `tls-server-end-point` binding for the verified peer
- * leaf certificate on this exact TLS connection. MD5/SHA-1 certificate
- * signatures are upgraded to SHA-256; otherwise the certificate signature
+ * Copies the RFC 5929 `tls-server-end-point` binding for the server's
+ * handshake leaf certificate on this exact TLS connection: the verified
+ * peer leaf for a client, the selected local leaf for a server (also in mTLS).
+ * MD5/SHA-1 certificate signatures are upgraded to SHA-256; otherwise the certificate signature
  * digest is used. `out_size` receives the required/copied digest width.
  *
  * The query is valid only after TLS verification succeeds and while the
  * generation-checked connection remains open. Plaintext returns
- * `SALTS_ENOTSUP`; incomplete TLS returns `SALTS_ENOTCONN`; a missing peer
+ * `SALTS_ENOTSUP`; incomplete TLS returns `SALTS_ENOTCONN`; a missing server
  * certificate returns `SALTS_ENOENT`; an unsupported certificate signature
  * digest returns `SALTS_ENOTSUP`; an undersized output returns
  * `SALTS_EMSGSIZE` with the required width in `out_size`.

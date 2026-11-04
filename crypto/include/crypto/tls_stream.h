@@ -187,7 +187,10 @@ int crypto_tls_stream_read(crypto_tls_stream *state, void *buffer, size_t capaci
 int crypto_tls_stream_probe_peer_close(crypto_tls_stream *state, bool *out_peer_closed,
                               bool *out_plaintext_pending);
 /* out_peer_notify_received is true only for an authenticated TLS close_notify.
- * A socket EOF cannot satisfy a locally initiated reciprocal shutdown. */
+ * A socket EOF cannot satisfy a locally initiated reciprocal shutdown.
+ * An incomplete write returns EBUSY without starting shutdown; finish that
+ * identical write first. Once shutdown starts, new writes return ENOTCONN,
+ * including when output backpressure delays the first close_notify byte. */
 int crypto_tls_stream_shutdown(crypto_tls_stream *state, bool *out_notify_generated,
                       bool *out_peer_notify_received);
 /* ALPN and peer-chain views borrow immutable stream storage until destroy.
@@ -211,6 +214,9 @@ int crypto_tls_stream_get_peer_certificate_chain(
 int crypto_tls_stream_server_end_point_binding_from_certificate(
     const uint8_t *certificate, size_t certificate_size,
     uint8_t *output, size_t capacity, size_t *out_size);
+/* RFC 5929: hashes the server's handshake certificate on BOTH endpoints.
+ * A server uses its selected local leaf; a client uses its verified peer leaf.
+ * Client certificates used for mTLS do not change this binding. */
 int crypto_tls_stream_server_end_point_binding(
     const crypto_tls_stream *state, uint8_t *output, size_t capacity,
     size_t *out_size);
