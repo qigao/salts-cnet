@@ -20,6 +20,63 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "crypto_tls_memory_test.h"
+#if defined(CRYPTO_TLS_STREAM_TESTING)
+static _Thread_local crypto_tls_test_memory_stats crypto_tls_test_memory;
+
+static void crypto_tls_test_add(uint64_t *value, uint64_t amount) {
+  if (amount > UINT64_MAX - *value) {
+    *value = UINT64_MAX;
+    crypto_tls_test_memory.overflow = true;
+  } else *value += amount;
+}
+bool crypto_tls_stream_test_memory_snapshot(crypto_tls_test_memory_stats *out) {
+  if (out == NULL) return false;
+  *out = crypto_tls_test_memory;
+  return true;
+}
+static void crypto_tls_test_allocation(size_t bytes, const void *result) {
+  crypto_tls_test_add(&crypto_tls_test_memory.allocation_calls, 1u);
+  crypto_tls_test_add(&crypto_tls_test_memory.requested_bytes, (uint64_t)bytes);
+  if (result != NULL) crypto_tls_test_add(&crypto_tls_test_memory.successful_bytes, (uint64_t)bytes);
+  else crypto_tls_test_add(&crypto_tls_test_memory.failures, 1u);
+}
+static void *crypto_tls_stream_malloc(size_t bytes) {
+  void *result = malloc(bytes);
+  crypto_tls_test_allocation(bytes, result);
+  return result;
+}
+static void *crypto_tls_stream_calloc(size_t count, size_t bytes) {
+  void *result = calloc(count, bytes);
+  if (count != 0u && bytes > SIZE_MAX / count) {
+    crypto_tls_test_memory.overflow = true;
+    crypto_tls_test_allocation(SIZE_MAX, result);
+  } else crypto_tls_test_allocation(count * bytes, result);
+  return result;
+}
+static void *crypto_tls_stream_realloc(void *old, size_t bytes) {
+  void *result = realloc(old, bytes);
+  crypto_tls_test_allocation(bytes, result);
+  return result;
+}
+static void crypto_tls_stream_free(void *value) {
+  if (value != NULL) crypto_tls_test_add(&crypto_tls_test_memory.releases, 1u);
+  free(value);
+}
+static void *crypto_tls_stream_copy(crypto_tls_test_copy_kind kind, void *to, const void *from, size_t bytes) {
+  void *result = memcpy(to, from, bytes);
+  crypto_tls_test_add(&crypto_tls_test_memory.copy_calls[kind], 1u);
+  crypto_tls_test_add(&crypto_tls_test_memory.copied_bytes[kind], (uint64_t)bytes);
+  return result;
+}
+#else
+#define crypto_tls_stream_malloc malloc
+#define crypto_tls_stream_calloc calloc
+#define crypto_tls_stream_realloc realloc
+#define crypto_tls_stream_free free
+#define crypto_tls_stream_copy(kind, to, from, bytes) memcpy((to), (from), (bytes))
+#endif
+
 #if defined(_WIN32)
   #include <winsock2.h>
   #include <windows.h>
@@ -177,7 +234,7 @@ static int crypto_tls_stream_der_bundle_append(crypto_tls_stream_der_bundle *bun
   status = crypto_tls_stream_der_bundle_required_size(bundle->size, size, &required);
   if (status != CRYPTO_TLS_STREAM_OK) return status;
   if (required <= bundle->capacity) {
-    memcpy(bundle->data + bundle->size, data, size);
+    crypto_tls_stream_copy(CRYPTO_TLS_TEST_COPY_METADATA, bundle->data + bundle->size, data, size);
     bundle->size = required;
     return CRYPTO_TLS_STREAM_OK;
   }
@@ -191,18 +248,18 @@ static int crypto_tls_stream_der_bundle_append(crypto_tls_stream_der_bundle *bun
     capacity *= 2u;
   }
   if (capacity < required) return CRYPTO_TLS_STREAM_ERANGE;
-  next = (unsigned char *)realloc(bundle->data, capacity);
+  next = (unsigned char *)crypto_tls_stream_realloc(bundle->data, capacity);
   if (next == NULL) return CRYPTO_TLS_STREAM_ENOMEM;
   bundle->data = next;
   bundle->capacity = capacity;
-  memcpy(bundle->data + bundle->size, data, size);
+  crypto_tls_stream_copy(CRYPTO_TLS_TEST_COPY_METADATA, bundle->data + bundle->size, data, size);
   bundle->size = required;
   return CRYPTO_TLS_STREAM_OK;
 }
 
 static void crypto_tls_stream_der_bundle_dispose(crypto_tls_stream_der_bundle *bundle) {
   if (bundle == NULL) return;
-  free(bundle->data);
+  crypto_tls_stream_free(bundle->data);
   memset(bundle, 0, sizeof(*bundle));
 }
 
@@ -530,8 +587,8 @@ static void crypto_tls_stream_alpn_dispose(crypto_tls_stream_context *context) {
   size_t index;
   if (context == NULL || context->alpn_protocols == NULL) return;
   for (index = 0u; index < context->alpn_protocol_count; ++index)
-    free(context->alpn_protocols[index]);
-  free(context->alpn_protocols);
+    crypto_tls_stream_free(context->alpn_protocols[index]);
+  crypto_tls_stream_free(context->alpn_protocols);
   context->alpn_protocols = NULL;
   context->alpn_protocol_count = 0u;
 }
@@ -557,18 +614,18 @@ static int crypto_tls_stream_alpn_copy(crypto_tls_stream_context *context,
   }
 
   if (count > SIZE_MAX / sizeof(char *)) return CRYPTO_TLS_STREAM_ERANGE;
-  context->alpn_protocols = (char **)calloc(count, sizeof(char *));
+  context->alpn_protocols = (char **)crypto_tls_stream_calloc(count, sizeof(char *));
   if (context->alpn_protocols == NULL) return CRYPTO_TLS_STREAM_ENOMEM;
   context->alpn_protocol_count = count;
 
   for (index = 0u; index < count; ++index) {
     size_t length = strlen(protocols[index]);
-    context->alpn_protocols[index] = (char *)malloc(length + 1u);
+    context->alpn_protocols[index] = (char *)crypto_tls_stream_malloc(length + 1u);
     if (context->alpn_protocols[index] == NULL) {
       crypto_tls_stream_alpn_dispose(context);
       return CRYPTO_TLS_STREAM_ENOMEM;
     }
-    memcpy(context->alpn_protocols[index], protocols[index], length + 1u);
+    crypto_tls_stream_copy(CRYPTO_TLS_TEST_COPY_METADATA, context->alpn_protocols[index], protocols[index], length + 1u);
   }
   return CRYPTO_TLS_STREAM_OK;
 }
@@ -736,7 +793,7 @@ static void crypto_tls_stream_context_dispose(crypto_tls_stream_context *context
     if (context->tls_ready[index]) tls_ctx_cleanup(&context->tls[index]);
   }
   crypto_tls_stream_alpn_dispose(context);
-  free(context);
+  crypto_tls_stream_free(context);
 }
 
 void crypto_tls_stream_context_retain(crypto_tls_stream_context *context) {
@@ -765,7 +822,7 @@ static int crypto_tls_stream_context_create_common(
   if (out_context == NULL) return CRYPTO_TLS_STREAM_EINVAL;
   *out_context = NULL;
 
-  context = (crypto_tls_stream_context *)calloc(1u, sizeof(*context));
+  context = (crypto_tls_stream_context *)crypto_tls_stream_calloc(1u, sizeof(*context));
   if (context == NULL) return CRYPTO_TLS_STREAM_ENOMEM;
   context->server = server;
   context->verify_peer = verify_peer;
@@ -841,7 +898,7 @@ int crypto_tls_stream_client_context_create(const crypto_tls_stream_client_confi
       config->security_profile, &context);
   if (status != CRYPTO_TLS_STREAM_OK) return status;
   if (config->server_name != NULL)
-    memcpy(context->client_server_name, config->server_name,
+    crypto_tls_stream_copy(CRYPTO_TLS_TEST_COPY_METADATA, context->client_server_name, config->server_name,
            strlen(config->server_name) + 1u);
   *out_context = context;
   return CRYPTO_TLS_STREAM_OK;
@@ -887,11 +944,12 @@ int crypto_tls_stream_server_context_create(const crypto_tls_stream_server_confi
   return CRYPTO_TLS_STREAM_OK;
 }
 
-static size_t crypto_tls_stream_ring_write(unsigned char *buffer, size_t capacity,
+static size_t crypto_tls_stream_ring_write(crypto_tls_test_copy_kind kind, unsigned char *buffer, size_t capacity,
                                   size_t head, size_t size,
                                   const unsigned char *data, size_t length) {
   size_t tail;
   size_t first;
+  (void)kind;
   if (buffer == NULL || data == NULL || capacity == 0u ||
       size >= capacity || length == 0u)
     return 0u;
@@ -899,23 +957,24 @@ static size_t crypto_tls_stream_ring_write(unsigned char *buffer, size_t capacit
   tail = (head + size) % capacity;
   first = capacity - tail;
   if (first > length) first = length;
-  memcpy(buffer + tail, data, first);
-  if (length > first) memcpy(buffer, data + first, length - first);
+  crypto_tls_stream_copy(kind, buffer + tail, data, first);
+  if (length > first) crypto_tls_stream_copy(kind, buffer, data + first, length - first);
   return length;
 }
 
-static size_t crypto_tls_stream_ring_read(unsigned char *buffer, size_t capacity,
+static size_t crypto_tls_stream_ring_read(crypto_tls_test_copy_kind kind, unsigned char *buffer, size_t capacity,
                                  size_t *head, size_t *size,
                                  unsigned char *data, size_t length) {
   size_t first;
+  (void)kind;
   if (buffer == NULL || head == NULL || size == NULL || data == NULL ||
       capacity == 0u || *size == 0u || length == 0u)
     return 0u;
   if (length > *size) length = *size;
   first = capacity - *head;
   if (first > length) first = length;
-  memcpy(data, buffer + *head, first);
-  if (length > first) memcpy(data + first, buffer, length - first);
+  crypto_tls_stream_copy(kind, data, buffer + *head, first);
+  if (length > first) crypto_tls_stream_copy(kind, data + first, buffer, length - first);
   *head = (*head + length) % capacity;
   *size -= length;
   return length;
@@ -931,8 +990,8 @@ static size_t crypto_tls_stream_ring_peek(const unsigned char *buffer, size_t ca
   if (length > size) length = size;
   first = capacity - head;
   if (first > length) first = length;
-  memcpy(data, buffer + head, first);
-  if (length > first) memcpy(data + first, buffer, length - first);
+  crypto_tls_stream_copy(CRYPTO_TLS_TEST_COPY_RECORD_HEADER, data, buffer + head, first);
+  if (length > first) crypto_tls_stream_copy(CRYPTO_TLS_TEST_COPY_RECORD_HEADER, data + first, buffer, length - first);
   return length;
 }
 
@@ -985,7 +1044,7 @@ int crypto_tls_stream_test_receive_record_gate(unsigned phase, const uint8_t *ci
   crypto_tls_stream_gmssl_state engine = {0};
   if (out_ready == NULL || cipher == NULL || size > sizeof(ring) || phase > 3u)
     return CRYPTO_TLS_STREAM_EINVAL;
-  memcpy(ring, cipher, size);
+  crypto_tls_stream_copy(CRYPTO_TLS_TEST_COPY_METADATA, ring, cipher, size);
   engine.cipher_input = ring;
   engine.capacity = sizeof(ring);
   engine.input_size = size;
@@ -1009,7 +1068,7 @@ static tls_ret_t crypto_tls_stream_io_send(void *user, const void *buffer, size_
   engine->diagnostic_send_requested += length;
 #endif
   written = crypto_tls_stream_ring_write(
-      engine->cipher_output, engine->capacity, engine->output_head,
+      CRYPTO_TLS_TEST_COPY_PROVIDER_SEND, engine->cipher_output, engine->capacity, engine->output_head,
       engine->output_size, (const unsigned char *)buffer, length);
   if (written == 0u) return TLS_ERROR_SEND_AGAIN;
   engine->output_size += written;
@@ -1027,7 +1086,7 @@ static tls_ret_t crypto_tls_stream_io_recv(void *user, void *buffer, size_t leng
   if (engine == NULL || buffer == NULL || length == 0u)
     return TLS_ERROR_SYSCALL;
   read_size = crypto_tls_stream_ring_read(
-      engine->cipher_input, engine->capacity, &engine->input_head,
+      CRYPTO_TLS_TEST_COPY_PROVIDER_RECEIVE, engine->cipher_input, engine->capacity, &engine->input_head,
       &engine->input_size, (unsigned char *)buffer, length);
   if (read_size == 0u) return TLS_ERROR_RECV_AGAIN;
   return (tls_ret_t)read_size;
@@ -1178,13 +1237,13 @@ static int crypto_tls_stream_init(crypto_tls_stream *state, crypto_tls_stream_co
   allocation_size = sizeof(crypto_tls_stream_gmssl_state) + ring_capacity * 2u;
   if (io_buffer_bytes > SIZE_MAX - allocation_size) return CRYPTO_TLS_STREAM_ERANGE;
   allocation_size += io_buffer_bytes;
-  engine = (crypto_tls_stream_gmssl_state *)calloc(1u, allocation_size);
-  read_buffer = (unsigned char *)malloc(io_buffer_bytes);
-  write_buffer = (unsigned char *)malloc(io_buffer_bytes);
+  engine = (crypto_tls_stream_gmssl_state *)crypto_tls_stream_calloc(1u, allocation_size);
+  read_buffer = (unsigned char *)crypto_tls_stream_malloc(io_buffer_bytes);
+  write_buffer = (unsigned char *)crypto_tls_stream_malloc(io_buffer_bytes);
   if (engine == NULL || read_buffer == NULL || write_buffer == NULL) {
-    free(write_buffer);
-    free(read_buffer);
-    free(engine);
+    crypto_tls_stream_free(write_buffer);
+    crypto_tls_stream_free(read_buffer);
+    crypto_tls_stream_free(engine);
     return CRYPTO_TLS_STREAM_ENOMEM;
   }
 
@@ -1195,7 +1254,7 @@ static int crypto_tls_stream_init(crypto_tls_stream *state, crypto_tls_stream_co
    * Provider reads/probes and pending plaintext must not alias that storage. */
   engine->plaintext = engine->cipher_output + ring_capacity;
   if (!server)
-    memcpy(engine->server_name, server_name, strlen(server_name) + 1u);
+    crypto_tls_stream_copy(CRYPTO_TLS_TEST_COPY_METADATA, engine->server_name, server_name, strlen(server_name) + 1u);
 
   state->context = context;
   state->engine = engine;
@@ -1218,9 +1277,9 @@ static int crypto_tls_stream_init(crypto_tls_stream *state, crypto_tls_stream_co
     state->io_buffer_bytes = 0u;
     state->server = false;
     if (engine->connection_ready) tls_cleanup(&engine->connection);
-    free(write_buffer);
-    free(read_buffer);
-    free(engine);
+    crypto_tls_stream_free(write_buffer);
+    crypto_tls_stream_free(read_buffer);
+    crypto_tls_stream_free(engine);
     return status;
   }
   return CRYPTO_TLS_STREAM_OK;
@@ -1234,12 +1293,12 @@ void crypto_tls_stream_destroy(crypto_tls_stream *state) {
   engine = CRYPTO_TLS_STREAM_ENGINE(state);
   if (engine != NULL && engine->connection_ready)
     tls_cleanup(&engine->connection);
-  free(engine);
-  free(state->write_buffer);
-  free(state->read_buffer);
+  crypto_tls_stream_free(engine);
+  crypto_tls_stream_free(state->write_buffer);
+  crypto_tls_stream_free(state->read_buffer);
   memset(state, 0, sizeof(*state));
   crypto_tls_stream_context_release(context);
-  free(state);
+  crypto_tls_stream_free(state);
 }
 
 static bool crypto_tls_stream_retryable(int result) {
@@ -1401,7 +1460,7 @@ static int crypto_tls_stream_finish_handshake(crypto_tls_stream *state,
   if (result == 1) {
     if (alpn_size == 0u || alpn_size > CRYPTO_TLS_STREAM_ALPN_NAME_MAX_BYTES)
       return CRYPTO_TLS_STREAM_EPROTO;
-    memcpy(state->negotiated_alpn, alpn, alpn_size);
+    crypto_tls_stream_copy(CRYPTO_TLS_TEST_COPY_METADATA, state->negotiated_alpn, alpn, alpn_size);
     state->negotiated_alpn_size = alpn_size;
   }
 
@@ -1523,7 +1582,7 @@ int crypto_tls_stream_feed_cipher(crypto_tls_stream *state, const void *data, si
     return CRYPTO_TLS_STREAM_EINVAL;
   if (size > engine->capacity - engine->input_size) return CRYPTO_TLS_STREAM_ENOBUFS;
   written = crypto_tls_stream_ring_write(
-      engine->cipher_input, engine->capacity, engine->input_head,
+      CRYPTO_TLS_TEST_COPY_CIPHER_INPUT, engine->cipher_input, engine->capacity, engine->input_head,
       engine->input_size, (const unsigned char *)data, size);
   if (written != size) return CRYPTO_TLS_STREAM_EIO;
   engine->input_size += written;
@@ -1557,7 +1616,7 @@ int crypto_tls_stream_take_cipher(crypto_tls_stream *state, void *buffer,
     return CRYPTO_TLS_STREAM_EINVAL;
   if (engine->output_size == 0u) return CRYPTO_TLS_STREAM_ENOENT;
   read_size = crypto_tls_stream_ring_read(
-      engine->cipher_output, engine->capacity, &engine->output_head,
+      CRYPTO_TLS_TEST_COPY_CIPHER_OUTPUT, engine->cipher_output, engine->capacity, &engine->output_head,
       &engine->output_size, (unsigned char *)buffer, capacity);
   if (read_size == 0u) return CRYPTO_TLS_STREAM_EIO;
   *out_size = read_size;
@@ -1620,7 +1679,7 @@ static int crypto_tls_stream_read_pending(crypto_tls_stream *state, void *buffer
   available =
       engine->plaintext_pending_size - engine->plaintext_pending_offset;
   size = capacity < available ? capacity : available;
-  memcpy(buffer, engine->plaintext + engine->plaintext_pending_offset, size);
+  crypto_tls_stream_copy(CRYPTO_TLS_TEST_COPY_PENDING_PLAINTEXT, buffer, engine->plaintext + engine->plaintext_pending_offset, size);
   engine->plaintext_pending_offset += size;
   if (engine->plaintext_pending_offset == engine->plaintext_pending_size) {
     engine->plaintext_pending_offset = 0u;
@@ -1673,7 +1732,7 @@ int crypto_tls_stream_read(crypto_tls_stream *state, void *buffer, size_t capaci
   if (result == 1) {
     if (received_size > state->io_buffer_bytes) return CRYPTO_TLS_STREAM_EPROTO;
     copy_size = capacity < received_size ? capacity : received_size;
-    if (copy_size != 0u) memcpy(buffer, engine->plaintext, copy_size);
+    if (copy_size != 0u) crypto_tls_stream_copy(CRYPTO_TLS_TEST_COPY_PLAINTEXT, buffer, engine->plaintext, copy_size);
     *out_size = copy_size;
     if (copy_size < received_size) {
       engine->plaintext_pending_offset = copy_size;
@@ -1815,7 +1874,7 @@ static int crypto_tls_stream_copy_session_string(const crypto_tls_stream *state,
   if (value == NULL || value[0] == '\0') return CRYPTO_TLS_STREAM_ENOENT;
   size = strlen(value);
   if (capacity <= size) return CRYPTO_TLS_STREAM_EMSGSIZE;
-  memcpy(buffer, value, size + 1u);
+  crypto_tls_stream_copy(CRYPTO_TLS_TEST_COPY_METADATA, buffer, value, size + 1u);
   *out_size = size;
   return CRYPTO_TLS_STREAM_OK;
 }
@@ -1956,7 +2015,7 @@ int crypto_tls_stream_server_end_point_binding_from_certificate(
     memset(digest_bytes, 0, sizeof(digest_bytes));
     return CRYPTO_TLS_STREAM_EIO;
   }
-  memcpy(output, digest_bytes, digest_size);
+  crypto_tls_stream_copy(CRYPTO_TLS_TEST_COPY_METADATA, output, digest_bytes, digest_size);
   memset(digest_bytes, 0, sizeof(digest_bytes));
   return CRYPTO_TLS_STREAM_OK;
 }
@@ -2079,10 +2138,10 @@ int crypto_tls_stream_create(crypto_tls_stream_context *context, bool server,
   if (out_stream == NULL) return CRYPTO_TLS_STREAM_EINVAL;
   *out_stream = NULL;
   if (context == NULL) return CRYPTO_TLS_STREAM_EINVAL;
-  stream = calloc(1u, sizeof(*stream));
+  stream = crypto_tls_stream_calloc(1u, sizeof(*stream));
   if (stream == NULL) return CRYPTO_TLS_STREAM_ENOMEM;
   status = crypto_tls_stream_init(stream, context, server, server_name, io_buffer_bytes);
-  if (status != CRYPTO_TLS_STREAM_OK) { free(stream); return status; }
+  if (status != CRYPTO_TLS_STREAM_OK) { crypto_tls_stream_free(stream); return status; }
   crypto_tls_stream_context_retain(context);
   *out_stream = stream;
   return CRYPTO_TLS_STREAM_OK;

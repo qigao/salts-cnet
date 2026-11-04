@@ -2,6 +2,7 @@
  * No spec/main, sockets, second runtime, or production policy is defined here. */
 #ifndef SALTSCORE_TEST_TLS_MIXED_WORKLOAD_H
 #define SALTSCORE_TEST_TLS_MIXED_WORKLOAD_H
+#include "crypto_tls_memory_test.h"
 
 enum { TLS_MIXED_BYTES = 32768, TLS_MIXED_EXCHANGES = 512 };
 typedef struct tls_mixed_state tls_mixed_state;
@@ -32,12 +33,58 @@ typedef struct tls_mixed_ops {
   int (*receive)(void *, size_t, size_t);
   int (*progress)(void *, size_t);
   int (*snapshot)(void *, tls_mixed_stats *);
+  bool (*memory)(crypto_tls_test_memory_stats *);
 } tls_mixed_ops;
 typedef struct tls_mixed_result {
   uint64_t elapsed, cpu, p50, p95, p99, bulk_bytes;
   uint64_t bulk_native, control_native, drain_bytes, drain_ns, drain_native;
   size_t bulk_admitted, rounds, rejected, calls, allocations, receives, peak_bytes, peak_backing;
+  crypto_tls_test_memory_stats memory, drain_memory;
 } tls_mixed_result;
+
+static int tls_mixed_memory_delta(const crypto_tls_test_memory_stats *before,
+                                  const crypto_tls_test_memory_stats *after,
+                                  crypto_tls_test_memory_stats *out) {
+  if (before->overflow || after->overflow) return SALTS_ERANGE;
+  *out = (crypto_tls_test_memory_stats){0};
+#define TLS_MEMORY_DELTA(field) do { \
+  if (after->field < before->field) return SALTS_EPROTO; \
+  out->field = after->field - before->field; \
+} while (0)
+  TLS_MEMORY_DELTA(allocation_calls);
+  TLS_MEMORY_DELTA(requested_bytes);
+  TLS_MEMORY_DELTA(successful_bytes);
+  TLS_MEMORY_DELTA(failures);
+  TLS_MEMORY_DELTA(releases);
+  for (size_t i = 0u; i < CRYPTO_TLS_TEST_COPY_COUNT; ++i) {
+    TLS_MEMORY_DELTA(copy_calls[i]);
+    TLS_MEMORY_DELTA(copied_bytes[i]);
+  }
+#undef TLS_MEMORY_DELTA
+  return SALTS_OK;
+}
+static int tls_mixed_memory_check(const crypto_tls_test_memory_stats *stats, uint64_t delivered) {
+  if (stats->overflow || stats->allocation_calls || stats->requested_bytes || stats->successful_bytes ||
+      stats->failures || stats->releases || stats->copied_bytes[CRYPTO_TLS_TEST_COPY_METADATA] ||
+      stats->copied_bytes[CRYPTO_TLS_TEST_COPY_PLAINTEXT] > delivered ||
+      stats->copied_bytes[CRYPTO_TLS_TEST_COPY_PENDING_PLAINTEXT] !=
+          delivered - stats->copied_bytes[CRYPTO_TLS_TEST_COPY_PLAINTEXT]) return SALTS_EPROTO;
+  return SALTS_OK;
+}
+static void tls_mixed_memory_print(const char *mode, unsigned repetition, size_t depth,
+                                   const char *phase, const crypto_tls_test_memory_stats *stats) {
+  printf("TLS_ADAPTER_MEMORY_CSV,mode,repeat,bulk_depth,phase,allocation_calls,requested_bytes,successful_bytes,failures,releases");
+  const char *names[] = {"metadata", "cipher_input", "provider_receive", "provider_send", "cipher_output",
+                        "record_header", "plaintext", "pending_plaintext"};
+  for (size_t i = 0u; i < CRYPTO_TLS_TEST_COPY_COUNT; ++i) printf(",%s_calls,%s_bytes", names[i], names[i]);
+  printf(",overflow\nTLS_ADAPTER_MEMORY_CSV,%s,%u,%zu,%s,%llu,%llu,%llu,%llu,%llu", mode, repetition, depth, phase,
+      (unsigned long long)stats->allocation_calls, (unsigned long long)stats->requested_bytes,
+      (unsigned long long)stats->successful_bytes, (unsigned long long)stats->failures,
+      (unsigned long long)stats->releases);
+  for (size_t i = 0u; i < CRYPTO_TLS_TEST_COPY_COUNT; ++i)
+    printf(",%llu,%llu", (unsigned long long)stats->copy_calls[i], (unsigned long long)stats->copied_bytes[i]);
+  printf(",%u\n", (unsigned)stats->overflow);
+}
 
 static int tls_mixed_init(tls_mixed_state *s, size_t window) {
   if (window != 1u && window != 8u) return SALTS_EINVAL;
@@ -174,6 +221,7 @@ static int tls_mixed_usage_check(tls_mixed_state *s, const tls_mixed_stats *stat
 }
 static int tls_mixed_phase(tls_mixed_state *s, const tls_mixed_ops *ops, size_t exchanges, tls_mixed_result *out) {
   tls_mixed_stats before, after, drained;
+  crypto_tls_test_memory_stats memory_before, memory_after, memory_drained;
   uint64_t cpu_start, cpu_end;
   if (exchanges == 0u || exchanges > TLS_MIXED_EXCHANGES || s->error) return SALTS_EINVAL;
   if (s->target && (!tls_mixed_control_done(s) || !tls_mixed_bulk_done(s))) return SALTS_EBUSY;
@@ -187,7 +235,8 @@ static int tls_mixed_phase(tls_mixed_state *s, const tls_mixed_ops *ops, size_t 
     }
   }
   s->target = exchanges;
-  if (ops->snapshot(ops->context, &before) != SALTS_OK || tls_mixed_cpu(&cpu_start) != SALTS_OK) return SALTS_EIO;
+  if (ops->snapshot(ops->context, &before) != SALTS_OK || !ops->memory(&memory_before) ||
+      tls_mixed_cpu(&cpu_start) != SALTS_OK) return SALTS_EIO;
   const uint64_t start = cmeta_hrtime(), deadline = start + UINT64_C(20000000000);
   while (!tls_mixed_control_done(s) && cmeta_hrtime() < deadline) {
     tls_mixed_lane *b = &s->lane[0], *c = &s->lane[1];
@@ -226,6 +275,7 @@ static int tls_mixed_phase(tls_mixed_state *s, const tls_mixed_ops *ops, size_t 
   out->elapsed = cmeta_hrtime() - start;
   if (tls_mixed_cpu(&cpu_end) != SALTS_OK || cpu_end < cpu_start) return SALTS_EIO;
   out->cpu = cpu_end - cpu_start;
+  if (!ops->memory(&memory_after)) return SALTS_EIO;
   if (!tls_mixed_control_done(s)) return SALTS_ETIMEDOUT;
   if (ops->snapshot(ops->context, &after) != SALTS_OK ||
       tls_mixed_usage_check(s, &after, out) != SALTS_OK) return SALTS_EPROTO;
@@ -236,6 +286,8 @@ static int tls_mixed_phase(tls_mixed_state *s, const tls_mixed_ops *ops, size_t 
   out->calls = after.policy_calls - before.policy_calls;
   out->allocations = after.allocations - before.allocations;
   out->receives = after.receives - before.receives;
+  if (tls_mixed_memory_delta(&memory_before, &memory_after, &out->memory) != SALTS_OK ||
+      tls_mixed_memory_check(&out->memory, out->bulk_bytes + 2u * exchanges) != SALTS_OK) return SALTS_EPROTO;
   const uint64_t drain_start = cmeta_hrtime(), drain_deadline = drain_start + UINT64_C(20000000000);
   while (!tls_mixed_bulk_done(s) && cmeta_hrtime() < drain_deadline) {
     int status = tls_mixed_receive(s, ops);
@@ -243,7 +295,10 @@ static int tls_mixed_phase(tls_mixed_state *s, const tls_mixed_ops *ops, size_t 
     if (status != SALTS_OK) return status;
   }
   out->drain_ns = cmeta_hrtime() - drain_start;
+  if (!ops->memory(&memory_drained)) return SALTS_EIO;
   out->drain_bytes = s->lane[0].received[1] - out->bulk_bytes;
+  if (tls_mixed_memory_delta(&memory_after, &memory_drained, &out->drain_memory) != SALTS_OK ||
+      tls_mixed_memory_check(&out->drain_memory, out->drain_bytes) != SALTS_OK) return SALTS_EPROTO;
   if (!tls_mixed_bulk_done(s) || ops->snapshot(ops->context, &drained) != SALTS_OK ||
       tls_mixed_usage_check(s, &drained, out) != SALTS_OK) return SALTS_EPROTO;
   out->drain_native = drained.native_submissions[0] + drained.native_submissions[1] -

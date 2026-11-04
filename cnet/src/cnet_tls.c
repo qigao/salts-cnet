@@ -4,6 +4,12 @@
 #include <stdatomic.h>
 #include <stdlib.h>
 #include <string.h>
+#if defined(CNET_TLS_MEMORY_TESTING)
+#include "cnet_tls_memory_test.h"
+bool cnet_test_tls_memory_snapshot(crypto_tls_test_memory_stats *out) {
+  return crypto_tls_stream_test_memory_snapshot(out);
+}
+#endif
 #if defined(CNET_INTERNAL_TESTING)
 #include "cnet_test_internal.h"
 #include "crypto_tls_stream_test.h"

@@ -242,6 +242,7 @@ if(TARGET Salts::CNet)
   target_link_libraries(saltscore_gmssl_tls_io_abi_test PRIVATE
     Salts::Crypto Salts::Core Salts::NativeIO Salts::TinyTest)
   target_include_directories(saltscore_gmssl_tls_io_abi_test PRIVATE
+    "${PROJECT_SOURCE_DIR}/crypto/src"
     "$<TARGET_PROPERTY:GmSSL::GmSSL,INTERFACE_INCLUDE_DIRECTORIES>")
   target_compile_definitions(saltscore_gmssl_tls_io_abi_test PRIVATE
     ENABLE_TLS ENABLE_SECP256R1 ENABLE_SECP384R1 ENABLE_SHA1 ENABLE_SHA2 ENABLE_AES
@@ -275,6 +276,8 @@ if(TARGET Salts::CNet)
   set_target_properties(saltscore_cnet_tls_ca_san_test PROPERTIES
     C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
   target_link_libraries(saltscore_cnet_tls_ca_san_test PRIVATE Salts::CNet Salts::TinyTest)
+  target_include_directories(saltscore_cnet_tls_ca_san_test PRIVATE
+    "${PROJECT_SOURCE_DIR}/cnet/src" "${PROJECT_SOURCE_DIR}/crypto/src")
   if(MSVC)
     target_compile_options(saltscore_cnet_tls_ca_san_test PRIVATE
       $<$<COMPILE_LANGUAGE:C>:-experimental:c11atomics>)

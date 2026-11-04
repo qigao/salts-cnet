@@ -22,6 +22,7 @@
 #include <sys/resource.h>
 #endif
 #include "tls_mixed_workload.h"
+#include "cnet_tls_memory_test.h"
 
 #ifndef CORE_TLS_TEST_P384_CA
 #error CORE_TLS_TEST_P384_CA is required
@@ -1682,8 +1683,10 @@ static int tls_mixed_cnet_sample(bool callback, size_t window, bool report, unsi
   int result = 0, phase_status = SALTS_EIO;
   uint64_t handshake_ns, close_ns[2] = {0};
   tls_mixed_result warm, measured;
+  crypto_tls_test_memory_stats start_memory, setup_memory, closing_memory, end_memory, setup_delta, close_delta;
   const size_t exchanges = report ? TLS_MIXED_EXCHANGES : 8u;
   if (!f) return __LINE__;
+  REQUIRE(cnet_test_tls_memory_snapshot(&start_memory));
   REQUIRE(tls_mixed_init(&f->state, window) == SALTS_OK);
   for (size_t i = 0u; i < 2u; ++i) {
     f->pair[i].mixed = &f->state.lane[i];
@@ -1692,8 +1695,11 @@ static int tls_mixed_cnet_sample(bool callback, size_t window, bool report, unsi
   }
   REQUIRE(strcmp(f->pair[0].ends[0].state.tls_version, f->pair[1].ends[0].state.tls_version) == 0);
   REQUIRE(strcmp(f->pair[0].ends[0].state.tls_cipher, f->pair[1].ends[0].state.tls_cipher) == 0);
+  REQUIRE(cnet_test_tls_memory_snapshot(&setup_memory));
+  REQUIRE(tls_mixed_memory_delta(&start_memory, &setup_memory, &setup_delta) == SALTS_OK);
+  REQUIRE(setup_delta.allocation_calls > 0u && setup_delta.requested_bytes > 0u && setup_delta.failures == 0u);
   const tls_mixed_ops ops = {f, tls_mixed_cnet_send, tls_mixed_cnet_receive,
-      tls_mixed_cnet_progress, tls_mixed_cnet_snapshot};
+      tls_mixed_cnet_progress, tls_mixed_cnet_snapshot, cnet_test_tls_memory_snapshot};
   REQUIRE(tls_mixed_phase(&f->state, &ops, 8u, &warm) == SALTS_OK);
   if (report) {
     benchmark_ops("independent TLS control RTT under bulk", 1, exchanges) {
@@ -1704,12 +1710,27 @@ static int tls_mixed_cnet_sample(bool callback, size_t window, bool report, unsi
                                        phase_status, (unsigned)callback, window);
   REQUIRE(phase_status == SALTS_OK);
   REQUIRE(measured.calls == (callback ? measured.bulk_admitted + 2u * exchanges : 0u));
+  REQUIRE(cnet_test_tls_memory_snapshot(&closing_memory));
   for (size_t i = 0u; i < 2u; ++i) REQUIRE(tls_bench_close(&f->pair[i], &close_ns[i]) == SALTS_OK);
   if (report) tls_mixed_print(callback ? "callback" : "native", repetition, &f->state, &measured,
       close_ns[0] + close_ns[1], f->pair[0].ends[0].state.tls_version, f->pair[0].ends[0].state.tls_cipher);
 cleanup:;
   bool quiet = true;
   for (size_t i = 0u; i < f->initialized; ++i) if (!tls_bench_dispose(&f->pair[i])) quiet = false;
+  if (quiet && result == 0) {
+    if (!cnet_test_tls_memory_snapshot(&end_memory) ||
+        tls_mixed_memory_delta(&closing_memory, &end_memory, &close_delta) != SALTS_OK ||
+        close_delta.failures || close_delta.releases == 0u) result = __LINE__;
+    else if (report) {
+      const char *mode = callback ? "callback" : "native";
+      tls_mixed_memory_print(mode, repetition, window, "setup", &setup_delta);
+      tls_mixed_memory_print(mode, repetition, window, "warm", &warm.memory);
+      tls_mixed_memory_print(mode, repetition, window, "warm_drain", &warm.drain_memory);
+      tls_mixed_memory_print(mode, repetition, window, "transfer", &measured.memory);
+      tls_mixed_memory_print(mode, repetition, window, "drain", &measured.drain_memory);
+      tls_mixed_memory_print(mode, repetition, window, "close_destroy", &close_delta);
+    }
+  }
   if (quiet) { tls_mixed_release(&f->state); free(f); return result; }
   return result ? result : __LINE__; /* Parent callback/source state remains live. */
 }

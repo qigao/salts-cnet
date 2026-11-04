@@ -75,3 +75,53 @@ instrumentation or other-platform timing evidence. No production policy API or
 optimization is justified merely by successful correctness tests.
 
 Evidence: [Windows x64, 2026-11-04](benchmarks/cnet-tls-mixed-windows-x64-2026-11-04.md).
+
+## TLS adapter memory instrumentation protocol
+
+The follow-up uses private `BUILD_TESTING` diagnostics in the same production
+`crypto_tls_stream.c` instance. The direct executable snapshots its Crypto
+archive; the CNet executable calls a private bridge into its existing CNet DSO.
+It does not link another Crypto archive. `BUILD_TESTING=OFF` builds expand the instrumented
+sites to the original libc operations and contain no counters or bridge.
+
+One calling thread owns a fixed-size, thread-local set of cumulative saturating
+counters. Snapshots copy values, never reset, explicitly call an allocator,
+progress a stream or borrow stream storage. Compiler-managed thread-local
+storage is outside the counters; the first snapshot precedes setup and timing.
+No worker aggregation, cross-thread publication or
+stream/context ownership change is introduced. Overflow invalidates a sample.
+Allocation counters cover actual malloc/calloc/realloc requests in this source,
+requested/successful request bytes, failures and non-null free calls. Realloc
+bytes count the entire request, not net growth; releases do not establish live
+bytes or leak freedom. Caller buffer initialization, calloc zeroing, realloc's
+internal movement, GmSSL internals, NativeIO/Core/OS allocation, metadata struct
+assignments and compiler-generated copies are outside this scope.
+
+Copy counters distinguish explicit memcpy operations for metadata, native
+cipher input into its ring, ring reads by the provider, provider output into its
+ring, cipher output into native staging, record-header peeks, initial plaintext
+delivery and pending-plaintext delivery. Ring splits count their actual two
+source operations and byte lengths. Counts describe source operations, not
+instructions, memory-bus traffic, encryption cost or a process-wide copy total.
+
+Keep setup, warm control traffic, warm bulk drain, measured control traffic,
+measured bulk drain and authenticated close/destruction as separate snapshot
+deltas. Transfer/drain must perform zero adapter allocation/release or metadata
+copy; their initial plus pending plaintext copies must equal the actual delivered
+bulk/control bytes. Every existing byte/refcount/identity/terminal/drain check
+still applies. Forced TLS 1.2/1.3 cases additionally verify over-capacity input refuses
+before any input copy and three-byte plaintext reads account the short pending
+remainder. The bounded direct short case combines 4-KiB native writes with
+1,023-byte plaintext reads and requires both actual ciphertext continuation and
+pending-plaintext delivery. Long samples retain the matched 32-KiB read capacity.
+A formal worker case constructs/destroys a real stream and proves those counts
+do not change the caller thread's snapshot.
+
+Use the existing opt-in cases and rotation; output `TLS_ADAPTER_MEMORY_CSV` for
+all six phases alongside the original timing rows. Treat these as a new
+instrumented cohort and retain all repetitions. Do not pool their timing with
+the previous uninstrumented copy workload. This closes the TLS adapter accounting
+gap only; global/provider-internal allocation/copy and other-platform timing
+evidence remain outstanding in #189.
+
+Evidence: [instrumented Windows x64 cohort, 2026-11-04](benchmarks/cnet-tls-adapter-memory-windows-x64-2026-11-04.md).

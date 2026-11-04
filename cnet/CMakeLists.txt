@@ -143,6 +143,9 @@ install(DIRECTORY include/cnet
   FILES_MATCHING PATTERN "*.h")
 
 if(BUILD_TESTING)
+  # Private counters in the same production Crypto instance; no extra runtime.
+  target_compile_definitions(saltscore_cnet PRIVATE CNET_TLS_MEMORY_TESTING)
+  target_include_directories(saltscore_cnet PRIVATE "${PROJECT_SOURCE_DIR}/crypto/src")
   # Link maps retain physical GmSSL and Crypto archive members even when symbols
   # are hidden or stripped from a PE export table. They are test evidence,
   # never an additional library or an installed SDK artifact.
