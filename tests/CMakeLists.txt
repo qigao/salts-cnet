@@ -315,6 +315,10 @@ if(TARGET Salts::CNet)
       find_program(SALTSCORE_HEAPTRACK_EXECUTABLE NAMES heaptrack REQUIRED)
       file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/tls-mixed-heaptrack")
     endif()
+    if(SALTSCORE_CNET_TLS_MIXED_PERF)
+      find_program(SALTSCORE_PERF_EXECUTABLE NAMES perf REQUIRED)
+      file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/tls-mixed-perf")
+    endif()
     set(_tls_mixed_previous "")
     foreach(_repeat RANGE 0 4)
       foreach(_position RANGE 0 4)
@@ -334,6 +338,10 @@ if(TARGET Salts::CNet)
         if(SALTSCORE_CNET_TLS_MIXED_HEAPTRACK)
           set(_launcher "${SALTSCORE_HEAPTRACK_EXECUTABLE}" --record-only --output
             "${CMAKE_CURRENT_BINARY_DIR}/tls-mixed-heaptrack/r${_repeat}-p${_position}")
+        elseif(SALTSCORE_CNET_TLS_MIXED_PERF)
+          set(_launcher "${SALTSCORE_PERF_EXECUTABLE}" record --event cpu-clock:u
+            --freq 4000 --strict-freq --call-graph dwarf,8192 --output
+            "${CMAKE_CURRENT_BINARY_DIR}/tls-mixed-perf/r${_repeat}-p${_position}.data" --)
         endif()
         add_test(NAME "${_case}" COMMAND ${_launcher} "${_binary}" --filter "${_filter}")
         set_tests_properties("${_case}" PROPERTIES
