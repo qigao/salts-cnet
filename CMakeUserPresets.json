@@ -8,6 +8,7 @@
       "name": "gmssl-copy-user",
       "displayName": "Linux x64 full graph with GmSSL explicit-copy counters",
       "inherits": "full-native",
+      "condition": {"type": "equals", "lhs": "${hostSystemName}", "rhs": "Linux"},
       "environment": {
         "SALTSCORE_VCPKG_TARGET_TRIPLET": "salts-gmssl-copy-x64-linux"
       },

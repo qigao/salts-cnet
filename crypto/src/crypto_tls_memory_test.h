@@ -1,6 +1,7 @@
-/* Private formal-test diagnostics; never installed. Source-level operations in
- * crypto_tls_stream.c only, on the calling thread. Not process heap/RSS,
- * GmSSL/NativeIO accounting, memory-bus traffic or a replacement allocator. */
+/* Private formal-test diagnostics; never installed. Adapter fields count
+ * crypto_tls_stream.c source operations on the calling thread. Provider fields
+ * add explicit GmSSL copies only in the diagnostic graph. Neither measures
+ * process heap/RSS, NativeIO or memory-bus traffic or replaces an allocator. */
 #ifndef CRYPTO_TLS_MEMORY_TEST_H
 #define CRYPTO_TLS_MEMORY_TEST_H
 #include <stdbool.h>
