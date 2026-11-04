@@ -21,15 +21,15 @@
     },
     {
       "platform": "linux",
-      "status": "unresolved",
+      "status": "provider-fixed-pending-product-qualification",
       "kind": "pinned-provider-pulse-initialization-leak",
-      "provider": "miniaudio 0.11.22",
-      "provider_header_sha256": "9019743287e443c55e5737a7297f38e5e358561701d6db2d905afb114390c410",
-      "evidence": "Original capture_posix_test under ASan/UBSan with detect_leaks=1 reported 41332 bytes in 28 allocations through pa_context_new_with_proplist -> ma_init_pa_mainloop_and_pa_context__pulse. A miniaudio-only reproducer using an explicitly absent private PulseAudio socket also leaks, without Core/Capture source or physical devices. Static Media consolidation keeps a single miniaudio implementation; it does not waive the original provider leak.",
+      "provider": "miniaudio 0.11.22#1",
+      "provider_header_sha256": "6fc8a4c2b37da54e520ff5045db1eb85451b57d55d4e7d7a765f704dc0dd9458",
+      "evidence": "Original capture_posix_test under ASan/UBSan with detect_leaks=1 reported 41332 bytes in 28 allocations through pa_context_new_with_proplist -> ma_init_pa_mainloop_and_pa_context__pulse. A miniaudio-only reproducer using an explicitly absent private PulseAudio socket also leaks, without Core/Capture source or physical devices. Static Media consolidation keeps a single miniaudio implementation; it does not waive the original provider leak. Dependency-side qualification: https://github.com/qigao/vcpkg-cache/actions/runs/41761576106 .",
       "cause": "The frozen provider frees its main loop but omits pa_context_unref after connect failure and after waiting for connection fails. Capture destroys every successfully initialized context on the observed paths.",
-      "policy": "Keep the sanitizer gate red. No PulseAudio disable, leak suppression, provider replacement or pin change is part of this source-retention migration.",
+      "policy": "Use the reviewed vcpkg-cache v0.1.5 dependency fix. Keep PulseAudio and sanitizers enabled; full Media regression and successful device lifecycle remain independent gates.",
       "proposal": "provider-proposals/README.md",
-      "proposal_status": "unapplied; isolated temporary copy preserves error -203 and passes the absent-server sanitizer reproduction, but no dependency-owner revision or renewed platform qualification exists"
+      "proposal_status": "Applied by vcpkg-cache PR #279 and released in v0.1.5 (f1caf997152e4830d7e1089fceaf77aa9127ec25). Real libpulse baseline/patched comparison passed three failure scenarios, each 32 attempts, including connect and connection-wait failure branches, with unchanged public error -203 and clean patched ASan/UBSan/LSan. Downstream exact-HEAD Media qualification is pending."
     },
     {
       "platform": "all",
