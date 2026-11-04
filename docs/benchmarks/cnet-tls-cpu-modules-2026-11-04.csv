@@ -1,0 +1,11 @@
+rid,source_sha,run_id,build_id,module
+linux-x64,1eed97774becdfbc4c2ee237a13c9498295e1747,41796177710,0d77dbd4379bf0b5af3e05be7fb6af1e4cea7c96,/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2
+linux-x64,1eed97774becdfbc4c2ee237a13c9498295e1747,41796177710,307183ce33894dddb05a423a8b4f322ea15fbbc0,/home/runner/work/salts-core/salts-core/build/ci-native/platform/libsaltscore_platform.so.0.1.2
+linux-x64,1eed97774becdfbc4c2ee237a13c9498295e1747,41796177710,4c8c49e114b282b398bed1422f6e45e464233421,/home/runner/work/salts-core/salts-core/build/ci-native/native-io/libsaltscore_native_io.so.0.1.2
+linux-x64,1eed97774becdfbc4c2ee237a13c9498295e1747,41796177710,5b718ef89a948df2fc79b5af83efbe415191e8d2,/home/runner/work/salts-core/salts-core/build/ci-native/tests/saltscore_gmssl_tls_io_abi_test
+linux-x64,1eed97774becdfbc4c2ee237a13c9498295e1747,41796177710,5f4012610a3dc25667472776d8f8e0eb52924a7b,/home/runner/work/salts-core/salts-core/build/ci-native/core/libsaltscore_core.so.0.1.2
+linux-x64,1eed97774becdfbc4c2ee237a13c9498295e1747,41796177710,5f8ec4212ea45816514d2cd616253ce3a5146c02,[vdso]
+linux-x64,1eed97774becdfbc4c2ee237a13c9498295e1747,41796177710,76cb5fe63b8596d0d4f73e21190b9fc6b5b53eb3,/home/runner/work/salts-core/salts-core/build/ci-native/concurrency/libsaltscore_concurrency.so.0.1.2
+linux-x64,1eed97774becdfbc4c2ee237a13c9498295e1747,41796177710,a4a7992a8e66555c8141ab2a08a8465ff6e0ea65,/usr/lib/x86_64-linux-gnu/libc.so.6
+linux-x64,1eed97774becdfbc4c2ee237a13c9498295e1747,41796177710,ced1cf698dc9d82ea17a7e59a2179d343ec2bee8,/home/runner/work/salts-core/salts-core/build/ci-native/cnet/libsaltscore_cnet.so.0.1.2
+linux-x64,1eed97774becdfbc4c2ee237a13c9498295e1747,41796177710,e1d52ec2ee056103639bd9f58cd1301880934bb6,/home/runner/work/salts-core/salts-core/build/ci-native/tests/saltscore_cnet_tls_ca_san_test

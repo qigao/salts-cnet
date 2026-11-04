@@ -7,6 +7,8 @@ direct/native/callback at depth 1 and native/callback at depth 8. Each process
 still checks actual bytes, source references, bounded usage, native identities,
 rejection, authenticated close and complete native drain. No new executable,
 consumer, smoke project, validation script or benchmark-only job is added.
+The [qualified report and raw rows](benchmarks/cnet-tls-cpu-2026-11-04.md)
+record the observed CPU distribution, coverage limits and scratch decision.
 
 ## Protocol before collection
 
@@ -38,7 +40,7 @@ stable profiling overhead from their difference. Capture source, host, project
 compiler, perf/libc versions, dependency status and loaded-module build IDs.
 Package/compiler versions are distinct from the project compiler identity.
 
-Convert each recording on its original host into complete symbolized stacks
+Convert each recording on its original host into all captured symbolized stacks
 with periods, flat and inclusive reports, build IDs and diagnostic output.
 Publish these and the original recording SHA256; raw stack-memory dumps remain
 local to that ephemeral runner. Keep unknown frames and lost-event messages.
