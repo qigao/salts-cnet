@@ -63,3 +63,5 @@ This compares two formal executables using the same production primitives,
 not identical application instruction sequences. Validate bytes/retention/close
 before interpreting timing. Independent TLS bulk/control, global allocation/
 copy instrumentation and other-platform timing cohorts remain open in #189.
+
+Evidence: [Windows x64, 2026-11-04](benchmarks/cnet-native-tls-windows-x64-2026-11-04.md).

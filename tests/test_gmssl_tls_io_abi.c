@@ -28,6 +28,7 @@ static bool native_tls_would_block(void) { return WSAGetLastError() == WSAEWOULD
 #include <errno.h>
 #include <fcntl.h>
 #include <arpa/inet.h>
+#include <netinet/in.h>
 #include <netinet/tcp.h>
 #include <sys/socket.h>
 #include <sys/resource.h>
