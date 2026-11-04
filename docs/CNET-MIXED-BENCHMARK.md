@@ -8,6 +8,11 @@ observes one batch, routes the whole batch and services both native peers with
 bounded work. There is no second poller, worker or application send queue.
 TLS, several Owners and the remaining #189 acceptance remain open.
 
+The separate [kernel-stalled workload](CNET-STALLED-BENCHMARK.md) pauses bulk
+peer reads, proves a real pending send and measures control progress followed
+by resumed drain. Its preparation, payload and offering differ from the
+continuously replenished workload here; keep their measurement cohorts separate.
+
 ## Direct NativeIO ownership protocol
 
 Direct mode qualifies bulk depth 1 with the same backend bounds (2 endpoints,
