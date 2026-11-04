@@ -224,22 +224,6 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             autoconf autoconf-archive automake libtool
 
-      - name: Install Linux native capture SDK headers
-        if: runner.os == 'Linux' && matrix.preset != 'ci-android'
-        shell: bash
-        run: |
-          set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            libudev-dev libpipewire-0.3-dev libx11-dev libxext-dev
-          multiarch="$(dpkg-architecture -qDEB_HOST_MULTIARCH)"
-          system_pkg_config_path="/usr/lib/$multiarch/pkgconfig:/usr/lib/pkgconfig:/usr/share/pkgconfig"
-          if [[ -n "${PKG_CONFIG_PATH:-}" ]]; then
-            system_pkg_config_path="$system_pkg_config_path:$PKG_CONFIG_PATH"
-          fi
-          echo "PKG_CONFIG_PATH=$system_pkg_config_path" >> "$GITHUB_ENV"
-          PKG_CONFIG_PATH="$system_pkg_config_path" pkg-config --exists libpipewire-0.3
-
       - name: Select preset toolchains
         shell: bash
         env:
@@ -296,6 +280,24 @@ jobs:
         run: |
           ccache --version
           ccache --zero-stats
+
+      # Tool setup Actions initialize Python and replace PKG_CONFIG_PATH.
+      # Establish product-owned system SDK paths after all tool setup.
+      - name: Install Linux native capture SDK headers
+        if: runner.os == 'Linux' && matrix.preset != 'ci-android'
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libudev-dev libpipewire-0.3-dev libx11-dev libxext-dev
+          multiarch="$(dpkg-architecture -qDEB_HOST_MULTIARCH)"
+          system_pkg_config_path="/usr/lib/$multiarch/pkgconfig:/usr/lib/pkgconfig:/usr/share/pkgconfig"
+          if [[ -n "${PKG_CONFIG_PATH:-}" ]]; then
+            system_pkg_config_path="$system_pkg_config_path:$PKG_CONFIG_PATH"
+          fi
+          echo "PKG_CONFIG_PATH=$system_pkg_config_path" >> "$GITHUB_ENV"
+          PKG_CONFIG_PATH="$system_pkg_config_path" pkg-config --exists libpipewire-0.3
 
       - name: Configure full graph
         shell: bash
