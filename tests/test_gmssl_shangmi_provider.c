@@ -432,6 +432,13 @@ static int saltscore_original_entry_test_gmssl_shangmi_provider_c(void) {
 }
 
 spec("GmSSL private ShangMi KAT and protocol settings") {
+  it("rejects infinity and noncanonical coordinates in uncompressed SM2 points") {
+    SM2_Z256_POINT point;
+    uint8_t encoded[65] = {4};
+    check_equal(sm2_z256_point_from_octets(&point, encoded, sizeof(encoded)), -1);
+    memset(encoded + 1u, 0xff, 32u);
+    check_equal(sm2_z256_point_from_octets(&point, encoded, sizeof(encoded)), -1);
+  }
   it("preserves the real owner lifecycle and original failure code") {
     const int result = saltscore_original_entry_test_gmssl_shangmi_provider_c();
     check(result == 0, "native integration returned %d", result);

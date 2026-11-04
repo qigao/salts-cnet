@@ -195,7 +195,7 @@ jobs:
       - name: Set up shared dependency contract
         id: vcpkg
         # Includes the pinned native Windows pkg-config; avoid MSYS2 for pkg-config.
-        uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-curl-cache@v0.1.5
+        uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-curl-cache@7e00f4fa2e06f8da7f49055ea8b7cedadc543fe5
         with:
           mode: read
           triplet: ${{ matrix.triplet }}

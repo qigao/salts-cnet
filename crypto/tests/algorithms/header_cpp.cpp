@@ -1,6 +1,10 @@
 #include <crypto/sha256.h>
 #include <crypto/ed448.h>
 #include <crypto/tls_stream.h>
+#include <crypto/sm3.h>
+#include <crypto/sm2.h>
+#include <crypto/zuc.h>
+#include <crypto/sm4.h>
 #include <tinytest.hpp>
 
 #include <cstddef>
