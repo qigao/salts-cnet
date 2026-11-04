@@ -19,6 +19,7 @@ struct tls_mixed_state {
   tls_mixed_lane lane[2];
   size_t target;
   int error;
+  bool tls13;
   uint64_t starts[TLS_MIXED_EXCHANGES], latency[TLS_MIXED_EXCHANGES];
 };
 typedef struct tls_mixed_usage { size_t operations, bytes, backing; } tls_mixed_usage;
@@ -45,8 +46,12 @@ typedef struct tls_mixed_result {
 static int tls_mixed_memory_delta(const crypto_tls_test_memory_stats *before,
                                   const crypto_tls_test_memory_stats *after,
                                   crypto_tls_test_memory_stats *out) {
-  if (before->overflow || after->overflow) return SALTS_ERANGE;
+  if (before->overflow || after->overflow || before->provider.overflow || after->provider.overflow)
+    return SALTS_ERANGE;
+  if (before->provider_copy_profile != after->provider_copy_profile ||
+      after->provider_copy_profile != (bool)SALTSCORE_EXPECT_PROVIDER_COPIES) return SALTS_EPROTO;
   *out = (crypto_tls_test_memory_stats){0};
+  out->provider_copy_profile = after->provider_copy_profile;
 #define TLS_MEMORY_DELTA(field) do { \
   if (after->field < before->field) return SALTS_EPROTO; \
   out->field = after->field - before->field; \
@@ -60,7 +65,31 @@ static int tls_mixed_memory_delta(const crypto_tls_test_memory_stats *before,
     TLS_MEMORY_DELTA(copy_calls[i]);
     TLS_MEMORY_DELTA(copied_bytes[i]);
   }
+  for (size_t i = 0u; i < CRYPTO_GMSSL_COPY_BUCKETS; ++i)
+    for (size_t j = 0u; j < CRYPTO_GMSSL_COPY_OPERATIONS; ++j) {
+      TLS_MEMORY_DELTA(provider.calls[i][j]);
+      TLS_MEMORY_DELTA(provider.bytes[i][j]);
+    }
 #undef TLS_MEMORY_DELTA
+  return SALTS_OK;
+}
+/* A fully drained TLS1.3 application interval has matching encrypted/decrypted
+ * record counts. The provider copies input and an 8-byte nonce on encrypt,
+ * and only the nonce on decrypt. Handshake/close are separate intervals. */
+static int tls_mixed_provider_check(const crypto_tls_test_memory_stats *stats, bool tls13,
+                                    uint64_t delivered) {
+  if (!stats->provider_copy_profile) return SALTS_OK;
+  const crypto_gmssl_copy_stats *p = &stats->provider;
+  if (p->overflow || p->calls[CRYPTO_GMSSL_COPY_OTHER][CRYPTO_GMSSL_MEMCPY] == 0u) return SALTS_EPROTO;
+  if (!tls13) return SALTS_OK;
+  const uint64_t enc = p->calls[CRYPTO_GMSSL_COPY_ENCRYPT][CRYPTO_GMSSL_MEMCPY];
+  const uint64_t dec = p->calls[CRYPTO_GMSSL_COPY_DECRYPT][CRYPTO_GMSSL_MEMCPY];
+  const uint64_t enc_bytes = p->bytes[CRYPTO_GMSSL_COPY_ENCRYPT][CRYPTO_GMSSL_MEMCPY];
+  const uint64_t dec_bytes = p->bytes[CRYPTO_GMSSL_COPY_DECRYPT][CRYPTO_GMSSL_MEMCPY];
+  if (enc == 0u || enc % 2u || enc / 2u != dec || dec > UINT64_MAX / 8u || dec_bytes != 8u * dec ||
+      enc_bytes < dec_bytes || enc_bytes - dec_bytes != delivered ||
+      p->calls[CRYPTO_GMSSL_COPY_ENCRYPT][CRYPTO_GMSSL_MEMMOVE] ||
+      p->calls[CRYPTO_GMSSL_COPY_DECRYPT][CRYPTO_GMSSL_MEMMOVE]) return SALTS_EPROTO;
   return SALTS_OK;
 }
 static int tls_mixed_memory_check(const crypto_tls_test_memory_stats *stats, uint64_t delivered) {
@@ -84,6 +113,20 @@ static void tls_mixed_memory_print(const char *mode, unsigned repetition, size_t
   for (size_t i = 0u; i < CRYPTO_TLS_TEST_COPY_COUNT; ++i)
     printf(",%llu,%llu", (unsigned long long)stats->copy_calls[i], (unsigned long long)stats->copied_bytes[i]);
   printf(",%u\n", (unsigned)stats->overflow);
+  if (stats->provider_copy_profile) {
+    const char *buckets[] = {"encrypt", "decrypt", "other"};
+    const char *operations[] = {"memcpy", "memmove"};
+    printf("GMSSL_COPY_CSV,mode,repeat,bulk_depth,phase");
+    for (size_t i = 0u; i < CRYPTO_GMSSL_COPY_BUCKETS; ++i)
+      for (size_t j = 0u; j < CRYPTO_GMSSL_COPY_OPERATIONS; ++j)
+        printf(",%s_%s_calls,%s_%s_bytes", buckets[i], operations[j], buckets[i], operations[j]);
+    printf(",overflow\nGMSSL_COPY_CSV,%s,%u,%zu,%s", mode, repetition, depth, phase);
+    for (size_t i = 0u; i < CRYPTO_GMSSL_COPY_BUCKETS; ++i)
+      for (size_t j = 0u; j < CRYPTO_GMSSL_COPY_OPERATIONS; ++j)
+        printf(",%llu,%llu", (unsigned long long)stats->provider.calls[i][j],
+               (unsigned long long)stats->provider.bytes[i][j]);
+    printf(",%u\n", (unsigned)stats->provider.overflow);
+  }
 }
 
 static int tls_mixed_init(tls_mixed_state *s, size_t window) {
@@ -299,6 +342,10 @@ static int tls_mixed_phase(tls_mixed_state *s, const tls_mixed_ops *ops, size_t 
   out->drain_bytes = s->lane[0].received[1] - out->bulk_bytes;
   if (tls_mixed_memory_delta(&memory_after, &memory_drained, &out->drain_memory) != SALTS_OK ||
       tls_mixed_memory_check(&out->drain_memory, out->drain_bytes) != SALTS_OK) return SALTS_EPROTO;
+  crypto_tls_test_memory_stats whole;
+  if (tls_mixed_memory_delta(&memory_before, &memory_drained, &whole) != SALTS_OK ||
+      tls_mixed_provider_check(&whole, s->tls13, out->bulk_bytes + out->drain_bytes + 2u * exchanges)
+          != SALTS_OK) return SALTS_EPROTO;
   if (!tls_mixed_bulk_done(s) || ops->snapshot(ops->context, &drained) != SALTS_OK ||
       tls_mixed_usage_check(s, &drained, out) != SALTS_OK) return SALTS_EPROTO;
   out->drain_native = drained.native_submissions[0] + drained.native_submissions[1] -

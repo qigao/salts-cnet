@@ -29,6 +29,18 @@ if(SALTSCORE_CNET_TLS_MIXED_HEAPTRACK)
     message(FATAL_ERROR "TLS heaptrack uses the native unsanitized graph")
   endif()
 endif()
+if(SALTSCORE_GMSSL_COPY_PROFILE)
+  if(NOT BUILD_TESTING OR NOT SALTSCORE_BUILD_CNET OR NOT CMAKE_SYSTEM_NAME STREQUAL "Linux"
+      OR NOT VCPKG_TARGET_TRIPLET STREQUAL "salts-gmssl-copy-x64-linux")
+    message(FATAL_ERROR "GmSSL copy profiling requires Linux tests, CNet and the salts-gmssl-copy-x64-linux triplet")
+  endif()
+  if(SALTSCORE_ENABLE_ASAN OR SALTSCORE_ENABLE_UBSAN OR SALTSCORE_ENABLE_TSAN
+      OR SALTSCORE_CNET_TLS_MIXED_HEAPTRACK)
+    message(FATAL_ERROR "GmSSL copy profiling uses a separate unsanitized, non-heaptrack graph")
+  endif()
+elseif(VCPKG_TARGET_TRIPLET STREQUAL "salts-gmssl-copy-x64-linux")
+  message(FATAL_ERROR "The diagnostic GmSSL triplet requires SALTSCORE_GMSSL_COPY_PROFILE=ON")
+endif()
 # Crypto's C++17 header tests are siblings of the other Core source tests.
 # Enable the language at the package root so all test subdirectories see it.
 if(BUILD_TESTING)

@@ -5,6 +5,7 @@
 #define CRYPTO_TLS_MEMORY_TEST_H
 #include <stdbool.h>
 #include <stdint.h>
+#include "crypto_gmssl_copy_test.h"
 
 typedef enum crypto_tls_test_copy_kind {
   CRYPTO_TLS_TEST_COPY_METADATA,
@@ -23,6 +24,8 @@ typedef struct crypto_tls_test_memory_stats {
   uint64_t copy_calls[CRYPTO_TLS_TEST_COPY_COUNT];
   uint64_t copied_bytes[CRYPTO_TLS_TEST_COPY_COUNT];
   bool overflow;
+  bool provider_copy_profile;
+  crypto_gmssl_copy_stats provider;
 } crypto_tls_test_memory_stats;
 
 /* Snapshot only: no reset, explicit allocator call, TLS state access or progress. Counters
@@ -30,7 +33,8 @@ typedef struct crypto_tls_test_memory_stats {
  * current thread, including creation/destruction performed on that thread.
  * realloc success bytes are the whole request, not net growth/live capacity.
  * Copy calls count explicit source memcpy operations, including ring splits;
- * compiler inlining/vectorization and provider-internal copies are excluded.
+ * compiler inlining/vectorization is not machine traffic. The separate
+ * provider fields are populated only in the explicit diagnostic graph.
  * Compiler-managed thread-local storage is also outside these counters. */
 bool crypto_tls_stream_test_memory_snapshot(crypto_tls_test_memory_stats *out);
 #endif

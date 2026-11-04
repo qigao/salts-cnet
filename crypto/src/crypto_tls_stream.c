@@ -33,6 +33,10 @@ static void crypto_tls_test_add(uint64_t *value, uint64_t amount) {
 bool crypto_tls_stream_test_memory_snapshot(crypto_tls_test_memory_stats *out) {
   if (out == NULL) return false;
   *out = crypto_tls_test_memory;
+#if defined(SALTSCORE_GMSSL_COPY_PROFILE)
+  if (!salts_gmssl_copy_snapshot(&out->provider)) return false;
+  out->provider_copy_profile = true;
+#endif
   return true;
 }
 static void crypto_tls_test_allocation(size_t bytes, const void *result) {

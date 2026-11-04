@@ -142,6 +142,11 @@ spec("Opaque Crypto streams retain policy and bounded storage") {
         check_equal(tls_mixed_memory_delta(&before, &after, &delta), SALTS_OK);
         check_equal(delta.copied_bytes[CRYPTO_TLS_TEST_COPY_CIPHER_INPUT], UINT64_C(0));
         check_equal(delta.copy_calls[CRYPTO_TLS_TEST_COPY_CIPHER_INPUT], UINT64_C(0));
+        for (size_t i = 0u; i < CRYPTO_GMSSL_COPY_BUCKETS; ++i)
+          for (size_t j = 0u; j < CRYPTO_GMSSL_COPY_OPERATIONS; ++j) {
+            check_equal(delta.provider.calls[i][j], UINT64_C(0));
+            check_equal(delta.provider.bytes[i][j], UINT64_C(0));
+          }
       }
       {
         const uint8_t payload[] = "retained-policy";
@@ -162,6 +167,19 @@ spec("Opaque Crypto streams retain policy and bounded storage") {
         check_true(crypto_tls_stream_test_memory_snapshot(&after));
         check_equal(tls_mixed_memory_delta(&before, &after, &delta), SALTS_OK);
         check_equal(tls_mixed_memory_check(&delta, sizeof(payload)), SALTS_OK);
+        check_equal(tls_mixed_provider_check(&delta, protocol == CRYPTO_TLS_STREAM_PROTOCOL_VERSION_1_3,
+                                             sizeof(payload)), SALTS_OK);
+        if (delta.provider_copy_profile) {
+          const bool tls13 = protocol == CRYPTO_TLS_STREAM_PROTOCOL_VERSION_1_3;
+          check_equal(delta.provider.calls[CRYPTO_GMSSL_COPY_ENCRYPT][CRYPTO_GMSSL_MEMCPY],
+                      tls13 ? UINT64_C(2) : UINT64_C(0));
+          check_equal(delta.provider.bytes[CRYPTO_GMSSL_COPY_ENCRYPT][CRYPTO_GMSSL_MEMCPY],
+                      tls13 ? (uint64_t)sizeof(payload) + 8u : UINT64_C(0));
+          check_equal(delta.provider.calls[CRYPTO_GMSSL_COPY_DECRYPT][CRYPTO_GMSSL_MEMCPY],
+                      tls13 ? UINT64_C(1) : UINT64_C(0));
+          check_equal(delta.provider.bytes[CRYPTO_GMSSL_COPY_DECRYPT][CRYPTO_GMSSL_MEMCPY],
+                      tls13 ? UINT64_C(8) : UINT64_C(0));
+        }
         /* A second record forces real pending-plaintext delivery, including
          * the short final remainder, in both TLS versions. */
         check_true(crypto_tls_stream_test_memory_snapshot(&before));
@@ -184,6 +202,8 @@ spec("Opaque Crypto streams retain policy and bounded storage") {
         check_equal(tls_mixed_memory_check(&delta, sizeof(payload)), SALTS_OK);
         check_equal(delta.copied_bytes[CRYPTO_TLS_TEST_COPY_PLAINTEXT], UINT64_C(3));
         check_equal(delta.copied_bytes[CRYPTO_TLS_TEST_COPY_PENDING_PLAINTEXT], (uint64_t)sizeof(payload) - 3u);
+        check_equal(tls_mixed_provider_check(&delta, protocol == CRYPTO_TLS_STREAM_PROTOCOL_VERSION_1_3,
+                                             sizeof(payload)), SALTS_OK);
       }
       {
         bool generated = false, peer = false, pending = false;
@@ -240,6 +260,10 @@ spec("TLS adapter memory diagnostics") {
     check_greater(delta.successful_bytes, UINT64_C(0));
     check_greater(delta.releases, UINT64_C(0));
     check_equal(delta.failures, UINT64_C(0));
+    if (delta.provider_copy_profile) {
+      check_equal(state.before.provider.calls[CRYPTO_GMSSL_COPY_OTHER][CRYPTO_GMSSL_MEMCPY], UINT64_C(0));
+      check_greater(delta.provider.calls[CRYPTO_GMSSL_COPY_OTHER][CRYPTO_GMSSL_MEMCPY], UINT64_C(0));
+    }
     check_true(crypto_tls_stream_test_memory_snapshot(&after));
     check_equal(tls_mixed_memory_delta(&before, &after, &delta), SALTS_OK);
     check_equal(tls_mixed_memory_check(&delta, 0u), SALTS_OK);
@@ -247,6 +271,11 @@ spec("TLS adapter memory diagnostics") {
       check_equal(delta.copy_calls[i], UINT64_C(0));
       check_equal(delta.copied_bytes[i], UINT64_C(0));
     }
+    for (size_t i = 0u; i < CRYPTO_GMSSL_COPY_BUCKETS; ++i)
+      for (size_t j = 0u; j < CRYPTO_GMSSL_COPY_OPERATIONS; ++j) {
+        check_equal(delta.provider.calls[i][j], UINT64_C(0));
+        check_equal(delta.provider.bytes[i][j], UINT64_C(0));
+      }
   }
 }
 
@@ -1061,6 +1090,7 @@ static int tls_mixed_native_sample(bool report, unsigned repetition, size_t chun
   }
   NATIVE_TLS_REQUIRE(strcmp(f->pair[0].ends[0].version, f->pair[1].ends[0].version) == 0);
   NATIVE_TLS_REQUIRE(strcmp(f->pair[0].ends[0].cipher, f->pair[1].ends[0].cipher) == 0);
+  f->state.tls13 = strcmp(f->pair[0].ends[0].version, "TLSv1.3") == 0;
   NATIVE_TLS_REQUIRE(crypto_tls_stream_test_memory_snapshot(&setup_memory));
   NATIVE_TLS_REQUIRE(tls_mixed_memory_delta(&start_memory, &setup_memory, &setup_delta) == SALTS_OK);
   NATIVE_TLS_REQUIRE(setup_delta.allocation_calls > 0u && setup_delta.requested_bytes > 0u && setup_delta.failures == 0u);

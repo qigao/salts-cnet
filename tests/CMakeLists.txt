@@ -245,6 +245,7 @@ if(TARGET Salts::CNet)
     "${PROJECT_SOURCE_DIR}/crypto/src"
     "$<TARGET_PROPERTY:GmSSL::GmSSL,INTERFACE_INCLUDE_DIRECTORIES>")
   target_compile_definitions(saltscore_gmssl_tls_io_abi_test PRIVATE
+    "SALTSCORE_EXPECT_PROVIDER_COPIES=$<BOOL:${SALTSCORE_GMSSL_COPY_PROFILE}>"
     ENABLE_TLS ENABLE_SECP256R1 ENABLE_SECP384R1 ENABLE_SHA1 ENABLE_SHA2 ENABLE_AES
     "CRYPTO_NATIVE_BENCH_CA=\"${CMAKE_CURRENT_SOURCE_DIR}/fixtures/p384-test-root-cert.pem\""
     "CRYPTO_NATIVE_BENCH_CERT=\"${CMAKE_CURRENT_SOURCE_DIR}/fixtures/p384-test-server-cert.pem\""
@@ -291,6 +292,7 @@ if(TARGET Salts::CNet)
   file(TO_CMAKE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/p384-test-server-key.pem"
        _cnet_test_key)
   target_compile_definitions(saltscore_cnet_tls_ca_san_test PRIVATE
+    "SALTSCORE_EXPECT_PROVIDER_COPIES=$<BOOL:${SALTSCORE_GMSSL_COPY_PROFILE}>"
     "CORE_TLS_TEST_P384_CA=\"${_cnet_test_root_ca}\""
     "CORE_TLS_TEST_P384_WRONG_CA=\"${_cnet_test_wrong_ca}\""
     "CORE_TLS_TEST_P384_LEAF=\"${_cnet_test_cert}\""

@@ -75,6 +75,9 @@ endif()
 if(BUILD_TESTING)
   target_compile_definitions(salts_crypto PRIVATE CRYPTO_TLS_STREAM_TESTING)
 endif()
+if(SALTSCORE_GMSSL_COPY_PROFILE)
+  target_compile_definitions(salts_crypto PRIVATE SALTSCORE_GMSSL_COPY_PROFILE)
+endif()
 
 # Keep the Ed448 facade's configuration consistent with the private object
 # target. No SHA256/SM3 libecc implementation or alternate RNG is built.
