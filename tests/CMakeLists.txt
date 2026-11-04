@@ -239,11 +239,15 @@ if(TARGET Salts::CNet)
   target_compile_features(saltscore_gmssl_tls_io_abi_test PRIVATE c_std_11)
   set_target_properties(saltscore_gmssl_tls_io_abi_test PROPERTIES
     C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
-  target_link_libraries(saltscore_gmssl_tls_io_abi_test PRIVATE Salts::Crypto Salts::TinyTest)
+  target_link_libraries(saltscore_gmssl_tls_io_abi_test PRIVATE
+    Salts::Crypto Salts::Core Salts::NativeIO Salts::TinyTest)
   target_include_directories(saltscore_gmssl_tls_io_abi_test PRIVATE
     "$<TARGET_PROPERTY:GmSSL::GmSSL,INTERFACE_INCLUDE_DIRECTORIES>")
   target_compile_definitions(saltscore_gmssl_tls_io_abi_test PRIVATE
     ENABLE_TLS ENABLE_SECP256R1 ENABLE_SECP384R1 ENABLE_SHA1 ENABLE_SHA2 ENABLE_AES
+    "CRYPTO_NATIVE_BENCH_CA=\"${CMAKE_CURRENT_SOURCE_DIR}/fixtures/p384-test-root-cert.pem\""
+    "CRYPTO_NATIVE_BENCH_CERT=\"${CMAKE_CURRENT_SOURCE_DIR}/fixtures/p384-test-server-cert.pem\""
+    "CRYPTO_NATIVE_BENCH_KEY=\"${CMAKE_CURRENT_SOURCE_DIR}/fixtures/p384-test-server-key.pem\""
     "CRYPTO_CLOSE_TEST_CA=\"${PROJECT_SOURCE_DIR}/crypto/tests/fixtures/external-io-ca-cert.pem\""
     "CRYPTO_CLOSE_TEST_SERVER_CERT=\"${PROJECT_SOURCE_DIR}/crypto/tests/fixtures/external-io-server-cert.pem\""
     "CRYPTO_CLOSE_TEST_SERVER_KEY=\"${PROJECT_SOURCE_DIR}/crypto/tests/fixtures/external-io-server-key.pem\"")

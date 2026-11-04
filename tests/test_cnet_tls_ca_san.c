@@ -1578,6 +1578,11 @@ spec("CNet real TLS CA SAN mTLS Python peer interoperability") {
       }
     }
     const char *measure = getenv("SALTSCORE_CNET_TLS_BENCHMARK");
+    if (measure != NULL) {
+      it("uses the explicit CNet TLS benchmark switch") {
+        check_equal(measure, "1");
+      }
+    }
     if (measure != NULL && strcmp(measure, "1") == 0) {
       printf("CNET_TLS_CSV,mode,repeat,window,operations,version,cipher,handshake_ns,bytes,elapsed_ns,cpu_ns,p50_send_ns,p95_send_ns,p99_send_ns,rejected,policy_calls,storage_allocations,receive_acquires,peak_logical_bytes,peak_backing_bytes,physical_source_bytes,native_submissions,close_ns\n");
       for (unsigned repetition = 0u; repetition < 5u; ++repetition) {
@@ -1614,10 +1619,14 @@ spec("CNet real TLS CA SAN mTLS Python peer interoperability") {
 }
 
 int main(int argc, char **argv) {
-  saltscore_original_argc = argc;
+  /* Keep peer protocol arguments intact; also expose TinyTest's standard
+   * case filter for interleaved project-owned benchmark collection. */
+  const bool filter = argc > 1 &&
+      (strcmp(argv[1], "--filter") == 0 || strcmp(argv[1], "-f") == 0);
+  saltscore_original_argc = filter ? 1 : argc;
   saltscore_original_argv = argv;
   char *runner_argv[] = {argv[0]};
-  return ttest_main__(1, runner_argv, TTEST_INVOKE_SPEC_ADAPTER__,
+  return ttest_main__(filter ? argc : 1, filter ? argv : runner_argv, TTEST_INVOKE_SPEC_ADAPTER__,
                       TT_USE_COLOR != 0, TT_USE_TAP != 0,
                       TTEST_IS_ATTY__() != 0, TTEST_PRINT_TRACE_DEFAULT__);
 }

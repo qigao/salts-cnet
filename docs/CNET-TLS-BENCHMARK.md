@@ -59,3 +59,7 @@ This slice leaves direct secure NativeIO, independent TLS bulk/control traffic,
 global allocation/copy instrumentation and other-platform timing evidence open.
 
 Measured evidence: [Windows x64, 2026-11-04](benchmarks/cnet-tls-windows-x64-2026-11-04.md).
+
+The subsequent [direct NativeIO TLS cohort](CNET-NATIVE-TLS-BENCHMARK.md) adds
+the depth-1 secure baseline in a separate existing Crypto formal executable,
+with interleaved fresh processes and matched production primitives/settings.
