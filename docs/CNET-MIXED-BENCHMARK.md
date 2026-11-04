@@ -13,6 +13,10 @@ peer reads, proves a real pending send and measures control progress followed
 by resumed drain. Its preparation, payload and offering differ from the
 continuously replenished workload here; keep their measurement cohorts separate.
 
+The [fixed Owner comparison](CNET-FIXED-OWNERS-BENCHMARK.md) partitions bulk and
+control across two SG shards and uses a separate matched 4-endpoint cohort.
+Its per-Owner sampling intervals and skew are recorded independently.
+
 ## Direct NativeIO ownership protocol
 
 Direct mode qualifies bulk depth 1 with the same backend bounds (2 endpoints,
