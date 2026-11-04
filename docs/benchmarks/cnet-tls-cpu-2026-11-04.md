@@ -66,6 +66,10 @@ sums for every recording. All 25 report zero lost samples; the stack exports
 contain no lost-event records. Of these, 98,700 samples resolve a
 `tls_mixed_phase` ancestor, covering warm/transfer and both drains. Process
 scope also includes setup/handshake/close and remains separately available.
+The full-process export also contains exactly seven GCM allocator-descendant
+samples, plus four other allocator samples. The phase selection did not discard
+an observed GCM allocator stack. All 48 unresolved process samples are already
+included in the phase unknown count.
 
 Percentages below are medians of five per-process weighted-period shares
 within resolved mixed-phase stacks. Allocator columns preserve all five
