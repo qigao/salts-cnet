@@ -127,6 +127,10 @@ on:
         description: "Run the full Linux x64 graph with explicit GmSSL copy counters"
         type: boolean
         default: false
+      cnet_cpu_profile:
+        description: "Sample CPU callchains of existing TLS CTests on Linux x64"
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -336,6 +340,10 @@ jobs:
                 "${{ matrix.preset }}" == "ci-native" ]]; then
             tls_options+=(-DSALTSCORE_CNET_TLS_MIXED_MEASUREMENTS=ON)
           fi
+          if [[ "${{ inputs.cnet_cpu_profile }}" == "true" &&
+                "${{ matrix.rid }}" == "linux-x64" ]]; then
+            tls_options+=(-DSALTSCORE_CNET_TLS_MIXED_MEASUREMENTS=ON)
+          fi
           cmake --preset "${{ matrix.preset }}" "${tls_options[@]}"
 
       # Configure completes vcpkg installation and local binary-cache writes.
@@ -365,7 +373,7 @@ jobs:
         run: ctest --preset "${{ matrix.preset }}"
 
       - name: Preserve formal measurement output and host provenance
-        if: always() && inputs.cnet_measurements && matrix.preset == 'ci-native'
+        if: always() && ((inputs.cnet_measurements && matrix.preset == 'ci-native') || (inputs.cnet_cpu_profile && matrix.rid == 'linux-x64'))
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
@@ -410,12 +418,66 @@ jobs:
           done < <(find build/ci-native/tests/tls-mixed-heaptrack -maxdepth 1 -type f \( -name '*.gz' -o -name '*.zst' \) -print0)
 
       - uses: actions/upload-artifact@v4
-        if: always() && inputs.cnet_measurements && matrix.preset == 'ci-native'
+        if: always() && ((inputs.cnet_measurements && matrix.preset == 'ci-native') || (inputs.cnet_cpu_profile && matrix.rid == 'linux-x64'))
         with:
           name: cnet-measurements-${{ matrix.rid }}
           path: |
             build/cnet-measurements/${{ matrix.rid }}
             build/${{ matrix.preset }}/tests/tls-mixed-heaptrack
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Sample the same formal cases with Linux perf
+        if: success() && inputs.cnet_cpu_profile && matrix.rid == 'linux-x64'
+        id: tls-perf
+        shell: bash
+        env:
+          DEBUGINFOD_URLS: ""
+        run: |
+          set -euo pipefail
+          output=build/cnet-cpu-measurements
+          mkdir -p "$output"
+          dpkg-query -W libc6 > "$output/native-libc.txt"
+          cp build/cnet-measurements/linux-x64/timing-ctest.log "$output/native-ctest.log"
+          cp build/ci-native/tests/tls-mixed-compiler.txt "$output/compiler.txt"
+          cp build/ci-native/vcpkg_installed/vcpkg/status "$output/vcpkg-status.txt"
+          sudo apt-get install -y --no-install-recommends "linux-tools-$(uname -r)" libc6-dbg
+          original_paranoid=$(sysctl -n kernel.perf_event_paranoid)
+          trap 'sudo sysctl -w kernel.perf_event_paranoid="$original_paranoid" >/dev/null' EXIT
+          sudo sysctl -w kernel.perf_event_paranoid=-1
+          {
+            git rev-parse HEAD
+            uname -a
+            lscpu
+            perf version --build-options
+            dpkg-query -W libc6 libc6-dbg "linux-tools-$(uname -r)"
+            sysctl kernel.perf_event_paranoid kernel.perf_event_max_sample_rate
+          } > "$output/host.txt"
+          cmake --preset ci-native -DSALTSCORE_CNET_TLS_MIXED_HEAPTRACK=OFF \
+            -DSALTSCORE_CNET_TLS_MIXED_PERF=ON
+          cmake --build --preset ci-native
+          ctest --preset ci-native -L '^cnet_tls_mixed_measurements$' --verbose \
+            --output-log "$output/perf-ctest.log"
+          while IFS= read -r -d '' trace; do
+            name=$(basename "$trace" .data)
+            sha256sum "$trace" >> "$output/recording-sha256.txt"
+            perf buildid-list -i "$trace" > "$output/$name.buildids.txt"
+            perf report -i "$trace" --stdio --header --no-children --percent-limit 0 \
+              --show-nr-samples --show-total-period --sort dso,symbol \
+              --field-separator , > "$output/$name.flat.txt" 2> "$output/$name.flat.stderr.txt"
+            perf report -i "$trace" --stdio --children --percent-limit 0 \
+              --show-nr-samples --show-total-period --sort dso,symbol \
+              > "$output/$name.children.txt" 2> "$output/$name.children.stderr.txt"
+            perf script -i "$trace" --ns --show-lost-events \
+              --fields comm,pid,tid,time,event,period,ip,sym,dso \
+              2> "$output/$name.script.stderr.txt" | gzip > "$output/$name.stacks.txt.gz"
+          done < <(find build/ci-native/tests/tls-mixed-perf -maxdepth 1 -type f -name '*.data' -print0)
+
+      - uses: actions/upload-artifact@v4
+        if: always() && steps.tls-perf.outcome != 'skipped' && steps.tls-perf.outcome != ''
+        with:
+          name: cnet-cpu-measurements-linux-x64
+          path: build/cnet-cpu-measurements
           if-no-files-found: error
           retention-days: 14
 
