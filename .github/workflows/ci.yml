@@ -140,7 +140,6 @@ jobs:
     timeout-minutes: 120
     env:
       VCPKG_DOWNLOADS: ${{ github.workspace }}/build/vcpkg-downloads
-      CCACHE_VERSION: 4.14.2
       CCACHE_DIR: ${{ github.workspace }}/build/ccache
       CCACHE_MAXSIZE: 256MiB
       CCACHE_COMPILERCHECK: content
@@ -172,7 +171,7 @@ jobs:
 
       - name: Set up native LLVM
         if: runner.os != 'Windows'
-        uses: qigao/vcpkg-cache/.github/actions/setup-llvm-native@v0.1.0
+        uses: qigao/vcpkg-cache/.github/actions/setup-llvm-native@v0.1.4
         with:
           build-type: toolchain-only
           obfuscator: "false"
@@ -180,7 +179,7 @@ jobs:
       - name: Set up Windows LLVM-MinGW
         id: windows-llvm
         if: runner.os == 'Windows'
-        uses: qigao/vcpkg-cache/.github/actions/setup-llvm-mingw@v0.1.0
+        uses: qigao/vcpkg-cache/.github/actions/setup-llvm-mingw@v0.1.4
         with:
           target: ${{ matrix.target }}
           build-type: toolchain-only
@@ -189,13 +188,16 @@ jobs:
       - name: Set up shared dependency contract
         id: vcpkg
         # Includes the pinned native Windows pkg-config; avoid MSYS2 for pkg-config.
-        uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-cache@a561c4c3179331e2f2cf3c68c6116cfb9e3db00b
+        uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-curl-cache@v0.1.4
         with:
           mode: read
+          triplet: ${{ matrix.triplet }}
+          host-triplet: ${{ matrix.host }}
+          restore-packages: "false"
           token: ${{ github.token }}
 
       - name: Restore re2c and Unicode host data
-        uses: qigao/vcpkg-cache/.github/actions/setup-re2c-tools@v0.1.0
+        uses: qigao/vcpkg-cache/.github/actions/setup-re2c-tools@v0.1.4
         with:
           token: ${{ github.token }}
 
@@ -283,41 +285,17 @@ jobs:
             vcpkg-v1-${{ runner.os }}-${{ runner.arch }}-${{ matrix.rid }}-${{ matrix.preset }}-${{ steps.vcpkg.outputs.cache_revision }}-
 
       - name: Install native ccache
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $platform, $digest = switch ("$env:RUNNER_OS-$env:RUNNER_ARCH") {
-            'Linux-X64' { 'linux-x86_64-glibc', 'b1f7fbb60ee24b80a6abae09ec4fcc6554fbf98c933c9bd25a3f53ab685fc00b' }
-            'Linux-ARM64' { 'linux-aarch64-glibc', 'bc537a1f29232be50be3219ffe80c7c1955bc80a99c75311d7fb839828c80dd0' }
-            'macOS-X64' { 'darwin', 'cf240009630b605b775c7c5c7b7105a3b196c79f31af322c1557969aa28003fc' }
-            'macOS-ARM64' { 'darwin', 'cf240009630b605b775c7c5c7b7105a3b196c79f31af322c1557969aa28003fc' }
-            'Windows-X64' { 'windows-x86_64', '6993ce645e53192cec592ee23186200b574ac4c59097ecde8d9cfd681b47ae84' }
-            'Windows-ARM64' { 'windows-aarch64', '47ea5a0ed661bea53962d8fb8ee9a1769092d979a6f7c73d3081499b3305b2ab' }
-            default { throw "Unsupported ccache host: $env:RUNNER_OS-$env:RUNNER_ARCH" }
-          }
-          $name = "ccache-$env:CCACHE_VERSION-$platform"
-          $extension = if ($IsWindows) { 'zip' } else { 'tar.gz' }
-          $archive = Join-Path $env:RUNNER_TEMP "$name.$extension"
-          Invoke-WebRequest "https://github.com/ccache/ccache/releases/download/v$env:CCACHE_VERSION/$name.$extension" -OutFile $archive
-          if ((Get-FileHash -Algorithm SHA256 -LiteralPath $archive).Hash -ne $digest) {
-            throw 'ccache archive SHA256 mismatch'
-          }
-          if ($IsWindows) {
-            Expand-Archive -LiteralPath $archive -DestinationPath $env:RUNNER_TEMP
-          } else {
-            tar -xf $archive -C $env:RUNNER_TEMP
-            if ($LASTEXITCODE -ne 0) { throw 'ccache extraction failed' }
-          }
-          (Join-Path $env:RUNNER_TEMP $name) >> $env:GITHUB_PATH
+        id: ccache
+        uses: qigao/vcpkg-cache/.github/actions/setup-ccache@v0.1.4
 
       - name: Restore compiler cache
         id: compiler-cache
         uses: actions/cache/restore@v4
         with:
           path: ${{ env.CCACHE_DIR }}
-          key: ccache-${{ env.CCACHE_VERSION }}-${{ steps.vcpkg-cache.outputs.cache-primary-key }}-${{ github.sha }}
+          key: ccache-${{ steps.ccache.outputs.version }}-${{ steps.vcpkg-cache.outputs.cache-primary-key }}-${{ github.sha }}
           restore-keys: |
-            ccache-${{ env.CCACHE_VERSION }}-${{ steps.vcpkg-cache.outputs.cache-primary-key }}-
+            ccache-${{ steps.ccache.outputs.version }}-${{ steps.vcpkg-cache.outputs.cache-primary-key }}-
 
       - name: Start compiler cache statistics
         shell: bash
