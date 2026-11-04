@@ -38,7 +38,7 @@ OWNER_FILES = (
     "usb/include/cflow/usb.h",
     "usb/src/usb.c",
 )
-for old in ("include", "src", "utils", "cflow-fs", "cflow-process", "salts_serial"):
+for old in ("include", "src", "utils", "cflow-fs", "cflow-process", "salts_serial", "capture", "playback"):
     if (ROOT / old).exists():
         raise SystemExit(f"legacy root module directory still present: {old}")
 
@@ -68,7 +68,7 @@ root_code_modules = {
             for path in child.rglob("*"))
 }
 expected_module_dirs = set(MODULES) | {
-    "cserde", "idna", "tinytest", "unicode", "tests", "vendor",
+    "cserde", "idna", "tinytest", "unicode", "tests", "vendor", "media",
 }
 missing_sources = expected_module_dirs - root_code_modules
 if missing_sources:

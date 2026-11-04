@@ -42,10 +42,7 @@ on:
       - "sctp/include/**"
       - "usb/src/**"
       - "usb/include/**"
-      - "playback/src/**"
-      - "playback/include/**"
-      - "capture/src/**"
-      - "capture/include/**"
+      - "media/**"
       - "serial/*.c"
       - "serial/*.h"
       - "verification/*.pml"
@@ -104,10 +101,7 @@ on:
       - "sctp/include/**"
       - "usb/src/**"
       - "usb/include/**"
-      - "playback/src/**"
-      - "playback/include/**"
-      - "capture/src/**"
-      - "capture/include/**"
+      - "media/**"
       - "serial/*.c"
       - "serial/*.h"
       - "verification/*.pml"
@@ -171,7 +165,7 @@ jobs:
 
       - name: Set up native LLVM
         if: runner.os != 'Windows'
-        uses: qigao/vcpkg-cache/.github/actions/setup-llvm-native@v0.1.4
+        uses: qigao/vcpkg-cache/.github/actions/setup-llvm-native@v0.1.5
         with:
           build-type: toolchain-only
           obfuscator: "false"
@@ -179,7 +173,7 @@ jobs:
       - name: Set up Windows LLVM-MinGW
         id: windows-llvm
         if: runner.os == 'Windows'
-        uses: qigao/vcpkg-cache/.github/actions/setup-llvm-mingw@v0.1.4
+        uses: qigao/vcpkg-cache/.github/actions/setup-llvm-mingw@v0.1.5
         with:
           target: ${{ matrix.target }}
           build-type: toolchain-only
@@ -188,7 +182,7 @@ jobs:
       - name: Set up shared dependency contract
         id: vcpkg
         # Includes the pinned native Windows pkg-config; avoid MSYS2 for pkg-config.
-        uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-curl-cache@v0.1.4
+        uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-curl-cache@v0.1.5
         with:
           mode: read
           triplet: ${{ matrix.triplet }}
@@ -197,7 +191,7 @@ jobs:
           token: ${{ github.token }}
 
       - name: Restore re2c and Unicode host data
-        uses: qigao/vcpkg-cache/.github/actions/setup-re2c-tools@v0.1.4
+        uses: qigao/vcpkg-cache/.github/actions/setup-re2c-tools@v0.1.5
         with:
           token: ${{ github.token }}
 
@@ -286,7 +280,7 @@ jobs:
 
       - name: Install native ccache
         id: ccache
-        uses: qigao/vcpkg-cache/.github/actions/setup-ccache@v0.1.4
+        uses: qigao/vcpkg-cache/.github/actions/setup-ccache@v0.1.5
 
       - name: Restore compiler cache
         id: compiler-cache
