@@ -18,9 +18,8 @@ option(SALTSCORE_TEST_CNET_CRYPTO_QUALIFICATION
 option(SALTSCORE_CNET_PRODUCTION_REQUIRED_MTLS_TEST
   "Exercise public NativeIO CNet REQUIRED client-certificate auth" OFF)
 option(SALTSCORE_BUILD_USB "Build the native libusb USB owner" OFF)
-option(SALTSCORE_BUILD_PLAYBACK "Build the native PCM Playback owner" OFF)
 option(SALTSCORE_BUILD_SERIAL "Build the native Serial owner" OFF)
-option(SALTSCORE_BUILD_CAPTURE "Build the native audio/video/screen Capture owner" OFF)
+option(SALTSCORE_BUILD_MEDIA "Build combined static Capture/Playback Media owner" OFF)
 
 option(SALTSCORE_ENABLE_ASAN "Enable AddressSanitizer" OFF)
 option(SALTSCORE_ENABLE_UBSAN "Enable UndefinedBehaviorSanitizer" OFF)

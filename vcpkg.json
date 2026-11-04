@@ -3,33 +3,10 @@
   "version-semver": "0.1.2",
   "builtin-baseline": "b1b19307e2d2ec1eefbdb7ea069de7d4bcd31f01",
   "features": {
-    "capture": {
-      "description": "Original native audio, video and screen capture backends",
-      "dependencies": [
-        {
-          "name": "miniaudio",
-          "platform": "!ios"
-        },
-        {
-          "name": "libyuv",
-          "platform": "windows | android | linux"
-        },
-        {
-          "name": "libjpeg-turbo",
-          "platform": "windows"
-        }
-      ]
-    },
     "zstd": {
       "description": "Pinned private static Zstd provider for the original Core compression API",
       "dependencies": [
         "zstd"
-      ]
-    },
-    "playback": {
-      "description": "Private miniaudio implementation for native PCM playback",
-      "dependencies": [
-        "miniaudio"
       ]
     },
     "usb": {
@@ -40,6 +17,20 @@
     },
     "cnet": {
       "description": "Compatibility feature: CNet is always built with local Crypto; networking dependencies belong to the base SDK"
+    },
+    "media": {
+      "description": "One static Media owner for Capture and PCM Playback",
+      "dependencies": [
+        "miniaudio",
+        {
+          "name": "libyuv",
+          "platform": "windows | android | linux"
+        },
+        {
+          "name": "libjpeg-turbo",
+          "platform": "windows"
+        }
+      ]
     }
   },
   "dependencies": [
