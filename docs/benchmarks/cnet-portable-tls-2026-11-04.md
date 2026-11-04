@@ -67,6 +67,14 @@ short tests rather than timing collection. Local full Release configuration,
 build and 25 selected measurement CTests passed in 33.88 seconds; later
 compiler-provenance generation required no runtime rebuild.
 
+The collection also exposed a compiler-cache restore-key limitation: every
+native lane missed the archive because its only restore prefix contained the
+complete vcpkg archive key, including the changed workflow hash. Logged ccache
+hit rates were 0.21–1.77%. A subsequent workflow correction adds a prefix
+limited to the same ccache version, OS/architecture/RID/preset and dependency
+contract, while preserving compiler-content/input validation. This changes
+cache discovery, not the measured source or its timing data.
+
 ## Native observations
 
 Each cell is **median bulk MiB/s / median control RTT p99 in milliseconds**

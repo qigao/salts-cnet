@@ -44,6 +44,12 @@ rejection, drain and boundary count; closed-loop paths can do different work.
 Compiler provenance is generated from the configured CMake graph; a different
 compiler found on the host shell PATH must not be used as the build identity.
 
+Compiler-cache restoration first uses the exact dependency/archive key, then
+the same ccache version, OS, architecture, RID, preset and dependency contract.
+This lets workflow/configuration-only edits find prior compiler entries;
+ccache still validates compiler content, flags and input dependencies. Binary
+package selection and compiler-cache validation are not bypassed.
+
 ## Linux process heap profile
 
 The same manual dispatch then profiles those 25 formal cases on Linux x64,

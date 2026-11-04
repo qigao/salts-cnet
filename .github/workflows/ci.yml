@@ -279,6 +279,7 @@ jobs:
           key: ccache-${{ steps.ccache.outputs.version }}-${{ steps.vcpkg-cache.outputs.cache-primary-key }}-${{ github.sha }}
           restore-keys: |
             ccache-${{ steps.ccache.outputs.version }}-${{ steps.vcpkg-cache.outputs.cache-primary-key }}-
+            ccache-${{ steps.ccache.outputs.version }}-vcpkg-v1-${{ runner.os }}-${{ runner.arch }}-${{ matrix.rid }}-${{ matrix.preset }}-${{ steps.vcpkg.outputs.cache_revision }}-
 
       - name: Start compiler cache statistics
         shell: bash
