@@ -869,6 +869,7 @@ static int run_python_ssl_client(const char *port_path,
   bool tls_live = false, server_live = false, listener_live = false;
   bool accepted = false, armed = false, response_sent = false;
   bool local_close_started = false;
+  bool send_marker_published = false;
   bool gated_ready_published = false;
   unsigned polls_after_receive_admission = 0u;
   mem_buffer_t *outgoing = NULL;
@@ -965,6 +966,29 @@ static int run_python_ssl_client(const char *port_path,
       mem_buffer_release(outgoing);
       outgoing = NULL;
       response_sent = true;
+    }
+    if ((expect_invalid_close || strcmp(outcome, "accept") == 0) &&
+        response_sent && probe.sent_count && !send_marker_published) {
+      /*
+       * Isolate authenticated-reply completion from the separate
+       * post-authenticated invalid-close gate. An independent Python peer
+       * must not inject EOF/bad alert until production CNet has actually
+       * published the SEND event for G; ciphertext reception alone is not
+       * that guarantee. The negative case still requires a real FAILED
+       * terminal after the peer's invalid close.
+       */
+      char send_ready_path[1024];
+      FILE *send_ready;
+      int name_bytes;
+      REQUIRE(probe.failed == 0u && probe.sent_count == 1u);
+      name_bytes = snprintf(send_ready_path, sizeof(send_ready_path),
+                            "%s.sent", port_path);
+      REQUIRE(name_bytes > 0 && (size_t)name_bytes < sizeof(send_ready_path));
+      send_ready = fopen(send_ready_path, "wb");
+      REQUIRE(send_ready != NULL);
+      REQUIRE(fputs("sent\\n", send_ready) >= 0);
+      REQUIRE(fclose(send_ready) == 0);
+      send_marker_published = true;
     }
     if (expect_local_peer_close && response_sent &&
         probe.sent_count && !local_close_started) {

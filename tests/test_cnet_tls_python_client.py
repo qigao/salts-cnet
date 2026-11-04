@@ -27,7 +27,26 @@ CASES = ("client", "missing", "wrongca", "eku", "expired", "chain", "badsig")
 VERSION = {"12": "TLSv1.2", "13": "TLSv1.3"}
 
 
-def rejected_close_exchange(ctx, raw, proto: str, mode: str) -> None:
+def wait_for_native_send(native: subprocess.Popen, port_path: Path) -> None:
+    """Wait for the genuine CNet SEND callback before changing TLS phase.
+
+    A received G byte proves wire delivery, not the native SEND event.
+    This deterministic boundary separates the negative peer-close test from
+    the independently tracked SEND-vs-EOF ownership race.
+    """
+    marker = Path(str(port_path) + ".sent")
+    deadline = time.monotonic() + 4.0
+    while not marker.exists():
+        if native.poll() is not None:
+            raise AssertionError("native CNet exited before SEND acknowledgement")
+        if time.monotonic() >= deadline:
+            raise AssertionError("native CNet did not publish SEND acknowledgement")
+        time.sleep(0.005)
+
+
+def rejected_close_exchange(
+    ctx, raw, proto: str, mode: str, native: subprocess.Popen, port_path: Path
+) -> None:
     """Authenticated exchange followed by an invalid TLS shutdown.
 
     MemoryBIO retains the actual OpenSSL record encryption, so corrupting or
@@ -66,6 +85,8 @@ def rejected_close_exchange(ctx, raw, proto: str, mode: str) -> None:
             break
         except ssl.SSLWantReadError:
             receive()
+
+    wait_for_native_send(native, port_path)
 
     if mode in ("truncated", "badalert"):
         try:
@@ -273,7 +294,9 @@ def scenario(
             try:
                 if rejected_close:
                     phase = f"authenticated-rejected-close-{rejected_close}"
-                    rejected_close_exchange(ctx, raw, proto, rejected_close)
+                    rejected_close_exchange(
+                        ctx, raw, proto, rejected_close, native, port_path
+                    )
                     peer_completed = True
                 elif fragmented or coalesced:
                     phase = (
@@ -362,6 +385,9 @@ def scenario(
                                     peer.unwrap()
                                     phase = "authenticated-close-complete"
                                 else:
+                                    if expected == "accept":
+                                        phase = "native-send-acknowledgement"
+                                        wait_for_native_send(native, port_path)
                                     phase = "authenticated"
                                 peer_completed = True
                             elif response == b"G":
