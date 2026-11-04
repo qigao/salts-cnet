@@ -57,3 +57,5 @@ fixture, source and callback/provider storage rather than freeing borrowed memor
 
 This slice leaves direct secure NativeIO, independent TLS bulk/control traffic,
 global allocation/copy instrumentation and other-platform timing evidence open.
+
+Measured evidence: [Windows x64, 2026-11-04](benchmarks/cnet-tls-windows-x64-2026-11-04.md).
