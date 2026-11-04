@@ -58,6 +58,29 @@ static void transfer_stream_cipher(unsigned from, unsigned to) {
                 CRYPTO_TLS_STREAM_OK);
 }
 
+static void establish_stream_pair(crypto_tls_stream_protocol_version protocol) {
+  crypto_tls_stream_client_config client = {sizeof(client)};
+  crypto_tls_stream_server_config server = {sizeof(server)};
+  bool complete[2] = {false, false};
+  client.ca_file = CRYPTO_CLOSE_TEST_CA;
+  server.cert_file = CRYPTO_CLOSE_TEST_SERVER_CERT;
+  server.key_file = CRYPTO_CLOSE_TEST_SERVER_KEY;
+  check_equal(crypto_tls_stream_client_context_create(&client, &stream_context[0]), CRYPTO_TLS_STREAM_OK);
+  check_equal(crypto_tls_stream_server_context_create(&server, &stream_context[1]), CRYPTO_TLS_STREAM_OK);
+  for (unsigned i = 0u; i < 2u; ++i) {
+    check_equal(crypto_tls_stream_create(stream_context[i], i != 0u,
+                  i == 0u ? "localhost" : NULL, 32768u, &stream_pair[i]), CRYPTO_TLS_STREAM_OK);
+    check_equal(crypto_tls_stream_set_protocol_range(stream_pair[i], protocol, protocol), CRYPTO_TLS_STREAM_OK);
+  }
+  for (unsigned step = 0u; step < 128u && !(complete[0] && complete[1]); ++step) {
+    for (unsigned i = 0u; i < 2u; ++i) {
+      check_equal(crypto_tls_stream_handshake(stream_pair[i], &complete[i]), CRYPTO_TLS_STREAM_OK);
+      transfer_stream_cipher(i, 1u - i);
+    }
+  }
+  check(complete[0] && complete[1]);
+}
+
 spec("Opaque Crypto streams retain policy and bounded storage") {
   before_each() {
     memset(stream_context, 0, sizeof(stream_context));
@@ -70,6 +93,98 @@ spec("Opaque Crypto streams retain policy and bounded storage") {
     }
   }
   for (unsigned version = 0; version < 2u; ++version) {
+    it("TLS1.%u server endpoint binding agrees at both endpoints", version + 2u) {
+      uint8_t client_binding[CRYPTO_TLS_STREAM_SERVER_END_POINT_MAX_BYTES];
+      uint8_t server_binding[CRYPTO_TLS_STREAM_SERVER_END_POINT_MAX_BYTES];
+      size_t client_size = 0u, server_size = 0u;
+      establish_stream_pair(version ? CRYPTO_TLS_STREAM_PROTOCOL_VERSION_1_3
+                                          : CRYPTO_TLS_STREAM_PROTOCOL_VERSION_1_2);
+      check_equal(crypto_tls_stream_server_end_point_binding(stream_pair[0],
+                    client_binding, sizeof(client_binding), &client_size), CRYPTO_TLS_STREAM_OK);
+      check_equal(crypto_tls_stream_server_end_point_binding(stream_pair[1],
+                    server_binding, sizeof(server_binding), &server_size), CRYPTO_TLS_STREAM_OK);
+      check_equal(server_size, client_size);
+      check_equal(server_binding, client_binding, client_size);
+    }
+    it("TLS1.%u shutdown rejects an incomplete application write without losing data", version + 2u) {
+      uint8_t payload[32768] = {0};
+      uint8_t received[32768];
+      size_t size = 0u, total = 0u;
+      bool complete = true, generated = false, peer = false;
+      bool pending = false;
+      establish_stream_pair(version ? CRYPTO_TLS_STREAM_PROTOCOL_VERSION_1_3
+                                          : CRYPTO_TLS_STREAM_PROTOCOL_VERSION_1_2);
+      check_equal(crypto_tls_stream_write(stream_pair[0], payload, sizeof(payload), &complete), CRYPTO_TLS_STREAM_OK);
+      check_false(complete);
+      transfer_stream_cipher(0u, 1u);
+      /* The provider still owns the partially emitted second application
+       * record. Shutdown must not relabel that record as close_notify. */
+      check_equal(crypto_tls_stream_shutdown(stream_pair[0], &generated, &peer), CRYPTO_TLS_STREAM_EBUSY);
+      check_false(generated);
+      check_false(peer);
+      check_equal(crypto_tls_stream_read(stream_pair[1], received, sizeof(received), &size, &peer), CRYPTO_TLS_STREAM_OK);
+      total += size;
+      check_equal(crypto_tls_stream_write(stream_pair[0], payload, sizeof(payload), &complete), CRYPTO_TLS_STREAM_OK);
+      check_true(complete);
+      transfer_stream_cipher(0u, 1u);
+      for (unsigned step = 0u; step < 16u && total < sizeof(payload); ++step) {
+        check_equal(crypto_tls_stream_read(stream_pair[1], received + total,
+                      sizeof(received) - total, &size, &peer), CRYPTO_TLS_STREAM_OK);
+        check_false(peer);
+        total += size;
+      }
+      check_equal(total, sizeof(payload));
+      check_equal(received, payload, total);
+      check_equal(crypto_tls_stream_shutdown(stream_pair[0], &generated, &peer), CRYPTO_TLS_STREAM_OK);
+      check_true(generated);
+      transfer_stream_cipher(0u, 1u);
+      check_equal(crypto_tls_stream_probe_peer_close(stream_pair[1], &peer, &pending), CRYPTO_TLS_STREAM_OK);
+      check_true(peer);
+      check_false(pending);
+      check_equal(crypto_tls_stream_shutdown(stream_pair[1], &generated, &peer), CRYPTO_TLS_STREAM_OK);
+      transfer_stream_cipher(1u, 0u);
+      check_equal(crypto_tls_stream_shutdown(stream_pair[0], &generated, &peer), CRYPTO_TLS_STREAM_OK);
+      check_true(peer);
+    }
+    it("TLS1.%u shutdown seals writes even when no alert byte fits", version + 2u) {
+      uint8_t payload[16384] = {0}, wire[32768], received[16384];
+      size_t size = 0u, wire_size = 0u, second_size;
+      bool complete = false, generated = true, peer = false, pending = false;
+      establish_stream_pair(version ? CRYPTO_TLS_STREAM_PROTOCOL_VERSION_1_3
+                                    : CRYPTO_TLS_STREAM_PROTOCOL_VERSION_1_2);
+      check_equal(crypto_tls_stream_write(stream_pair[0], payload, 1u, &complete), CRYPTO_TLS_STREAM_OK);
+      check_true(complete);
+      check_equal(crypto_tls_stream_take_cipher(stream_pair[0], wire, sizeof(wire), &wire_size), CRYPTO_TLS_STREAM_OK);
+      check_greater(wire_size, 1u);
+      check_less(wire_size, 128u);
+      check_equal(crypto_tls_stream_feed_cipher(stream_pair[1], wire, wire_size), CRYPTO_TLS_STREAM_OK);
+      check_equal(crypto_tls_stream_read(stream_pair[1], received, sizeof(received), &size, &peer), CRYPTO_TLS_STREAM_OK);
+      check_equal(size, 1u);
+      /* Measure the negotiated record overhead, then exactly fill the output
+       * ring with two complete application records (no pending write). */
+      second_size = sizeof(wire) - sizeof(payload) - 2u * (wire_size - 1u);
+      check_equal(crypto_tls_stream_write(stream_pair[0], payload, sizeof(payload), &complete), CRYPTO_TLS_STREAM_OK);
+      check_true(complete);
+      check_equal(crypto_tls_stream_write(stream_pair[0], payload, second_size, &complete), CRYPTO_TLS_STREAM_OK);
+      check_true(complete);
+      check_equal(crypto_tls_stream_shutdown(stream_pair[0], &generated, &peer), CRYPTO_TLS_STREAM_OK);
+      check_false(generated);
+      check_equal(crypto_tls_stream_write(stream_pair[0], payload, 1u, &complete), CRYPTO_TLS_STREAM_ENOTCONN);
+      transfer_stream_cipher(0u, 1u);
+      check_equal(crypto_tls_stream_read(stream_pair[1], received, sizeof(received), &size, &peer), CRYPTO_TLS_STREAM_OK);
+      check_equal(size, sizeof(payload));
+      check_equal(crypto_tls_stream_read(stream_pair[1], received, sizeof(received), &size, &peer), CRYPTO_TLS_STREAM_OK);
+      check_equal(size, second_size);
+      check_equal(crypto_tls_stream_shutdown(stream_pair[0], &generated, &peer), CRYPTO_TLS_STREAM_OK);
+      check_true(generated);
+      transfer_stream_cipher(0u, 1u);
+      check_equal(crypto_tls_stream_probe_peer_close(stream_pair[1], &peer, &pending), CRYPTO_TLS_STREAM_OK);
+      check_true(peer);
+      check_equal(crypto_tls_stream_shutdown(stream_pair[1], &generated, &peer), CRYPTO_TLS_STREAM_OK);
+      transfer_stream_cipher(1u, 0u);
+      check_equal(crypto_tls_stream_shutdown(stream_pair[0], &generated, &peer), CRYPTO_TLS_STREAM_OK);
+      check_true(peer);
+    }
     it("TLS1.%u survives creator release and preserves authenticated shutdown", version + 2u) {
       char alpn_name[] = "stream-test";
       const char *alpn[] = {alpn_name};
@@ -500,6 +615,40 @@ spec("Crypto authenticated close evidence after real handshake") {
   }
   for (unsigned version = 0u; version < 2u; ++version) {
     const crypto_tls_protocol protocol = version ? CRYPTO_TLS_1_3 : CRYPTO_TLS_1_2;
+    it("TLS1.%u conflicting operations preserve a pending send record", version + 2u) {
+      uint8_t payload[16384] = {0};
+      uint8_t received[16384];
+      size_t sent = 0u, size = 0u, total = 0u;
+      crypto_tls_result result;
+      establish_close_pair(protocol);
+      check_equal(crypto_tls_session_send(close_session[0], payload, sizeof(payload), &sent), CRYPTO_TLS_OK);
+      check_equal(sent, sizeof(payload));
+      check_equal(crypto_tls_session_send(close_session[0], payload, sizeof(payload), &sent), CRYPTO_TLS_AGAIN);
+      check_equal(sent, 0u);
+      check_equal(crypto_tls_session_send(close_session[0], payload + 1u, sizeof(payload) - 1u, &sent), CRYPTO_TLS_BUSY);
+      check_equal(sent, 0u);
+      check_equal(crypto_tls_session_send(close_session[0], payload, sizeof(payload) - 1u, &sent), CRYPTO_TLS_BUSY);
+      check_equal(sent, 0u);
+      check_equal(crypto_tls_session_shutdown(close_session[0]), CRYPTO_TLS_BUSY);
+      /* Sequential entry is not permission to overwrite pending ciphertext. */
+      result = crypto_tls_session_receive(close_session[0], received, sizeof(received), &size);
+      check_equal(result, CRYPTO_TLS_BUSY);
+      check_equal(size, 0u);
+      transfer_close_cipher(0u, 1u);
+      check_equal(crypto_tls_session_receive(close_session[1], received, sizeof(received), &size), CRYPTO_TLS_OK);
+      check_equal(size, sizeof(payload));
+      check_equal(crypto_tls_session_receive(close_session[1], received, sizeof(received), &size), CRYPTO_TLS_AGAIN);
+      check_equal(crypto_tls_session_send(close_session[0], payload, sizeof(payload), &sent), CRYPTO_TLS_OK);
+      check_equal(sent, sizeof(payload));
+      transfer_close_cipher(0u, 1u);
+      for (unsigned step = 0u; step < 16u && total < sizeof(payload); ++step) {
+        result = crypto_tls_session_receive(close_session[1], received + total, sizeof(received) - total, &size);
+        check(result == CRYPTO_TLS_OK || result == CRYPTO_TLS_AGAIN);
+        total += size;
+      }
+      check_equal(total, sizeof(payload));
+      check_equal(received, payload, sizeof(payload));
+    }
     const char *modes[] = {"reciprocal", "EOF", "truncated", "corrupted", "cancelled"};
     for (unsigned mode = 0u; mode < 5u; ++mode) {
       it("TLS1.%u %s cannot forge peer consent", version + 2u, modes[mode]) {
@@ -510,6 +659,8 @@ spec("Crypto authenticated close evidence after real handshake") {
         establish_close_pair(protocol);
         result = crypto_tls_session_shutdown(close_session[0]);
         check(result == CRYPTO_TLS_OK || result == CRYPTO_TLS_AGAIN);
+        check_equal(crypto_tls_session_send(close_session[0], plaintext, 1u, &size), CRYPTO_TLS_CLOSED);
+        check_equal(size, 0u);
         check_equal(crypto_tls_session_peer_close_notify_v1_4(
                         close_session[0], &received), CRYPTO_TLS_OK);
         check_equal(received, 0u); /* Local alert is not peer evidence. */

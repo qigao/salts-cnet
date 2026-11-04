@@ -36,6 +36,11 @@ struct crypto_tls_session {
     uint32_t auth_protocol;
     crypto_tls_result terminal_handshake_error;
     crypto_tls_result terminal_io_error;
+    /* Serialized by in_use; an AGAIN send owns the provider record scratch
+     * until the identical range is retried successfully or the session ends. */
+    const uint8_t *pending_send;
+    size_t pending_send_size;
+    int shutdown_started;
     int alpn_configured;
     size_t alpn_count;
     char alpn_storage[CRYPTO_TLS_ALPN_MAX_PROTOCOLS][
@@ -550,8 +555,20 @@ crypto_tls_result crypto_tls_session_send(
         status = CRYPTO_TLS_CANCELLED;
     else if (s->terminal_io_error != CRYPTO_TLS_OK)
         status = s->terminal_io_error;
+    else if (s->shutdown_started)
+        status = CRYPTO_TLS_CLOSED;
+    else if (s->pending_send &&
+        (s->pending_send != data || s->pending_send_size != len))
+        status = CRYPTO_TLS_BUSY;
     else if ((status = completed_handshake(s)) == CRYPTO_TLS_OK) {
         status = record_io_result(s, tls_send(&s->connection, data, len, &n));
+        if (status == CRYPTO_TLS_AGAIN) {
+            s->pending_send = data;
+            s->pending_send_size = len;
+        } else {
+            s->pending_send = NULL;
+            s->pending_send_size = 0u;
+        }
         if (status == CRYPTO_TLS_OK) {
             if (!n || n > len)
                 status = s->terminal_io_error = CRYPTO_TLS_BACKEND_ERROR;
@@ -579,6 +596,8 @@ crypto_tls_result crypto_tls_session_receive(
         status = CRYPTO_TLS_CANCELLED;
     else if (s->terminal_io_error != CRYPTO_TLS_OK)
         status = s->terminal_io_error;
+    else if (s->pending_send)
+        status = CRYPTO_TLS_BUSY;
     else if ((status = completed_handshake(s)) == CRYPTO_TLS_OK) {
         int peer_closed = 0;
         if (tls_get_peer_close_notify(&s->connection, &peer_closed) != 1)
@@ -607,10 +626,13 @@ crypto_tls_result crypto_tls_session_shutdown(crypto_tls_session *s)
         status = CRYPTO_TLS_CANCELLED;
     else if (s->terminal_io_error != CRYPTO_TLS_OK)
         status = s->terminal_io_error;
+    else if (s->pending_send)
+        status = CRYPTO_TLS_BUSY;
     else if (s->auth_configured &&
         s->terminal_handshake_error != CRYPTO_TLS_OK)
         status = s->terminal_handshake_error;
     else {
+        s->shutdown_started = 1;
         status = record_io_result(s, tls_shutdown(&s->connection));
         if (atomic_load_explicit(&s->cancelled, memory_order_acquire))
             status = CRYPTO_TLS_CANCELLED;

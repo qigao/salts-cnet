@@ -118,6 +118,7 @@ struct crypto_tls_stream {
   bool handshake_started;
   bool handshake_complete;
   bool peer_close_notify;
+  bool shutdown_started;
   bool close_notify_started;
 };
 
@@ -1636,7 +1637,7 @@ int crypto_tls_stream_write(crypto_tls_stream *state, const void *data, size_t s
       (engine = CRYPTO_TLS_STREAM_ENGINE(state)) == NULL)
     return CRYPTO_TLS_STREAM_EINVAL;
   *out_complete = false;
-  if (!state->handshake_complete || state->close_notify_started)
+  if (!state->handshake_complete || state->shutdown_started)
     return CRYPTO_TLS_STREAM_ENOTCONN;
 
   if (engine->write_size == 0u) {
@@ -1828,7 +1829,11 @@ int crypto_tls_stream_shutdown(crypto_tls_stream *state, bool *out_notify_genera
   *out_notify_generated = state->close_notify_started;
   *out_peer_notify_received = false;
   if (!state->handshake_complete) return CRYPTO_TLS_STREAM_ENOTCONN;
+  /* tls_shutdown shares the provider's record scratch with tls_send.
+   * Never let it flush an application record as if it were close_notify. */
+  if (engine->write_size != 0u) return CRYPTO_TLS_STREAM_EBUSY;
 
+  state->shutdown_started = true;
   output_before = engine->output_size;
   result = tls_shutdown(&engine->connection);
   if (engine->output_size > output_before) state->close_notify_started = true;
@@ -2042,8 +2047,18 @@ int crypto_tls_stream_server_end_point_binding(
       !state->handshake_complete)
     return CRYPTO_TLS_STREAM_ENOTCONN;
 
-  result = crypto_tls_stream_peer_leaf(&CRYPTO_TLS_STREAM_ENGINE(state)->connection,
-                                    &certificate, &certificate_size);
+  if (state->server) {
+    const TLS_CONNECT *connection = &CRYPTO_TLS_STREAM_ENGINE(state)->connection;
+    /* This is the selected local chain used by the handshake, not the
+     * client's mTLS identity or the first configured certificate. */
+    result = connection->cert_chain != NULL && connection->cert_chain_len != 0u
+        ? x509_certs_get_cert_by_index(connection->cert_chain,
+              connection->cert_chain_len, 0, &certificate, &certificate_size)
+        : 0;
+  } else {
+    result = crypto_tls_stream_peer_leaf(&CRYPTO_TLS_STREAM_ENGINE(state)->connection,
+                                        &certificate, &certificate_size);
+  }
   if (result < 0) return CRYPTO_TLS_STREAM_EIO;
   if (result == 0) return CRYPTO_TLS_STREAM_ENOENT;
   return crypto_tls_stream_server_end_point_binding_from_certificate(
