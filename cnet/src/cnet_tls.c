@@ -236,6 +236,10 @@ size_t cnet_tls_cipher_input_capacity(const cnet_tls_state *state) {
   return crypto_tls_stream_cipher_input_capacity(cnet_tls_stream(state));
 }
 
+bool cnet_tls_cipher_output_empty(const cnet_tls_state *state) {
+  return crypto_tls_stream_cipher_output_empty(cnet_tls_stream(state));
+}
+
 int cnet_tls_feed_cipher(cnet_tls_state *state, const void *data, size_t size) {
   return cnet_tls_status(crypto_tls_stream_feed_cipher(cnet_tls_stream(state), data, size));
 }

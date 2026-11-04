@@ -103,13 +103,23 @@ dumps. All these cases remain inside the existing formal CMake/CTest graph.
 Issue #152 still requires exact-head platform CI acceptance; local success
 alone does not close it or qualify the complete production provider cutover.
 
-The standalone `sctp/tests/independent/dtls` and
-`crypto/tests/x509/standalone` CMake projects predate this migration and
-remain **outside** the default first-party native graph. They are external
-independent/installed-consumer drivers, not a reason to add a new consumer
-project or test framework to the Core build. Their retirement/in-tree
-rehosting must preserve the actual independent peer oracle and owner boundary
-rather than dropping the behavior to satisfy a CMake naming rule.
+The pre-existing standalone drivers are reconciled in the root test graph:
+
+| Legacy driver | Preserved behavior and current owner |
+| --- | --- |
+| `crypto/tests/x509/standalone` | The two existing TinyTest executables compile the actual `crypto_x509_der.c` and link only ASN1/TinyTest. Real P-256/P-384, malformed DER, concatenated chains and the SaltsNet fixture retain the provider-free link boundary. |
+| `media/capture/tests/native_tsan` | The root TSan preset builds five TinyTest cases against the one instrumented `Salts::Media` archive, including miniaudio. A private PulseAudio null monitor supplies synthetic PCM. Fresh cycles, same-device restart, blocked-callback stop/destroy and invalid device/format rejection remain tested. |
+| `sctp/tests/independent/dtls` | Removed under the explicit no-OpenSSL/BoringSSL-link policy. Its encrypted-record, fingerprint/exporter and DTLS-bound generation evidence is retired, not relabeled as plaintext coverage. Production replacement remains #188. |
+| Pion SCTP peer | The OpenSSL DTLS mode was removed; original UDP I-DATA/I-FORWARD loss/recovery cases run as two CTests in Linux x64 CI. Unsupported legacy DTLS arguments fail. |
+
+Capture's fixture script owns only the private virtual audio service and PCM
+feeder; CTest owns the test invocation/status. It neither configures another
+project nor invokes nested CTest or installed SDK/linkage checks. Each Capture
+TinyTest case runs in a fresh copy of the formal executable, so a failure
+cannot return past stack storage still borrowed by a live native callback.
+No physical audio source is admitted. Missing requested tools fail configure.
+Python `ssl`/`cryptography` and separate CLI peers remain permitted independent
+test processes; no project target links OpenSSL/BoringSSL.
 
 ## CI dependency and compiler caches
 

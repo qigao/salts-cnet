@@ -807,7 +807,7 @@ static int cnet_owner_release_tls_send(cnet_owner_impl *impl, cnet_owner_session
 static int cnet_owner_finalize_session(cnet_owner_impl *impl, cnet_owner_session *session) {
   int close_status;
   int status;
-  if (session->pending_status != SALTS_OK) {
+  if (session->pending_status != SALTS_OK && !session->write_active) {
     status = cnet_owner_release_tls_send(impl, session);
     if (status != SALTS_OK) return status;
   }
@@ -2388,6 +2388,19 @@ static int cnet_owner_complete(cnet_owner_impl *impl, cnet_owner_request *reques
         role == CNET_OWNER_REQUEST_TLS_WRITE &&
         completion->kind == NATIVE_IO_COMPLETION_OK)
       return cnet_owner_tls_drain_fatal_alert(impl, session);
+    /* Cancellation may lose to a complete ciphertext write already observed
+     * by NativeIO. Preserve its logical SEND before the sticky failure only
+     * when all plaintext was accepted and no ciphertext remains unsent.
+     * Never drive TLS or submit another write after failure. */
+    if (role == CNET_OWNER_REQUEST_TLS_WRITE &&
+        completion->kind == NATIVE_IO_COMPLETION_OK &&
+        completion->bytes == requested_size &&
+        session->tls_send_accepted &&
+        cnet_write_handle_valid(session->tls_send_write.handle) &&
+        cnet_tls_cipher_output_empty(&session->tls)) {
+      status = cnet_owner_tls_publish_send(impl, session);
+      if (status != SALTS_OK) return status;
+    }
     return cnet_owner_finalize_session(impl, session);
   }
 
@@ -2697,8 +2710,7 @@ static int cnet_owner_route_completion(cnet_owner_impl *impl,
 #endif
     /* Cancellation may lose to a partial success already queued by the OS. */
     if (session->pending_status != SALTS_OK &&
-        !(session->tls_fatal_alert_draining &&
-          request->role == CNET_OWNER_REQUEST_TLS_WRITE))
+        request->role != CNET_OWNER_REQUEST_TLS_WRITE)
       return cnet_owner_finish_direct_completion(impl, request, completion);
     /* The fatal-alert write still owns its entire logical ciphertext record.
      * Partial NativeIO success must resubmit its remainder before the
@@ -2711,6 +2723,14 @@ static int cnet_owner_route_completion(cnet_owner_impl *impl,
     }
     request->completed_size += completion->bytes;
     if (request->completed_size < request->requested_size) {
+      if (session->pending_status != SALTS_OK &&
+          !session->tls_fatal_alert_draining) {
+        terminal.kind = NATIVE_IO_COMPLETION_CANCELLED;
+        terminal.bytes = 0u;
+        terminal.status = SALTS_ECANCELED;
+        terminal.native_status = 0u;
+        return cnet_owner_finish_direct_completion(impl, request, &terminal);
+      }
       if (request->operation.kind == NATIVE_IO_OPERATION_UDP_SEND_TO)
         return cnet_owner_fail_direct_request(impl, request, SALTS_EIO);
       if (request->role == CNET_OWNER_REQUEST_SEND && session->close_requested) {

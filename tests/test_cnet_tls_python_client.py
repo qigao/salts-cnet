@@ -86,7 +86,8 @@ def rejected_close_exchange(
         except ssl.SSLWantReadError:
             receive()
 
-    wait_for_native_send(native, port_path)
+    if mode not in ("race-eof", "race-eof-pending"):
+        wait_for_native_send(native, port_path)
 
     if mode in ("truncated", "badalert"):
         try:
@@ -115,7 +116,7 @@ def rejected_close_exchange(
         if not outgoing.pending:
             raise AssertionError("OpenSSL did not generate encrypted fatal alert")
         flush()
-    elif mode != "eof":
+    elif mode not in ("eof", "race-eof", "race-eof-pending"):
         raise AssertionError(f"unknown shutdown failure: {mode}")
     # Preserve the read half so CNet must retire its own NativeIO requests
     # and close within the existing socket deadline. EOF is never success.
@@ -279,13 +280,18 @@ def scenario(
     peer_completed = False
     try:
         deadline = time.monotonic() + 12.0
-        while not port_path.exists():
+        while True:
+            # fopen creates the marker before fprintf/fclose publishes its
+            # contents. Wait for the complete line, within the same deadline.
+            port_text = port_path.read_text(encoding="ascii") if port_path.exists() else ""
+            if port_text.endswith("\n"):
+                break
             if native.poll() is not None:
                 raise AssertionError("native CNet server terminated before bind")
             if time.monotonic() >= deadline:
                 raise AssertionError("native CNet server did not bind within deadline")
             time.sleep(0.02)
-        port = int(port_path.read_text(encoding="ascii").strip())
+        port = int(port_text.strip())
         if not 0 < port < 65536:
             raise AssertionError("native listener port invalid")
         phase = "tcp-connect"
@@ -432,7 +438,7 @@ def scenario(
     ):
         diagnostic = "\n".join(
             line for line in err.splitlines()
-            if line.startswith(("CNET_", "CNet TLS case"))
+            if line.startswith(("CNET_", "TLS_EOF_ORDER", "CNet TLS case"))
         )
         raise AssertionError(
             f"TLS{proto} {case} failed at {phase}: {failure or ''} "
@@ -464,7 +470,7 @@ def main() -> int:
         private.chmod(0o700)
         fixtures = python_mtls.make_fixtures(private)
         for proto in ("12", "13"):
-            for mode in ("eof", "truncated", "badalert", "fatal"):
+            for mode in ("race-eof", "race-eof-pending", "eof", "truncated", "badalert", "fatal"):
                 scenario(args.binary, private, python_mtls, fixtures, proto,
                          "client", rejected_close=mode)
             for close_mode in ("orderly_close", "local_close", "send_close"):

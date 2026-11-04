@@ -173,6 +173,9 @@ void *crypto_tls_stream_read_buffer(crypto_tls_stream *state);
 void *crypto_tls_stream_write_buffer(crypto_tls_stream *state);
 size_t crypto_tls_stream_io_buffer_bytes(const crypto_tls_stream *state);
 size_t crypto_tls_stream_cipher_input_capacity(const crypto_tls_stream *state);
+/* Owner-thread query only; false for an invalid stream. This checks the
+ * output ring, not ciphertext already borrowed by a native write. */
+bool crypto_tls_stream_cipher_output_empty(const crypto_tls_stream *state);
 int crypto_tls_stream_feed_cipher(crypto_tls_stream *state, const void *data, size_t size);
 /* ENOENT with *out_size=0 means no queued ciphertext, not a connection error. */
 int crypto_tls_stream_take_cipher(crypto_tls_stream *state, void *buffer, size_t capacity, size_t *out_size);

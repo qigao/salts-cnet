@@ -1,5 +1,11 @@
 # Release readiness — RFC-first C11 SCTP (#1281)
 
+> Current dependency policy: OpenSSL/BoringSSL-linked adapters have been
+> removed. DTLS results below are historical upstream evidence, not tests
+> supported by this checkout. The Pion UDP cases remain formal root-graph
+> tests; production DTLS and encrypted SCTP qualification remain open in
+> [#188](https://github.com/qigao/salts-core/issues/188).
+
 **Initial preflight: 2026-10-13. Feature-checkpoint update: 2026-10-25. Decision: NO-GO for production SCTP.**
 This is a release *preflight record*, not permission to create a tag, publish a package, or replace TurboMedia's usrsctp. Private research [PR #1281](https://github.com/qigao/salts/pull/1281) has merged to `master`; the standalone prototype now has an opaque installed C11 session target, but no production CNet/DTLS integration or Salts.Native publication. All SCTP work remains original C11, with no Rust/C++ SCTP engine, bridge, or runtime fallback.
 

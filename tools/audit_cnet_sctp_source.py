@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Strict byte-identical source provenance for C11 SCTP migration into Core.
 
-Only the original transport/session/test C11 sources are attested. The obsolete
+Only unchanged original transport/session/test C11 sources are attested.
+The removed OpenSSL DTLS adapters and adapted UDP Pion peer are excluded. The obsolete
 GmSSL MAC sample, old package and packaging files are deliberately NOT copied
 into the native Core SDK. Actual cryptographic algorithm implementations live
 only in qigao/crypto.
@@ -39,10 +40,6 @@ EXPECTED = {
   "sctp/tests/dcep_test.c": "a6a71deb3421a44e6e95d85f72a97678a1b0886d",
   "sctp/tests/fast_recovery_test.c": "33c698c0bbbc3c302091c0a5e8e556224a979dc3",
   "sctp/tests/fragment_test.c": "b3a17a5c81a975171b572d33893e286b3ca45e29",
-  "sctp/tests/independent/dtls_records.c": "fce355e49e220e3f7259d63a13917b64dee79d61",
-  "sctp/tests/independent/pion_dtls_transport.c": "14046840e022a6770d4289b9cf8a14958d482b45",
-  "sctp/tests/independent/pion_dtls_transport.h": "65c72d68dabfac155d86cd841a3abfc3470a3649",
-  "sctp/tests/independent/pion_peer.c": "163b02f59034ac9c61f46017140c97590bb3449f",
   "sctp/tests/init_params_test.c": "43ee076d85a288778d3832209cc8c618475e3cfd",
   "sctp/tests/public_api_test.c": "8f63ee561c43bd854e6c30dc6b51d8c289f0ef05",
   "sctp/tests/interleaving_test.c": "c77f3481744f874ebc36211549163f48884c61eb",
@@ -83,7 +80,7 @@ def main() -> int:
             failures.append(f"old crypto owner or package remains: {name}")
     for failure in failures:
         print("FAIL:", failure)
-    print(f"SCTP 44 native source/test blobs from {SOURCE_REF}: "
+    print(f"SCTP {len(EXPECTED)} unchanged native source/test blobs from {SOURCE_REF}: "
           + ("FAIL" if failures else "PASS"))
     return 1 if failures else 0
 

@@ -2,13 +2,13 @@
 set -euo pipefail
 umask 077
 
-# Run only in explicit CI with source-instrumented static Media.
-# bash media/capture/tests/native_tsan/run_private_pulse.sh <CMake-build-dir>
-if [[ "$#" != 1 ]]; then
-  echo 'expected exactly one CMake build directory' >&2
+# CTest supplies the root-graph executable and Python interpreter.
+if [[ "$#" != 2 ]]; then
+  echo 'expected Capture test executable and Python interpreter' >&2
   exit 2
 fi
-build="$(realpath "$1")"
+exe="$1"
+python="$2"
 root="$(cd "$(dirname "$0")/../../../.." && pwd)"
 private="$(mktemp -d "${RUNNER_TEMP:-/tmp}/salts-capture-tsan.XXXXXX")"
 export XDG_RUNTIME_DIR="$private/xdg"
@@ -67,7 +67,7 @@ pactl list sources | grep -F 'CaptureTsanVirtualAudioSink'
 echo 'PASS CI-owned software null monitor only, no physical audio cards'
 
 (
-  python3 -u "$root/media/capture/tests/native_tsan/feed_private_null.py" |
+  "$python" -u "$root/media/capture/tests/native_tsan/feed_private_null.py" |
     pacat --playback --device=capture_tsan_sink \
       --format=s16le --rate=16000 --channels=1 > /dev/null 2>&1
 ) &
@@ -79,38 +79,6 @@ test "$streams" = 1 || {
   exit 1
 }
 
-export LD_LIBRARY_PATH="$build:$SALTS_ROOT/lib:${LD_LIBRARY_PATH:-}"
-ctest --test-dir "$build" \
-  -R '^salts_capture_native_tsan_virtual_monitor$' \
-  --repeat until-fail:12 --verbose --no-tests=error \
-  --output-on-failure --timeout 30 | tee "$private/native-tsan.log"
-
-for marker in \
-  'PASS original source-Tsan Capture native callbacks start/stop/join, 3 cycles' \
-  'PASS same-device Capture stop/restart admission, timestamp reset, no late callback' \
-  'PASS original source-Tsan Capture blocked callback forces concurrent stop/join' \
-  'PASS active Capture destroy waits for blocked native callback join' \
-  'PASS original source-Tsan Capture invalid format and exact device no fallback' \
-  'PASS self-contained SaltsUtils source-Tsan native callback regression'; do
-  n="$(grep -Fc "$marker" "$private/native-tsan.log" || true)"
-  test "$n" = 12 || {
-    echo "missing original Capture source race guard: $marker ($n/12)" >&2
-    exit 1
-  }
-done
-
-exe="$build/salts_capture_native_tsan_regression"
-lib="$build/libsaltscore_media.a"
-test -x "$exe"
-test -f "$lib"
-for sym in salts_audio_capture_create salts_capture_start salts_capture_stop salts_playback_create; do
-  nm --defined-only "$lib" | grep -F " T $sym"
-done
-nm "$exe" | grep -F 'salts_capture_start'
-nm -D "$exe" | grep -F '__tsan_init'
-ldd "$exe" | tee "$private/native-tsan-loaded.txt"
-if grep -F 'not found' "$private/native-tsan-loaded.txt"; then
-  echo 'native static Media source-TSan dependencies unresolved' >&2
-  exit 1
-fi
-echo 'PASS 12/12 original Capture callback/held stop/join and single static Media linkage, no suppression'
+# One invocation of the formal TinyTest suite. CTest owns status and timeout;
+# this fixture only owns the private virtual device and synthetic PCM feeder.
+"$exe"

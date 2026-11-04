@@ -13,6 +13,8 @@ option(SALTSCORE_BUILD_PROCESS "Build standalone Process owner" OFF)
 option(SALTSCORE_CNET_OWNER_SOURCE_TESTS
   "Qualify original CNet Owner and actual retained NativeIO terminal" OFF)
 option(SALTSCORE_BUILD_SCTP "Build standalone C11 SCTP Wire and Session" OFF)
+option(CNET_SCTP_TEST_PION_ORACLE
+  "Build and test the independent Pion SCTP RFC8260 UDP peer" OFF)
 option(SALTSCORE_TEST_CNET_CRYPTO_QUALIFICATION
   "Run additional test-only Crypto facade and original Owner qualification" OFF)
 option(SALTSCORE_CNET_PRODUCTION_REQUIRED_MTLS_TEST
