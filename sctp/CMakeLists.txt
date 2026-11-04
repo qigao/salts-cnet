@@ -415,10 +415,12 @@ endif()
 # first oracle slice. NEVER export, install or link this adapter into Salts.
 if(CNET_SCTP_TEST_PION_ORACLE)
   if(NOT BUILD_TESTING OR NOT CMAKE_SYSTEM_NAME STREQUAL "Linux" OR
-     NOT CMAKE_HOST_SYSTEM_NAME STREQUAL "Linux" OR
-     NOT CMAKE_SYSTEM_PROCESSOR STREQUAL CMAKE_HOST_SYSTEM_PROCESSOR)
-    message(FATAL_ERROR "Independent Pion SCTP tests require a native Linux test build")
+     NOT CMAKE_HOST_SYSTEM_NAME STREQUAL "Linux")
+    message(FATAL_ERROR "Independent Pion SCTP tests require a Linux host and target with testing enabled")
   endif()
+  # This explicit test option requires runnable target binaries. Toolchains
+  # may set CMAKE_CROSSCOMPILING or use a processor alias on a native host;
+  # the formal CTest invocation supplies the actual execution check.
   find_program(SALTSCORE_GO_EXECUTABLE go REQUIRED)
   add_executable(cnet_sctp_pion_oracle_peer
     tests/independent/pion_peer.c)
