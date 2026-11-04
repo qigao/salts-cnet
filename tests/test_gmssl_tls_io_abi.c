@@ -152,9 +152,13 @@ spec("Opaque Crypto streams retain policy and bounded storage") {
       bool complete = false, generated = true, peer = false, pending = false;
       establish_stream_pair(version ? CRYPTO_TLS_STREAM_PROTOCOL_VERSION_1_3
                                     : CRYPTO_TLS_STREAM_PROTOCOL_VERSION_1_2);
+      check_false(crypto_tls_stream_cipher_output_empty(NULL));
+      check_true(crypto_tls_stream_cipher_output_empty(stream_pair[0]));
       check_equal(crypto_tls_stream_write(stream_pair[0], payload, 1u, &complete), CRYPTO_TLS_STREAM_OK);
       check_true(complete);
+      check_false(crypto_tls_stream_cipher_output_empty(stream_pair[0]));
       check_equal(crypto_tls_stream_take_cipher(stream_pair[0], wire, sizeof(wire), &wire_size), CRYPTO_TLS_STREAM_OK);
+      check_true(crypto_tls_stream_cipher_output_empty(stream_pair[0]));
       check_greater(wire_size, 1u);
       check_less(wire_size, 128u);
       check_equal(crypto_tls_stream_feed_cipher(stream_pair[1], wire, wire_size), CRYPTO_TLS_STREAM_OK);

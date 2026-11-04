@@ -68,6 +68,7 @@ void *cnet_tls_state_read_buffer(cnet_tls_state *state);
 void *cnet_tls_state_write_buffer(cnet_tls_state *state);
 size_t cnet_tls_state_io_buffer_bytes(const cnet_tls_state *state);
 size_t cnet_tls_cipher_input_capacity(const cnet_tls_state *state);
+bool cnet_tls_cipher_output_empty(const cnet_tls_state *state);
 int cnet_tls_feed_cipher(cnet_tls_state *state, const void *data, size_t size);
 #if defined(CNET_INTERNAL_TESTING)
 /* Internal diagnostics only; compiled only into the test-profile archive. */

@@ -1579,6 +1579,12 @@ size_t crypto_tls_stream_cipher_input_capacity(const crypto_tls_stream *state) {
              : 0u;
 }
 
+bool crypto_tls_stream_cipher_output_empty(const crypto_tls_stream *state) {
+  const crypto_tls_stream_gmssl_state *engine =
+      state != NULL ? CRYPTO_TLS_STREAM_ENGINE(state) : NULL;
+  return engine != NULL && engine->output_size == 0u;
+}
+
 int crypto_tls_stream_feed_cipher(crypto_tls_stream *state, const void *data, size_t size) {
   crypto_tls_stream_gmssl_state *engine;
   size_t written;

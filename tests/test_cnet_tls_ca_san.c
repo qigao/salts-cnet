@@ -861,6 +861,65 @@ cleanup:
  * supplies ephemeral client credentials and pins TLS 1.2 or TLS 1.3.
  * Port handoff is a private test file to avoid any extra server/consumer app.
  */
+/* Hold only a real NativeIO success after admitting the authenticated reply.
+ * The peer sends nothing further until raw EOF. Route EOF first, then the
+ * retained completion, so scheduling cannot hide the SEND/FAILED race. */
+typedef struct tls_eof_race {
+  native_io_backend backend;
+  native_io_completion write;
+  bool held;
+  bool delayed_write;
+  bool routed_eof;
+} tls_eof_race;
+
+static int tls_eof_race_progress(cnet_client *client, tls_eof_race *race,
+                                 bool hold_write, size_t *events) {
+  native_io_completion completions[8];
+  size_t count = 0u;
+  int status = cnet_client_advance_external(client, events);
+  if (status != SALTS_OK) return status;
+  status = native_io_backend_observe(&race->backend, completions, 8u, 1u, &count);
+  if (status != SALTS_OK && status != SALTS_ETIMEDOUT) return status;
+  int first_error = SALTS_OK;
+  size_t held_index = SIZE_MAX;
+  /* Observe the complete batch before routing: EOF may precede the already
+   * successful write in the same batch. Hold that write in either order. */
+  if (hold_write && !race->routed_eof) {
+    for (size_t i = 0u; i < count; ++i) {
+      if (completions[i].kind != NATIVE_IO_COMPLETION_OK) continue;
+      if (race->held) { first_error = SALTS_EPROTO; continue; }
+      race->write = completions[i];
+      race->held = true;
+      race->delayed_write = true;
+      held_index = i;
+    }
+  }
+  for (size_t i = 0u; i < count; ++i) {
+    bool consumed = false;
+    if (i == held_index) continue;
+    if (completions[i].kind == NATIVE_IO_COMPLETION_EOF)
+      fprintf(stderr, "TLS_EOF_ORDER eof=%u:%u endpoint=%u:%u\n",
+          completions[i].request.slot, completions[i].request.generation,
+          completions[i].endpoint.slot, completions[i].endpoint.generation);
+    status = cnet_client_route_external_completion(client, &completions[i], &consumed, events);
+    if ((status != SALTS_OK || !consumed) && first_error == SALTS_OK)
+      first_error = status != SALTS_OK ? status : SALTS_EPROTO;
+    if (completions[i].kind == NATIVE_IO_COMPLETION_EOF) race->routed_eof = true;
+  }
+  if (race->held && (race->routed_eof || !hold_write)) {
+    bool consumed = false;
+    fprintf(stderr, "TLS_EOF_ORDER write=%u:%u endpoint=%u:%u bytes=%zu eof_first=%u\n",
+        race->write.request.slot, race->write.request.generation,
+        race->write.endpoint.slot, race->write.endpoint.generation,
+        race->write.bytes, (unsigned)race->routed_eof);
+    status = cnet_client_route_external_completion(client, &race->write, &consumed, events);
+    if (consumed) race->held = false;
+    if ((status != SALTS_OK || !consumed) && first_error == SALTS_OK)
+      first_error = status != SALTS_OK ? status : SALTS_EPROTO;
+  }
+  return first_error;
+}
+
 static int run_python_ssl_client(const char *port_path,
                                  const char *ca_file,
                                  const char *cert_file,
@@ -876,18 +935,23 @@ static int run_python_ssl_client(const char *port_path,
   const bool expect_local_peer_close = strcmp(outcome, "localclose") == 0;
   const bool expect_final_send_close = strcmp(outcome, "sendclose") == 0;
   const bool expect_gated_receive = strcmp(outcome, "gated") == 0;
+  const bool expect_incomplete_send = strcmp(outcome, "race-eof-pending") == 0;
+  const bool expect_eof_race = strcmp(outcome, "race-eof") == 0 || expect_incomplete_send;
+  const unsigned expected_sends = expect_incomplete_send ? 0u : 1u;
+  const size_t response_size = expect_incomplete_send ? 65536u : 1u;
   const bool expect_invalid_close = strcmp(outcome, "eof") == 0 ||
       strcmp(outcome, "truncated") == 0 || strcmp(outcome, "badalert") == 0 ||
-      strcmp(outcome, "fatal") == 0;
+      strcmp(outcome, "fatal") == 0 || expect_eof_race;
   const bool should_verify =
       strcmp(outcome, "accept") == 0 || expect_idle_read_timeout ||
       expect_orderly_close || expect_local_peer_close ||
       expect_final_send_close || expect_gated_receive || expect_invalid_close;
   cnet_client server = {0};
+  tls_eof_race race = {0};
   cnet_listener listener = {0};
   cnet_tls_server tls_server = {0};
   tls_probe probe = {0};
-  const cnet_client_config client_cfg = config();
+  cnet_client_config client_cfg = config();
   const cnet_listener_config listener_cfg = {
       client_cfg.backend, "127.0.0.1", 0u, 2u};
   const cnet_tls_server_config tls_cfg = {
@@ -915,9 +979,16 @@ static int run_python_ssl_client(const char *port_path,
       (!should_verify && strcmp(outcome, "reject") != 0))
     return 2;
   probe.client = &server;
+  if (expect_incomplete_send) client_cfg.max_send_bytes = response_size;
   REQUIRE(cnet_tls_server_init(&tls_server, &tls_cfg) == SALTS_OK);
   tls_live = true;
-  REQUIRE(cnet_client_init(&server, &client_cfg) == SALTS_OK);
+  if (expect_eof_race) {
+    const native_io_backend_config backend_cfg = {
+        client_cfg.backend, client_cfg.connection_capacity * 2u,
+        client_cfg.request_capacity, client_cfg.completion_batch_capacity};
+    REQUIRE(native_io_backend_init(&race.backend, &backend_cfg) == SALTS_OK);
+    REQUIRE(cnet_client_init_external(&server, &client_cfg, &race.backend) == SALTS_OK);
+  } else REQUIRE(cnet_client_init(&server, &client_cfg) == SALTS_OK);
   server_live = true;
   REQUIRE(cnet_listener_init(&listener, &listener_cfg) == SALTS_OK);
   listener_live = true;
@@ -943,7 +1014,9 @@ static int run_python_ssl_client(const char *port_path,
         accepted = true;
       }
     }
-    REQUIRE(cnet_client_poll(&server, 1u, &events) == SALTS_OK);
+    REQUIRE((expect_eof_race
+        ? tls_eof_race_progress(&server, &race, response_sent, &events)
+        : cnet_client_poll(&server, 1u, &events)) == SALTS_OK);
     if (!should_verify && probe.terminal_count) break;
     if (should_verify && probe.connected_count && !armed) {
       char fingerprint[CNET_TLS_PEER_CERTIFICATE_SHA256_CAPACITY] = {0};
@@ -983,10 +1056,10 @@ static int run_python_ssl_client(const char *port_path,
         probe.received_count && !response_sent) {
       REQUIRE(probe.received_count == 1u && probe.received_byte == 0x46u);
       REQUIRE(probe.failed == 0u);
-      outgoing = mem_get_buffer(mem_global(), 1u);
+      outgoing = mem_get_buffer(mem_global(), response_size);
       REQUIRE(outgoing != NULL);
-      *mem_buffer_data(outgoing) = 0x47u;
-      mem_set_used(outgoing, 1u);
+      memset(mem_buffer_data(outgoing), 0x47, response_size);
+      mem_set_used(outgoing, response_size);
       /* The retained FINAL send must use the same authenticated reciprocal
        * shutdown as explicit cnet_close. Its public send-success callback
        * proves data completion, NOT that TLS close_notify was exchanged. */
@@ -997,7 +1070,7 @@ static int run_python_ssl_client(const char *port_path,
       outgoing = NULL;
       response_sent = true;
     }
-    if ((expect_invalid_close || strcmp(outcome, "accept") == 0) &&
+    if (((expect_invalid_close && !expect_eof_race) || strcmp(outcome, "accept") == 0) &&
         response_sent && probe.sent_count && !send_marker_published) {
       /*
        * Isolate authenticated-reply completion from the separate
@@ -1062,18 +1135,28 @@ static int run_python_ssl_client(const char *port_path,
             probe.received_count, probe.sent_count);
   }
   if (expect_invalid_close) {
+    REQUIRE(!expect_eof_race || (race.delayed_write && race.routed_eof && !race.held));
     REQUIRE(armed && probe.connected_count == 1u);
     REQUIRE(probe.received_count == 1u && probe.received_byte == 0x46u);
-    REQUIRE(response_sent && probe.sent_count == 1u);
+    REQUIRE(response_sent && probe.sent_count == expected_sends);
     REQUIRE(probe.terminal_count == 1u && probe.failed == 1u);
+    REQUIRE(probe.sends_at_terminal == expected_sends);
     REQUIRE(probe.last_connection_state == CNET_CONNECTION_FAILED);
     REQUIRE(probe.last_error_status == SALTS_ECONNABORTED ||
             probe.last_error_status == SALTS_EPROTO);
     REQUIRE(strcmp(probe.failure_stage, "read") == 0);
+    if (expect_eof_race) {
+      bool consumed = true;
+      REQUIRE(cnet_client_route_external_completion(
+          &server, &race.write, &consumed, &events) == SALTS_OK);
+      REQUIRE(!consumed); /* The old native generation cannot send twice. */
+    }
     for (unsigned index = 0u; index < 2u; ++index) {
-      REQUIRE(cnet_client_poll(&server, 0u, &events) == SALTS_OK);
+      REQUIRE((expect_eof_race
+          ? tls_eof_race_progress(&server, &race, false, &events)
+          : cnet_client_poll(&server, 0u, &events)) == SALTS_OK);
       REQUIRE(probe.terminal_count == 1u);
-      REQUIRE(probe.received_count == 1u && probe.sent_count == 1u);
+      REQUIRE(probe.received_count == 1u && probe.sent_count == expected_sends);
     }
   } else if (expect_orderly_close || expect_local_peer_close || expect_final_send_close) {
     /* Python ssl.unwrap() requires a real authenticated reciprocal
@@ -1147,9 +1230,20 @@ cleanup:
     (void)cnet_listener_destroy(&listener);
   }
   if (server_live) {
-    const int stop_status = cnet_client_stop(&server, 5000u);
+    int stop_status;
+    if (expect_eof_race) {
+      const uint64_t stop_deadline = cmeta_monotonic_ms() + 5000u;
+      do {
+        (void)tls_eof_race_progress(&server, &race, false, &events);
+        stop_status = cnet_client_stop_external(&server);
+      } while (stop_status == SALTS_EBUSY && cmeta_monotonic_ms() < stop_deadline);
+    } else stop_status = cnet_client_stop(&server, 5000u);
     const int destroy_status = cnet_client_destroy(&server);
     if (stop_status != SALTS_OK || destroy_status != SALTS_OK) result = 1;
+  }
+  if (race.backend.impl != NULL) {
+    if (native_io_backend_close(&race.backend) != SALTS_OK ||
+        native_io_backend_destroy(&race.backend) != SALTS_OK) result = 1;
   }
   if (tls_live) (void)cnet_tls_server_destroy(&tls_server);
   if (result == 0)

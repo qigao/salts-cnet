@@ -501,6 +501,16 @@ size_t cnet_tls_cipher_input_capacity(const cnet_tls_state *state)
     return snap.capacity - snap.input_pending;
 }
 
+bool cnet_tls_cipher_output_empty(const cnet_tls_state *state)
+{
+    cnet_crypto_state *eng = get_engine(state);
+    crypto_tls_cipher_bio_snapshot snap = {0};
+    if (eng == NULL) return false;
+    snap.struct_size = (uint32_t)sizeof(snap);
+    return crypto_tls_cipher_bio_get_snapshot(eng->bio, &snap) == CRYPTO_TLS_OK
+        && snap.output_pending == 0u;
+}
+
 int cnet_tls_feed_cipher(cnet_tls_state *state, const void *data, size_t size)
 {
     cnet_crypto_state *eng = get_engine(state);

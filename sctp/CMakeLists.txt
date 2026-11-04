@@ -413,22 +413,34 @@ endif()
 # Test-only independent Pion SCTP oracle. Real UDP datagrams to an external
 # Go implementation of SCTP (RFC8260); no DTLS in this deliberately isolated
 # first oracle slice. NEVER export, install or link this adapter into Salts.
-option(CNET_SCTP_TEST_PION_ORACLE
-  "Build separate Pion SCTP RFC8260 test-only UDP packet peer" OFF)
 if(CNET_SCTP_TEST_PION_ORACLE)
-  if(NOT CMAKE_SYSTEM_NAME STREQUAL "Linux")
-    message(FATAL_ERROR "Independent Pion SCTP oracle is Linux-only")
+  if(NOT BUILD_TESTING OR NOT CMAKE_SYSTEM_NAME STREQUAL "Linux" OR CMAKE_CROSSCOMPILING)
+    message(FATAL_ERROR "Independent Pion SCTP tests require a native Linux test build")
   endif()
-  find_package(OpenSSL 3.0 REQUIRED COMPONENTS SSL Crypto)
+  find_program(SALTSCORE_GO_EXECUTABLE go REQUIRED)
   add_executable(cnet_sctp_pion_oracle_peer
-    tests/independent/pion_peer.c
-    tests/independent/pion_dtls_transport.c)
+    tests/independent/pion_peer.c)
   target_link_libraries(cnet_sctp_pion_oracle_peer PRIVATE
-    Salts::SCTP OpenSSL::SSL OpenSSL::Crypto)
+    Salts::SCTP)
   set_target_properties(cnet_sctp_pion_oracle_peer PROPERTIES
     C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
   target_compile_options(cnet_sctp_pion_oracle_peer PRIVATE
     -Wall -Wextra -Wpedantic -Werror)
+  set(pion_source "${CMAKE_CURRENT_SOURCE_DIR}/tests/independent/pion")
+  set(pion_driver "${CMAKE_CURRENT_BINARY_DIR}/pion-sctp-oracle")
+  add_custom_command(OUTPUT "${pion_driver}"
+    COMMAND "${CMAKE_COMMAND}" -E env CGO_ENABLED=0
+      "${SALTSCORE_GO_EXECUTABLE}" build -mod=readonly -o "${pion_driver}" .
+    WORKING_DIRECTORY "${pion_source}"
+    DEPENDS "${pion_source}/main.go" "${pion_source}/go.mod" "${pion_source}/go.sum"
+    VERBATIM)
+  add_custom_target(cnet_sctp_pion_driver ALL DEPENDS "${pion_driver}")
+  add_test(NAME cnet_sctp_pion_udp
+    COMMAND "${pion_driver}" $<TARGET_FILE:cnet_sctp_pion_oracle_peer>)
+  add_test(NAME cnet_sctp_pion_udp_lost_iforward
+    COMMAND "${pion_driver}" $<TARGET_FILE:cnet_sctp_pion_oracle_peer> drop-first-iforward)
+  set_tests_properties(cnet_sctp_pion_udp cnet_sctp_pion_udp_lost_iforward
+    PROPERTIES TIMEOUT 30 RUN_SERIAL TRUE)
 endif()
 
 # Cookie-MAC cryptography belongs to qigao/crypto. CNet/SCTP remains
