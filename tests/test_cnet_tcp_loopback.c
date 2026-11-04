@@ -3863,6 +3863,8 @@ typedef struct mixed_fixture {
   uint64_t control_start, rtt[MIXED_EXCHANGES];
 } mixed_fixture;
 typedef struct mixed_result {
+  const char *stage;
+  native_io_request stalled_request;
   uint64_t elapsed_ns, cpu_ns, p50_ns, p95_ns, p99_ns, bulk_drain_ns, close_ns, native_submissions;
   size_t bulk_bytes, bulk_admitted, rounds, rejected, allocations, receives, calls;
   size_t peak_bytes, peak_backing;
@@ -4145,6 +4147,7 @@ static int mixed_phase(mixed_fixture *f, size_t exchanges, mixed_result *out) {
   if (exchanges == 0u || exchanges > MIXED_EXCHANGES ||
       !native_io_backend_get_stats(&f->backend, &before) || before.active_requests != 0u) return SALTS_EINVAL;
   *out = (mixed_result){0};
+  out->stage = "preparation";
   f->bulk_admitted = f->bulk_received = f->control_done = 0u;
   bulk->io.sent = control->io.sent = 0u;
   f->target = exchanges;
@@ -4154,11 +4157,13 @@ static int mixed_phase(mixed_fixture *f, size_t exchanges, mixed_result *out) {
     if (status != SALTS_OK) return status;
     if (mixed_pending_bulk(f, &stalled_request) != SALTS_OK ||
         !native_io_backend_get_stats(&f->backend, &before)) return SALTS_EPROTO;
+    out->stalled_request = stalled_request;
     allocations = bulk->storage.allocated + control->storage.allocated;
     receives = control->storage.buffers;
     calls = bulk->calls + control->calls;
   }
   if (matched_cpu_ns(&cpu_start) != SALTS_OK) return SALTS_EIO;
+  out->stage = "control";
   const uint64_t start = cmeta_hrtime(), deadline = start + UINT64_C(10000000000);
   while ((f->control_done != exchanges || control->io.sent != exchanges) && cmeta_hrtime() < deadline) {
     while (!f->stalled && f->bulk_admitted - bulk->io.sent < f->bulk_window) {
@@ -4205,6 +4210,7 @@ static int mixed_phase(mixed_fixture *f, size_t exchanges, mixed_result *out) {
   out->receives = control->storage.buffers - receives;
   out->calls = bulk->calls + control->calls - calls;
   if (f->stalled) {
+    out->stage = "stalled-request";
     native_io_request pending;
     if (mixed_pending_bulk(f, &pending) != SALTS_OK || pending.slot != stalled_request.slot ||
         pending.generation != stalled_request.generation || after.active_requests != 1u ||
@@ -4214,6 +4220,7 @@ static int mixed_phase(mixed_fixture *f, size_t exchanges, mixed_result *out) {
   }
   /* Seal replenishment, then drain every admitted write and actual peer byte. */
   const uint64_t resume_start = f->stalled ? cmeta_hrtime() : stop;
+  out->stage = "resume";
   const uint64_t resume_submissions = after.submitted;
   while ((bulk->io.sent != f->bulk_admitted || f->bulk_received != f->bulk_admitted * f->bulk_bytes) &&
          cmeta_hrtime() < deadline) {
@@ -4222,6 +4229,7 @@ static int mixed_phase(mixed_fixture *f, size_t exchanges, mixed_result *out) {
   if (bulk->io.sent != f->bulk_admitted || f->bulk_received != f->bulk_admitted * f->bulk_bytes) return SALTS_ETIMEDOUT;
   out->bulk_drain_ns = cmeta_hrtime() - resume_start;
   out->resume_bytes = f->bulk_received - out->bulk_bytes;
+  out->stage = "settlement";
   for (size_t i = 0u; i < 2u; ++i) {
     cnet_send_usage usage;
     if (mixed_usage(f, i, &usage) != SALTS_OK ||
@@ -4255,7 +4263,7 @@ static int mixed_sample(matched_mode mode, size_t bulk_window, size_t exchanges,
   const native_io_backend_config backend_config = {backend_kind(), profile == MIXED_PARTITION ? 4u : 2u, 8u, 4u};
   const cnet_listener_config listener_config = {backend_kind(), "127.0.0.1", 0u, 2u};
   struct sockaddr_in remote = {0};
-  mixed_result warm, measured;
+  mixed_result warm = {0}, measured = {0};
   native_io_backend_stats stats;
   uint16_t port;
   int ready = 0, result = 0, measured_status = SALTS_EIO;
@@ -4358,6 +4366,20 @@ static int mixed_sample(matched_mode mode, size_t bulk_window, size_t exchanges,
       measured_status = mixed_phase(f, exchanges, &measured);
     }
   } else measured_status = mixed_phase(f, exchanges, &measured);
+  if (measured_status != SALTS_OK) {
+    native_io_backend_stats diagnostic = {0};
+    native_io_request pending = {0};
+    const int pending_status = mixed_pending_bulk(f, &pending);
+    (void)native_io_backend_get_stats(&f->backend, &diagnostic);
+    fprintf(stderr, "mixed phase mode=%s stalled=%u stage=%s status=%d control=%zu/%u bulk=%u/%zu bytes=%zu refs=%u native=%llu active=%zu pending=%d/%u/%u expected=%u/%u empty=%zu observe=%d/%zu\n",
+        matched_name(mode), (unsigned)stalled, measured.stage ? measured.stage : "entry", measured_status,
+        f->control_done, f->lanes[1].io.sent, f->lanes[0].io.sent, f->bulk_admitted,
+        f->bulk_received, mem_buffer_ref_count(f->lanes[0].source),
+        (unsigned long long)measured.native_submissions, diagnostic.active_requests,
+        pending_status, pending.slot, pending.generation,
+        measured.stalled_request.slot, measured.stalled_request.generation, measured.empty_observations,
+        f->observe_status, f->observed_count);
+  }
   VERIFY(measured_status == SALTS_OK && measured.elapsed_ns != 0u);
   VERIFY(measured.calls == (mode == MATCHED_CALLBACK ? (stalled ? 0u : measured.bulk_admitted) + exchanges : 0u));
   VERIFY((bulk_window == 8u) == (measured.rejected != 0u));
