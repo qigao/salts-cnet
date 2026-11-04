@@ -21,6 +21,7 @@
 #else
 #include <sys/resource.h>
 #endif
+#include "tls_mixed_workload.h"
 
 #ifndef CORE_TLS_TEST_P384_CA
 #error CORE_TLS_TEST_P384_CA is required
@@ -1202,6 +1203,7 @@ typedef struct tls_bench_end {
   tls_bench_fixture *fixture;
 } tls_bench_end;
 struct tls_bench_fixture {
+  tls_mixed_lane *mixed; /* Borrowed parent workload; alive through disposal. */
   tls_bench_end ends[2];
   cnet_listener listener;
   cnet_tls_server context;
@@ -1240,6 +1242,11 @@ static void tls_bench_sent(void *user, cnet_connection connection, size_t bytes)
   tls_bench_end *end = user;
   tls_bench_fixture *f = end->fixture;
   (void)connection;
+  if (f->mixed) {
+    if (end->state.terminal_count) f->mixed->owner->error = SALTS_EPROTO;
+    else { tls_mixed_sent(f->mixed, end == &f->ends[0] ? 0u : 1u, bytes); ++end->state.sent_count; }
+    return;
+  }
   if (end != &f->ends[0] || end->state.terminal_count != 0u ||
       f->completed >= f->offered || bytes != tls_bench_size(f->completed)) {
     ++end->state.failed;
@@ -1254,6 +1261,15 @@ static void tls_bench_received(void *user, cnet_connection connection,
   tls_bench_end *end = user;
   tls_bench_fixture *f = end->fixture;
   (void)connection;
+  if (f->mixed) {
+    if (!view || view->kind != CNET_MESSAGE_BYTES || end->state.terminal_count)
+      f->mixed->owner->error = SALTS_EPROTO;
+    else {
+      tls_mixed_received(f->mixed, end == &f->ends[0] ? 0u : 1u, view->data, view->size);
+      ++end->state.received_count;
+    }
+    return;
+  }
   if (end != &f->ends[1] || end->state.terminal_count != 0u || view == NULL ||
       view->kind != CNET_MESSAGE_BYTES || view->data == NULL || view->size == 0u) {
     ++end->state.failed;
@@ -1278,6 +1294,20 @@ static int tls_bench_admit(void *user, const cnet_send_usage *total,
   tls_bench_fixture *f = user;
   const size_t logical = f->window * TLS_BENCH_BYTES;
   const size_t retained = f->window * mem_buffer_capacity(f->source);
+  ++f->calls;
+  return total->operations < f->window && connection->operations < f->window &&
+      total->bytes <= logical && bytes <= logical - total->bytes &&
+      total->backing_bytes <= retained && backing <= retained - total->backing_bytes
+      ? SALTS_OK : SALTS_ENOBUFS;
+}
+static int tls_bench_mixed_admit(void *user, const cnet_send_usage *total,
+                                 const cnet_send_usage *connection, size_t bytes, size_t backing) {
+  tls_bench_end *end = user;
+  tls_bench_fixture *f = end->fixture;
+  const size_t index = end == &f->ends[0] ? 0u : 1u;
+  mem_buffer_t *source = f->mixed->source[index];
+  const size_t logical = f->window * mem_buffer_used(source);
+  const size_t retained = f->window * mem_buffer_capacity(source);
   ++f->calls;
   return total->operations < f->window && connection->operations < f->window &&
       total->bytes <= logical && bytes <= logical - total->bytes &&
@@ -1398,20 +1428,16 @@ static int tls_bench_transfer(tls_bench_fixture *f, size_t operations, tls_bench
   return SALTS_OK;
 }
 
-static int tls_bench_sample(bool callback, size_t window, bool report, unsigned repetition) {
-  const char *label = "TLS policy benchmark";
-  tls_bench_fixture *f = calloc(1u, sizeof(*f));
-  int result = 0, transfer_status = SALTS_EIO;
+static int tls_bench_setup(tls_bench_fixture *f, bool callback, size_t window, uint64_t *handshake_ns) {
+  const char *label = "TLS pair setup";
+  int result = 0;
   uint16_t port = 0u;
-  uint64_t handshake_ns = 0u, close_ns = 0u;
-  tls_bench_result warm, measured;
-  const size_t operations = report ? TLS_BENCH_WRITES : 16u;
-  if (f == NULL) return __LINE__;
   f->window = window;
   cnet_client_config cfg = config();
   cfg.connection_capacity = 1u;
   cfg.completion_batch_capacity = 4u;
-  cfg.max_send_bytes = cfg.receive_buffer_bytes = TLS_BENCH_BYTES;
+  cfg.max_send_bytes = f->mixed && !f->mixed->bulk ? 1u : TLS_BENCH_BYTES;
+  cfg.receive_buffer_bytes = TLS_BENCH_BYTES;
   cfg.read_timeout_ms = cfg.write_timeout_ms = 0u;
   cfg.send_limits.operations = window;
   const native_io_backend_config backend_cfg = {cfg.backend, 2u, 8u, 4u};
@@ -1435,11 +1461,13 @@ static int tls_bench_sample(bool callback, size_t window, bool report, unsigned 
   }
   REQUIRE(cnet_listener_init(&f->listener, &listener_cfg) == SALTS_OK);
   REQUIRE(cnet_listener_port(&f->listener, &port) == SALTS_OK && port != 0u);
-  f->source = mem_get_buffer(mem_global(), TLS_BENCH_BYTES);
+  f->source = f->mixed ? f->mixed->source[0] : mem_get_buffer(mem_global(), TLS_BENCH_BYTES);
   REQUIRE(f->source != NULL);
-  for (size_t i = 0u; i < TLS_BENCH_BYTES; ++i)
-    mem_buffer_data(f->source)[i] = (char)((0x5au + i * 29u) & 0xffu);
-  mem_set_used(f->source, TLS_BENCH_BYTES);
+  if (!f->mixed) {
+    for (size_t i = 0u; i < TLS_BENCH_BYTES; ++i)
+      mem_buffer_data(f->source)[i] = (char)((0x5au + i * 29u) & 0xffu);
+    mem_set_used(f->source, TLS_BENCH_BYTES);
+  }
   char uri[80];
   REQUIRE(snprintf(uri, sizeof(uri), "tls://127.0.0.1:%u", (unsigned)port) > 0);
   const cnet_connect_options connect = {.uri = uri, .tls = &tls_cfg,
@@ -1465,7 +1493,7 @@ static int tls_bench_sample(bool callback, size_t window, bool report, unsigned 
     REQUIRE(tls_bench_progress(f) == SALTS_OK);
     REQUIRE(!f->ends[0].state.failed && !f->ends[1].state.failed);
   }
-  handshake_ns = cmeta_hrtime() - handshake_start;
+  *handshake_ns = cmeta_hrtime() - handshake_start;
   for (size_t e = 0u; e < 2u; ++e) {
     tls_probe *p = &f->ends[e].state;
     REQUIRE(p->connected_count == 1u && p->terminal_count == 0u);
@@ -1479,19 +1507,25 @@ static int tls_bench_sample(bool callback, size_t window, bool report, unsigned 
   REQUIRE(strcmp(f->ends[0].state.tls_cipher, f->ends[1].state.tls_cipher) == 0);
   REQUIRE(cnet_listener_close(&f->listener) == SALTS_OK && cnet_listener_destroy(&f->listener) == SALTS_OK);
   if (callback) {
-    const cnet_send_admission_policy policy = {tls_bench_admit, f};
-    REQUIRE(cnet_set_send_admission(&f->ends[0].client, f->ends[0].state.connection, &policy) == SALTS_OK);
-  }
-  REQUIRE(tls_bench_transfer(f, report ? 64u : 8u, &warm) == SALTS_OK);
-  if (report) {
-    benchmark_io("retained TLS policy transfer", 1, operations,
-                 operations / 8u * (7u * TLS_BENCH_BYTES + 1u)) {
-      transfer_status = tls_bench_transfer(f, operations, &measured);
+    if (f->mixed) {
+      for (size_t e = 0u; e < 2u; ++e) if (f->mixed->source[e]) {
+        const cnet_send_admission_policy policy = {tls_bench_mixed_admit, &f->ends[e]};
+        REQUIRE(cnet_set_send_admission(&f->ends[e].client, f->ends[e].state.connection, &policy) == SALTS_OK);
+      }
+    } else {
+      const cnet_send_admission_policy policy = {tls_bench_admit, f};
+      REQUIRE(cnet_set_send_admission(&f->ends[0].client, f->ends[0].state.connection, &policy) == SALTS_OK);
     }
-  } else transfer_status = tls_bench_transfer(f, operations, &measured);
-  REQUIRE(transfer_status == SALTS_OK && measured.elapsed != 0u && measured.allocations == 0u);
-  REQUIRE(measured.calls == (callback ? operations : 0u));
-  REQUIRE((window == 8u) == (measured.rejected != 0u));
+  }
+  return SALTS_OK;
+cleanup:
+  return result;
+}
+
+static int tls_bench_close(tls_bench_fixture *f, uint64_t *close_ns) {
+  const char *label = "TLS pair close";
+  int result = 0;
+  uint64_t deadline;
   const uint64_t close_start = cmeta_hrtime();
   REQUIRE(cnet_close(&f->ends[0].client, f->ends[0].state.connection) == SALTS_OK);
   deadline = cmeta_monotonic_ms() + 7000u;
@@ -1506,25 +1540,19 @@ static int tls_bench_sample(bool callback, size_t window, bool report, unsigned 
     REQUIRE(cnet_client_stop_external(&end->client) == SALTS_OK);
     REQUIRE(native_io_backend_get_stats(&end->backend, &stats) && stats.active_requests == 0u && stats.endpoint_count == 0u);
   }
-  close_ns = cmeta_hrtime() - close_start;
+  *close_ns = cmeta_hrtime() - close_start;
   for (size_t e = 0u; e < 2u; ++e) {
     tls_bench_end *end = &f->ends[e];
     REQUIRE(cnet_client_destroy(&end->client) == SALTS_OK);
     REQUIRE(end->storage.allocated == end->storage.released);
     REQUIRE(native_io_backend_close(&end->backend) == SALTS_OK && native_io_backend_destroy(&end->backend) == SALTS_OK);
   }
-  REQUIRE(f->ends[0].state.sent_count == (report ? 64u : 8u) + operations);
-  REQUIRE(f->ends[0].state.sends_at_terminal == f->ends[0].state.sent_count);
-  REQUIRE(mem_buffer_ref_count(f->source) == 1u);
-  if (report) printf("CNET_TLS_CSV,%s,%u,%zu,%zu,%s,%s,%llu,%zu,%llu,%llu,%llu,%llu,%llu,%zu,%zu,%zu,%zu,%zu,%zu,%zu,%llu,%llu\n",
-      callback ? "callback" : "native", repetition, window, operations,
-      f->ends[0].state.tls_version, f->ends[0].state.tls_cipher, (unsigned long long)handshake_ns,
-      measured.bytes, (unsigned long long)measured.elapsed, (unsigned long long)measured.cpu,
-      (unsigned long long)measured.p50, (unsigned long long)measured.p95, (unsigned long long)measured.p99,
-      measured.rejected, measured.calls, measured.allocations, measured.receives,
-      measured.peak_bytes, measured.peak_backing, mem_buffer_capacity(f->source),
-      (unsigned long long)measured.submissions, (unsigned long long)close_ns);
+  return SALTS_OK;
 cleanup:
+  return result;
+}
+
+static bool tls_bench_dispose(tls_bench_fixture *f) {
   (void)cnet_listener_close(&f->listener);
   (void)cnet_listener_destroy(&f->listener);
   for (size_t e = 0u; e < 2u; ++e)
@@ -1552,12 +1580,126 @@ cleanup:
     if (f->ends[0].client.impl == NULL && f->ends[1].client.impl == NULL &&
         f->ends[0].backend.impl == NULL && f->ends[1].backend.impl == NULL &&
         f->listener.impl == NULL && f->context.impl == NULL) {
-      if (f->source) mem_buffer_release(f->source);
-      free(f);
-      return result;
+      if (f->source && !f->mixed) mem_buffer_release(f->source);
+      f->source = NULL;
+      return true;
     }
   }
-  return result != 0 ? result : __LINE__; /* Retain live callback/native storage. */
+  return false; /* Retain live callback/native storage. */
+}
+
+static int tls_bench_sample(bool callback, size_t window, bool report, unsigned repetition) {
+  const char *label = "TLS policy benchmark";
+  tls_bench_fixture *f = calloc(1u, sizeof(*f));
+  int result = 0, transfer_status = SALTS_EIO;
+  uint64_t handshake_ns = 0u, close_ns = 0u;
+  tls_bench_result warm, measured;
+  const size_t operations = report ? TLS_BENCH_WRITES : 16u;
+  if (f == NULL) return __LINE__;
+  REQUIRE(tls_bench_setup(f, callback, window, &handshake_ns) == SALTS_OK);
+  REQUIRE(tls_bench_transfer(f, report ? 64u : 8u, &warm) == SALTS_OK);
+  if (report) {
+    benchmark_io("retained TLS policy transfer", 1, operations,
+                 operations / 8u * (7u * TLS_BENCH_BYTES + 1u)) {
+      transfer_status = tls_bench_transfer(f, operations, &measured);
+    }
+  } else transfer_status = tls_bench_transfer(f, operations, &measured);
+  REQUIRE(transfer_status == SALTS_OK && measured.elapsed != 0u && measured.allocations == 0u);
+  REQUIRE(measured.calls == (callback ? operations : 0u));
+  REQUIRE((window == 8u) == (measured.rejected != 0u));
+  REQUIRE(tls_bench_close(f, &close_ns) == SALTS_OK);
+  REQUIRE(f->ends[0].state.sent_count == (report ? 64u : 8u) + operations);
+  REQUIRE(f->ends[0].state.sends_at_terminal == f->ends[0].state.sent_count);
+  REQUIRE(mem_buffer_ref_count(f->source) == 1u);
+  if (report) printf("CNET_TLS_CSV,%s,%u,%zu,%zu,%s,%s,%llu,%zu,%llu,%llu,%llu,%llu,%llu,%zu,%zu,%zu,%zu,%zu,%zu,%zu,%llu,%llu\n",
+      callback ? "callback" : "native", repetition, window, operations,
+      f->ends[0].state.tls_version, f->ends[0].state.tls_cipher, (unsigned long long)handshake_ns,
+      measured.bytes, (unsigned long long)measured.elapsed, (unsigned long long)measured.cpu,
+      (unsigned long long)measured.p50, (unsigned long long)measured.p95, (unsigned long long)measured.p99,
+      measured.rejected, measured.calls, measured.allocations, measured.receives,
+      measured.peak_bytes, measured.peak_backing, mem_buffer_capacity(f->source),
+      (unsigned long long)measured.submissions, (unsigned long long)close_ns);
+cleanup:
+  if (tls_bench_dispose(f)) { free(f); return result; }
+  return result != 0 ? result : __LINE__;
+}
+
+typedef struct tls_mixed_cnet_fixture {
+  tls_mixed_state state;
+  tls_bench_fixture pair[2];
+  size_t initialized;
+} tls_mixed_cnet_fixture;
+static int tls_mixed_cnet_send(void *user, size_t lane, size_t end, mem_buffer_t *source) {
+  tls_bench_end *e = &((tls_mixed_cnet_fixture *)user)->pair[lane].ends[end];
+  return cnet_send_buffer(&e->client, e->state.connection, source);
+}
+static int tls_mixed_cnet_receive(void *user, size_t lane, size_t end) {
+  tls_bench_end *e = &((tls_mixed_cnet_fixture *)user)->pair[lane].ends[end];
+  return cnet_receive(&e->client, e->state.connection, 1u);
+}
+static int tls_mixed_cnet_progress(void *user, size_t lane) {
+  tls_bench_fixture *p = &((tls_mixed_cnet_fixture *)user)->pair[lane];
+  const int status = tls_bench_progress(p);
+  if (status != SALTS_OK) return status;
+  for (size_t e = 0u; e < 2u; ++e)
+    if (p->ends[e].state.failed || p->ends[e].state.terminal_count) return SALTS_EPROTO;
+  return SALTS_OK;
+}
+static int tls_mixed_cnet_snapshot(void *user, tls_mixed_stats *out) {
+  tls_mixed_cnet_fixture *f = user;
+  *out = (tls_mixed_stats){0};
+  for (size_t i = 0u; i < 2u; ++i) {
+    out->policy_calls += f->pair[i].calls;
+    for (size_t e = 0u; e < 2u; ++e) {
+      tls_bench_end *end = &f->pair[i].ends[e];
+      native_io_backend_stats stats;
+      cnet_send_usage usage;
+      if (!native_io_backend_get_stats(&end->backend, &stats) ||
+          cnet_client_send_usage(&end->client, end->state.connection, &usage) != SALTS_OK) return SALTS_EIO;
+      out->native_submissions[i] += stats.submitted;
+      out->usage[i][e] = (tls_mixed_usage){usage.operations, usage.bytes, usage.backing_bytes};
+      out->allocations += end->storage.allocated;
+      out->receives += end->storage.receives;
+    }
+  }
+  return SALTS_OK;
+}
+static int tls_mixed_cnet_sample(bool callback, size_t window, bool report, unsigned repetition) {
+  const char *label = "independent TLS bulk/control";
+  tls_mixed_cnet_fixture *f = calloc(1u, sizeof(*f));
+  int result = 0, phase_status = SALTS_EIO;
+  uint64_t handshake_ns, close_ns[2] = {0};
+  tls_mixed_result warm, measured;
+  const size_t exchanges = report ? TLS_MIXED_EXCHANGES : 8u;
+  if (!f) return __LINE__;
+  REQUIRE(tls_mixed_init(&f->state, window) == SALTS_OK);
+  for (size_t i = 0u; i < 2u; ++i) {
+    f->pair[i].mixed = &f->state.lane[i];
+    ++f->initialized;
+    REQUIRE(tls_bench_setup(&f->pair[i], callback, f->state.lane[i].window, &handshake_ns) == SALTS_OK);
+  }
+  REQUIRE(strcmp(f->pair[0].ends[0].state.tls_version, f->pair[1].ends[0].state.tls_version) == 0);
+  REQUIRE(strcmp(f->pair[0].ends[0].state.tls_cipher, f->pair[1].ends[0].state.tls_cipher) == 0);
+  const tls_mixed_ops ops = {f, tls_mixed_cnet_send, tls_mixed_cnet_receive,
+      tls_mixed_cnet_progress, tls_mixed_cnet_snapshot};
+  REQUIRE(tls_mixed_phase(&f->state, &ops, 8u, &warm) == SALTS_OK);
+  if (report) {
+    benchmark_ops("independent TLS control RTT under bulk", 1, exchanges) {
+      phase_status = tls_mixed_phase(&f->state, &ops, exchanges, &measured);
+    }
+  } else phase_status = tls_mixed_phase(&f->state, &ops, exchanges, &measured);
+  if (phase_status != SALTS_OK) fprintf(stderr, "TLS mixed phase status=%d callback=%u depth=%zu\n",
+                                       phase_status, (unsigned)callback, window);
+  REQUIRE(phase_status == SALTS_OK);
+  REQUIRE(measured.calls == (callback ? measured.bulk_admitted + 2u * exchanges : 0u));
+  for (size_t i = 0u; i < 2u; ++i) REQUIRE(tls_bench_close(&f->pair[i], &close_ns[i]) == SALTS_OK);
+  if (report) tls_mixed_print(callback ? "callback" : "native", repetition, &f->state, &measured,
+      close_ns[0] + close_ns[1], f->pair[0].ends[0].state.tls_version, f->pair[0].ends[0].state.tls_cipher);
+cleanup:;
+  bool quiet = true;
+  for (size_t i = 0u; i < f->initialized; ++i) if (!tls_bench_dispose(&f->pair[i])) quiet = false;
+  if (quiet) { tls_mixed_release(&f->state); free(f); return result; }
+  return result ? result : __LINE__; /* Parent callback/source state remains live. */
 }
 
 /* Preserve original real peer / module argument delivery and all cleanup.
@@ -1571,6 +1713,25 @@ spec("CNet real TLS CA SAN mTLS Python peer interoperability") {
     check(result == 0, "native integration returned %d", result);
   }
   if (saltscore_original_argc == 1) {
+    for (unsigned scenario = 0u; scenario < 4u; ++scenario) {
+      it("drains independent TLS bulk/control scenario %u", scenario) {
+        const int result = tls_mixed_cnet_sample((scenario & 1u) != 0u, scenario < 2u ? 1u : 8u, false, 0u);
+        check(result == 0, "TLS mixed correctness returned %d", result);
+      }
+    }
+    const char *mixed_measure = getenv("SALTSCORE_CNET_TLS_MIXED_BENCHMARK");
+    if (mixed_measure != NULL) {
+      it("uses the explicit CNet TLS mixed benchmark switch") { check_equal(mixed_measure, "1"); }
+      if (strcmp(mixed_measure, "1") == 0)
+        for (unsigned repetition = 0u; repetition < 5u; ++repetition)
+          for (unsigned position = 0u; position < 4u; ++position) {
+            const unsigned scenario = (position + repetition) % 4u;
+            it("measures mixed TLS control, repetition %u scenario %u", repetition, scenario) {
+              const int result = tls_mixed_cnet_sample((scenario & 1u) != 0u, scenario < 2u ? 1u : 8u, true, repetition);
+              check(result == 0, "TLS mixed sample returned %d", result);
+            }
+          }
+    }
     for (unsigned scenario = 0u; scenario < 4u; ++scenario) {
       it("drains verified retained TLS policy traffic, scenario %u", scenario) {
         const int result = tls_bench_sample((scenario & 1u) != 0u, scenario < 2u ? 1u : 8u, false, 0u);
