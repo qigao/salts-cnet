@@ -17,6 +17,10 @@ option(SALTSCORE_TEST_CNET_CRYPTO_QUALIFICATION
   "Run additional test-only Crypto facade and original Owner qualification" OFF)
 option(SALTSCORE_CNET_PRODUCTION_REQUIRED_MTLS_TEST
   "Exercise public NativeIO CNet REQUIRED client-certificate auth" OFF)
+option(SALTSCORE_CNET_TLS_MIXED_MEASUREMENTS
+  "Register the 25 existing fresh-process TLS bulk/control measurement cases" OFF)
+option(SALTSCORE_CNET_TLS_MIXED_HEAPTRACK
+  "Profile the formal TLS measurement cases with Linux heaptrack" OFF)
 option(SALTSCORE_BUILD_USB "Build the native libusb USB owner" OFF)
 option(SALTSCORE_BUILD_SERIAL "Build the native Serial owner" OFF)
 option(SALTSCORE_BUILD_MEDIA "Build combined static Capture/Playback Media owner" OFF)

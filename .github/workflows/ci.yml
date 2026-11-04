@@ -118,6 +118,11 @@ on:
       - "**/tests/**"
       - "tinytest/test/**"
   workflow_dispatch:
+    inputs:
+      cnet_measurements:
+        description: "Run existing TLS measurement CTests; also heaptrack them on Linux x64"
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -274,6 +279,7 @@ jobs:
           key: ccache-${{ steps.ccache.outputs.version }}-${{ steps.vcpkg-cache.outputs.cache-primary-key }}-${{ github.sha }}
           restore-keys: |
             ccache-${{ steps.ccache.outputs.version }}-${{ steps.vcpkg-cache.outputs.cache-primary-key }}-
+            ccache-${{ steps.ccache.outputs.version }}-vcpkg-v1-${{ runner.os }}-${{ runner.arch }}-${{ matrix.rid }}-${{ matrix.preset }}-${{ steps.vcpkg.outputs.cache_revision }}-
 
       - name: Start compiler cache statistics
         shell: bash
@@ -322,6 +328,10 @@ jobs:
                 "${{ matrix.rid }}" == "linux-x64-tsan" ]]; then
             tls_options+=(-DCNET_SCTP_TEST_OWNER_THREADS=ON)
           fi
+          if [[ "${{ inputs.cnet_measurements }}" == "true" &&
+                "${{ matrix.preset }}" == "ci-native" ]]; then
+            tls_options+=(-DSALTSCORE_CNET_TLS_MIXED_MEASUREMENTS=ON)
+          fi
           cmake --preset "${{ matrix.preset }}" "${tls_options[@]}"
 
       # Configure completes vcpkg installation and local binary-cache writes.
@@ -356,6 +366,61 @@ jobs:
         if: matrix.preset != 'ci-android'
         shell: bash
         run: ctest --preset "${{ matrix.preset }}"
+
+      - name: Preserve formal measurement output and host provenance
+        if: always() && inputs.cnet_measurements && matrix.preset == 'ci-native'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $output = 'build/cnet-measurements/${{ matrix.rid }}'
+          New-Item -ItemType Directory -Force -Path $output | Out-Null
+          Copy-Item -LiteralPath 'build/${{ matrix.preset }}/Testing/Temporary/LastTest.log' -Destination "$output/timing-ctest.log"
+          @(
+            "source=$(git rev-parse HEAD)"
+            "event-sha=$env:GITHUB_SHA"
+            "run=$env:GITHUB_RUN_ID"
+            'rid=${{ matrix.rid }}'
+            'preset=${{ matrix.preset }}'
+            "os=$([Runtime.InteropServices.RuntimeInformation]::OSDescription)"
+            "architecture=$([Runtime.InteropServices.RuntimeInformation]::OSArchitecture)"
+            "processors=$([Environment]::ProcessorCount)"
+            'protection=none'
+            'affinity-frequency-background-load=uncontrolled'
+          ) | Set-Content -Encoding utf8 "$output/host.txt"
+          Copy-Item -LiteralPath 'build/${{ matrix.preset }}/tests/tls-mixed-compiler.txt' -Destination "$output/compiler.txt"
+          if ($IsLinux) { lscpu | Add-Content "$output/host.txt" }
+          elseif ($IsMacOS) { sysctl machdep.cpu.brand_string hw.ncpu hw.memsize | Add-Content "$output/host.txt" }
+          else { Get-CimInstance Win32_Processor | Select-Object Name,NumberOfCores,NumberOfLogicalProcessors | Out-String | Add-Content "$output/host.txt" }
+
+      - name: Profile the same formal cases with Linux heaptrack
+        if: success() && inputs.cnet_measurements && matrix.rid == 'linux-x64'
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get install -y heaptrack
+          output=build/cnet-measurements/linux-x64
+          heaptrack --version | tee "$output/heaptrack-version.txt"
+          heaptrack_print --version | tee -a "$output/heaptrack-version.txt"
+          cmake --preset ci-native -DSALTSCORE_CNET_TLS_MIXED_HEAPTRACK=ON
+          cmake --build --preset ci-native
+          ctest --preset ci-native -L '^cnet_tls_mixed_measurements$' --verbose \
+            --output-log "$output/heaptrack-ctest.log"
+          while IFS= read -r -d '' trace; do
+            heaptrack_print "$trace" --print-leaks=true \
+              --disable-builtin-suppressions --disable-embedded-suppressions \
+              --print-histogram "$trace.histogram" \
+              --print-flamegraph "$trace.allocations" > "$trace.txt"
+          done < <(find build/ci-native/tests/tls-mixed-heaptrack -maxdepth 1 -type f \( -name '*.gz' -o -name '*.zst' \) -print0)
+
+      - uses: actions/upload-artifact@v4
+        if: always() && inputs.cnet_measurements && matrix.preset == 'ci-native'
+        with:
+          name: cnet-measurements-${{ matrix.rid }}
+          path: |
+            build/cnet-measurements/${{ matrix.rid }}
+            build/${{ matrix.preset }}/tests/tls-mixed-heaptrack
+          if-no-files-found: error
+          retention-days: 14
 
       - name: Install release SDK
         if: matrix.package && github.ref == 'refs/tags/v0.1.002'
