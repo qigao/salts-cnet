@@ -303,6 +303,45 @@ if(TARGET Salts::CNet)
     COMMAND saltscore_cnet_tls_ca_san_test)
   set_tests_properties(saltscore.cnet_tls_ca_san PROPERTIES TIMEOUT 65)
 
+  # Reuse the actual opt-in TinyTest cases, one fresh process per sample. The
+  # dependency chain rotates all five modes and preserves order with ctest -j.
+  if(SALTSCORE_CNET_TLS_MIXED_MEASUREMENTS)
+    if(SALTSCORE_CNET_TLS_MIXED_HEAPTRACK)
+      find_program(SALTSCORE_HEAPTRACK_EXECUTABLE NAMES heaptrack REQUIRED)
+      file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/tls-mixed-heaptrack")
+    endif()
+    set(_tls_mixed_previous "")
+    foreach(_repeat RANGE 0 4)
+      foreach(_position RANGE 0 4)
+        math(EXPR _mode "(${_repeat} + ${_position}) % 5")
+        set(_case "saltscore.cnet_tls_mixed_r${_repeat}_p${_position}")
+        if(_mode EQUAL 0)
+          set(_binary "$<TARGET_FILE:saltscore_gmssl_tls_io_abi_test>")
+          set(_filter "measures direct mixed TLS control, repetition ${_repeat}")
+          set(_switch "SALTSCORE_NATIVE_TLS_MIXED_BENCHMARK=1")
+        else()
+          math(EXPR _scenario "${_mode} - 1")
+          set(_binary "$<TARGET_FILE:saltscore_cnet_tls_ca_san_test>")
+          set(_filter "measures mixed TLS control, repetition ${_repeat} scenario ${_scenario}")
+          set(_switch "SALTSCORE_CNET_TLS_MIXED_BENCHMARK=1")
+        endif()
+        set(_launcher)
+        if(SALTSCORE_CNET_TLS_MIXED_HEAPTRACK)
+          set(_launcher "${SALTSCORE_HEAPTRACK_EXECUTABLE}" --record-only --output
+            "${CMAKE_CURRENT_BINARY_DIR}/tls-mixed-heaptrack/r${_repeat}-p${_position}")
+        endif()
+        add_test(NAME "${_case}" COMMAND ${_launcher} "${_binary}" --filter "${_filter}")
+        set_tests_properties("${_case}" PROPERTIES
+          ENVIRONMENT "${_switch}" TIMEOUT 65 RUN_SERIAL TRUE
+          LABELS "cnet_tls_mixed_measurements")
+        if(_tls_mixed_previous)
+          set_tests_properties("${_case}" PROPERTIES DEPENDS "${_tls_mixed_previous}")
+        endif()
+        set(_tls_mixed_previous "${_case}")
+      endforeach()
+    endforeach()
+  endif()
+
   # This is the exact production Salts::CNet target, never the retired
   # second test-only CNet Owner / Crypto adapter.
   if(SALTSCORE_CNET_PRODUCTION_REQUIRED_MTLS_TEST)
