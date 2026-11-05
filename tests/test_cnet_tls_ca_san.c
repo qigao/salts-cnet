@@ -820,12 +820,14 @@ static int run_python_ssl_server(const char *port_text,
   const char *label = "production CNet -> independent secure stream peer";
   const bool tlcp = strcmp(protocol, "tlcp") == 0;
   const bool key_update_exchange = strcmp(protocol, "shangmi13-update") == 0;
+  const bool peer_limit = strncmp(protocol, "shangmi13-limit", 15u) == 0;
+  const bool peer_limit_failure = peer_limit && strstr(protocol, "fail") != NULL;
   const bool local_rotation = strncmp(protocol, "shangmi13-rotate", 15u) == 0;
   const uint32_t rotation_limit = strcmp(protocol, "shangmi13-rotate1") == 0 ? 1u :
       strcmp(protocol, "shangmi13-rotate2") == 0 ? 2u :
       strcmp(protocol, "shangmi13-rotatemax") == 0 ? CNET_TLS_KEY_UPDATE_RECORD_LIMIT_MAX : 0u;
-  const unsigned rounds = local_rotation ? 5u : key_update_exchange ? 2u : 1u;
-  const bool shangmi = strcmp(protocol, "shangmi13") == 0 || key_update_exchange || local_rotation;
+  const unsigned rounds = local_rotation ? 5u : (key_update_exchange || peer_limit) ? 2u : 1u;
+  const bool shangmi = strcmp(protocol, "shangmi13") == 0 || key_update_exchange || local_rotation || peer_limit;
   const bool approved_identity = expect_success;
   const char *expected_version = strcmp(protocol, "tls12") == 0
                                      ? "TLSv1.2" : tlcp ? "TLCPv1.1" : "TLSv1.3";
@@ -847,7 +849,8 @@ static int run_python_ssl_server(const char *port_text,
       .key_file = client_key,
       .security_profile = tlcp ? CNET_TLS_SECURITY_PROFILE_TLCP11 :
           shangmi ? CNET_TLS_SECURITY_PROFILE_SHANGMI_TLS13 : CNET_TLS_SECURITY_PROFILE_STANDARD,
-      .peer_policy = owned_policy, .key_update_record_limit = rotation_limit};
+      .peer_policy = owned_policy, .key_update_record_limit = rotation_limit,
+      .peer_key_update_limit = peer_limit && strcmp(protocol, "shangmi13-limit-off") != 0 ? 2u : 0u};
   char uri[96] = {0};
   bool initialized = false;
   mem_buffer_t *outgoing = NULL;
@@ -941,6 +944,13 @@ static int run_python_ssl_server(const char *port_text,
       while ((probe.received_count != round || probe.sent_count != round) &&
              !probe.terminal_count && cmeta_monotonic_ms() < deadline)
         REQUIRE(cnet_client_poll(&client, 1u, &events) == SALTS_OK);
+      if (peer_limit_failure) {
+        REQUIRE(probe.terminal_count == 1u && probe.failed == 1u);
+        REQUIRE(probe.received_count == 1u && probe.sent_count >= 1u && probe.sent_count <= 2u);
+        REQUIRE(probe.last_error_status == SALTS_EPROTO && strcmp(probe.failure_stage, "read") == 0);
+        REQUIRE(probe.last_connection_state == CNET_CONNECTION_FAILED);
+        goto cleanup;
+      }
       REQUIRE(probe.received_count == round && probe.sent_count == round && probe.failed == 0u);
     }
     REQUIRE(cnet_close(&client, outbound) == SALTS_OK);
@@ -1047,11 +1057,13 @@ static int run_python_ssl_client(const char *port_path,
                                      ? "TLSv1.2" : tlcp ? "TLCPv1.1" : "TLSv1.3";
   const bool expect_idle_read_timeout = strcmp(outcome, "idle") == 0;
   const bool local_rotation = strncmp(outcome, "rotate", 6u) == 0;
+  const bool peer_limit = strncmp(outcome, "limit", 5u) == 0;
+  const bool peer_limit_failure = peer_limit && strstr(outcome, "fail") != NULL;
   const uint32_t rotation_limit = strcmp(outcome, "rotate1") == 0 ? 1u :
       strcmp(outcome, "rotate2") == 0 ? 2u :
       strcmp(outcome, "rotatemax") == 0 ? CNET_TLS_KEY_UPDATE_RECORD_LIMIT_MAX : 0u;
-  const unsigned rounds = local_rotation ? 5u : 1u;
-  const bool expect_orderly_close = strcmp(outcome, "close") == 0 || local_rotation;
+  const unsigned rounds = local_rotation ? 5u : peer_limit && !peer_limit_failure ? 2u : 1u;
+  const bool expect_orderly_close = strcmp(outcome, "close") == 0 || local_rotation || (peer_limit && !peer_limit_failure);
   const bool expect_local_peer_close = strcmp(outcome, "localclose") == 0;
   const bool expect_final_send_close = strcmp(outcome, "sendclose") == 0;
   const bool expect_gated_receive = strcmp(outcome, "gated") == 0;
@@ -1059,7 +1071,7 @@ static int run_python_ssl_client(const char *port_path,
   const bool expect_eof_race = strcmp(outcome, "race-eof") == 0 || expect_incomplete_send;
   const unsigned expected_sends = expect_incomplete_send ? 0u : 1u;
   const size_t response_size = expect_incomplete_send ? 65536u : 1u;
-  const bool expect_invalid_close = strcmp(outcome, "eof") == 0 ||
+  const bool expect_invalid_close = peer_limit_failure || strcmp(outcome, "eof") == 0 ||
       strcmp(outcome, "keyupdate-fail") == 0 ||
       strcmp(outcome, "truncated") == 0 || strcmp(outcome, "badalert") == 0 ||
       strcmp(outcome, "fatal") == 0 || expect_eof_race;
@@ -1083,7 +1095,8 @@ static int run_python_ssl_client(const char *port_path,
       .client_auth = server_auth_only ? CNET_TLS_CLIENT_AUTH_NONE : CNET_TLS_CLIENT_AUTH_REQUIRED,
       .security_profile = tlcp ? CNET_TLS_SECURITY_PROFILE_TLCP11 :
           shangmi ? CNET_TLS_SECURITY_PROFILE_SHANGMI_TLS13 : CNET_TLS_SECURITY_PROFILE_STANDARD,
-      .key_update_record_limit = rotation_limit};
+      .key_update_record_limit = rotation_limit,
+      .peer_key_update_limit = peer_limit && strcmp(outcome, "limit-off") != 0 ? 2u : 0u};
   bool tls_live = false, server_live = false, listener_live = false;
   bool accepted = false, armed = false, response_sent = false;
   bool local_close_started = false;
@@ -1281,6 +1294,7 @@ static int run_python_ssl_client(const char *port_path,
     REQUIRE(probe.last_error_status == SALTS_ECONNABORTED ||
             probe.last_error_status == SALTS_EPROTO);
     REQUIRE(strcmp(probe.failure_stage, "read") == 0);
+    if (peer_limit_failure) REQUIRE(probe.last_error_status == SALTS_EPROTO);
     if (expect_eof_race) {
       bool consumed = true;
       REQUIRE(cnet_client_route_external_completion(

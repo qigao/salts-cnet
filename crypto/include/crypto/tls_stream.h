@@ -76,8 +76,15 @@ typedef struct crypto_tls_stream_client_config {
    * Counts records under the current application
    * traffic key, not bytes/writes/time; control records are separate overhead.
    * Nonzero with STANDARD/TLCP returns ENOTSUP; above maximum returns EINVAL.
-   * Immutable per context; no background timer or peer-update flood limit. */
+   * Immutable per context; no background timer. Peer-update admission uses
+   * the separate peer_key_update_limit field. */
   uint32_t key_update_record_limit;
+  /** SHANGMI_TLS13 consecutive authenticated peer KeyUpdate limit; zero is
+   * unlimited. Counts both request kinds across progress calls. Nonempty
+   * authenticated application data resets the count; empty records do not.
+   * Exceeding the limit permanently fails the stream with EPROTO. This is
+   * a burst bound, not a time/byte rate limit. Nonzero STANDARD/TLCP: ENOTSUP. */
+  uint32_t peer_key_update_limit;
 } crypto_tls_stream_client_config;
 
 /** Configuration copied into a reusable server context during initialization. */
@@ -107,6 +114,8 @@ typedef struct crypto_tls_stream_server_config {
   const crypto_tls_stream_peer_policy *peer_policy;
   /** Same local sending-key rotation contract as the client configuration. */
   uint32_t key_update_record_limit;
+  /** Same consecutive peer-update contract as the client configuration. */
+  uint32_t peer_key_update_limit;
 } crypto_tls_stream_server_config;
 
 typedef struct crypto_tls_stream_context crypto_tls_stream_context;

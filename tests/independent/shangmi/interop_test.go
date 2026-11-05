@@ -111,7 +111,7 @@ func runNativeClientWithIdentity(t *testing.T, f fixture, client *fixture, ident
 		defer p.clearSecrets()
 		handshakeScenario := corrupt
 		keyUpdate := strings.HasPrefix(corrupt, "key_update")
-		if keyUpdate || strings.HasPrefix(corrupt, "rotate") {
+		if keyUpdate || strings.HasPrefix(corrupt, "rotate") || strings.HasPrefix(corrupt, "limit") {
 			handshakeScenario = ""
 		}
 		if client == nil {
@@ -139,6 +139,12 @@ func runNativeClientWithIdentity(t *testing.T, f fixture, client *fixture, ident
 				return
 			}
 			result = nil
+			return
+		}
+		if strings.HasPrefix(corrupt, "limit") {
+			if result == nil {
+				result = p.peerUpdateLimit(false, corrupt, nil)
+			}
 			return
 		}
 		if strings.HasPrefix(corrupt, "rotate") {
@@ -193,6 +199,9 @@ func runNativeClientWithIdentity(t *testing.T, f fixture, client *fixture, ident
 		protocol = "shangmi13-update"
 	}
 	if strings.HasPrefix(corrupt, "rotate") {
+		protocol = "shangmi13-" + corrupt
+	}
+	if strings.HasPrefix(corrupt, "limit") {
 		protocol = "shangmi13-" + corrupt
 	}
 	args := []string{"--external-ip-san", port, protocol, identity, f.caPath, expect}
@@ -271,13 +280,37 @@ func runNativeServerWithClient(t *testing.T, f fixture, client *fixture, outcome
 	}
 	handshakeScenario := scenario
 	keyUpdateFailure := strings.HasPrefix(scenario, "key_update_bad")
-	if strings.HasPrefix(scenario, "key_update") || strings.HasPrefix(scenario, "rotate") {
+	if strings.HasPrefix(scenario, "key_update") || strings.HasPrefix(scenario, "rotate") || strings.HasPrefix(scenario, "limit") {
 		handshakeScenario = ""
 	}
 	if client == nil {
 		err = p.client(tls13gm.ClientConfig{DCID: []byte("formal TCP peer"), Roots: roots, ServerName: "localhost"}, handshakeScenario)
 	} else {
 		err = p.mutualClient(f, *client, handshakeScenario)
+	}
+	if strings.HasPrefix(scenario, "limit") {
+		if err == nil {
+			err = p.peerUpdateLimit(true, scenario, func() error {
+				deadline := time.Now().Add(5 * time.Second)
+				for time.Now().Before(deadline) {
+					if _, ready := os.Stat(portPath + ".sent"); ready == nil {
+						return nil
+					}
+					time.Sleep(5 * time.Millisecond)
+				}
+				return errors.New("native SEND marker timed out")
+			})
+		}
+		if err != nil {
+			raw.Close()
+			cancel()
+		}
+		runErr := <-done
+		waited = true
+		if runErr != nil || err != nil {
+			t.Fatalf("native peer update limit: %v; peer: %v\n%s", runErr, err, output.String())
+		}
+		return
 	}
 	if strings.HasPrefix(scenario, "rotate") {
 		if err == nil {
