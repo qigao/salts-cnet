@@ -135,12 +135,42 @@ Certificate position is zero-based in the presented peer chain. Identity
 failures identify leaf index 0; other currently unreported positions use
 SIZE_MAX. CERTIFICATE currently groups parsing/validity/usage errors rather
 than inventing an expired/not-yet-valid classification. More detailed provider
-reasons, certificate positions and configurable validation time/depth remain
+reasons, certificate positions and configurable validation time remain
 separate work.
 
 Formal tests cover real TLS trust/identity rejection, standard and ShangMi
 peer-policy rejection, TLS 1.2/1.3 first-failure stability and peer-alert
 classification, plus owned event snapshots under queue pressure and slot reuse.
+
+### Certificate verification depth
+
+Crypto/CNet client and server configurations expose immutable
+`verification_depth`: zero retains the default of 4; explicit values 1..5
+select the maximum number of peer-supplied issuer certificates after the leaf.
+For TLCP server authentication both signing and encryption leaves are excluded.
+A root included in the transmitted chain counts; an anchor loaded locally does
+not. This bounds the provider's presented-chain verification, not a new general
+path builder or an OpenSSL-compatible intermediate-only count. Other mandatory
+trust, identity, purpose, pathLen, chain-count and byte limits still apply.
+
+Values above 5 fail with EINVAL before allocation/trust loading. Servers must
+enable REQUIRED client authentication to configure a nonzero depth; otherwise
+initialization fails with EINVAL. The iOS implicit system-trust bridge does not
+expose this provider depth contract, so a nonzero depth there fails with ENOTSUP;
+explicit CA file/path/memory sources use the normal provider path. No requested
+bound is silently ignored. Zero never disables certificate verification.
+
+Every initialized TLS variant receives the same normalized depth after loading
+trust, including memory anchors. The context consumes the numeric value at init;
+caller config changes cannot widen it. A rejected peer chain reports DEPTH via
+the first-failure diagnostic, without publishing CONNECTED or application data.
+
+Formal tests use independently signed two-issuer chains in TLS 1.2, TLS 1.3 and
+ShangMi mTLS, accepting depth 2 and rejecting depth 1 on either endpoint. The 36
+cases cover file/PEM-memory/DER-memory inputs, default/maximum settings, included
+root accounting and early context release. Five invalid configuration cases
+fail before reading nonexistent credential paths. Independent TLCP clients use
+depth 1 with dual-leaf server identities. iOS device execution is not claimed.
 
 ### Context protocol-version policy
 

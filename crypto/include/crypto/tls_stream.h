@@ -39,7 +39,9 @@ enum {
   CRYPTO_TLS_STREAM_SERVER_NAME_CAPACITY = 254,
   CRYPTO_TLS_STREAM_CHANNEL_BINDING_BYTES = 32,
   CRYPTO_TLS_STREAM_SERVER_END_POINT_MAX_BYTES = 64,
-  CRYPTO_TLS_STREAM_KEY_UPDATE_RECORD_LIMIT_MAX = 1u << 20
+  CRYPTO_TLS_STREAM_KEY_UPDATE_RECORD_LIMIT_MAX = 1u << 20,
+  CRYPTO_TLS_STREAM_VERIFICATION_DEPTH_DEFAULT = 4,
+  CRYPTO_TLS_STREAM_VERIFICATION_DEPTH_MAX = 5
 };
 
 typedef enum crypto_tls_stream_protocol_version {
@@ -105,6 +107,12 @@ typedef struct crypto_tls_stream_client_config {
    * A stream may narrow but cannot widen these bounds. */
   crypto_tls_stream_protocol_version minimum_version;
   crypto_tls_stream_protocol_version maximum_version;
+  /** Maximum peer-supplied issuer certificates after the leaf (after both
+   * TLCP leaves). A transmitted trust anchor counts; a local anchor does not.
+   * Zero selects DEFAULT (4); explicit 1..MAX (5) is immutable per context.
+   * Larger values: EINVAL. iOS implicit system trust: ENOTSUP for nonzero.
+   * Authentication and other path/size/constraint limits remain mandatory. */
+  uint32_t verification_depth;
 } crypto_tls_stream_client_config;
 
 /** Configuration copied into a reusable server context during initialization. */
@@ -145,6 +153,8 @@ typedef struct crypto_tls_stream_server_config {
    * A stream may narrow but cannot widen these bounds. */
   crypto_tls_stream_protocol_version minimum_version;
   crypto_tls_stream_protocol_version maximum_version;
+  /** Same depth contract as client. Nonzero requires REQUIRED client auth. */
+  uint32_t verification_depth;
 } crypto_tls_stream_server_config;
 
 typedef struct crypto_tls_stream_context crypto_tls_stream_context;
