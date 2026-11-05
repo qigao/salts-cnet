@@ -3,6 +3,7 @@
  */
 #ifndef CRYPTO_TLS_STREAM_H
 #define CRYPTO_TLS_STREAM_H
+#include <crypto/tls_peer_policy.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -34,8 +35,6 @@ enum {
   CRYPTO_TLS_STREAM_PEER_CERTIFICATE_SHA256_CAPACITY = 65,
   CRYPTO_TLS_STREAM_MIN_IO_BUFFER_BYTES = 17 * 1024,
   CRYPTO_TLS_STREAM_SERVER_NAME_CAPACITY = 254,
-  CRYPTO_TLS_STREAM_PEER_CHAIN_MAX_CERTIFICATES = 5,
-  CRYPTO_TLS_STREAM_PEER_CHAIN_MAX_BYTES = 4096,
   CRYPTO_TLS_STREAM_CHANNEL_BINDING_BYTES = 32,
   CRYPTO_TLS_STREAM_SERVER_END_POINT_MAX_BYTES = 64
 };
@@ -44,17 +43,6 @@ typedef enum crypto_tls_stream_client_auth {
   CRYPTO_TLS_STREAM_CLIENT_AUTH_NONE = 0,
   CRYPTO_TLS_STREAM_CLIENT_AUTH_REQUIRED = 1
 } crypto_tls_stream_client_auth;
-
-/** Immutable secure transport choice, fixed when client/server TLS context is created.
- * STANDARD preserves existing verified TLS 1.2-1.3 behavior; SHANGMI_TLS13
- * requires RFC 8998 TLS 1.3 with SM2/SM3/SM4-GCM. TLCP11 requires TLCP 1.1
- * with ECC-SM2/SM4-GCM/SM3. The profiles never fall back to each other.
- */
-typedef enum crypto_tls_stream_security_profile {
-  CRYPTO_TLS_STREAM_SECURITY_PROFILE_STANDARD = 0,
-  CRYPTO_TLS_STREAM_SECURITY_PROFILE_SHANGMI_TLS13 = 1,
-  CRYPTO_TLS_STREAM_SECURITY_PROFILE_TLCP11 = 2
-} crypto_tls_stream_security_profile;
 
 /**
  * Per-connection client policy. The configuration is consumed synchronously
@@ -78,6 +66,8 @@ typedef struct crypto_tls_stream_client_config {
   size_t alpn_protocol_count;
   /** Explicit security profile; zero retains verified STANDARD TLS. */
   crypto_tls_stream_security_profile security_profile;
+  /** Optional additional admission; copied and retained by context creation. */
+  const crypto_tls_stream_peer_policy *peer_policy;
 } crypto_tls_stream_client_config;
 
 /** Configuration copied into a reusable server context during initialization. */
@@ -103,18 +93,9 @@ typedef struct crypto_tls_stream_server_config {
   size_t alpn_protocol_count;
   /** Explicit security profile; zero retains verified STANDARD TLS. */
   crypto_tls_stream_security_profile security_profile;
+  /** Optional additional admission; requires REQUIRED client authentication. */
+  const crypto_tls_stream_peer_policy *peer_policy;
 } crypto_tls_stream_server_config;
-
-typedef struct crypto_tls_stream_peer_certificate {
-  const uint8_t *data;
-  size_t size;
-} crypto_tls_stream_peer_certificate;
-
-typedef struct crypto_tls_stream_peer_certificate_chain {
-  crypto_tls_stream_peer_certificate certificates[CRYPTO_TLS_STREAM_PEER_CHAIN_MAX_CERTIFICATES];
-  size_t count;
-  size_t total_bytes;
-} crypto_tls_stream_peer_certificate_chain;
 
 typedef struct crypto_tls_stream_context crypto_tls_stream_context;
 

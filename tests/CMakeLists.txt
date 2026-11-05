@@ -342,6 +342,17 @@ if(TARGET Salts::CNet)
     set_tests_properties(saltscore.cnet_shangmi_key_update PROPERTIES
       WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/independent/shangmi"
       ENVIRONMENT "CGO_ENABLED=0;GOWORK=off" TIMEOUT 180)
+    # Separate image: one Crypto/GmSSL owner, never also Salts::CNet.
+    add_executable(saltscore_crypto_tls_peer_policy_test test_crypto_tls_peer_policy.c)
+    target_link_libraries(saltscore_crypto_tls_peer_policy_test PRIVATE Salts::Crypto)
+    set_target_properties(saltscore_crypto_tls_peer_policy_test PROPERTIES
+      C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF FOLDER "Core/tests")
+    add_test(NAME saltscore.crypto_tls_shangmi_revocation
+      COMMAND "${SALTS_CNET_TEST_GO}" test -mod=readonly -count=1 -timeout=150s -run "^TestShangMiRevocation$"
+        -args -native "$<TARGET_FILE:saltscore_crypto_tls_peer_policy_test>")
+    set_tests_properties(saltscore.crypto_tls_shangmi_revocation PROPERTIES
+      WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/independent/shangmi"
+      ENVIRONMENT "CGO_ENABLED=0;GOWORK=off" TIMEOUT 180)
   endif()
 
   # Reuse the actual opt-in TinyTest cases, one fresh process per sample. The

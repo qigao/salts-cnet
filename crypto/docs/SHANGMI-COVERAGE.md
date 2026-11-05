@@ -167,8 +167,58 @@ bytes. All tests link the pinned provider; no second GmSSL build is embedded.
 
 This qualifies peer-initiated updates under the existing owner/write contracts.
 Application-selected local rotation limits, update-flood policy and fragmented
-post-handshake messages remain separate work, as do revocation integration,
-session resumption, DTLS and hardware-backed keys.
+post-handshake messages remain separate work, as do session resumption, DTLS
+and hardware-backed keys. Additional peer admission is described below.
+
+### Authenticated-peer admission and revocation composition
+
+`crypto/tls_peer_policy.h` defines the provider-neutral `check/retain/release`
+contract shared by Crypto streams and `cnet_tls_peer_policy`. Set `peer_policy`
+in a client or server TLS configuration to require an additional decision before
+handshake completion (and before CNet publishes CONNECTED). NULL keeps mandatory
+TLS verification but supplies no additional revocation assurance. Server policies
+require REQUIRED client authentication; partial callback descriptors fail at
+context creation.
+
+The hook cannot override certificate/hostname/proof-of-possession failures.
+It receives the bounded peer-supplied DER chain, peer role and security profile
+only after mandatory authentication. The chain is not a constructed trust path:
+the policy must select and authenticate issuers and check every certificate
+required by its profile. TLCP has separate signing and encryption certificates.
+Only return value zero admits. Errors, unknown results and positive values all
+reject with ECONNABORTED; retries cannot run the callback again or resurrect the
+stream. Application reads/writes remain unavailable after rejection.
+
+Crypto copies the descriptor and retains its context once on successful context
+creation. The final release occurs after all streams release the TLS context.
+CNet initialization may acquire and release a temporary reference on an outer
+allocation failure; it retains nothing on failure. Callers keep ownership of
+their original reference. Use immutable snapshots with thread-safe reference
+counts, or synchronize shared state: streams on different owners may invoke the
+same policy concurrently. The check is synchronous, nonblocking and cannot reenter
+the stream or retain chain views. Publish a replacement TLS context for new
+connections when changing snapshots; existing connections are not revalidated.
+
+For a direct authenticated SM2 issuer, a Crypto policy can call
+`salts_crypto_sm2_check_crl` with its retained complete CRL snapshot, authenticated
+issuer, explicit signing ID, validation time, maximum age and rollback floor.
+Time acquisition, persistent rollback state and snapshot refresh remain external.
+There is no automatic network fetching, OCSP, cache or general path builder.
+CNet exposes the data contract without making static Crypto/GmSSL a transitive
+link dependency; do not copy those archives into a CNet consumer/plugin.
+
+Formal tests cover two boundaries separately. `saltscore.cnet_tls_ca_san` checks
+real-TCP admission, mandatory trust/identity precedence, invalid descriptors and
+retained lifetime. `saltscore.cnet_shangmi_required_mtls` checks both authenticated
+roles and denial before CONNECTED, including early server-context release.
+`saltscore.crypto_tls_shangmi_revocation` drives production Crypto streams over a
+bounded in-memory ciphertext transport with independently signed Go fixtures:
+both roles accept current CRLs and reject revoked, stale, bad-signature,
+rolled-back, wrong-issuer, malformed and future CRLs. An IP identity mismatch
+skips the callback, rejected streams remain rejected on retry, and final destroy
+releases the retained snapshot. These are 17 scenarios, not independent TLS
+engine interoperation or production network CRL distribution. TLCP dual-certificate
+revocation and a packaged CNet CRL policy remain separate qualification work.
 
 ## API use and boundaries
 

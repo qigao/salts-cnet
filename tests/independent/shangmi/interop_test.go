@@ -31,6 +31,7 @@ var native = flag.String("native", "", "production CNet formal peer")
 type fixture struct {
 	root, leaf                *x509.Certificate
 	key                       *sm2.PrivateKey
+	rootKey                   *sm2.PrivateKey
 	caPath, certPath, keyPath string
 }
 
@@ -69,7 +70,7 @@ func credentials(t *testing.T, change func(*x509.Certificate)) fixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	f := fixture{root: parsedRoot, leaf: parsedLeaf, key: key,
+	f := fixture{root: parsedRoot, leaf: parsedLeaf, key: key, rootKey: rootKey,
 		caPath: filepath.Join(dir, "ca.pem"), certPath: filepath.Join(dir, "leaf.pem"), keyPath: filepath.Join(dir, "key.pem")}
 	keyDER, err := smx509.MarshalPKCS8PrivateKey(key)
 	if err != nil {
