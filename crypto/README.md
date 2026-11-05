@@ -14,7 +14,7 @@ CMake targets, C11 source and C++17-usable C headers.
 
 Use the repository's user presets for the ASN1/Crypto/CNet build and formal
 CTest suite. The native GmSSL implementation is installed from the immutable
-`gmssl 3.2.0#32` vcpkg port, whose extension sources are pinned from
+`gmssl 3.2.0#33` vcpkg port, whose extension sources are pinned from
 `gmssl-extensions/`. `Salts::Crypto` links the imported `GmSSL::GmSSL` static
 library; it never compiles a duplicate GmSSL implementation.
 Private Ed448 libecc objects live under `vendor/libecc/` in this module.
@@ -93,3 +93,9 @@ existing `crypto_tls_session_copy_peer_chain_v1_2` returns a bounded
 caller-owned concatenated DER chain that can be consumed by this inspector
 without changing GmSSL's authenticated TLS handshake or trust decisions.
 See [X.509 DER scope](docs/X509-DER-ASN1-INSPECTION.md).
+
+Handshake diagnostics retain expired/not-yet-valid results and the zero-based
+position of the certificate actually checked in the peer's presented chain.
+This includes intermediate CAs and TLCP's encryption leaf. Local-only trust
+anchors and failures without a known position use `SIZE_MAX`; the diagnostic
+remains an owned value after stream teardown. See `<crypto/tls_diagnostic.h>`.
