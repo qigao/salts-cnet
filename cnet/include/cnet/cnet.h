@@ -346,7 +346,8 @@ enum {
   /** Lowercase SHA-256 hexadecimal digest plus the trailing NUL. */
   CNET_TLS_PEER_CERTIFICATE_SHA256_CAPACITY = 65,
   /** Minimum fixed capacity of each TLS network BIO and scratch buffer. */
-  CNET_TLS_MIN_IO_BUFFER_BYTES = 17 * 1024
+  CNET_TLS_MIN_IO_BUFFER_BYTES = 17 * 1024,
+  CNET_TLS_KEY_UPDATE_RECORD_LIMIT_MAX = 1u << 20
 };
 
 typedef enum cnet_tls_client_auth {
@@ -410,6 +411,15 @@ typedef struct cnet_tls_client_config {
   cnet_tls_security_profile security_profile;
   /** Optional extra admission; descriptor copied, context retained until quiescence. */
   const cnet_tls_peer_policy *peer_policy;
+  /** SHANGMI_TLS13 local sending-key rotation threshold, 1..2^20 records.
+   * Zero disables automatic local rotation, not mandatory peer responses.
+   * At the threshold, KeyUpdate precedes the next application record and
+   * requests reciprocal rotation unless answering a pending peer request.
+   * Counts records per application traffic key,
+   * not CNet sends/bytes/time; control records are separate overhead.
+   * Nonzero STANDARD/TLCP returns SALTS_ENOTSUP; above maximum SALTS_EINVAL.
+   * Fixed per TLS context; no timer or peer-update flood policy. */
+  uint32_t key_update_record_limit;
 } cnet_tls_client_config;
 
 /** Configuration copied into a reusable server context during initialization. */
@@ -437,6 +447,8 @@ typedef struct cnet_tls_server_config {
   cnet_tls_security_profile security_profile;
   /** Optional extra admission; requires REQUIRED client authentication. */
   const cnet_tls_peer_policy *peer_policy;
+  /** Same local sending-key rotation contract as the client configuration. */
+  uint32_t key_update_record_limit;
 } cnet_tls_server_config;
 
 typedef struct cnet_connect_options {

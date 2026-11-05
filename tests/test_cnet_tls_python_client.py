@@ -311,6 +311,10 @@ def scenario(
                         "tls13-fragmented-finished-plus-application"
                     )
                     fragmented_tls13_exchange(ctx, raw, coalesced=coalesced)
+                    # Peer receipt of G can precede the native SEND callback.
+                    # Preserve the same completion boundary as ordinary accept
+                    # before this successful framing case closes its socket.
+                    wait_for_native_send(native, port_path)
                     peer_completed = True
                     phase = "authenticated"
                 else:

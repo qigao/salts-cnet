@@ -650,7 +650,8 @@ static int crypto_tls_stream_configure_variant(crypto_tls_stream_context *contex
                                       const char *cert_file,
                                       const char *key_file,
                                       const char *key_password,
-                                      crypto_tls_stream_client_auth client_auth) {
+                                      crypto_tls_stream_client_auth client_auth,
+                                      uint32_t key_update_record_limit) {
   static const int range_ciphers[] = {
       TLS_cipher_aes_128_gcm_sha256,
       TLS_cipher_ecdhe_rsa_with_aes_128_gcm_sha256,
@@ -743,6 +744,11 @@ static int crypto_tls_stream_configure_variant(crypto_tls_stream_context *contex
       tls_ctx_set_signature_algorithms(tls, signatures, signature_count) != 1)
     return CRYPTO_TLS_STREAM_EIO;
 
+  if (key_update_record_limit != 0u &&
+      (tls13_ctx_enable_key_update(tls, 1) != 1 ||
+       tls13_ctx_set_key_update_seq_num_limit(tls, key_update_record_limit) != 1))
+    return CRYPTO_TLS_STREAM_EIO;
+
   /* RFC 5746 initial-handshake secure renegotiation is mandatory for
    * TLS1.2, including when the normal public context negotiates TLS12/13.
    * This is never permission to renegotiate or downgrade an established TLS
@@ -824,6 +830,7 @@ static int crypto_tls_stream_context_create_common(
     crypto_tls_stream_client_auth client_auth, const char *const *alpn_protocols,
     size_t alpn_protocol_count, crypto_tls_stream_security_profile security_profile,
     const crypto_tls_stream_peer_policy *peer_policy,
+    uint32_t key_update_record_limit,
     crypto_tls_stream_context **out_context) {
   crypto_tls_stream_context *context;
   size_t index;
@@ -831,6 +838,12 @@ static int crypto_tls_stream_context_create_common(
 
   if (out_context == NULL) return CRYPTO_TLS_STREAM_EINVAL;
   *out_context = NULL;
+
+  if (key_update_record_limit > CRYPTO_TLS_STREAM_KEY_UPDATE_RECORD_LIMIT_MAX)
+    return CRYPTO_TLS_STREAM_EINVAL;
+  if (key_update_record_limit != 0u &&
+      security_profile != CRYPTO_TLS_STREAM_SECURITY_PROFILE_SHANGMI_TLS13)
+    return CRYPTO_TLS_STREAM_ENOTSUP;
 
   if (peer_policy != NULL &&
       (!verify_peer || peer_policy->check == NULL ||
@@ -881,7 +894,7 @@ static int crypto_tls_stream_context_create_common(
         index != CRYPTO_TLS_STREAM_VARIANT_TLCP11) continue;
     status = crypto_tls_stream_configure_variant(
         context, (crypto_tls_stream_variant)index, ca_file, ca_path, cert_file, key_file,
-        key_password, client_auth);
+        key_password, client_auth, key_update_record_limit);
     if (status != CRYPTO_TLS_STREAM_OK) {
       crypto_tls_stream_context_dispose(context);
       return status;
@@ -929,7 +942,7 @@ int crypto_tls_stream_client_context_create(const crypto_tls_stream_client_confi
       false, true, config->ca_file, config->ca_path, config->cert_file,
       config->key_file, config->key_password, CRYPTO_TLS_STREAM_CLIENT_AUTH_NONE,
       config->alpn_protocols, config->alpn_protocol_count,
-      config->security_profile, config->peer_policy, &context);
+      config->security_profile, config->peer_policy, config->key_update_record_limit, &context);
   if (status != CRYPTO_TLS_STREAM_OK) return status;
   if (config->server_name != NULL)
     crypto_tls_stream_copy(CRYPTO_TLS_TEST_COPY_METADATA, context->client_server_name, config->server_name,
@@ -972,7 +985,8 @@ int crypto_tls_stream_server_context_create(const crypto_tls_stream_server_confi
       true, config->client_auth == CRYPTO_TLS_STREAM_CLIENT_AUTH_REQUIRED,
       config->ca_file, config->ca_path, config->cert_file, config->key_file,
       config->key_password, config->client_auth, config->alpn_protocols,
-      config->alpn_protocol_count, config->security_profile, config->peer_policy, &context);
+      config->alpn_protocol_count, config->security_profile, config->peer_policy,
+      config->key_update_record_limit, &context);
   if (status != CRYPTO_TLS_STREAM_OK) return status;
   *out_context = context;
   return CRYPTO_TLS_STREAM_OK;

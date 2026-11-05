@@ -36,7 +36,8 @@ enum {
   CRYPTO_TLS_STREAM_MIN_IO_BUFFER_BYTES = 17 * 1024,
   CRYPTO_TLS_STREAM_SERVER_NAME_CAPACITY = 254,
   CRYPTO_TLS_STREAM_CHANNEL_BINDING_BYTES = 32,
-  CRYPTO_TLS_STREAM_SERVER_END_POINT_MAX_BYTES = 64
+  CRYPTO_TLS_STREAM_SERVER_END_POINT_MAX_BYTES = 64,
+  CRYPTO_TLS_STREAM_KEY_UPDATE_RECORD_LIMIT_MAX = 1u << 20
 };
 
 typedef enum crypto_tls_stream_client_auth {
@@ -68,6 +69,15 @@ typedef struct crypto_tls_stream_client_config {
   crypto_tls_stream_security_profile security_profile;
   /** Optional additional admission; copied and retained by context creation. */
   const crypto_tls_stream_peer_policy *peer_policy;
+  /** SHANGMI_TLS13 local sending-key rotation threshold, 1..2^20 records.
+   * Zero disables automatic local rotation, not mandatory peer responses.
+   * Before the next application record at the threshold, send KeyUpdate and
+   * request reciprocal rotation unless answering a pending peer request.
+   * Counts records under the current application
+   * traffic key, not bytes/writes/time; control records are separate overhead.
+   * Nonzero with STANDARD/TLCP returns ENOTSUP; above maximum returns EINVAL.
+   * Immutable per context; no background timer or peer-update flood limit. */
+  uint32_t key_update_record_limit;
 } crypto_tls_stream_client_config;
 
 /** Configuration copied into a reusable server context during initialization. */
@@ -95,6 +105,8 @@ typedef struct crypto_tls_stream_server_config {
   crypto_tls_stream_security_profile security_profile;
   /** Optional additional admission; requires REQUIRED client authentication. */
   const crypto_tls_stream_peer_policy *peer_policy;
+  /** Same local sending-key rotation contract as the client configuration. */
+  uint32_t key_update_record_limit;
 } crypto_tls_stream_server_config;
 
 typedef struct crypto_tls_stream_context crypto_tls_stream_context;
