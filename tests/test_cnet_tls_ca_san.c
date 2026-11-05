@@ -990,8 +990,9 @@ static int run_python_ssl_client(const char *port_path,
                                  const char *expected_client_sha256) {
   const char *label = "production CNet <- independent secure stream peer";
   const bool tlcp = strcmp(protocol, "tlcp") == 0;
-  const bool shangmi = strcmp(protocol, "shangmi13") == 0;
-  const bool server_auth_only = tlcp || shangmi;
+  const bool shangmi = strcmp(protocol, "shangmi13") == 0 ||
+      strcmp(protocol, "shangmi13-mtls") == 0;
+  const bool server_auth_only = tlcp || strcmp(protocol, "shangmi13") == 0;
   const char *expected_version = strcmp(protocol, "12") == 0
                                      ? "TLSv1.2" : tlcp ? "TLCPv1.1" : "TLSv1.3";
   const bool expect_idle_read_timeout = strcmp(outcome, "idle") == 0;
@@ -1091,6 +1092,7 @@ static int run_python_ssl_client(const char *port_path,
       REQUIRE(strcmp(probe.tls_version, expected_version) == 0);
       REQUIRE(probe.tls_cipher_status == SALTS_OK);
       REQUIRE(probe.tls_cipher[0] != '\0');
+      if (shangmi) REQUIRE(strcmp(probe.tls_cipher, "TLS_SM4_GCM_SM3") == 0);
       if (server_auth_only) {
         REQUIRE(strcmp(probe.tls_cipher, tlcp ? "TLS_ECC_SM4_GCM_SM3" : "TLS_SM4_GCM_SM3") == 0);
         REQUIRE(cnet_tls_peer_certificate_sha256(
@@ -1341,6 +1343,8 @@ cleanup:
 }
 
 static int saltscore_original_entry_test_cnet_tls_ca_san_c(int argc, char **argv) {
+  if (argc == 8 && strcmp(argv[1], "--shangmi-required-client") == 0)
+    return run_python_ssl_client(argv[2], argv[3], argv[4], argv[5], "shangmi13-mtls", argv[6], argv[7]);
   if (argc == 12 && strcmp(argv[1], "--shangmi-mtls") == 0) {
     const bool success = strcmp(argv[8], "accept") == 0;
     const bool server_rejection = strcmp(argv[8], "reject-server") == 0;

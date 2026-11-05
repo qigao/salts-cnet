@@ -11,11 +11,12 @@ import (
 	"github.com/iuboy/pollux-go/tls13gm"
 )
 
-// The independent handshaker owns key exchange, transcript, certificate and
-// Finished verification. This test adapter supplies bounded TLS TCP records;
+// The independent handshaker/primitives own key exchange, transcript, certificate
+// and Finished verification. This test adapter supplies bounded TLS TCP records;
 // no production GmSSL or Core crypto entrypoint is used on this side.
 type recordPeer struct {
 	net.Conn
+	authFlightSent          bool
 	readCipher, writeCipher *tls13gm.AEAD
 	readSeq, writeSeq       uint64
 	altered                 bool
