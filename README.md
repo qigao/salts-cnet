@@ -131,6 +131,13 @@ pinned in the Crypto source lock. The USB module and its libusb dependency
 have been removed from the SDK. The remaining dependency graph does not
 request the libusb Autotools/MSYS2 tool bundle.
 
+CI must restore the complete `cnet,media,zstd` dependency graph from the
+shared `qigao/vcpkg-cache` GitHub Packages feed. CI presets enforce
+`--only-binarycaching`: an absent exact ABI package or authentication failure
+stops the run. Repository-local Actions caches supplement the shared feed;
+they do not replace it. Dependency publication belongs to the shared cache
+repository. Compiler-cache restoration is independent of registry revisions.
+
 An unavailable dependency fails configuration, without substituting another
 TLS provider or an implicit transport fallback. Local source ownership does
 not make the retained GmSSL-derived implementation third-party-free. Exact

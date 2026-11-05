@@ -39,11 +39,15 @@
 - When removing an installer/consumer source tree, remove its native-graph
   registration in the same change. A stale `add_executable` is detected only
   at CMake generation, even when configure has otherwise found all packages.
-- `setup-vcpkg-curl-cache` is a binary-only admission gate and fails on the
-  first absent immutable ABI package. After the package registry is cleared,
-  product CI must use `setup-vcpkg-cache` in read mode so vcpkg can compile a
-  cache miss from the pinned source graph without publishing from the product
-  repository.
+- Shared dependency binary-cache consumption is mandatory. CI requests
+  `restore-packages: "true"` with the complete `cnet,media,zstd` feature set.
+  The CI and diagnostic user presets require `--only-binarycaching`. A missing
+  exact ABI or failed authentication must stop the build; do not disable
+  restoration or compile dependencies in product CI to hide a cache miss.
+  Dependency production/publication belongs to `qigao/vcpkg-cache`.
+- Keep ccache restoration independent of the complete registry/port revision.
+  ccache checks compiler contents, flags and headers; keep OS/architecture
+  and preset namespaces separate.
 
 ## 2026-11-01 CNet numeric-host endpoint
 

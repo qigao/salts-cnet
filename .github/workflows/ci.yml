@@ -197,7 +197,8 @@ jobs:
           mode: read
           triplet: ${{ matrix.triplet }}
           host-triplet: ${{ matrix.host }}
-          restore-packages: "false"
+          restore-packages: "true"
+          features: cnet,media,zstd
           token: ${{ github.token }}
 
       - name: Restore re2c and Unicode host data
@@ -281,10 +282,11 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: ${{ env.CCACHE_DIR }}
-          key: ccache-${{ steps.ccache.outputs.version }}-${{ steps.vcpkg-cache.outputs.cache-primary-key }}-${{ github.sha }}
+          # ccache validates compiler content, flags and included headers itself.
+          # A port/registry update must not discard unrelated compilation entries.
+          key: ccache-v2-${{ steps.ccache.outputs.version }}-${{ runner.os }}-${{ runner.arch }}-${{ matrix.rid }}-${{ matrix.preset }}-${{ github.sha }}
           restore-keys: |
-            ccache-${{ steps.ccache.outputs.version }}-${{ steps.vcpkg-cache.outputs.cache-primary-key }}-
-            ccache-${{ steps.ccache.outputs.version }}-vcpkg-v1-${{ runner.os }}-${{ runner.arch }}-${{ matrix.rid }}-${{ matrix.preset }}-${{ steps.vcpkg.outputs.cache_revision }}-
+            ccache-v2-${{ steps.ccache.outputs.version }}-${{ runner.os }}-${{ runner.arch }}-${{ matrix.rid }}-${{ matrix.preset }}-
 
       - name: Start compiler cache statistics
         shell: bash
@@ -346,8 +348,8 @@ jobs:
           fi
           cmake --preset "${{ matrix.preset }}" "${tls_options[@]}"
 
-      # Configure completes vcpkg installation and local binary-cache writes.
-      # Save now so a later project build/test failure does not discard them.
+      # Configure installs only exact restored ABI packages; it cannot build ports.
+      # Save the downloaded packages before product build/test execution.
       - name: Save vcpkg binaries and downloads
         if: steps.vcpkg-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@v4
