@@ -37,6 +37,11 @@ set_target_properties(crypto_sm2_x509_test PROPERTIES FOLDER "Crypto/tests/x509"
 add_test(NAME crypto.x509.sm2_signatures COMMAND crypto_sm2_x509_test)
 set_tests_properties(crypto.x509.sm2_signatures PROPERTIES TIMEOUT 120)
 
+add_executable(crypto_sm2_trust_admission sm2_trust_admission.c)
+target_link_libraries(crypto_sm2_trust_admission PRIVATE Salts::Crypto Salts::TinyTest)
+set_target_properties(crypto_sm2_trust_admission PROPERTIES FOLDER "Crypto/tests/x509")
+add_test(NAME crypto.x509.sm2_trust_admission COMMAND crypto_sm2_trust_admission)
+
 # Formal independent certificate generation/verification, never a consumer project.
 # Android is build-only in the established CI; Go is a host test peer.
 if(NOT CMAKE_SYSTEM_NAME STREQUAL "Android")
@@ -45,9 +50,18 @@ if(NOT CMAKE_SYSTEM_NAME STREQUAL "Android")
   target_link_libraries(crypto_sm2_x509_peer PRIVATE Salts::Crypto)
   set_target_properties(crypto_sm2_x509_peer PROPERTIES FOLDER "Crypto/tests/x509")
   add_test(NAME crypto.x509.sm2_independent
-    COMMAND "${SALTS_CRYPTO_TEST_GO}" test -mod=readonly -count=1 -timeout=90s
+    COMMAND "${SALTS_CRYPTO_TEST_GO}" test -mod=readonly -count=1 -timeout=90s -run "^TestSM2Certificates$"
       -args -peer "$<TARGET_FILE:crypto_sm2_x509_peer>")
   set_tests_properties(crypto.x509.sm2_independent PROPERTIES
+    WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/independent"
+    ENVIRONMENT "CGO_ENABLED=0;GOWORK=off" TIMEOUT 180)
+  add_executable(crypto_sm2_trust_peer sm2_trust_peer.c)
+  target_link_libraries(crypto_sm2_trust_peer PRIVATE Salts::Crypto)
+  set_target_properties(crypto_sm2_trust_peer PROPERTIES FOLDER "Crypto/tests/x509")
+  add_test(NAME crypto.x509.sm2_pinned_trust
+    COMMAND "${SALTS_CRYPTO_TEST_GO}" test -mod=readonly -count=1 -timeout=90s -run "^TestPinnedChain$"
+      -args -trust-peer "$<TARGET_FILE:crypto_sm2_trust_peer>")
+  set_tests_properties(crypto.x509.sm2_pinned_trust PROPERTIES
     WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/independent"
     ENVIRONMENT "CGO_ENABLED=0;GOWORK=off" TIMEOUT 180)
 endif()
