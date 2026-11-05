@@ -15,7 +15,7 @@ source or falls back to plaintext.
 | SM4 | ECB/CBC without padding; CTR/OFB/CFB8/64/128; XTS; GCM/CCM | Block and independent mode vectors, RFC 8998 GCM/CCM vectors, partial segments, XTS ciphertext stealing, bad tag erasure, counter wrap rejection |
 | ZUC | ZUC128/256 whole-message encryption and bit-length MAC/verification | Known keystream/MAC answers, all tag sizes, ignored unused final bits, corrupt tag, key/length rejection |
 | SM9 signature/encryption/KEM | Public identity-based signing, XOR encryption and KEM; fixed canonical key points and DER messages | Published signature/KEM/encryption vectors, scripted nonce/failure paths, finite prime-order subgroup admission, DER/tamper/identity negatives and output erasure; cross-platform CI required |
-| SM9 key exchange | Pending implementation/review; pinned upstream header marks it unfinished | No production claim |
+| SM9 key exchange | First-party bounded exchange over existing GmSSL primitives, with mandatory mutual key confirmation and distinct exchange keys | Published session-key and both confirmation vectors; identity/master/purpose binding, wrong phase, forged/replayed confirmations, RNG failure, cancellation and erasure; cross-platform CI required |
 | SM2 full authenticated key exchange | Pending; ordinary ECDH must not be advertised as this protocol | No production claim |
 | CMS / SM2 certificate and protected key workflows | CMS enabled in provider; public workflow qualification pending | Generic ASN1 parsing and existing X509 inspection alone do not qualify signing/trust/key protection |
 | TLS 1.3 ShangMi / TLCP | Existing explicit stream profiles; complete independent handshake/authentication matrix remains separate | Existing provider settings/KATs do not replace protocol interoperation |
@@ -70,6 +70,40 @@ recipient, zero-nonce retry/exhaustion and failure erasure. These functional
 tests do not establish constant-time execution of the underlying pairing and
 scalar arithmetic; side-channel qualification remains a production gate for
 deployments exposing private-key operations to local or timing attackers.
+
+### SM9 confirmed exchange
+
+`crypto/sm9_exchange.h` supplies the complete two-party confirmation sequence.
+Generate a separate `SALTS_CRYPTO_SM9_EXCHANGE` master and extract keys with
+`salts_crypto_sm9_exchange_extract` (`hid=0x02`). Encryption keys (`hid=0x03`)
+cannot be reused: admission checks the private key against the local identity,
+master public key and exchange purpose, including subgroup checks.
+
+Each party owns one zero-initialized 2048-byte context, used from one thread.
+Identities are copied (1..255 bytes each); the session key is bounded to
+1..1024 bytes. No caller buffer is retained and no allocation or I/O occurs.
+
+1. Initiator calls `exchange_start`, retaining its context and sending RA.
+2. Responder calls `exchange_respond`, retaining its context and sending RB/SB.
+   Its pending key remains internal until SA is verified.
+3. Initiator calls `exchange_finish_initiator` with RB/SB. Only a valid SB
+   releases its session key and SA. It sends SA to the responder.
+4. Responder calls `exchange_finish_responder` with SA. Only valid SA releases
+   its session key. Both finish calls erase their context on success or an
+   admitted protocol/state failure. Invalid buffer admission leaves state intact.
+
+Both parties must agree identities, master, key length and application profile.
+The standard confirmation transcript does not encode the requested key length;
+the enclosing authenticated protocol must agree that parameter. Confirmation
+does not acknowledge SA delivery or business success. An all-zero derived key
+fails the exchange; restart with fresh shares, never reuse the old nonce.
+
+Call `exchange_clear` at cancellation/deadline or when abandoning a pending
+exchange. CNet/application owners remain responsible for message framing,
+generation routing, retransmission/deadlines and retained-send lifetime. These
+pure Crypto operations do not by themselves implement a CNet channel, DTLS,
+SCTP integration or a negotiated network profile. GmSSL's unfinished exchange
+entrypoints are not called, and no second copy of its primitives is compiled.
 
 RFC 8998 defines TLS 1.3 suites. Its registry marks these suites and curveSM2
 as not DTLS-OK; this implementation must not simply reuse their identifiers in

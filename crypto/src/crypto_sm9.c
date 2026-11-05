@@ -1,4 +1,5 @@
 #include <crypto/sm9.h>
+#include <crypto/sm9_exchange.h>
 #include <crypto/sm3.h>
 #include <asn1.h>
 #include "crypto_internal.h"
@@ -31,7 +32,8 @@ static int g2_import(SM9_Z256_TWIST_POINT *point, const uint8_t raw[129]) {
   return ok;
 }
 static size_t public_size(salts_crypto_sm9_purpose purpose) {
-  return purpose == SALTS_CRYPTO_SM9_SIGN ? 129u : purpose == SALTS_CRYPTO_SM9_ENCRYPT ? 65u : 0u;
+  return purpose == SALTS_CRYPTO_SM9_SIGN ? 129u :
+      (purpose == SALTS_CRYPTO_SM9_ENCRYPT || purpose == SALTS_CRYPTO_SM9_EXCHANGE) ? 65u : 0u;
 }
 static int sign_master(SM9_SIGN_MASTER_KEY *key, const uint8_t raw[32]) {
   if (!scalar_import(key->ks, raw)) return 0;
@@ -330,5 +332,244 @@ done:
   salts_crypto_secure_zero(secret, sizeof(secret));
   salts_crypto_secure_zero(tag, sizeof(tag));
   if (status != SALTS_CRYPTO_OK) salts_crypto_secure_zero(out, 255u);
+  return status;
+}
+
+int salts_crypto_sm9_exchange_extract(const uint8_t raw[32], const void *id, size_t idn,
+    salts_crypto_sm9_exchange_key *out) {
+  SM9_EXCH_MASTER_KEY master = {0};
+  SM9_EXCH_KEY key = {0};
+  if (!raw || !out || !id_valid(id, idn) || idn > SALTS_CRYPTO_SM9_EXCHANGE_ID_MAX_SIZE ||
+      salts_crypto_overlap(out, sizeof(*out), raw, 32u) ||
+      salts_crypto_overlap(out, sizeof(*out), id, idn)) return SALTS_CRYPTO_EINVAL;
+  int status = enc_master(&master, raw) ? SALTS_CRYPTO_OK : SALTS_CRYPTO_EINVAL;
+  if (status == SALTS_CRYPTO_OK && (sm9_exch_master_key_extract_key(&master, id, idn, &key) != 1 ||
+      sm9_z256_twist_point_to_uncompressed_octets(&key.de, out->private_point) != 1 ||
+      sm9_z256_point_to_uncompressed_octets(&key.Ppube, out->master_public) != 1))
+    status = SALTS_CRYPTO_ECRYPTO;
+  salts_crypto_secure_zero(&key, sizeof(key));
+  salts_crypto_secure_zero(&master, sizeof(master));
+  if (status != SALTS_CRYPTO_OK) salts_crypto_sm9_exchange_key_clear(out);
+  return status;
+}
+void salts_crypto_sm9_exchange_key_clear(salts_crypto_sm9_exchange_key *key) {
+  if (key) salts_crypto_secure_zero(key, sizeof(*key));
+}
+void salts_crypto_sm9_exchange_clear(salts_crypto_sm9_exchange_ctx *ctx) {
+  if (ctx) salts_crypto_secure_zero(ctx, sizeof(*ctx));
+}
+
+typedef struct sm9_exchange_state {
+  uint32_t phase;
+  size_t key_size, id_a_size, id_b_size;
+  salts_crypto_sm9_exchange_key key;
+  uint8_t nonce[32], own_share[65], id_a[255], id_b[255];
+  uint8_t pending[1024], expected_a[32];
+} sm9_exchange_state;
+enum { SM9_WAIT_B = 0x534d3901u, SM9_WAIT_A = 0x534d3902u };
+_Static_assert(sizeof(sm9_exchange_state) <= SALTS_CRYPTO_SM9_EXCHANGE_CONTEXT_SIZE,
+    "SM9 exchange context capacity");
+
+typedef struct sm9_range { const void *data; size_t size; } sm9_range;
+/* Outputs precede inputs. Read-only inputs may alias one another. */
+static int exchange_alias(const sm9_range *ranges, size_t outputs, size_t count) {
+  for (size_t i = 0; i < outputs; ++i)
+    for (size_t j = i + 1u; j < count; ++j)
+      if (salts_crypto_overlap(ranges[i].data, ranges[i].size, ranges[j].data, ranges[j].size)) return 1;
+  return 0;
+}
+static int exchange_sizes(const void *a, size_t an, const void *b, size_t bn, size_t kn) {
+  return id_valid(a, an) && an <= 255u && id_valid(b, bn) && bn <= 255u && kn && kn <= 1024u;
+}
+static int exchange_point(SM9_Z256_POINT *q, const SM9_Z256_POINT *pub, const void *id, size_t n) {
+  sm9_z256_t h;
+  sm9_z256_hash1(h, id, n, SM9_HID_EXCH);
+  sm9_z256_point_mul_generator(q, h);
+  sm9_z256_point_add(q, q, pub);
+  salts_crypto_secure_zero(h, sizeof(h));
+  return !sm9_z256_point_is_at_infinity(q);
+}
+static int exchange_prepare(sm9_exchange_state *state, const salts_crypto_sm9_exchange_key *raw,
+    const void *a, size_t an, const void *b, size_t bn, size_t kn, int initiator) {
+  SM9_EXCH_KEY key = {0};
+  SM9_Z256_POINT q = {0}, share = {0};
+  sm9_z256_fp12_t expected, actual;
+  sm9_z256_t r = {0};
+  int status = SALTS_CRYPTO_EINVAL;
+  if (!g1_import(&key.Ppube, raw->master_public) || !g2_import(&key.de, raw->private_point) ||
+      !exchange_point(&q, &key.Ppube, initiator ? a : b, initiator ? an : bn)) goto done;
+  /* Bind the local private point to its claimed identity, master and hid.
+   * Encryption keys (hid=0x03) cannot enter exchange (hid=0x02). */
+  sm9_z256_pairing(expected, sm9_z256_twist_generator(), &key.Ppube);
+  sm9_z256_pairing(actual, &key.de, &q);
+  if (!sm9_z256_fp12_equ(expected, actual) ||
+      !exchange_point(&q, &key.Ppube, initiator ? b : a, initiator ? bn : an)) goto done;
+  status = SALTS_CRYPTO_ERANDOM;
+  for (unsigned attempt = 0; attempt < 128u; ++attempt) {
+    if (sm9_z256_rand_range(r, sm9_z256_order()) != 1) goto done;
+    if (!sm9_z256_is_zero(r)) { status = SALTS_CRYPTO_OK; break; }
+  }
+  if (status != SALTS_CRYPTO_OK) goto done;
+  sm9_z256_point_mul(&share, r, &q);
+  if (sm9_z256_point_to_uncompressed_octets(&share, state->own_share) != 1) {
+    status = SALTS_CRYPTO_ECRYPTO; goto done;
+  }
+  state->key = *raw; state->key_size = kn;
+  state->id_a_size = an; state->id_b_size = bn;
+  memcpy(state->id_a, a, an); memcpy(state->id_b, b, bn);
+  sm9_z256_to_bytes(r, state->nonce);
+done:
+  salts_crypto_secure_zero(&key, sizeof(key));
+  salts_crypto_secure_zero(&q, sizeof(q)); salts_crypto_secure_zero(&share, sizeof(share));
+  salts_crypto_secure_zero(expected, sizeof(expected)); salts_crypto_secure_zero(actual, sizeof(actual));
+  salts_crypto_secure_zero(r, sizeof(r));
+  return status;
+}
+
+/* Complete the standard transcript and both role-specific confirmation hashes.
+ * Uses existing provider primitives, not its unfinished exchange entrypoints. */
+static int exchange_derive(const sm9_exchange_state *state, const uint8_t peer[65], int initiator,
+    uint8_t secret[1024], uint8_t sa[32], uint8_t sb[32]) {
+  SM9_EXCH_KEY key = {0};
+  SM9_Z256_POINT point = {0};
+  sm9_z256_t r = {0};
+  sm9_z256_fp12_t g1, g2, g3;
+  uint8_t encoded[3][384], inner[32], prefix;
+  SM3_CTX hash;
+  SM3_KDF_CTX kdf;
+  const uint8_t *ra = initiator ? state->own_share : peer;
+  const uint8_t *rb = initiator ? peer : state->own_share;
+  int status = SALTS_CRYPTO_EVERIFY;
+  if (!g1_import(&point, peer) || !g1_import(&key.Ppube, state->key.master_public) ||
+      !g2_import(&key.de, state->key.private_point) || !scalar_import(r, state->nonce)) goto done;
+  if (initiator) {
+    sm9_z256_pairing(g1, sm9_z256_twist_generator(), &key.Ppube);
+    sm9_z256_fp12_pow(g1, g1, r);
+    sm9_z256_pairing(g2, &key.de, &point);
+    sm9_z256_fp12_pow(g3, g2, r);
+  } else {
+    sm9_z256_pairing(g1, &key.de, &point);
+    sm9_z256_pairing(g2, sm9_z256_twist_generator(), &key.Ppube);
+    sm9_z256_fp12_pow(g2, g2, r);
+    sm9_z256_fp12_pow(g3, g1, r);
+  }
+  sm9_z256_fp12_to_bytes(g1, encoded[0]);
+  sm9_z256_fp12_to_bytes(g2, encoded[1]);
+  sm9_z256_fp12_to_bytes(g3, encoded[2]);
+  sm3_kdf_init(&kdf, state->key_size);
+  sm3_kdf_update(&kdf, state->id_a, state->id_a_size);
+  sm3_kdf_update(&kdf, state->id_b, state->id_b_size);
+  sm3_kdf_update(&kdf, ra + 1u, 64u); sm3_kdf_update(&kdf, rb + 1u, 64u);
+  for (size_t i = 0; i < 3u; ++i) sm3_kdf_update(&kdf, encoded[i], sizeof(encoded[i]));
+  sm3_kdf_finish(&kdf, secret);
+  if (!nonzero(secret, state->key_size)) { status = SALTS_CRYPTO_ECRYPTO; goto done; }
+  sm3_init(&hash);
+  sm3_update(&hash, encoded[1], sizeof(encoded[1]));
+  sm3_update(&hash, encoded[2], sizeof(encoded[2]));
+  sm3_update(&hash, state->id_a, state->id_a_size);
+  sm3_update(&hash, state->id_b, state->id_b_size);
+  sm3_update(&hash, ra + 1u, 64u); sm3_update(&hash, rb + 1u, 64u);
+  sm3_finish(&hash, inner);
+  prefix = 0x82u;
+  sm3_init(&hash); sm3_update(&hash, &prefix, 1u);
+  sm3_update(&hash, encoded[0], 384u); sm3_update(&hash, inner, sizeof(inner)); sm3_finish(&hash, sb);
+  prefix = 0x83u;
+  sm3_init(&hash); sm3_update(&hash, &prefix, 1u);
+  sm3_update(&hash, encoded[0], 384u); sm3_update(&hash, inner, sizeof(inner)); sm3_finish(&hash, sa);
+  status = SALTS_CRYPTO_OK;
+done:
+  salts_crypto_secure_zero(&key, sizeof(key)); salts_crypto_secure_zero(&point, sizeof(point));
+  salts_crypto_secure_zero(r, sizeof(r)); salts_crypto_secure_zero(g1, sizeof(g1));
+  salts_crypto_secure_zero(g2, sizeof(g2)); salts_crypto_secure_zero(g3, sizeof(g3));
+  salts_crypto_secure_zero(encoded, sizeof(encoded)); salts_crypto_secure_zero(inner, sizeof(inner));
+  salts_crypto_secure_zero(&hash, sizeof(hash)); salts_crypto_secure_zero(&kdf, sizeof(kdf));
+  return status;
+}
+
+int salts_crypto_sm9_exchange_start(salts_crypto_sm9_exchange_ctx *ctx,
+    const salts_crypto_sm9_exchange_key *key, const void *a, size_t an,
+    const void *b, size_t bn, size_t kn, uint8_t ra[65]) {
+  sm9_exchange_state state = {0};
+  const sm9_range ranges[] = {{ctx, sizeof(*ctx)}, {ra, 65u}, {key, sizeof(*key)}, {a, an}, {b, bn}};
+  if (!ctx || !key || !ra || !exchange_sizes(a, an, b, bn, kn) || exchange_alias(ranges, 2u, 5u))
+    return SALTS_CRYPTO_EINVAL;
+  salts_crypto_sm9_exchange_clear(ctx);
+  int status = exchange_prepare(&state, key, a, an, b, bn, kn, 1);
+  if (status == SALTS_CRYPTO_OK) {
+    state.phase = SM9_WAIT_B;
+    memcpy(ctx->bytes, &state, sizeof(state)); memcpy(ra, state.own_share, 65u);
+  } else salts_crypto_secure_zero(ra, 65u);
+  salts_crypto_secure_zero(&state, sizeof(state));
+  return status;
+}
+
+int salts_crypto_sm9_exchange_respond(salts_crypto_sm9_exchange_ctx *ctx,
+    const salts_crypto_sm9_exchange_key *key, const void *a, size_t an,
+    const void *b, size_t bn, size_t kn, const uint8_t ra[65], uint8_t rb[65], uint8_t sb[32]) {
+  sm9_exchange_state state = {0}, pending = {0};
+  SM9_Z256_POINT peer;
+  const sm9_range ranges[] = {{ctx, sizeof(*ctx)}, {rb, 65u}, {sb, 32u},
+      {key, sizeof(*key)}, {a, an}, {b, bn}, {ra, 65u}};
+  if (!ctx || !key || !ra || !rb || !sb || !exchange_sizes(a, an, b, bn, kn) || exchange_alias(ranges, 3u, 7u))
+    return SALTS_CRYPTO_EINVAL;
+  salts_crypto_sm9_exchange_clear(ctx);
+  int status = SALTS_CRYPTO_EVERIFY;
+  if (!g1_import(&peer, ra)) goto done;
+  status = exchange_prepare(&state, key, a, an, b, bn, kn, 0);
+  if (status != SALTS_CRYPTO_OK) goto done;
+  status = exchange_derive(&state, ra, 0, pending.pending, pending.expected_a, sb);
+  if (status != SALTS_CRYPTO_OK) goto done;
+  pending.phase = SM9_WAIT_A; pending.key_size = kn;
+  memcpy(ctx->bytes, &pending, sizeof(pending)); memcpy(rb, state.own_share, 65u);
+done:
+  if (status != SALTS_CRYPTO_OK) { salts_crypto_secure_zero(rb, 65u); salts_crypto_secure_zero(sb, 32u); }
+  salts_crypto_secure_zero(&peer, sizeof(peer));
+  salts_crypto_secure_zero(&state, sizeof(state)); salts_crypto_secure_zero(&pending, sizeof(pending));
+  return status;
+}
+
+int salts_crypto_sm9_exchange_finish_initiator(salts_crypto_sm9_exchange_ctx *ctx,
+    const uint8_t rb[65], const uint8_t sb[32], uint8_t sa[32], void *out, size_t cap, size_t *written) {
+  sm9_exchange_state state;
+  uint8_t secret[1024] = {0}, expected[32] = {0}, confirmation[32] = {0};
+  unsigned diff = 0;
+  const sm9_range ranges[] = {{ctx, sizeof(*ctx)}, {out, 1024u}, {written, sizeof(*written)},
+      {sa, 32u}, {rb, 65u}, {sb, 32u}};
+  if (!ctx || !rb || !sb || !sa || !out || cap < 1024u || !written || exchange_alias(ranges, 4u, 6u))
+    return SALTS_CRYPTO_EINVAL;
+  *written = 0;
+  memcpy(&state, ctx->bytes, sizeof(state)); salts_crypto_sm9_exchange_clear(ctx);
+  int status = SALTS_CRYPTO_ESTATE;
+  if (state.phase != SM9_WAIT_B || !exchange_sizes(state.id_a, state.id_a_size,
+          state.id_b, state.id_b_size, state.key_size)) goto done;
+  status = exchange_derive(&state, rb, 1, secret, confirmation, expected);
+  if (status != SALTS_CRYPTO_OK) goto done;
+  for (size_t i = 0; i < 32u; ++i) diff |= expected[i] ^ sb[i];
+  if (diff) { status = SALTS_CRYPTO_EVERIFY; goto done; }
+  memcpy(out, secret, state.key_size); memcpy(sa, confirmation, 32u); *written = state.key_size;
+done:
+  if (status != SALTS_CRYPTO_OK) { salts_crypto_secure_zero(out, 1024u); salts_crypto_secure_zero(sa, 32u); }
+  salts_crypto_secure_zero(secret, sizeof(secret)); salts_crypto_secure_zero(expected, sizeof(expected));
+  salts_crypto_secure_zero(confirmation, sizeof(confirmation)); salts_crypto_secure_zero(&state, sizeof(state));
+  return status;
+}
+
+int salts_crypto_sm9_exchange_finish_responder(salts_crypto_sm9_exchange_ctx *ctx,
+    const uint8_t sa[32], void *out, size_t cap, size_t *written) {
+  sm9_exchange_state state;
+  unsigned diff = 0;
+  const sm9_range ranges[] = {{ctx, sizeof(*ctx)}, {out, 1024u}, {written, sizeof(*written)}, {sa, 32u}};
+  if (!ctx || !sa || !out || cap < 1024u || !written || exchange_alias(ranges, 3u, 4u))
+    return SALTS_CRYPTO_EINVAL;
+  *written = 0;
+  memcpy(&state, ctx->bytes, sizeof(state)); salts_crypto_sm9_exchange_clear(ctx);
+  int status = SALTS_CRYPTO_ESTATE;
+  if (state.phase != SM9_WAIT_A || !state.key_size || state.key_size > 1024u) goto done;
+  for (size_t i = 0; i < 32u; ++i) diff |= state.expected_a[i] ^ sa[i];
+  if (diff) { status = SALTS_CRYPTO_EVERIFY; goto done; }
+  memcpy(out, state.pending, state.key_size); *written = state.key_size; status = SALTS_CRYPTO_OK;
+done:
+  if (status != SALTS_CRYPTO_OK) salts_crypto_secure_zero(out, 1024u);
+  salts_crypto_secure_zero(&state, sizeof(state));
   return status;
 }
