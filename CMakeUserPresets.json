@@ -7,7 +7,7 @@
     {
       "name": "gmssl-copy-user",
       "displayName": "Linux x64 full graph with GmSSL explicit-copy counters",
-      "inherits": ["shared-binary-cache-required", "full-native"],
+      "inherits": "full-native",
       "condition": {"type": "equals", "lhs": "${hostSystemName}", "rhs": "Linux"},
       "environment": {
         "SALTSCORE_VCPKG_TARGET_TRIPLET": "salts-gmssl-copy-x64-linux"
@@ -26,22 +26,22 @@
     {
       "name": "ci-native",
       "displayName": "CI native LLVM full graph",
-      "inherits": ["shared-binary-cache-required", "full-native"]
+      "inherits": "full-native"
     },
     {
       "name": "ci-asan-ubsan",
       "displayName": "CI Linux LLVM ASan+UBSan",
-      "inherits": ["shared-binary-cache-required", "full-native-asan-ubsan"]
+      "inherits": "full-native-asan-ubsan"
     },
     {
       "name": "ci-tsan",
       "displayName": "CI Linux LLVM TSan",
-      "inherits": ["shared-binary-cache-required", "full-native-tsan"]
+      "inherits": "full-native-tsan"
     },
     {
       "name": "ci-android",
       "displayName": "CI Android LLVM",
-      "inherits": ["shared-binary-cache-required", "android-release"]
+      "inherits": "android-release"
     }
   ],
   "buildPresets": [

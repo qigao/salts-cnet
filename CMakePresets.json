@@ -7,13 +7,6 @@
   },
   "configurePresets": [
     {
-      "name": "shared-binary-cache-required",
-      "hidden": true,
-      "cacheVariables": {
-        "VCPKG_INSTALL_OPTIONS": "--only-binarycaching"
-      }
-    },
-    {
       "name": "base",
       "hidden": true,
       "generator": "Ninja",

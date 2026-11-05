@@ -39,12 +39,14 @@
 - When removing an installer/consumer source tree, remove its native-graph
   registration in the same change. A stale `add_executable` is detected only
   at CMake generation, even when configure has otherwise found all packages.
-- Shared dependency binary-cache consumption is mandatory. CI requests
-  `restore-packages: "true"` with the complete `cnet,media,zstd` feature set.
-  The CI and diagnostic user presets require `--only-binarycaching`. A missing
-  exact ABI or failed authentication must stop the build; do not disable
-  restoration or compile dependencies in product CI to hide a cache miss.
-  Dependency production/publication belongs to `qigao/vcpkg-cache`.
+- Use the shared `qigao/vcpkg-cache` Actions for compiler, host tools and vcpkg
+  setup. As in cmeta PR #1351, normal product builds set `restore-packages: "false"`
+  and restore the repository's Actions-backed local files cache before CMake.
+  Missing ABI packages are built from the pinned manifest and saved to that
+  cache after configure. A cold cache is supported; dependency build errors
+  still fail the job. Do not impose `--only-binarycaching` on these presets.
+  Actions caches are repository-scoped, not a cross-repository package feed.
+  Publishing GitHub Packages remains a separate operation.
 - Keep ccache restoration independent of the complete registry/port revision.
   ccache checks compiler contents, flags and headers; keep OS/architecture
   and preset namespaces separate.
