@@ -12,7 +12,8 @@ static int tls_test_read(tls_test_memory *m, unsigned slot, const char *path,
   const char *mode = getenv("SALTS_TEST_TLS_MEMORY");
   char name[2048];
   if (!path || snprintf(name, sizeof(name), "%s%s%s%s", path, part,
-      slot >= 2u && getenv("SALTS_TEST_TLS_ENCRYPTED") ? ".encrypted" : "",
+      slot >= 2u && getenv("SALTS_TEST_TLS_ENCRYPTED") ?
+          (strcmp(getenv("SALTS_TEST_TLS_ENCRYPTED"), "aes") == 0 ? ".aes" : ".encrypted") : "",
       strcmp(mode, "der") == 0 ? ".der" : "") >= (int)sizeof(name)) return SALTS_EINVAL;
   FILE *f = fopen(name, "rb");
   if (!f) return SALTS_EIO;
@@ -43,7 +44,8 @@ static int tls_test_prepare(tls_test_memory *m, const char *ca, const char *cert
     const char sign_password[] = "memory\0sign", enc_password[] = "memory\0encryption";
     memcpy(m->passwords[0], sign_password, sizeof(sign_password) - 1u);
     memcpy(m->passwords[1], enc_password, sizeof(enc_password) - 1u);
-    m->credentials.private_key_password = (crypto_tls_password){m->passwords[0], sizeof(sign_password) - 1u};
+    m->credentials.private_key_password = (crypto_tls_password){m->passwords[0],
+        getenv("SALTS_TEST_TLS_EMPTY_PASSWORD") ? 0u : sizeof(sign_password) - 1u};
     if (tlcp) m->credentials.encryption_key_password =
         (crypto_tls_password){m->passwords[1], sizeof(enc_password) - 1u};
   }

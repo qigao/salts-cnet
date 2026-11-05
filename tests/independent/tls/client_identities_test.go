@@ -97,6 +97,14 @@ func TestClientIdentities(t *testing.T) {
 	server := makeIdentity(t, "server", false, nil)
 	first := makeIdentity(t, "first", false, nil)
 	second := makeIdentity(t, "second", false, nil)
+	for _, f := range []identity{first, second} {
+		writeAESFixture(t, f, "binary", "")
+	}
+	emptyFirst, emptySecond := first, second
+	emptyFirst.keyFile = filepath.Join(t.TempDir(), "key.pem")
+	emptySecond.keyFile = filepath.Join(t.TempDir(), "key.pem")
+	writeAESFixtureFrom(t, first, emptyFirst, "empty", "")
+	writeAESFixtureFrom(t, second, emptySecond, "empty", "")
 	// ECDSA leaf under an RSA issuer: only the leaf scheme excludes this identity.
 	ec := makeIdentity(t, "ec", true, &first)
 	for _, version := range []uint16{tls.VersionTLS12, tls.VersionTLS13} {
@@ -105,6 +113,9 @@ func TestClientIdentities(t *testing.T) {
 			if version == tls.VersionTLS13 {
 				scenarios = append(scenarios, "separate_certificate")
 			}
+			if mode != "file" {
+				scenarios = append(scenarios, "encrypted_binary", "encrypted_empty")
+			}
 			for _, scenario := range scenarios {
 				t.Run(fmt.Sprintf("tls%d/%s/%s", version, mode, scenario), func(t *testing.T) {
 					a, b := first, second
@@ -112,6 +123,14 @@ func TestClientIdentities(t *testing.T) {
 					hints := x509.NewCertPool()
 					auth := tls.RequireAndVerifyClientCert
 					switch scenario {
+					case "encrypted_binary", "encrypted_empty":
+						t.Setenv("SALTS_TEST_TLS_ENCRYPTED", "1")
+						if scenario == "encrypted_empty" {
+							a, b = emptyFirst, emptySecond
+							t.Setenv("SALTS_TEST_TLS_EMPTY_PASSWORD", "1")
+						}
+						hints.AddCert(second.root)
+						want = second.leaf
 					case "separate_certificate":
 						t.Setenv("SALTS_TEST_TLS_SEPARATE_CERT_SIGNATURES", "1")
 						hints.AddCert(first.root)

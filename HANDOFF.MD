@@ -188,3 +188,14 @@
 - Certificate lists do not require a handshake-capable algorithm. PKCS1-only
   certificates are valid with RSA-PSS TLS1.3 CertificateVerify. Do not reuse
   handshake-list version validation for certificate policy.
+
+## 2026-11-05 TLS AES-protected PKCS8
+
+- GmSSL #30 already parses explicit HMAC-SHA256 and AES256-CBC envelope
+  parameters. Reuse its ASN1/PBKDF2/AES implementations; no provider patch or
+  second BER/DER parser is needed for this credential-input addition.
+- Select only the documented PRF/cipher pairs before derivation. Key length
+  must equal that cipher's key size; reject absent PRF and unsupported pairs.
+  Preserve all work/output bounds and erase both AES/SM4 schedules on exit.
+- Keep separate independent .aes and .encrypted fixture files so AES tests
+  cannot silently replace SM3/SM4 coverage in subsequent subtests.

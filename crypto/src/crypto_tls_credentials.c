@@ -1,5 +1,7 @@
 #include "crypto_tls_credentials.h"
 #include <gmssl/base64.h>
+#include <gmssl/aes.h>
+#include <gmssl/pbkdf2.h>
 #include <gmssl/mem.h>
 #include <gmssl/pkcs8.h>
 #include <gmssl/sm3.h>
@@ -138,7 +140,8 @@ static int decode_key(const crypto_tls_data *input, const crypto_tls_password *p
     unsigned char *out, size_t capacity, size_t *out_size) {
   if (!password->data) return decode(input, "PRIVATE KEY", false, out, capacity, out_size);
   unsigned char envelope[CRYPTO_TLS_CREDENTIAL_INPUT_MAX_BYTES];
-  unsigned char derived[16] = {0};
+  unsigned char derived[AES256_KEY_SIZE] = {0};
+  AES_KEY aes_key = {0};
   SM4_KEY cipher_key = {0};
   const unsigned char *salt, *iv, *ciphertext, *cursor = envelope;
   size_t remaining = 0u, salt_size, iv_size, ciphertext_size;
@@ -150,19 +153,29 @@ static int decode_key(const crypto_tls_data *input, const crypto_tls_password *p
   if (pkcs8_enced_private_key_info_from_der(&salt, &salt_size, &iterations, &key_size,
       &prf, &cipher, &iv, &iv_size, &ciphertext, &ciphertext_size, &cursor, &remaining) != 1 || remaining)
     goto end;
-  if (prf != OID_hmac_sm3 || cipher != OID_sm4_cbc || (key_size != -1 && key_size != 16) ||
+  const bool sm4 = prf == OID_hmac_sm3 && cipher == OID_sm4_cbc;
+  const bool aes = prf == OID_hmac_sha256 && cipher == OID_aes256_cbc;
+  const size_t derived_size = aes ? AES256_KEY_SIZE : SM4_KEY_SIZE;
+  if ((!sm4 && !aes) || (key_size != -1 && key_size != (int)derived_size) ||
       iv_size != 16u || salt_size < 8u || salt_size > 64u ||
       iterations < CRYPTO_TLS_PKCS8_MIN_ITERATIONS || iterations > CRYPTO_TLS_PKCS8_MAX_ITERATIONS ||
       !ciphertext_size || ciphertext_size % 16u) goto end;
   /* The provider writes at most the ciphertext length, including padding. */
   if (ciphertext_size > capacity) { status = CRYPTO_TLS_STREAM_ERANGE; goto end; }
-  if (sm3_pbkdf2(password->data, password->size, salt, salt_size, (size_t)iterations,
-      sizeof(derived), derived) != 1) goto end;
-  sm4_set_decrypt_key(&cipher_key, derived);
-  if (sm4_cbc_padding_decrypt(&cipher_key, iv, ciphertext, ciphertext_size, out, out_size) != 1)
-    goto end;
+  if (aes) {
+    if (pbkdf2_hmac_genkey(DIGEST_sha256(), password->data, password->size, salt, salt_size,
+        (size_t)iterations, derived_size, derived) != 1 ||
+        aes_set_decrypt_key(&aes_key, derived, derived_size) != 1 ||
+        aes_cbc_padding_decrypt(&aes_key, iv, ciphertext, ciphertext_size, out, out_size) != 1) goto end;
+  } else {
+    if (sm3_pbkdf2(password->data, password->size, salt, salt_size, (size_t)iterations,
+        derived_size, derived) != 1) goto end;
+    sm4_set_decrypt_key(&cipher_key, derived);
+    if (sm4_cbc_padding_decrypt(&cipher_key, iv, ciphertext, ciphertext_size, out, out_size) != 1) goto end;
+  }
   status = CRYPTO_TLS_STREAM_OK;
 end:
+  gmssl_secure_clear(&aes_key, sizeof(aes_key));
   gmssl_secure_clear(&cipher_key, sizeof(cipher_key));
   gmssl_secure_clear(derived, sizeof(derived));
   gmssl_secure_clear(envelope, sizeof(envelope));
