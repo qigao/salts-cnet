@@ -457,6 +457,98 @@ spec("GmSSL TLS IO callback ABI") {
   }
 }
 
+typedef struct key_update_wire {
+  uint8_t bytes[2048];
+  size_t size;
+  size_t budget;
+} key_update_wire;
+
+static tls_ret_t key_update_capture(void *user, const void *data, size_t size, int flags) {
+  key_update_wire *wire = (key_update_wire *)user;
+  (void)flags;
+  if (wire->budget == 0u) return TLS_ERROR_SEND_AGAIN;
+  if (size > wire->budget) size = wire->budget;
+  if (size > sizeof(wire->bytes) - wire->size) return TLS_ERROR_SYSCALL;
+  memcpy(wire->bytes + wire->size, data, size);
+  wire->size += size;
+  wire->budget -= size;
+  return (tls_ret_t)size;
+}
+
+static tls_ret_t key_update_no_receive(void *user, void *data, size_t size, int flags) {
+  (void)user; (void)data; (void)size; (void)flags;
+  return TLS_ERROR_SYSCALL;
+}
+
+spec("GmSSL TLS 1.3 KeyUpdate under bounded external writes") {
+  for (unsigned role = 0u; role < 2u; ++role) {
+    for (unsigned suite_index = 0u; suite_index < 2u; ++suite_index) {
+      it("role %u suite %u retries control ciphertext without application completion", role, suite_index) {
+        TLS_CTX ctx = {0};
+        TLS_CONNECT conn = {0};
+        key_update_wire wire = {0};
+        TLS_IO io = {0};
+        BLOCK_CIPHER_KEY old_key;
+        uint8_t old_iv[12], zero_seq[8] = {0}, plain[1024], payload = 0x46;
+        size_t sent = 0u, plain_size = 0u;
+        int result = TLS_ERROR_SEND_AGAIN;
+        conn.ctx = &ctx;
+        conn.is_client = (int)role;
+        conn.protocol = TLS_protocol_tls13;
+        tls_record_set_protocol(conn.plain_record, TLS_protocol_tls12);
+        tls_record_set_protocol(conn.record, TLS_protocol_tls12);
+        conn.cipher_suite = suite_index ? TLS_cipher_aes_128_gcm_sha256 : TLS_cipher_sm4_gcm_sm3;
+        check_equal(tls_cipher_suite_get(conn.cipher_suite, &conn.cipher, &conn.digest), 1);
+        memset(conn.client_application_traffic_secret, 0x35, 32u);
+        memset(conn.server_application_traffic_secret, 0x59, 32u);
+        for (unsigned key_role = 0u; key_role < 2u; ++key_role) {
+          uint8_t key[16];
+          const uint8_t *secret = key_role ? conn.client_application_traffic_secret : conn.server_application_traffic_secret;
+          uint8_t *iv = key_role ? conn.client_write_iv : conn.server_write_iv;
+          BLOCK_CIPHER_KEY *cipher_key = key_role ? &conn.client_write_key : &conn.server_write_key;
+          check_equal(tls13_hkdf_expand_label(conn.digest, secret, "key", NULL, 0u, sizeof(key), key), 1);
+          check_equal(tls13_hkdf_expand_label(conn.digest, secret, "iv", NULL, 0u, 12u, iv), 1);
+          check_equal(block_cipher_set_encrypt_key(cipher_key, conn.cipher, key), 1);
+        }
+        old_key = role ? conn.client_write_key : conn.server_write_key;
+        memcpy(old_iv, role ? conn.client_write_iv : conn.server_write_iv, sizeof(old_iv));
+        io.user = &wire;
+        io.send = key_update_capture;
+        io.recv = key_update_no_receive;
+        check_equal(tls_set_io(&conn, &io), 1);
+        conn.key_update = 1; /* response pending; automatic rotation stays disabled */
+        conn.sentlen = 7u; /* stale prior application count must never escape */
+        for (unsigned step = 0u; step < sizeof(wire.bytes) && result != 1; ++step) {
+          wire.budget = 1u;
+          sent = 99u;
+          result = tls13_send(&conn, &payload, 1u, &sent);
+          check(result == 1 || result == TLS_ERROR_SEND_AGAIN);
+          check_equal(sent, result == 1 ? (size_t)1u : (size_t)0u);
+        }
+        check_equal(result, 1);
+        check(wire.size >= 10u);
+        const size_t first = 5u + ((size_t)wire.bytes[3] << 8) + wire.bytes[4];
+        check(first + 5u < wire.size);
+        check_equal(tls13_record_decrypt(conn.cipher_suite, &old_key, old_iv, zero_seq,
+            wire.bytes, first, plain, &plain_size), 1);
+        check_equal(plain_size, (size_t)10u);
+        const uint8_t expected_update[] = {24, 0, 0, 1, 0};
+        check_equal(plain[0], (uint8_t)22);
+        check_equal(plain + 5u, expected_update, sizeof(expected_update));
+        const size_t second = 5u + ((size_t)wire.bytes[first + 3u] << 8) + wire.bytes[first + 4u];
+        check_equal(first + second, wire.size);
+        check_equal(tls13_record_decrypt(conn.cipher_suite,
+            role ? &conn.client_write_key : &conn.server_write_key,
+            role ? conn.client_write_iv : conn.server_write_iv, zero_seq,
+            wire.bytes + first, second, plain, &plain_size), 1);
+        check_equal(plain_size, (size_t)6u);
+        check_equal(plain[0], (uint8_t)23);
+        check_equal(plain[5], payload);
+      }
+    }
+  }
+}
+
 spec("Crypto versioned peer close_notify facade") {
   it("rejects absent and malformed output without falsifying evidence") {
     uint32_t peer = UINT32_C(0xfeedbeef);

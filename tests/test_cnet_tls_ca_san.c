@@ -73,6 +73,7 @@ typedef struct tls_probe {
   unsigned sends_at_terminal;
   /* Python ssl peer sends a complete two-byte TLS application record. */
   bool expect_python_ok_record;
+  unsigned receive_limit; /* zero keeps the ordinary single-record contract */
   int tls_version_status;
   int tls_cipher_status;
   char tls_version[24];
@@ -123,7 +124,8 @@ static void receive_callback(void *user, cnet_connection connection,
   (void)connection;
   if (view == NULL || view->kind != CNET_MESSAGE_BYTES ||
       view->data == NULL ||
-      (!p->stream_transfer && !p->pool_reuse && p->received_count != 0u) ||
+      (!p->stream_transfer && !p->pool_reuse &&
+       p->received_count >= (p->receive_limit ? p->receive_limit : 1u)) ||
       (p->pool_reuse && (p->terminal_count != 0u || p->received_count >= 3u))) {
     ++p->failed;
     return;
@@ -802,7 +804,8 @@ static int run_python_ssl_server(const char *port_text,
                                  const char *expected_server_sha256) {
   const char *label = "production CNet -> independent secure stream peer";
   const bool tlcp = strcmp(protocol, "tlcp") == 0;
-  const bool shangmi = strcmp(protocol, "shangmi13") == 0;
+  const bool key_update_exchange = strcmp(protocol, "shangmi13-update") == 0;
+  const bool shangmi = strcmp(protocol, "shangmi13") == 0 || key_update_exchange;
   const bool approved_identity = expect_success;
   const char *expected_version = strcmp(protocol, "tls12") == 0
                                      ? "TLSv1.2" : tlcp ? "TLCPv1.1" : "TLSv1.3";
@@ -844,6 +847,7 @@ static int run_python_ssl_server(const char *port_text,
 
   probe.client = &client;
   probe.expect_python_ok_record = true;
+  probe.receive_limit = key_update_exchange ? 2u : 1u;
   REQUIRE(cnet_client_init(&client, &client_cfg) == SALTS_OK);
   initialized = true;
   REQUIRE(snprintf(uri, sizeof(uri), "tls://127.0.0.1:%lu", port) > 0);
@@ -903,6 +907,17 @@ static int run_python_ssl_server(const char *port_text,
     REQUIRE(probe.received_count == 1u && probe.received_byte == 'o' &&
             probe.failed == 0u);
     REQUIRE(probe.sent_count == 1u && probe.failed == 0u);
+    if (key_update_exchange) {
+      /* The independent server updated keys before its first reply. A new
+       * native application send must honor the requested reciprocal update. */
+      REQUIRE(cnet_receive(&client, outbound, 1u) == SALTS_OK);
+      REQUIRE(send_byte(&client, outbound, 0x46u) == SALTS_OK);
+      deadline = cmeta_monotonic_ms() + 9000u;
+      while ((probe.received_count != 2u || probe.sent_count != 2u) &&
+             !probe.terminal_count && cmeta_monotonic_ms() < deadline)
+        REQUIRE(cnet_client_poll(&client, 1u, &events) == SALTS_OK);
+      REQUIRE(probe.received_count == 2u && probe.sent_count == 2u && probe.failed == 0u);
+    }
     REQUIRE(cnet_close(&client, outbound) == SALTS_OK);
     deadline = cmeta_monotonic_ms() + 9000u;
     while (!probe.terminal_count && cmeta_monotonic_ms() < deadline)
@@ -910,7 +925,8 @@ static int run_python_ssl_server(const char *port_text,
     REQUIRE(probe.terminal_count == 1u && probe.failed == 0u &&
             probe.last_connection_state == CNET_CONNECTION_CLOSED);
     REQUIRE(cnet_client_poll(&client, 0u, &events) == SALTS_OK);
-    REQUIRE(probe.terminal_count == 1u && probe.sent_count == 1u && probe.received_count == 1u && probe.failed == 0u);
+    REQUIRE(probe.terminal_count == 1u && probe.sent_count == (key_update_exchange ? 2u : 1u) &&
+            probe.received_count == (key_update_exchange ? 2u : 1u) && probe.failed == 0u);
   }
 
 cleanup:
@@ -1014,6 +1030,7 @@ static int run_python_ssl_client(const char *port_path,
   const unsigned expected_sends = expect_incomplete_send ? 0u : 1u;
   const size_t response_size = expect_incomplete_send ? 65536u : 1u;
   const bool expect_invalid_close = strcmp(outcome, "eof") == 0 ||
+      strcmp(outcome, "keyupdate-fail") == 0 ||
       strcmp(outcome, "truncated") == 0 || strcmp(outcome, "badalert") == 0 ||
       strcmp(outcome, "fatal") == 0 || expect_eof_race;
   const bool should_verify =
