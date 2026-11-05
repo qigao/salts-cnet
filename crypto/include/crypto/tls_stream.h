@@ -41,6 +41,12 @@ enum {
   CRYPTO_TLS_STREAM_KEY_UPDATE_RECORD_LIMIT_MAX = 1u << 20
 };
 
+typedef enum crypto_tls_stream_protocol_version {
+  CRYPTO_TLS_STREAM_PROTOCOL_VERSION_DEFAULT = 0,
+  CRYPTO_TLS_STREAM_PROTOCOL_VERSION_1_2 = 12,
+  CRYPTO_TLS_STREAM_PROTOCOL_VERSION_1_3 = 13
+} crypto_tls_stream_protocol_version;
+
 typedef enum crypto_tls_stream_client_auth {
   CRYPTO_TLS_STREAM_CLIENT_AUTH_NONE = 0,
   CRYPTO_TLS_STREAM_CLIENT_AUTH_REQUIRED = 1
@@ -92,6 +98,12 @@ typedef struct crypto_tls_stream_client_config {
   const crypto_tls_data *ca_data;
   /** Memory identity, mutually exclusive with cert_file/key_file/key_password. */
   const crypto_tls_credentials *credentials;
+  /** Immutable protocol bounds. STANDARD defaults to TLS1.2..1.3;
+   * SHANGMI defaults to TLS1.3 only and rejects TLS1.2. TLCP requires both
+   * DEFAULT. Unknown/reversed bounds: EINVAL; profile conflict: ENOTSUP.
+   * A stream may narrow but cannot widen these bounds. */
+  crypto_tls_stream_protocol_version minimum_version;
+  crypto_tls_stream_protocol_version maximum_version;
 } crypto_tls_stream_client_config;
 
 /** Configuration copied into a reusable server context during initialization. */
@@ -126,15 +138,17 @@ typedef struct crypto_tls_stream_server_config {
   /** Same memory-input contract as the client; CA required for REQUIRED auth. */
   const crypto_tls_data *ca_data;
   const crypto_tls_credentials *credentials;
+  /** Immutable protocol bounds. STANDARD defaults to TLS1.2..1.3;
+   * SHANGMI defaults to TLS1.3 only and rejects TLS1.2. TLCP requires both
+   * DEFAULT. Unknown/reversed bounds: EINVAL; profile conflict: ENOTSUP.
+   * A stream may narrow but cannot widen these bounds. */
+  crypto_tls_stream_protocol_version minimum_version;
+  crypto_tls_stream_protocol_version maximum_version;
 } crypto_tls_stream_server_config;
 
 typedef struct crypto_tls_stream_context crypto_tls_stream_context;
 
-typedef enum crypto_tls_stream_protocol_version {
-  CRYPTO_TLS_STREAM_PROTOCOL_VERSION_DEFAULT = 0,
-  CRYPTO_TLS_STREAM_PROTOCOL_VERSION_1_2 = 12,
-  CRYPTO_TLS_STREAM_PROTOCOL_VERSION_1_3 = 13
-} crypto_tls_stream_protocol_version;
+
 
 
 typedef struct crypto_tls_stream crypto_tls_stream;
@@ -184,7 +198,9 @@ void crypto_tls_stream_destroy(crypto_tls_stream *stream);
  * Negotiated metadata remains historical inspection, not readiness evidence. */
 int crypto_tls_stream_handshake(crypto_tls_stream *state, bool *out_complete);
 bool crypto_tls_stream_handshake_complete(const crypto_tls_stream *state);
-/* Select before the first handshake call; changes after that call are rejected. */
+/* Narrow within context bounds before the first handshake call. DEFAULT uses
+ * the corresponding context bound; widening returns ENOTSUP without changing
+ * state. Changes after the first handshake call are rejected. */
 int crypto_tls_stream_set_protocol_range(crypto_tls_stream *state,
                                       crypto_tls_stream_protocol_version minimum,
                                       crypto_tls_stream_protocol_version maximum);

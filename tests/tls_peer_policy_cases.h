@@ -17,6 +17,20 @@ static int run_peer_policy_cases(void) {
   int result = 0;
   REQUIRE(cnet_tls_server_init(&server, &server_cfg) == SALTS_EINVAL);
   REQUIRE(server.impl == NULL && client.impl == NULL);
+  for (unsigned bad = 0u; bad < 5u; ++bad) {
+    cnet_tls_client_config cc = {.size = sizeof(cc), .ca_file = "absent-version-ca.pem"};
+    cnet_tls_server_config sc = {.size = sizeof(sc), .cert_file = "absent-version-cert.pem", .key_file = "absent-version-key.pem"};
+    cc.minimum_version = bad == 0u ? 99 : bad == 1u ? 13 : 12;
+    cc.maximum_version = bad == 2u ? 99 : 12;
+    cc.security_profile = bad == 3u ? CNET_TLS_SECURITY_PROFILE_SHANGMI_TLS13 :
+        bad == 4u ? CNET_TLS_SECURITY_PROFILE_TLCP11 : CNET_TLS_SECURITY_PROFILE_STANDARD;
+    sc.minimum_version = cc.minimum_version; sc.maximum_version = cc.maximum_version;
+    sc.security_profile = cc.security_profile;
+    const int expected = bad < 3u ? SALTS_EINVAL : SALTS_ENOTSUP;
+    REQUIRE(cnet_tls_client_init(&client, &cc) == expected);
+    REQUIRE(cnet_tls_server_init(&server, &sc) == expected);
+    REQUIRE(client.impl == NULL && server.impl == NULL);
+  }
   for (unsigned missing = 0; missing < 3; ++missing) {
     policy = peer_policy_descriptor(&p);
     if (missing == 0) policy.check = NULL;

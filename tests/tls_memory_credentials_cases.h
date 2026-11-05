@@ -12,14 +12,14 @@ static size_t tls_memory_fixture(const char *path, const char *label, unsigned e
   return ok ? size : 0u;
 }
 
-static void tls_memory_contexts(unsigned encoding, unsigned bad) {
+static void tls_memory_contexts(unsigned encoding, unsigned bad, unsigned version) {
   unsigned char ca[16384], cert[16384], key[16384];
   crypto_tls_data trust = {ca, tls_memory_fixture(CRYPTO_CLOSE_TEST_CA, "CERTIFICATE", encoding, ca, sizeof(ca)), encoding};
   crypto_tls_credentials credentials = {.size = sizeof(credentials),
       .certificate_chain = {cert, tls_memory_fixture(CRYPTO_CLOSE_TEST_SERVER_CERT, "CERTIFICATE", encoding, cert, sizeof(cert)), encoding},
       .private_key = {key, tls_memory_fixture(CRYPTO_CLOSE_TEST_SERVER_KEY, "PRIVATE KEY", encoding, key, sizeof(key)), encoding}};
-  crypto_tls_stream_client_config client = {.size = sizeof(client), .ca_data = &trust};
-  crypto_tls_stream_server_config server = {.size = sizeof(server), .credentials = &credentials};
+  crypto_tls_stream_client_config client = {.size = sizeof(client), .ca_data = &trust, .minimum_version = version, .maximum_version = version};
+  crypto_tls_stream_server_config server = {.size = sizeof(server), .credentials = &credentials, .minimum_version = version, .maximum_version = version};
   check(trust.size && credentials.certificate_chain.size && credentials.private_key.size);
   int expected = CRYPTO_TLS_STREAM_EIO;
   switch (bad) {
