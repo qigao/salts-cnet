@@ -1,4 +1,5 @@
 #include <crypto/sm9.h>
+#include <crypto/sm9_exchange.h>
 #include <gmssl/sm9.h>
 #include <gmssl/rand.h>
 #include <tinytest.h>
@@ -34,6 +35,55 @@ static int is_zero(const void *p, size_t n) {
 }
 
 spec("SM9 provider RNG failures and standard nonces") {
+  it("matches the published exchange key and both mandatory confirmation values") {
+    uint8_t master[32], nonce[32], ra[65], rb[65], sa[32], sb[32], expected[32], expected_ra[65];
+    uint8_t ka[1024], kb[1024], expected_key[16]; size_t an, bn;
+    salts_crypto_sm9_exchange_key ak, bk;
+    salts_crypto_sm9_exchange_ctx a = {0}, b = {0};
+    unhex(master, "0002e65b0762d042f51f0d23542b13ed8cfa2e9a0e7206361e013a283905e31f");
+    unhex(expected_key, "c5c13a8f59a97cdeae64f16a2272a9e7");
+    unhex(expected_ra, "047cba5b19069ee66aa79d490413d11846b9ba76dd22567f809cf23b6d964bb265a9760c99cb6f706343fed05637085864958d6c90902aba7d405fbedf7b781599");
+    check_equal(salts_crypto_sm9_exchange_extract(master, "Alice", 5u, &ak), SALTS_CRYPTO_OK);
+    check_equal(salts_crypto_sm9_exchange_extract(master, "Bob", 3u, &bk), SALTS_CRYPTO_OK);
+    /* GB/T 38635 exchange example, also gmsm v0.41.1 TestKeyExchangeSample. */
+    unhex(nonce, "00005879dd1d51e175946f23b1b41e93ba31c584ae59a426ec1046a4d03b06c8");
+    sm9_z256_from_bytes(chosen, nonce); fail_rng = 0; zeros = 1; calls = 0;
+    check_equal(salts_crypto_sm9_exchange_start(&a, &ak, "Alice", 5u, "Bob", 3u, 16u, ra), SALTS_CRYPTO_OK);
+    check_equal(calls, 2u); check_equal(ra, expected_ra, sizeof(ra));
+    unhex(nonce, "00018b98c44bef9f8537fb7d071b2c928b3bc65bd3d69e1eee213564905634fe");
+    sm9_z256_from_bytes(chosen, nonce); zeros = 0;
+    check_equal(salts_crypto_sm9_exchange_respond(&b, &bk, "Alice", 5u, "Bob", 3u, 16u, ra, rb, sb), SALTS_CRYPTO_OK);
+    unhex(expected, "3bb4bcee8139c960b4d6566db1e0d5f0b2767680e5e1bf934103e6c66e40ffee");
+    check_equal(sb, expected, sizeof(sb));
+    check_equal(salts_crypto_sm9_exchange_finish_initiator(&a, rb, sb, sa, ka, sizeof(ka), &an), SALTS_CRYPTO_OK);
+    check_equal(an, sizeof(expected_key)); check_equal(ka, expected_key, sizeof(expected_key));
+    unhex(expected, "195d1b7256ba7e0e67c71202a25f8c94ff8241702c2f55d613ae1c6b98215172");
+    check_equal(sa, expected, sizeof(sa)); check_true(is_zero(&a, sizeof(a)));
+    check_equal(salts_crypto_sm9_exchange_finish_responder(&b, sa, kb, sizeof(kb), &bn), SALTS_CRYPTO_OK);
+    check_equal(bn, sizeof(expected_key)); check_equal(kb, expected_key, sizeof(expected_key));
+    check_true(is_zero(&b, sizeof(b)));
+    /* Minimum output length uses the same standard transcript and key prefix. */
+    unhex(nonce, "00005879dd1d51e175946f23b1b41e93ba31c584ae59a426ec1046a4d03b06c8");
+    sm9_z256_from_bytes(chosen, nonce);
+    check_equal(salts_crypto_sm9_exchange_start(&a, &ak, "Alice", 5u, "Bob", 3u, 1u, ra), SALTS_CRYPTO_OK);
+    unhex(nonce, "00018b98c44bef9f8537fb7d071b2c928b3bc65bd3d69e1eee213564905634fe");
+    sm9_z256_from_bytes(chosen, nonce);
+    check_equal(salts_crypto_sm9_exchange_respond(&b, &bk, "Alice", 5u, "Bob", 3u, 1u, ra, rb, sb), SALTS_CRYPTO_OK);
+    check_equal(salts_crypto_sm9_exchange_finish_initiator(&a, rb, sb, sa, ka, sizeof(ka), &an), SALTS_CRYPTO_OK);
+    check_equal(salts_crypto_sm9_exchange_finish_responder(&b, sa, kb, sizeof(kb), &bn), SALTS_CRYPTO_OK);
+    check_equal(an, 1u); check_equal(bn, 1u); check_equal(ka[0], expected_key[0]); check_equal(kb[0], expected_key[0]);
+    fail_rng = 1; memset(rb, 0xa5, sizeof(rb)); memset(sb, 0xa5, sizeof(sb));
+    check_equal(salts_crypto_sm9_exchange_respond(&b, &bk, "Alice", 5u, "Bob", 3u, 16u, ra, rb, sb), SALTS_CRYPTO_ERANDOM);
+    check_true(is_zero(&b, sizeof(b))); check_true(is_zero(rb, sizeof(rb))); check_true(is_zero(sb, sizeof(sb)));
+    fail_rng = 1; memset(ra, 0xa5, sizeof(ra));
+    check_equal(salts_crypto_sm9_exchange_start(&a, &ak, "Alice", 5u, "Bob", 3u, 16u, ra), SALTS_CRYPTO_ERANDOM);
+    check_true(is_zero(&a, sizeof(a))); check_true(is_zero(ra, sizeof(ra)));
+    fail_rng = 0; zeros = 129; calls = 0;
+    check_equal(salts_crypto_sm9_exchange_start(&a, &ak, "Alice", 5u, "Bob", 3u, 16u, ra), SALTS_CRYPTO_ERANDOM);
+    check_equal(calls, 128u); check_true(is_zero(&a, sizeof(a))); check_true(is_zero(ra, sizeof(ra)));
+    fail_rng = 0; zeros = 0;
+    salts_crypto_sm9_exchange_key_clear(&ak); salts_crypto_sm9_exchange_key_clear(&bk);
+  }
   it("rejects an on-curve G2 point outside the prime-order subgroup") {
     uint8_t point[129], master[32] = {0}, sig[104], capsule[65] = {4}, secret[32];
     SM9_Z256_TWIST_POINT native, multiple;

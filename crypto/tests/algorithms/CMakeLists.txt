@@ -26,3 +26,8 @@ add_executable(salts_crypto_sm9_provider_failure sm9_provider_failure.c)
 target_link_libraries(salts_crypto_sm9_provider_failure PRIVATE Salts::Crypto Salts::TinyTest GmSSL::GmSSL)
 add_test(NAME crypto.algorithms.sm9_provider_failure COMMAND salts_crypto_sm9_provider_failure)
 set_tests_properties(crypto.algorithms.sm9_provider_failure PROPERTIES TIMEOUT 120)
+
+add_executable(salts_crypto_sm9_exchange_test sm9_exchange_test.c)
+target_link_libraries(salts_crypto_sm9_exchange_test PRIVATE Salts::Crypto Salts::TinyTest)
+add_test(NAME crypto.algorithms.sm9_exchange COMMAND salts_crypto_sm9_exchange_test)
+set_tests_properties(crypto.algorithms.sm9_exchange PROPERTIES TIMEOUT 120)

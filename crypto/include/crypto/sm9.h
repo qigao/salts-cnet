@@ -15,7 +15,8 @@ extern "C" {
 
 typedef enum salts_crypto_sm9_purpose {
   SALTS_CRYPTO_SM9_SIGN = 1,
-  SALTS_CRYPTO_SM9_ENCRYPT = 2
+  SALTS_CRYPTO_SM9_ENCRYPT = 2,
+  SALTS_CRYPTO_SM9_EXCHANGE = 3
 } salts_crypto_sm9_purpose;
 
 /* Canonical uncompressed point octets, independent of native provider layout.
@@ -31,7 +32,8 @@ typedef struct salts_crypto_sm9_enc_key {
 } salts_crypto_sm9_enc_key;
 
 /* Master secret is a 32-byte big-endian scalar in [1,N-1]. Public output is
- * 129 bytes for SIGN, 65 for ENCRYPT. Identity is explicit, 1..8191 bytes.
+ * 129 bytes for SIGN, 65 for ENCRYPT/EXCHANGE. Use separate masters for each
+ * purpose. Identity is explicit, 1..8191 bytes.
  * Output ranges must be disjoint from all inputs and each other. Invalid
  * pointers/lengths/overlap leave outputs untouched. Once processing begins,
  * failures erase output key/signature buffers and facade-owned working state.
