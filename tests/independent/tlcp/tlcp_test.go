@@ -399,6 +399,29 @@ func TestTLCP(t *testing.T) {
 		t.Fatal("missing native peer")
 	}
 	f := credentials(t, nil)
+	memoryFixtures(t, f.caPath, f.certPath)
+	bundle, err := os.ReadFile(f.keyPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, part := range []string{".sign", ".enc"} {
+		block, rest := pem.Decode(bundle)
+		if block == nil {
+			t.Fatal("missing dual key")
+		}
+		if err := os.WriteFile(f.keyPath+part, pem.EncodeToMemory(block), 0600); err != nil {
+			t.Fatal(err)
+		}
+		memoryFixtures(t, f.keyPath+part)
+		bundle = rest
+	}
+	for _, mode := range []string{"pem", "der"} {
+		t.Run("memory_"+mode, func(t *testing.T) {
+			t.Setenv("SALTS_TEST_TLS_MEMORY", mode)
+			runNativeClient(t, f, "localhost", true, []uint16{tlcp.ECC_SM4_GCM_SM3})
+			runNativeServer(t, f, verifiedConfig(f), "close")
+		})
+	}
 	t.Run("native_client", func(t *testing.T) { runNativeClient(t, f, "localhost", true, []uint16{tlcp.ECC_SM4_GCM_SM3}) })
 	t.Run("native_client_ip", func(t *testing.T) { runNativeClient(t, f, "127.0.0.1", true, []uint16{tlcp.ECC_SM4_GCM_SM3}) })
 	t.Run("native_server", func(t *testing.T) { runNativeServer(t, f, verifiedConfig(f), "close") })
@@ -504,11 +527,62 @@ func TestLocalDualIdentity(t *testing.T) {
 			if err := os.WriteFile(keyPath, test.key, 0600); err != nil {
 				t.Fatal(err)
 			}
+			// These cases reach the production memory importer with
+			// complete, independently encoded inputs and must still reject.
+			if test.name != "missing_encryption_key" {
+				bundle := test.key
+				for _, part := range []string{".sign", ".enc"} {
+					block, rest := pem.Decode(bundle)
+					if block == nil {
+						t.Fatal("missing test key")
+					}
+					if err := os.WriteFile(keyPath+part, pem.EncodeToMemory(block), 0600); err != nil {
+						t.Fatal(err)
+					}
+					memoryFixtures(t, keyPath+part)
+					bundle = rest
+				}
+				memoryFixtures(t, certPath)
+				for _, mode := range []string{"pem", "der"} {
+					t.Run("memory_"+mode, func(t *testing.T) {
+						t.Setenv("SALTS_TEST_TLS_MEMORY", mode)
+						ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+						defer cancel()
+						if out, err := exec.CommandContext(ctx, *native, "--reject-tlcp-identity", certPath, keyPath).CombinedOutput(); err != nil {
+							t.Fatalf("memory identity rejection: %v\n%s", err, out)
+						}
+					})
+				}
+			}
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()
 			if out, err := exec.CommandContext(ctx, *native, "--reject-tlcp-identity", certPath, keyPath).CombinedOutput(); err != nil {
 				t.Fatalf("local identity rejection: %v\n%s", err, out)
 			}
 		})
+	}
+}
+
+// Write independent DER fixtures; the native adapter consumes and then erases
+// memory inputs before handshake progress.
+func memoryFixtures(t *testing.T, paths ...string) {
+	t.Helper()
+	for _, path := range paths {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var der []byte
+		for len(data) != 0 {
+			block, rest := pem.Decode(data)
+			if block == nil {
+				t.Fatal("invalid fixture PEM")
+			}
+			der = append(der, block.Bytes...)
+			data = rest
+		}
+		if err := os.WriteFile(path+".der", der, 0600); err != nil {
+			t.Fatal(err)
+		}
 	}
 }

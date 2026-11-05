@@ -7,6 +7,7 @@
 #include <cmeta_buffer.h>
 #include <crypto/tls_peer_policy.h>
 #include <crypto/tls_sm2_crl_policy.h>
+#include <crypto/tls_credentials.h>
 
 #include <stddef.h>
 #include <stdint.h>
@@ -373,6 +374,8 @@ typedef enum cnet_tls_security_profile {
  * profiles/peer roles return SALTS_ENOTSUP during TLS initialization. */
 typedef crypto_tls_stream_peer_policy cnet_tls_peer_policy;
 typedef crypto_tls_sm2_crl_config cnet_tls_sm2_crl_config;
+typedef crypto_tls_data cnet_tls_data;
+typedef crypto_tls_credentials cnet_tls_credentials;
 
 /** Creates a retained direct-issuer SM2 CRL policy inside CNet's Crypto owner.
  * Uses the snapshot contract in crypto/tls_sm2_crl_policy.h; returns SALTS status.
@@ -390,7 +393,7 @@ int cnet_tlcp_sm2_crl_peer_policy_create(const cnet_tls_sm2_crl_config *config,
 /**
  * Per-connection client policy. The configuration is consumed synchronously
  * by `cnet_connect()` and is not retained. Peer and hostname verification are
- * always enabled. NULL CA fields select the platform trust store. TLCP11
+ * always enabled. Absent ca_file/ca_path/ca_data selects platform trust. TLCP11
  * client certificates are not qualified and return `SALTS_ENOTSUP`.
  */
 typedef struct cnet_tls_client_config {
@@ -425,12 +428,16 @@ typedef struct cnet_tls_client_config {
    * application data resets the count. Exceeding it fails with SALTS_EPROTO.
    * Burst bound only, not a time/byte rate. Nonzero STANDARD/TLCP: SALTS_ENOTSUP. */
   uint32_t peer_key_update_limit;
+  /** Explicit memory anchors, excluding ca_file/ca_path. See tls_credentials.h. */
+  const cnet_tls_data *ca_data;
+  /** Memory identity, excluding cert_file/key_file/key_password. */
+  const cnet_tls_credentials *credentials;
 } cnet_tls_client_config;
 
 /** Configuration copied into a reusable server context during initialization. */
 typedef struct cnet_tls_server_config {
   size_t size;
-  /** Required PEM server certificate chain and private key.
+  /** PEM server certificate chain and private key; required unless credentials is set.
    * For TLCP11, cert_file contains the signing certificate first, encryption
    * certificate second, then issuer certificates. key_file contains the
    * matching signing key first and encryption key second. Both keys use
@@ -456,6 +463,9 @@ typedef struct cnet_tls_server_config {
   uint32_t key_update_record_limit;
   /** Same consecutive peer-update contract as the client configuration. */
   uint32_t peer_key_update_limit;
+  /** Same memory-input contract as the client; CA required for REQUIRED auth. */
+  const cnet_tls_data *ca_data;
+  const cnet_tls_credentials *credentials;
 } cnet_tls_server_config;
 
 typedef struct cnet_connect_options {

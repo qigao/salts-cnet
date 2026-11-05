@@ -4,6 +4,7 @@
 #ifndef CRYPTO_TLS_STREAM_H
 #define CRYPTO_TLS_STREAM_H
 #include <crypto/tls_peer_policy.h>
+#include <crypto/tls_credentials.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -48,7 +49,7 @@ typedef enum crypto_tls_stream_client_auth {
 /**
  * Per-connection client policy. The configuration is consumed synchronously
  * by context creation and is not retained. Peer and hostname verification are
- * always enabled. NULL CA fields select the platform trust store. TLCP11
+ * always enabled. Absent ca_file/ca_path/ca_data selects platform trust. TLCP11
  * client certificates are not qualified and return `CRYPTO_TLS_STREAM_ENOTSUP`.
  */
 typedef struct crypto_tls_stream_client_config {
@@ -85,12 +86,18 @@ typedef struct crypto_tls_stream_client_config {
    * Exceeding the limit permanently fails the stream with EPROTO. This is
    * a burst bound, not a time/byte rate limit. Nonzero STANDARD/TLCP: ENOTSUP. */
   uint32_t peer_key_update_limit;
+  /** Explicit memory anchors; mutually exclusive with ca_file/ca_path.
+   * Concatenated DER or CERTIFICATE PEM, bounded by TRUST_INPUT_MAX_BYTES.
+   * Invalid/empty explicit input never falls back to system trust. */
+  const crypto_tls_data *ca_data;
+  /** Memory identity, mutually exclusive with cert_file/key_file/key_password. */
+  const crypto_tls_credentials *credentials;
 } crypto_tls_stream_client_config;
 
 /** Configuration copied into a reusable server context during initialization. */
 typedef struct crypto_tls_stream_server_config {
   size_t size;
-  /** Required PEM server certificate chain and private key.
+  /** PEM server certificate chain and private key; required unless credentials is set.
    * For TLCP11, cert_file contains the signing certificate first, encryption
    * certificate second, then issuer certificates. key_file contains the
    * matching signing key first and encryption key second. Both keys use
@@ -116,6 +123,9 @@ typedef struct crypto_tls_stream_server_config {
   uint32_t key_update_record_limit;
   /** Same consecutive peer-update contract as the client configuration. */
   uint32_t peer_key_update_limit;
+  /** Same memory-input contract as the client; CA required for REQUIRED auth. */
+  const crypto_tls_data *ca_data;
+  const crypto_tls_credentials *credentials;
 } crypto_tls_stream_server_config;
 
 typedef struct crypto_tls_stream_context crypto_tls_stream_context;

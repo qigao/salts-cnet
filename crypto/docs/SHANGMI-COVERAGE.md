@@ -27,7 +27,7 @@ source or falls back to plaintext.
 | DTLS | Issue #188 resumed; implementation and CNet/SCTP qualification pending | Existing TLS tests do not qualify DTLS |
 | SDF / SKF hardware | Requires selected vendor runtime/device and its integration tests | No software fallback for non-exportable keys |
 
-GmSSL 3.2.0 port revision 23 enables SM9, ZUC and CMS and exports the enabled
+GmSSL 3.2.0 port revision 24 enables SM9, ZUC and CMS and exports the enabled
 algorithm feature definitions. It also clears the PBKDF2 password-derived
 template and rejects invalid/infinity uncompressed SM2 points. These changes
 belong to the external package, not a duplicate in-tree GmSSL build. Revision 20
@@ -44,6 +44,48 @@ application completion or rotate the sending key twice.
 Revision 23 adds a per-context consecutive authenticated peer-KeyUpdate limit.
 It checks the budget before deriving new traffic keys and resets only when a
 nonempty authenticated application record is received.
+Revision 24 adds bounded in-memory certificate-chain and plain PKCS#8 key
+admission. It checks the complete chain ordering and each private-key binding
+before committing the context's owned identity.
+
+### Memory credentials and trust inputs
+
+Crypto/CNet client and server configurations accept `ca_data` and `credentials`
+from `crypto/tls_credentials.h`. Each input explicitly selects DER or PEM and
+provides a byte length; no NUL terminator, temporary file or filesystem lookup
+is needed for memory inputs. Certificate chains and anchors use concatenated
+DER certificates or `CERTIFICATE` PEM blocks. Private keys use one unencrypted
+PKCS#8 `PrivateKeyInfo`, DER or `PRIVATE KEY` PEM, for RSA or EC SM2/P-256.
+TLCP servers provide separate signing and encryption keys and a chain ordered
+as signing leaf, encryption leaf, then issuers. Both certificate/key bindings
+and the two KeyUsage roles are checked before initialization succeeds.
+
+Memory trust excludes `ca_file`/`ca_path`; memory identity excludes
+`cert_file`/`key_file`/`key_password`. Conflicts, invalid descriptors and
+unsupported encodings fail before trust loading or publication. Empty or invalid
+explicit anchors never select system trust. Input bounds are 1 MiB for trust
+and 16 KiB for each identity input; decoded chains are at most 8189 bytes and
+each decoded key at most 8192 bytes. PEM rejects foreign labels, noncanonical
+base64 padding, extra keys and non-whitespace trailing text. Each certificate
+PEM block must encode exactly one complete certificate.
+
+Inputs are borrowed only during initialization. Successful contexts own their
+certificate/key state and anchors; internal decoded private keys are cleared
+on success and failure. Existing retain/release, fixed owner, authentication,
+protocol profile and additional peer-policy contracts remain unchanged.
+There is no hot update, file watcher or replacement of an established identity.
+
+Formal provider/Crypto tests cover both memory encodings, TLS 1.2/1.3 handshake
+and application data after source erasure, malformed/oversized/conflicting
+inputs, key mismatch and explicit-trust failure. Independent CNet tests cover
+both encodings with native/native and independent-peer ShangMi REQUIRED-mTLS,
+TLCP in both directions, and malformed dual identities. The CNet adapter frees
+all credential input before progressing a handshake and links only CNet's
+canonical Crypto owner.
+
+Encrypted memory PKCS#8, PKCS#12/PFX, retained credential/key objects and
+hardware-backed keys are not supplied by this slice. They must not be inferred
+from existing encrypted file input or standalone SM2 key-container APIs.
 
 ### TLCP stream qualification
 

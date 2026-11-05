@@ -60,6 +60,15 @@ func TestShangMiMutual(t *testing.T) {
 		t.Fatal("missing native peer")
 	}
 	server, client := credentials(t, nil), clientCredentials(t, nil)
+	memoryFixtures(t, server.caPath, server.certPath, server.keyPath, client.caPath, client.certPath, client.keyPath)
+	for _, mode := range []string{"pem", "der"} {
+		t.Run("memory_"+mode, func(t *testing.T) {
+			t.Setenv("SALTS_TEST_TLS_MEMORY", mode)
+			mutual(t, server, client, "accept")
+			runNativeServerWithClient(t, server, &client, "close")
+			runNativeClientWithIdentity(t, server, &client, "localhost", true, "")
+		})
+	}
 	t.Run("verified_distinct_trust_roots", func(t *testing.T) { mutual(t, server, client, "accept") })
 	t.Run("reject_client_peer_policy", func(t *testing.T) { mutual(t, server, client, "reject-policy-client") })
 	t.Run("reject_server_peer_policy", func(t *testing.T) { mutual(t, server, client, "reject-policy-server") })
@@ -168,4 +177,28 @@ func TestShangMiMutualNativeClient(t *testing.T) {
 		t.Run("reject_server_"+name, func(t *testing.T) { run(t, credentials(t, change), false, "") })
 	}
 	t.Run("reject_server_certificate_signature", func(t *testing.T) { run(t, corruptCertificate(t, credentials(t, nil)), false, "") })
+}
+
+// Write independent DER fixtures; the native adapter consumes and then erases
+// memory inputs before handshake progress.
+func memoryFixtures(t *testing.T, paths ...string) {
+	t.Helper()
+	for _, path := range paths {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var der []byte
+		for len(data) != 0 {
+			block, rest := pem.Decode(data)
+			if block == nil {
+				t.Fatal("invalid fixture PEM")
+			}
+			der = append(der, block.Bytes...)
+			data = rest
+		}
+		if err := os.WriteFile(path+".der", der, 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
 }

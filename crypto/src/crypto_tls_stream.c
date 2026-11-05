@@ -1,4 +1,5 @@
 #include <crypto/tls_stream.h>
+#include "crypto_tls_credentials.h"
 
 #if defined(CRYPTO_TLS_STREAM_TESTING)
   #include "crypto_tls_stream_test.h"
@@ -653,7 +654,9 @@ static int crypto_tls_stream_configure_variant(crypto_tls_stream_context *contex
                                       const char *key_password,
                                       crypto_tls_stream_client_auth client_auth,
                                       uint32_t key_update_record_limit,
-                                      uint32_t peer_key_update_limit) {
+                                      uint32_t peer_key_update_limit,
+                                      const crypto_tls_data *ca_data,
+                                      const crypto_tls_credentials *credentials) {
   static const int range_ciphers[] = {
       TLS_cipher_aes_128_gcm_sha256,
       TLS_cipher_ecdhe_rsa_with_aes_128_gcm_sha256,
@@ -774,13 +777,17 @@ static int crypto_tls_stream_configure_variant(crypto_tls_stream_context *contex
     return CRYPTO_TLS_STREAM_EIO;
 
   if (context->verify_peer) {
-    status = (ca_file != NULL || ca_path != NULL)
+    status = ca_data != NULL ? crypto_tls_memory_trust(tls, ca_data) :
+        (ca_file != NULL || ca_path != NULL)
                  ? crypto_tls_stream_load_explicit_trust(tls, ca_file, ca_path)
                  : crypto_tls_stream_load_system_trust(tls);
     if (status != CRYPTO_TLS_STREAM_OK) return status;
   }
 
-  if (cert_file != NULL) {
+  if (credentials != NULL) {
+    status = crypto_tls_memory_identity(tls, credentials);
+    if (status != CRYPTO_TLS_STREAM_OK) return status;
+  } else if (cert_file != NULL) {
     int certificate_result;
     if (variant == CRYPTO_TLS_STREAM_VARIANT_TLCP11 && context->server) {
       if (crypto_tls_stream_tlcp_certificate_roles_valid(cert_file) != CRYPTO_TLS_STREAM_OK)
@@ -837,6 +844,7 @@ static int crypto_tls_stream_context_create_common(
     const crypto_tls_stream_peer_policy *peer_policy,
     uint32_t key_update_record_limit,
     uint32_t peer_key_update_limit,
+    const crypto_tls_data *ca_data, const crypto_tls_credentials *credentials,
     crypto_tls_stream_context **out_context) {
   crypto_tls_stream_context *context;
   size_t index;
@@ -844,6 +852,13 @@ static int crypto_tls_stream_context_create_common(
 
   if (out_context == NULL) return CRYPTO_TLS_STREAM_EINVAL;
   *out_context = NULL;
+
+  if ((ca_data != NULL && (ca_file != NULL || ca_path != NULL)) ||
+      (credentials != NULL && (cert_file != NULL || key_file != NULL || key_password != NULL)))
+    return CRYPTO_TLS_STREAM_EINVAL;
+  status = crypto_tls_memory_validate(ca_data, credentials,
+      server && security_profile == CRYPTO_TLS_STREAM_SECURITY_PROFILE_TLCP11);
+  if (status != CRYPTO_TLS_STREAM_OK) return status;
 
   if (key_update_record_limit > CRYPTO_TLS_STREAM_KEY_UPDATE_RECORD_LIMIT_MAX)
     return CRYPTO_TLS_STREAM_EINVAL;
@@ -878,7 +893,7 @@ static int crypto_tls_stream_context_create_common(
   context->security_profile = security_profile;
 #if defined(__APPLE__) && !TARGET_OS_OSX
   context->native_system_trust =
-      !server && verify_peer && ca_file == NULL && ca_path == NULL;
+      !server && verify_peer && ca_file == NULL && ca_path == NULL && ca_data == NULL;
 #else
   context->native_system_trust = false;
 #endif
@@ -900,7 +915,7 @@ static int crypto_tls_stream_context_create_common(
         index != CRYPTO_TLS_STREAM_VARIANT_TLCP11) continue;
     status = crypto_tls_stream_configure_variant(
         context, (crypto_tls_stream_variant)index, ca_file, ca_path, cert_file, key_file,
-        key_password, client_auth, key_update_record_limit, peer_key_update_limit);
+        key_password, client_auth, key_update_record_limit, peer_key_update_limit, ca_data, credentials);
     if (status != CRYPTO_TLS_STREAM_OK) {
       crypto_tls_stream_context_dispose(context);
       return status;
@@ -941,7 +956,7 @@ int crypto_tls_stream_client_context_create(const crypto_tls_stream_client_confi
        config->security_profile != CRYPTO_TLS_STREAM_SECURITY_PROFILE_TLCP11))
     return CRYPTO_TLS_STREAM_EINVAL;
   if (config->security_profile == CRYPTO_TLS_STREAM_SECURITY_PROFILE_TLCP11 &&
-      config->cert_file != NULL)
+      (config->cert_file != NULL || config->credentials != NULL))
     return CRYPTO_TLS_STREAM_ENOTSUP;
 
   status = crypto_tls_stream_context_create_common(
@@ -949,7 +964,7 @@ int crypto_tls_stream_client_context_create(const crypto_tls_stream_client_confi
       config->key_file, config->key_password, CRYPTO_TLS_STREAM_CLIENT_AUTH_NONE,
       config->alpn_protocols, config->alpn_protocol_count,
       config->security_profile, config->peer_policy, config->key_update_record_limit,
-      config->peer_key_update_limit, &context);
+      config->peer_key_update_limit, config->ca_data, config->credentials, &context);
   if (status != CRYPTO_TLS_STREAM_OK) return status;
   if (config->server_name != NULL)
     crypto_tls_stream_copy(CRYPTO_TLS_TEST_COPY_METADATA, context->client_server_name, config->server_name,
@@ -969,7 +984,7 @@ int crypto_tls_stream_server_context_create(const crypto_tls_stream_server_confi
   if (config->size != sizeof(*config) ||
       !crypto_tls_stream_optional_path_valid(config->cert_file) ||
       !crypto_tls_stream_optional_path_valid(config->key_file) ||
-      config->cert_file == NULL || config->key_file == NULL ||
+      (config->credentials == NULL && (config->cert_file == NULL || config->key_file == NULL)) ||
       !crypto_tls_stream_optional_path_valid(config->ca_file) ||
       !crypto_tls_stream_optional_path_valid(config->ca_path) ||
       !crypto_tls_stream_bounded_string(config->key_password,
@@ -977,9 +992,9 @@ int crypto_tls_stream_server_context_create(const crypto_tls_stream_server_confi
       (config->client_auth != CRYPTO_TLS_STREAM_CLIENT_AUTH_NONE &&
        config->client_auth != CRYPTO_TLS_STREAM_CLIENT_AUTH_REQUIRED) ||
       (config->client_auth == CRYPTO_TLS_STREAM_CLIENT_AUTH_REQUIRED &&
-       config->ca_file == NULL && config->ca_path == NULL) ||
+       config->ca_file == NULL && config->ca_path == NULL && config->ca_data == NULL) ||
       (config->client_auth == CRYPTO_TLS_STREAM_CLIENT_AUTH_NONE &&
-       (config->ca_file != NULL || config->ca_path != NULL)) ||
+       (config->ca_file != NULL || config->ca_path != NULL || config->ca_data != NULL)) ||
       (config->security_profile != CRYPTO_TLS_STREAM_SECURITY_PROFILE_STANDARD &&
        config->security_profile != CRYPTO_TLS_STREAM_SECURITY_PROFILE_SHANGMI_TLS13 &&
        config->security_profile != CRYPTO_TLS_STREAM_SECURITY_PROFILE_TLCP11))
@@ -993,7 +1008,7 @@ int crypto_tls_stream_server_context_create(const crypto_tls_stream_server_confi
       config->ca_file, config->ca_path, config->cert_file, config->key_file,
       config->key_password, config->client_auth, config->alpn_protocols,
       config->alpn_protocol_count, config->security_profile, config->peer_policy,
-      config->key_update_record_limit, config->peer_key_update_limit, &context);
+      config->key_update_record_limit, config->peer_key_update_limit, config->ca_data, config->credentials, &context);
   if (status != CRYPTO_TLS_STREAM_OK) return status;
   *out_context = context;
   return CRYPTO_TLS_STREAM_OK;
