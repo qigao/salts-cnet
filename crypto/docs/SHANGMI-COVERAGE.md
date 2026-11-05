@@ -218,7 +218,77 @@ rolled-back, wrong-issuer, malformed and future CRLs. An IP identity mismatch
 skips the callback, rejected streams remain rejected on retry, and final destroy
 releases the retained snapshot. These are 17 scenarios, not independent TLS
 engine interoperation or production network CRL distribution. TLCP dual-certificate
-revocation and a packaged CNet CRL policy remain separate qualification work.
+revocation remains separate qualification work.
+
+### Ready-to-configure CNet SM2 CRL snapshots
+
+`cnet_tls_sm2_crl_peer_policy_create` provides a retained immutable policy inside
+CNet's existing Crypto owner. Applications link only `Salts::CNet`. Direct Crypto
+stream users have `crypto_tls_sm2_crl_peer_policy_create` with the same configuration
+and lifetime. The supported profile is RFC 8998 SHANGMI_TLS13, for either server
+authentication or REQUIRED client authentication, with one explicitly configured
+direct issuer. STANDARD, TLCP and paths beyond leaf + optional identical issuer
+are rejected.
+
+Creation copies DER and both explicit SM2 signing identities into one bounded
+allocation below 87 KiB. It first authenticates the entire CRL and checks issuer
+CA/cRLSign/SKI, signature, supported extensions, entries, validity, maximum age
+and minimum CRL number; invalid snapshots fail immediately. This uses
+`salts_crypto_sm2_validate_crl`, which authenticates a snapshot without deciding
+whether a particular peer is revoked. Every handshake then reads the trusted
+host UTC clock again, verifies the leaf signature against the configured issuer
+key and certificate-signing ID, and calls `salts_crypto_sm2_check_crl`. Matching
+issuer names alone cannot authorize a foreign CA's CRL. The configured peer role
+must also match. Clock failure and any unknown/error result deny admission.
+
+For a client verifying a server, after loading and authenticating `issuer_der`
+and the local `crl_der`, initialize a reusable TLS client as follows (all status
+returns are checked):
+
+```c
+cnet_tls_peer_policy policy = {0};
+cnet_tls_sm2_crl_config revocation = {
+    .size = sizeof(revocation),
+    .issuer_certificate = issuer_der, .issuer_certificate_size = issuer_size,
+    .crl = crl_der, .crl_size = crl_size,
+    .certificate_signing_identity = cert_id,
+    .certificate_signing_identity_size = cert_id_size,
+    .crl_signing_identity = crl_id, .crl_signing_identity_size = crl_id_size,
+    .minimum_crl_number = authenticated_floor, .maximum_age_seconds = 3600,
+    .peer_is_server = true
+};
+int status = cnet_tls_sm2_crl_peer_policy_create(&revocation, &policy);
+if (status != SALTS_OK) return status;
+cnet_tls_client_config tls = {
+    .size = sizeof(tls), .ca_file = ca_file, .server_name = expected_name,
+    .security_profile = CNET_TLS_SECURITY_PROFILE_SHANGMI_TLS13,
+    .peer_policy = &policy
+};
+status = cnet_tls_client_init(&tls_client, &tls); /* tls_client starts zeroed */
+policy.release(policy.context); /* TLS context owns its own reference on success. */
+if (status != SALTS_OK) return status;
+/* Set connect_options.tls_client = &tls_client for subsequent connections. */
+```
+
+For a server, select `peer_is_server=false` and set REQUIRED client authentication
+in its TLS configuration. Release the caller's policy reference after server
+initialization as above. Input buffers can be released immediately after policy
+creation. Destroy the reusable TLS handle when no longer needed; streams retain
+their own context references until quiescent destruction. Publish a new policy
+and TLS context when refreshing CRLs or advancing the rollback floor. Existing
+connections are not revalidated, and old contexts keep their original floor.
+The host must maintain an accurate trusted wall clock and authenticate/persist
+the floor. No fetching, distribution-point routing, OCSP, general path builder
+or automatic connection eviction is supplied.
+
+`saltscore.cnet_shangmi_crl_policy` exercises 29 independently generated fixture
+scenarios through the production CNet DSO: immediate invalid-snapshot rejection,
+both TCP/mTLS roles, revoked peers, substituted same-name issuers, both signing
+IDs, role/identity mismatches and leaf-only/leaf-plus-issuer chains. It overwrites
+all original DER/ID buffers and releases the caller's policy reference before
+handshake progress; the server TLS facade is released early too. Formal ownership
+audits retain the single CNet provider owner. These tests do not qualify TLCP
+revocation, live CRL distribution or hardware-backed signing.
 
 ## API use and boundaries
 

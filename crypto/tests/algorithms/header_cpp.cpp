@@ -1,6 +1,7 @@
 #include <crypto/sha256.h>
 #include <crypto/ed448.h>
 #include <crypto/tls_stream.h>
+#include <crypto/tls_sm2_crl_policy.h>
 #include <crypto/sm3.h>
 #include <crypto/sm2.h>
 #include <crypto/sm2_exchange.h>
