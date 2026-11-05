@@ -5,6 +5,7 @@
 #include <crypto/sm2.h>
 #include <crypto/zuc.h>
 #include <crypto/sm4.h>
+#include <crypto/sm9.h>
 #include <tinytest.hpp>
 
 #include <cstddef>

@@ -14,7 +14,7 @@ source or falls back to plaintext.
 | SM3 | Streaming and one-shot digest/HMAC; HKDF; PBKDF2 | Known answers, fragmented input, erased state, invalid reuse, overlap/length/iteration rejection |
 | SM4 | ECB/CBC without padding; CTR/OFB/CFB8/64/128; XTS; GCM/CCM | Block and independent mode vectors, RFC 8998 GCM/CCM vectors, partial segments, XTS ciphertext stealing, bad tag erasure, counter wrap rejection |
 | ZUC | ZUC128/256 whole-message encryption and bit-length MAC/verification | Known keystream/MAC answers, all tag sizes, ignored unused final bits, corrupt tag, key/length rejection |
-| SM9 signature/encryption/KEM | Enabled in provider; public API and independent qualification pending | Compilation is not a production gate |
+| SM9 signature/encryption/KEM | Public identity-based signing, XOR encryption and KEM; fixed canonical key points and DER messages | Published signature/KEM/encryption vectors, scripted nonce/failure paths, finite prime-order subgroup admission, DER/tamper/identity negatives and output erasure; cross-platform CI required |
 | SM9 key exchange | Pending implementation/review; pinned upstream header marks it unfinished | No production claim |
 | SM2 full authenticated key exchange | Pending; ordinary ECDH must not be advertised as this protocol | No production claim |
 | CMS / SM2 certificate and protected key workflows | CMS enabled in provider; public workflow qualification pending | Generic ASN1 parsing and existing X509 inspection alone do not qualify signing/trust/key protection |
@@ -22,10 +22,13 @@ source or falls back to plaintext.
 | DTLS | Issue #188 resumed; implementation and CNet/SCTP qualification pending | Existing TLS tests do not qualify DTLS |
 | SDF / SKF hardware | Requires selected vendor runtime/device and its integration tests | No software fallback for non-exportable keys |
 
-GmSSL 3.2.0 port revision 19 enables SM9, ZUC and CMS and exports the enabled
+GmSSL 3.2.0 port revision 20 enables SM9, ZUC and CMS and exports the enabled
 algorithm feature definitions. It also clears the PBKDF2 password-derived
 template and rejects invalid/infinity uncompressed SM2 points. These changes
-belong to the external package, not a duplicate in-tree GmSSL build.
+belong to the external package, not a duplicate in-tree GmSSL build. Revision 20
+preserves the original digest/pairing base and recipient point across SM9
+retries, bounds attempts, rejects zero KEM nonces/infinity and cleans up
+extraction scalars and KEM/signing working state on error paths.
 
 ## API use and boundaries
 
@@ -41,6 +44,32 @@ authenticate messages. ZUC's API handles one bounded message per invocation;
 calling it repeatedly with the same key/IV is not streaming continuation.
 Key storage, rotation and hardware authorization remain explicit application
 or key-service responsibilities. Public headers document sizes and ownership.
+
+`crypto/sm9.h` uses separate signing and encryption master keys. A key service
+extracts the user's private key for an explicit identity; applications retain
+the master public key and clear each owned private-key copy after use. Public
+key structs contain canonical point bytes, never provider structs or handles.
+Master private keys and extracted keys require protected application storage;
+this API does not implement a protected key-file container.
+
+SM9 XOR encryption authenticates with `SM3(C2 || K2)` and releases plaintext
+only after checking the tag. Its bounded plaintext is 1..255 bytes. Composition
+uses GmSSL KEM and the existing SM3 facade, with DER owned by Salts::ASN1;
+GmSSL's native HMAC-based SM9 encryption wrapper is not used by this API.
+Raw KEM derives 1..1024 bytes and is not sender authentication or key
+confirmation: changing an identity or valid capsule can yield a different key
+successfully. A protocol must authenticate/confirm that key before using it.
+
+`crypto.algorithms.sm9_public` checks the published examples also exercised by
+[gmsm v0.41.1](https://github.com/emmansun/gmsm/blob/v0.41.1/internal/sm9/sm9_test.go).
+`crypto.algorithms.sm9_provider_failure` resolves the installed static provider's
+RNG symbol only inside that formal test executable, allowing fixed nonces and
+injected failure without modifying production RNG behavior. It additionally
+checks an on-curve G2 point outside the prime-order subgroup, an infinity
+recipient, zero-nonce retry/exhaustion and failure erasure. These functional
+tests do not establish constant-time execution of the underlying pairing and
+scalar arithmetic; side-channel qualification remains a production gate for
+deployments exposing private-key operations to local or timing attackers.
 
 RFC 8998 defines TLS 1.3 suites. Its registry marks these suites and curveSM2
 as not DTLS-OK; this implementation must not simply reuse their identifiers in

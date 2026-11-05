@@ -16,3 +16,13 @@ add_executable(salts_crypto_shangmi_vectors shangmi_vectors.c)
 target_link_libraries(salts_crypto_shangmi_vectors PRIVATE Salts::Crypto Salts::TinyTest)
 add_test(NAME crypto.algorithms.shangmi_public COMMAND salts_crypto_shangmi_vectors)
 set_tests_properties(crypto.algorithms.shangmi_public PROPERTIES TIMEOUT 120)
+
+add_executable(salts_crypto_sm9_vectors sm9_vectors.c)
+target_link_libraries(salts_crypto_sm9_vectors PRIVATE Salts::Crypto Salts::TinyTest)
+add_test(NAME crypto.algorithms.sm9_public COMMAND salts_crypto_sm9_vectors)
+set_tests_properties(crypto.algorithms.sm9_public PROPERTIES TIMEOUT 120)
+
+add_executable(salts_crypto_sm9_provider_failure sm9_provider_failure.c)
+target_link_libraries(salts_crypto_sm9_provider_failure PRIVATE Salts::Crypto Salts::TinyTest GmSSL::GmSSL)
+add_test(NAME crypto.algorithms.sm9_provider_failure COMMAND salts_crypto_sm9_provider_failure)
+set_tests_properties(crypto.algorithms.sm9_provider_failure PROPERTIES TIMEOUT 120)
