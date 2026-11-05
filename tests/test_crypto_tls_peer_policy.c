@@ -51,8 +51,7 @@ static int transfer(crypto_tls_stream *from, crypto_tls_stream *to) {
   fprintf(stderr, "TLS revocation assertion at line %d: %s\n", __LINE__, #condition); \
   result = 1; goto cleanup; } } while (0)
 
-int main(int argc, char **argv) {
-  if (argc != 14 || strcmp(argv[1], "--shangmi-revocation") != 0) return 2;
+static int run_case(char **argv, unsigned fatal_case) {
   uint8_t issuer[CRYPTO_TLS_STREAM_PEER_CHAIN_MAX_BYTES];
   uint8_t crl[SALTS_CRYPTO_SM2_CRL_MAX_BYTES];
   revocation_probe p = {0};
@@ -113,6 +112,54 @@ int main(int argc, char **argv) {
     /* Repeated completed handshakes never re-run admission. */
     REQUIRE(crypto_tls_stream_handshake(client, &client_complete) == 0 && client_complete);
     REQUIRE(crypto_tls_stream_handshake(server, &server_complete) == 0 && server_complete);
+    if (fatal_case != 0u) {
+      crypto_tls_stream *receiver = peer_is_server ? client : server;
+      crypto_tls_stream *sender = peer_is_server ? server : client;
+      uint8_t cipher[4096];
+      size_t cipher_size = 0u;
+      bool pending = false;
+      REQUIRE(crypto_tls_stream_cipher_output_empty(receiver));
+      if (fatal_case <= 2u) {
+        REQUIRE(crypto_tls_stream_write(sender, "X", 1u, &sent) == 0 && sent);
+        REQUIRE(crypto_tls_stream_take_cipher(sender, cipher, sizeof(cipher), &cipher_size) == 0);
+        REQUIRE(cipher_size > 5u);
+        cipher[cipher_size - 1u] ^= 1u; /* Corrupt the AEAD tag. */
+      } else {
+        const uint8_t oversized_record[] = {23, 3, 3, 255, 255};
+        memcpy(cipher, oversized_record, sizeof(oversized_record));
+        cipher_size = sizeof(oversized_record);
+      }
+      REQUIRE(crypto_tls_stream_feed_cipher(receiver, cipher, cipher_size) == 0);
+      size = 0u;
+      int failure = (fatal_case & 1u) != 0u ?
+          crypto_tls_stream_read(receiver, &received, 1u, &size, &closed) :
+          crypto_tls_stream_probe_peer_close(receiver, &closed, &pending);
+      REQUIRE(failure == CRYPTO_TLS_STREAM_EPROTO);
+      REQUIRE(!closed && !pending && size == 0u);
+      /* Drain any initial fatal-alert output, then prove retries cannot
+       * resurrect application I/O, READY or an orderly close. */
+      for (unsigned drain = 0u; drain < 8u && !crypto_tls_stream_cipher_output_empty(receiver); ++drain)
+        REQUIRE(crypto_tls_stream_take_cipher(receiver, cipher, sizeof(cipher), &cipher_size) == 0);
+      REQUIRE(crypto_tls_stream_cipher_output_empty(receiver));
+      for (unsigned retry = 0u; retry < 3u; ++retry) {
+        sent = true;
+        REQUIRE(crypto_tls_stream_write(receiver, "forbidden", 9u, &sent) == failure);
+        REQUIRE(!sent);
+        size = 99u; closed = true; received = 0x5au;
+        REQUIRE(crypto_tls_stream_read(receiver, &received, 1u, &size, &closed) == failure);
+        REQUIRE(size == 0u && !closed && received == 0x5au);
+        closed = pending = true;
+        REQUIRE(crypto_tls_stream_probe_peer_close(receiver, &closed, &pending) == failure);
+        REQUIRE(!closed && !pending);
+        sent = closed = true;
+        REQUIRE(crypto_tls_stream_shutdown(receiver, &sent, &closed) == failure);
+        REQUIRE(!sent && !closed);
+        sent = true;
+        REQUIRE(crypto_tls_stream_handshake(receiver, &sent) == failure);
+        REQUIRE(!sent && !crypto_tls_stream_handshake_complete(receiver));
+        REQUIRE(crypto_tls_stream_cipher_output_empty(receiver));
+      }
+    }
   } else {
     crypto_tls_stream *rejected = peer_is_server ? client : server;
     REQUIRE((peer_is_server ? client_status : server_status) == CRYPTO_TLS_STREAM_ECONNABORTED);
@@ -137,4 +184,14 @@ cleanup:
   crypto_tls_stream_context_release(server_context);
   if (!result && !peer_policy_finished(&p.base, wrong_name ? 0u : 1u)) result = 1;
   return result;
+}
+
+int main(int argc, char **argv) {
+  if (argc != 14 || strcmp(argv[1], "--shangmi-revocation") != 0) return 2;
+  const unsigned cases = strcmp(argv[12], "accept") == 0 ? 5u : 1u;
+  for (unsigned fatal_case = 0u; fatal_case < cases; ++fatal_case) {
+    int result = run_case(argv, fatal_case);
+    if (result != 0) return result;
+  }
+  return 0;
 }
