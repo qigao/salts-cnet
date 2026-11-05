@@ -11,3 +11,8 @@ add_executable(crypto_algorithms_cpp_header header_cpp.cpp)
 set_target_properties(crypto_algorithms_cpp_header PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON)
 target_link_libraries(crypto_algorithms_cpp_header PRIVATE Salts::Crypto Salts::TinyTest)
 add_test(NAME crypto.algorithms.cpp17_header COMMAND crypto_algorithms_cpp_header)
+
+add_executable(salts_crypto_shangmi_vectors shangmi_vectors.c)
+target_link_libraries(salts_crypto_shangmi_vectors PRIVATE Salts::Crypto Salts::TinyTest)
+add_test(NAME crypto.algorithms.shangmi_public COMMAND salts_crypto_shangmi_vectors)
+set_tests_properties(crypto.algorithms.shangmi_public PROPERTIES TIMEOUT 120)

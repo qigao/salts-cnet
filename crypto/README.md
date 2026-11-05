@@ -14,7 +14,7 @@ CMake targets, C11 source and C++17-usable C headers.
 
 Use the repository's user presets for the ASN1/Crypto/CNet build and formal
 CTest suite. The native GmSSL implementation is installed from the immutable
-`gmssl 3.2.0#18` vcpkg port, whose extension sources are pinned from
+`gmssl 3.2.0#19` vcpkg port, whose extension sources are pinned from
 `gmssl-extensions/`. `Salts::Crypto` links the imported `GmSSL::GmSSL` static
 library; it never compiles a duplicate GmSSL implementation.
 Private Ed448 libecc objects live under `vendor/libecc/` in this module.
@@ -29,6 +29,18 @@ Installed consumers require `find_package(Crypto 0.1 CONFIG REQUIRED)`
 and link `Salts::Crypto`. This imports the sibling `Salts::ASN1` via
 `find_dependency(ASN1)`. Direct protocol consumers should instead use only
 `find_package(ASN1 0.1 CONFIG REQUIRED)` and `Salts::ASN1`.
+
+## ShangMi algorithm APIs
+
+The public `<crypto/sm2.h>`, `<crypto/sm3.h>`, `<crypto/sm4.h>` and
+`<crypto/zuc.h>` interfaces expose GmSSL algorithms through `Salts::Crypto`.
+They use caller-owned buffers and private provider state, with explicit
+identity/nonce, capacity, overlap, authentication and secret-erasure contracts.
+Applications do not need native GmSSL headers.
+
+See [ShangMi coverage and production gates](docs/SHANGMI-COVERAGE.md) for the
+implemented operations, formal tests and remaining requirements. Algorithm
+tests do not qualify a TLS/TLCP/DTLS protocol or a hardware deployment.
 
 ## Opaque TLS streams for transport owners
 
