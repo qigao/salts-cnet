@@ -225,10 +225,11 @@ jobs:
         if: matrix.preset != 'ci-android'
         uses: actions/setup-go@v5
         with:
-          go-version-file: crypto/tests/x509/independent/go.mod
+          go-version-file: tests/independent/shangmi/go.mod
           cache-dependency-path: |
             crypto/tests/x509/independent/go.sum
             tests/independent/tlcp/go.sum
+            tests/independent/shangmi/go.sum
             sctp/tests/independent/pion/go.sum
 
       - name: Install macOS native autotools

@@ -23,7 +23,7 @@ source or falls back to plaintext.
 | SM2 complete direct CRL | Explicit issuer/SM2 signing ID, full-CRL scope, time/age/number policy and serial checking | Independent gmsm CRLs, real pinned-trust callback, revoked/stale/rollback/scope/DER negatives; cross-platform CI required |
 | CMS / SM2 certificate workflows | CMS enabled in provider; public workflow qualification pending | Generic ASN1 parsing and existing X509 inspection alone do not qualify signing or trust |
 | TLCP 1.1 ECC_SM4_GCM_SM3 | Explicit CNet client/server profile with dual SM2 server certificates | Independent GoTLCP bidirectional handshake/data/close, CA/DNS/IP/time/signature/KU negatives, local dual-identity admission and signature-extension/cipher rejection; cross-platform CI required |
-| TLS 1.3 ShangMi | Existing explicit stream profile; independent handshake/authentication matrix remains separate | Existing provider settings/KATs do not replace protocol interoperation |
+| TLS 1.3 ShangMi | Explicit CNet client/server RFC 8998 SM4-GCM profile with SM2 server authentication | Independent bidirectional handshake/data/close, certificate/CertificateVerify/Finished negatives, exact profile rejection, handshake fragmentation and abnormal EOF; cross-platform CI required |
 | DTLS | Issue #188 resumed; implementation and CNet/SCTP qualification pending | Existing TLS tests do not qualify DTLS |
 | SDF / SKF hardware | Requires selected vendor runtime/device and its integration tests | No software fallback for non-exportable keys |
 
@@ -65,6 +65,37 @@ This gate covers the server-authenticated TLCP profile. It does not establish
 TLCP mutual authentication, TLS 1.3 ShangMi interoperation, revocation-policy
 integration or DTLS support. GoTLCP and gmsm are formal test dependencies only;
 production continues to link the single packaged GmSSL provider.
+
+### TLS 1.3 ShangMi stream qualification
+
+Select `CNET_TLS_SECURITY_PROFILE_SHANGMI_TLS13` for TLS 1.3 with
+`TLS_SM4_GCM_SM3`, `curveSM2` and `sm2sig_sm3`. Configure one SM2 signing
+certificate and matching key on the server, plus explicit CA trust and the
+expected DNS/IP identity on the client. The profile rejects standard TLS
+suites/groups, TLCP's signature pair and TLS 1.2 offers.
+
+`saltscore.cnet_shangmi_tls13_independent` uses the existing production
+CNet/NativeIO peer and the test-only
+[pollux-go v0.5.0 handshaker](https://github.com/iuboy/pollux-go/tree/v0.5.0/tls13gm).
+The independent engine owns curveSM2 ECDHE, the SM3 transcript/key schedule,
+certificate and CertificateVerify checks, and Finished authentication. A
+bounded test adapter supplies TLS TCP records and SM4-GCM protection. It uses
+the RFC 8446 `key`/`iv` labels; the engine's unused QUIC initial keys do not
+participate in this TCP exchange. There is no provider code shared with GmSSL.
+
+The 21 cases include both native directions, DNS/IP success, encrypted data
+and reciprocal close_notify, seven-byte handshake fragments across encrypted
+records, untrusted/invalid certificates, forged CertificateVerify and Finished,
+wrong version/cipher/signature/group offers, invalid SM2 shares and raw EOF.
+Authentication failures must publish no CNet CONNECTED/plaintext events and
+must not be timeouts. The explicit IP-SAN check can reject after the provider's
+Finished processing while the CNet connection remains in handshake admission.
+
+The formal peer requires Go 1.26; CI selects it from this test module and
+caches all independent-peer modules together. The production dependency stays
+GmSSL 3.2.0#21. These cases qualify server authentication; ShangMi mutual
+authentication, revocation integration, resumption/key-update qualification,
+DTLS and hardware-backed keys remain separate gates.
 
 ## API use and boundaries
 
