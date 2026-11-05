@@ -898,9 +898,19 @@ static bool tls_probe_expected_validity(const tls_probe *probe) {
   else if (strcmp(expected, "certificate") == 0) reason = CRYPTO_TLS_FAILURE_CERTIFICATE;
   else if (strcmp(expected, "handshake") == 0) reason = CRYPTO_TLS_FAILURE_HANDSHAKE;
   else return false;
-  if (probe->tls_diagnostic.reason != reason)
-    fprintf(stderr, "validity diagnostic actual=%d expected=%d\n", probe->tls_diagnostic.reason, reason);
-  return probe->tls_diagnostic.reason == reason && probe->tls_diagnostic.certificate_index == SIZE_MAX;
+  const char *index_text = getenv("SALTS_TEST_TLS_VALIDITY_INDEX");
+  size_t index = SIZE_MAX;
+  if (index_text) {
+    /* Fixtures use only these positions; reject misspelled expectations. */
+    if (strcmp(index_text, "0") == 0) index = 0u;
+    else if (strcmp(index_text, "1") == 0) index = 1u;
+    else if (strcmp(index_text, "2") == 0) index = 2u;
+    else return false;
+  }
+  if (probe->tls_diagnostic.reason != reason || probe->tls_diagnostic.certificate_index != index)
+    fprintf(stderr, "validity diagnostic actual=%d:%zu expected=%d:%zu\n",
+        probe->tls_diagnostic.reason, probe->tls_diagnostic.certificate_index, reason, index);
+  return probe->tls_diagnostic.reason == reason && probe->tls_diagnostic.certificate_index == index;
 }
 
 static int run_python_ssl_server(const char *port_text,

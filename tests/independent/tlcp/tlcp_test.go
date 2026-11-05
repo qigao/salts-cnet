@@ -533,6 +533,7 @@ func TestTLCP(t *testing.T) {
 	for _, role := range []int{1, 2} {
 		t.Run(fmt.Sprintf("reject_future_role_%d", role), func(t *testing.T) {
 			t.Setenv("SALTS_TEST_TLS_VALIDITY_DIAGNOSTIC", "future")
+			t.Setenv("SALTS_TEST_TLS_VALIDITY_INDEX", fmt.Sprint(role-1))
 			bad := credentials(t, func(i int, cert *x509.Certificate) {
 				if i == role {
 					cert.NotBefore = time.Now().Add(time.Hour)
@@ -548,6 +549,7 @@ func TestTLCP(t *testing.T) {
 		})
 		t.Run(fmt.Sprintf("reject_expired_role_%d", role), func(t *testing.T) {
 			t.Setenv("SALTS_TEST_TLS_VALIDITY_DIAGNOSTIC", "expired")
+			t.Setenv("SALTS_TEST_TLS_VALIDITY_INDEX", fmt.Sprint(role-1))
 			bad := credentials(t, func(i int, cert *x509.Certificate) {
 				if i == role {
 					cert.NotBefore = time.Now().Add(-48 * time.Hour)

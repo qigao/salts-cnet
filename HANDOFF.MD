@@ -222,6 +222,17 @@
 - Invalid intervals and clock failure remain generic. Certificate positions are
   unknown unless reported explicitly; do not label every validity error index 0.
 
+## 2026-11-06 TLS validity certificate positions
+
+- GmSSL #33 records the peer-chain cursor at the actual failing validity check
+  and propagates it through all five TLS verifier call sites. Crypto copies it
+  only for expired/not-yet-valid failures. No certificate rescan or new clock
+  sample is involved; local-only anchors and generic errors remain unknown.
+- Independent RSA/P256 TLS1.2/1.3 fixtures exercise indices 0, 1 and 2 with
+  file/PEM/DER trust, plus unknown local-anchor/malformed-interval positions.
+  SM2 mTLS covers both endpoints; TLCP distinguishes signing/encryption leaves.
+  The native runner checks the owned diagnostic again after owner teardown.
+
 ## 2026-11-06 TSan audio runtime package indexes
 
 - The private PulseAudio runtime is installed before the Linux capture SDK

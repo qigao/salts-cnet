@@ -14,6 +14,60 @@ import (
 	"time"
 )
 
+// Return the real transmitted chain separately from the local trust anchor.
+func validityIdentity(t *testing.T, ec bool, target string, change func(*x509.Certificate)) (identity, [][]byte) {
+	t.Helper()
+	if target == "leaf" {
+		f := makeIdentity(t, "validity", ec, nil, change)
+		return f, [][]byte{f.leaf.Raw}
+	}
+	root := makeIdentity(t, "validity root", ec, nil)
+	template := *root.root
+	template.MaxPathLenZero = false
+	template.MaxPathLen = 2
+	if target == "anchor" {
+		change(&template)
+	}
+	der, err := x509.CreateCertificate(rand.Reader, &template, &template, root.key.Public(), root.key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	root.root, err = x509.ParseCertificate(der)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for path, contents := range map[string][]byte{root.ca: pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), root.ca + ".der": der} {
+		if err = os.WriteFile(path, contents, 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	issuer := root
+	var intermediates [][]byte
+	depth := 0
+	if target == "intermediate" {
+		depth = 1
+	} else if target == "upper_intermediate" {
+		depth = 2
+	}
+	for i := 0; i < depth; i++ {
+		ca := makeIdentity(t, fmt.Sprintf("validity CA %d", i), ec, &issuer, func(c *x509.Certificate) {
+			c.IsCA = true
+			c.KeyUsage = x509.KeyUsageCertSign
+			c.MaxPathLen = depth - i - 1
+			c.MaxPathLenZero = c.MaxPathLen == 0
+			if i == 0 {
+				change(c)
+			}
+		})
+		ca.root = ca.leaf // The next certificate is issued by this CA's key.
+		issuer = ca
+		intermediates = append([][]byte{ca.leaf.Raw}, intermediates...)
+	}
+	f := makeIdentity(t, "validity leaf", ec, &issuer)
+	f.ca = root.ca
+	return f, append([][]byte{f.leaf.Raw}, intermediates...)
+}
+
 func TestValidityDiagnostics(t *testing.T) {
 	if *native == "" {
 		t.Fatal("-native is required")
@@ -32,29 +86,12 @@ func TestValidityDiagnostics(t *testing.T) {
 					c.NotAfter = time.Now().Add(24 * time.Hour)
 				}
 			}
-			targets := []string{"leaf", "anchor"}
+			targets := []string{"leaf", "intermediate", "upper_intermediate", "anchor"}
 			if reason == "certificate" {
 				targets = []string{"leaf"}
 			}
 			for _, target := range targets {
-				var f identity
-				if target == "leaf" {
-					f = makeIdentity(t, "validity", ec, nil, change)
-				} else {
-					f = makeIdentity(t, "validity", ec, nil)
-					root := *f.root
-					change(&root)
-					der, err := x509.CreateCertificate(rand.Reader, &root, &root, f.key.Public(), f.key)
-					if err != nil {
-						t.Fatal(err)
-					}
-					if err = os.WriteFile(f.ca, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), 0600); err != nil {
-						t.Fatal(err)
-					}
-					if err = os.WriteFile(f.ca+".der", der, 0600); err != nil {
-						t.Fatal(err)
-					}
-				}
+				f, chain := validityIdentity(t, ec, target, change)
 				for _, version := range []uint16{tls.VersionTLS12, tls.VersionTLS13} {
 					for _, mode := range []string{"file", "pem", "der"} {
 						t.Run(fmt.Sprintf("ec_%t/%s/%s/tls%d/%s", ec, target, reason, version, mode), func(t *testing.T) {
@@ -65,6 +102,10 @@ func TestValidityDiagnostics(t *testing.T) {
 								expected = "handshake"
 							}
 							t.Setenv("SALTS_TEST_TLS_VALIDITY_DIAGNOSTIC", expected)
+							if reason != "certificate" && target != "anchor" {
+								index := map[string]string{"leaf": "0", "intermediate": "1", "upper_intermediate": "2"}[target]
+								t.Setenv("SALTS_TEST_TLS_VALIDITY_INDEX", index)
+							}
 							if mode != "file" {
 								t.Setenv("SALTS_TEST_TLS_MEMORY", mode)
 							}
@@ -88,7 +129,7 @@ func TestValidityDiagnostics(t *testing.T) {
 									done <- e
 									return
 								}
-								conn := tls.Server(raw, &tls.Config{MinVersion: version, MaxVersion: version, CurvePreferences: []tls.CurveID{tls.CurveP256}, CipherSuites: []uint16{tls.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256, tls.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256}, Certificates: []tls.Certificate{{Certificate: [][]byte{f.leaf.Raw}, PrivateKey: f.key}}})
+								conn := tls.Server(raw, &tls.Config{MinVersion: version, MaxVersion: version, CurvePreferences: []tls.CurveID{tls.CurveP256}, CipherSuites: []uint16{tls.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256, tls.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256}, Certificates: []tls.Certificate{{Certificate: chain, PrivateKey: f.key}}})
 								done <- conn.Handshake()
 							}()
 							protocol := "tls13"

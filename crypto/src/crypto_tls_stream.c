@@ -1887,8 +1887,11 @@ int crypto_tls_stream_handshake(crypto_tls_stream *state, bool *out_complete) {
     /* The provider's public getter only works after success. Its connection
      * result is also set on failed verification and remains internal here. */
     crypto_tls_failure_reason reason = crypto_tls_stream_verify_reason(engine->connection.verify_result);
+    size_t certificate_index = reason == CRYPTO_TLS_FAILURE_IDENTITY ? 0u : SIZE_MAX;
+    if (reason == CRYPTO_TLS_FAILURE_EXPIRED || reason == CRYPTO_TLS_FAILURE_NOT_YET_VALID)
+      certificate_index = engine->connection.verify_certificate_index;
     crypto_tls_stream_fail_handshake(state, status, reason,
-        reason == CRYPTO_TLS_FAILURE_IDENTITY ? 0u : SIZE_MAX);
+        certificate_index);
   }
   return status;
 }

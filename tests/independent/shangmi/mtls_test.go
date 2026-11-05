@@ -205,6 +205,7 @@ func TestShangMiMutualIndependent(t *testing.T) {
 		t.Run("reject_client_"+name, func(t *testing.T) {
 			if name == "expired" || name == "future" {
 				t.Setenv("SALTS_TEST_TLS_VALIDITY_DIAGNOSTIC", name)
+				t.Setenv("SALTS_TEST_TLS_VALIDITY_INDEX", "0")
 			}
 			if name == "key_usage" || name == "server_only_eku" {
 				t.Setenv("SALTS_TEST_TLS_VALIDITY_DIAGNOSTIC", "certificate")
@@ -272,6 +273,7 @@ func TestShangMiMutualNativeClient(t *testing.T) {
 		t.Run("reject_server_"+name, func(t *testing.T) {
 			if name == "expired" || name == "future" {
 				t.Setenv("SALTS_TEST_TLS_VALIDITY_DIAGNOSTIC", name)
+				t.Setenv("SALTS_TEST_TLS_VALIDITY_INDEX", "0")
 			}
 			if name == "key_usage" || name == "client_only_eku" {
 				t.Setenv("SALTS_TEST_TLS_VALIDITY_DIAGNOSTIC", "certificate")
