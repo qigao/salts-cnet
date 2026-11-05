@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
@@ -149,11 +150,20 @@ func runNativeClient(t *testing.T, f fixture, identity string, accept bool, corr
 }
 
 func runNativeServer(t *testing.T, f fixture, outcome string, corrupt ...string) {
+	runNativeServerWithClient(t, f, nil, outcome, corrupt...)
+}
+
+func runNativeServerWithClient(t *testing.T, f fixture, client *fixture, outcome string, corrupt ...string) {
 	t.Helper()
 	portPath := filepath.Join(t.TempDir(), "port")
 	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
 	defer cancel()
-	command := exec.CommandContext(ctx, *native, "--shangmi-client", portPath, f.certPath, f.keyPath, outcome)
+	args := []string{"--shangmi-client", portPath, f.certPath, f.keyPath, outcome}
+	if client != nil {
+		args = []string{"--shangmi-required-client", portPath, client.caPath, f.certPath, f.keyPath, outcome,
+			fmt.Sprintf("%x", sha256.Sum256(client.leaf.Raw))}
+	}
+	command := exec.CommandContext(ctx, *native, args...)
 	var output bytes.Buffer
 	command.Stdout, command.Stderr = &output, &output
 	if err := command.Start(); err != nil {
@@ -199,10 +209,14 @@ func runNativeServer(t *testing.T, f fixture, outcome string, corrupt ...string)
 	if len(corrupt) != 0 {
 		scenario = corrupt[0]
 	}
-	err = p.client(tls13gm.ClientConfig{DCID: []byte("formal TCP peer"), Roots: roots, ServerName: "localhost"}, scenario)
+	if client == nil {
+		err = p.client(tls13gm.ClientConfig{DCID: []byte("formal TCP peer"), Roots: roots, ServerName: "localhost"}, scenario)
+	} else {
+		err = p.mutualClient(f, *client, scenario)
+	}
 	if outcome == "reject" {
-		if !p.altered {
-			t.Fatalf("wire mutation did not execute: %v", err)
+		if (client == nil && !p.altered) || (client != nil && !p.authFlightSent) {
+			t.Fatalf("negative client flight did not execute: %v", err)
 		}
 		if err == nil {
 			kind, data, readErr := p.record()
@@ -236,6 +250,19 @@ func runNativeServer(t *testing.T, f fixture, outcome string, corrupt ...string)
 		err = p.expect(21, []byte{1, 0})
 	}
 	if outcome == "eof" {
+		// Ciphertext receipt does not prove the native SEND callback ran.
+		// Let the formal native peer publish completion before injecting EOF.
+		deadline := time.Now().Add(5 * time.Second)
+		for err == nil {
+			if _, readyErr := os.Stat(portPath + ".sent"); readyErr == nil {
+				break
+			}
+			if time.Now().After(deadline) {
+				err = errors.New("native SEND marker timed out")
+				break
+			}
+			time.Sleep(5 * time.Millisecond)
+		}
 		raw.Close()
 	}
 	if err != nil {

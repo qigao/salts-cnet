@@ -324,6 +324,12 @@ if(TARGET Salts::CNet)
     set_tests_properties(saltscore.cnet_shangmi_required_mtls PROPERTIES
       WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/independent/shangmi"
       ENVIRONMENT "CGO_ENABLED=0;GOWORK=off" TIMEOUT 180)
+    add_test(NAME saltscore.cnet_shangmi_mtls_independent
+      COMMAND "${SALTS_CNET_TEST_GO}" test -mod=readonly -count=1 -timeout=150s -run "^TestShangMiMutualIndependent$"
+        -args -native "$<TARGET_FILE:saltscore_cnet_tls_ca_san_test>")
+    set_tests_properties(saltscore.cnet_shangmi_mtls_independent PROPERTIES
+      WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/independent/shangmi"
+      ENVIRONMENT "CGO_ENABLED=0;GOWORK=off" TIMEOUT 180)
   endif()
 
   # Reuse the actual opt-in TinyTest cases, one fresh process per sample. The

@@ -94,3 +94,39 @@ func TestShangMiMutual(t *testing.T) {
 		mutual(t, corruptCertificate(t, credentials(t, nil)), client, "reject-client")
 	})
 }
+
+func TestShangMiMutualIndependent(t *testing.T) {
+	if *native == "" {
+		t.Fatal("missing native peer")
+	}
+	server, client := credentials(t, nil), clientCredentials(t, nil)
+	t.Run("verified_client", func(t *testing.T) { runNativeServerWithClient(t, server, &client, "close") })
+	t.Run("fragmented_client_flight", func(t *testing.T) { runNativeServerWithClient(t, server, &client, "close", "fragmented") })
+	t.Run("reject_raw_eof", func(t *testing.T) { runNativeServerWithClient(t, server, &client, "eof") })
+	for _, scenario := range []string{"missing", "certificate_verify", "server_context", "certificate_id", "tlcp_signature", "request_context", "finished"} {
+		t.Run("reject_"+scenario, func(t *testing.T) { runNativeServerWithClient(t, server, &client, "reject", scenario) })
+	}
+	t.Run("reject_unknown_client_ca", func(t *testing.T) {
+		bad := client
+		bad.caPath = credentials(t, nil).caPath
+		runNativeServerWithClient(t, server, &bad, "reject")
+	})
+	t.Run("reject_client_certificate_signature", func(t *testing.T) {
+		bad := corruptCertificate(t, clientCredentials(t, nil))
+		runNativeServerWithClient(t, server, &bad, "reject")
+	})
+	for name, change := range map[string]func(*x509.Certificate){
+		"expired": func(c *x509.Certificate) {
+			c.NotBefore = time.Now().Add(-48 * time.Hour)
+			c.NotAfter = time.Now().Add(-24 * time.Hour)
+		},
+		"future":          func(c *x509.Certificate) { c.NotBefore = time.Now().Add(time.Hour) },
+		"key_usage":       func(c *x509.Certificate) { c.KeyUsage = x509.KeyUsageKeyEncipherment },
+		"server_only_eku": func(c *x509.Certificate) { c.ExtKeyUsage = []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth} },
+	} {
+		t.Run("reject_client_"+name, func(t *testing.T) {
+			bad := clientCredentials(t, change)
+			runNativeServerWithClient(t, server, &bad, "reject")
+		})
+	}
+}
