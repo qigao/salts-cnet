@@ -281,6 +281,7 @@ typedef struct tls_case_options {
   cnet_tls_protocol_version server_minimum, server_maximum;
   const char *expected_version;
   crypto_tls_failure_reason expected_failure;
+  uint32_t client_depth, server_depth;
 } tls_case_options;
 
 static int run_case(const tls_case_options *options) {
@@ -320,7 +321,8 @@ static int run_case(const tls_case_options *options) {
                          : CNET_TLS_CLIENT_AUTH_NONE,
       .security_profile = options->security_profile,
       .peer_policy = options->server_peer_policy,
-      .minimum_version = options->server_minimum, .maximum_version = options->server_maximum};
+      .minimum_version = options->server_minimum, .maximum_version = options->server_maximum,
+      .verification_depth = options->server_depth};
   const cnet_tls_client_config client_tls_cfg = {
       .size = sizeof(cnet_tls_client_config),
       .ca_file = options->ca_file,
@@ -329,7 +331,8 @@ static int run_case(const tls_case_options *options) {
       .server_name = options->verified_hostname,
       .security_profile = options->security_profile,
       .peer_policy = options->client_peer_policy,
-      .minimum_version = options->client_minimum, .maximum_version = options->client_maximum};
+      .minimum_version = options->client_minimum, .maximum_version = options->client_maximum,
+      .verification_depth = options->client_depth};
   tls_probe client_probe = {0}, server_probe = {0};
   cnet_connect_options connect_options = {0};
   cnet_connection outbound = {0};
@@ -873,6 +876,9 @@ static int run_python_ssl_server(const char *port_text,
       .security_profile = tlcp ? CNET_TLS_SECURITY_PROFILE_TLCP11 :
           shangmi ? CNET_TLS_SECURITY_PROFILE_SHANGMI_TLS13 : CNET_TLS_SECURITY_PROFILE_STANDARD,
       .peer_policy = owned_policy, .key_update_record_limit = rotation_limit,
+      /* TLCP's two leaves do not consume issuer depth. Exercise the smallest
+       * explicit bound with independent dual-certificate peers. */
+      .verification_depth = tlcp ? 1u : 0u,
       .peer_key_update_limit = peer_limit && strcmp(protocol, "shangmi13-limit-off") != 0 ? 2u : 0u,
       .minimum_version = !tlcp && !shangmi ? (strcmp(protocol, "tls12") == 0 ? 12 : 13) : 0,
       .maximum_version = !tlcp && !shangmi ? (strcmp(protocol, "tls12") == 0 ? 12 : 13) : 0};
@@ -1460,14 +1466,15 @@ static int saltscore_original_entry_test_cnet_tls_ca_san_c(int argc, char **argv
   }
   if (argc == 8 && strcmp(argv[1], "--shangmi-required-client") == 0)
     return run_python_ssl_client(argv[2], argv[3], argv[4], argv[5], "shangmi13-mtls", argv[6], argv[7]);
-  if (argc == 12 && strcmp(argv[1], "--shangmi-mtls") == 0) {
+  if ((argc == 12 && strcmp(argv[1], "--shangmi-mtls") == 0) ||
+      (argc == 16 && strcmp(argv[1], "--depth-mtls") == 0)) {
     const bool success = strcmp(argv[8], "accept") == 0;
     const bool policy_client = strcmp(argv[8], "reject-policy-client") == 0;
     const bool policy_server = strcmp(argv[8], "reject-policy-server") == 0;
     const bool server_rejection = strcmp(argv[8], "reject-server") == 0 || policy_server;
     if ((!success && !server_rejection && !policy_client && strcmp(argv[8], "reject-client") != 0) ||
         ((strcmp(argv[6], "-") == 0) != (strcmp(argv[7], "-") == 0))) return 2;
-    const tls_case_options mtls = {
+    tls_case_options mtls = {
         .label = "production CNet ShangMi REQUIRED-mTLS",
         .ca_file = argv[2], .server_ca_file = argv[3],
         .server_cert_file = argv[4], .server_key_file = argv[5],
@@ -1478,6 +1485,21 @@ static int saltscore_original_entry_test_cnet_tls_ca_san_c(int argc, char **argv
         .security_profile = CNET_TLS_SECURITY_PROFILE_SHANGMI_TLS13,
         .expected_server_fingerprint = argv[9], .expected_client_fingerprint = argv[10],
         .expected_server_binding = argv[11]};
+    if (argc == 16) {
+      if ((strcmp(argv[12], "0") && strcmp(argv[12], "1")) ||
+          (strcmp(argv[13], "0") && strcmp(argv[13], "12") && strcmp(argv[13], "13")) ||
+          strlen(argv[14]) != 1u || argv[14][0] < '0' || argv[14][0] > '5' ||
+          strlen(argv[15]) != 1u || argv[15][0] < '0' || argv[15][0] > '5') return 2;
+      mtls.security_profile = (cnet_tls_security_profile)(argv[12][0] - '0');
+      mtls.client_minimum = mtls.client_maximum = mtls.server_minimum = mtls.server_maximum =
+          (cnet_tls_protocol_version)atoi(argv[13]);
+      mtls.client_depth = (uint32_t)(argv[14][0] - '0');
+      mtls.server_depth = (uint32_t)(argv[15][0] - '0');
+      mtls.release_tls_context_early = true;
+      mtls.expected_failure = success ? CRYPTO_TLS_FAILURE_NONE : CRYPTO_TLS_FAILURE_DEPTH;
+      if (mtls.security_profile == CNET_TLS_SECURITY_PROFILE_STANDARD) mtls.expected_server_binding = NULL;
+      return run_case(&mtls);
+    }
     return success || policy_client || policy_server
         ? run_mutual_peer_policy_case(&mtls, policy_client, policy_server) : run_case(&mtls);
   }

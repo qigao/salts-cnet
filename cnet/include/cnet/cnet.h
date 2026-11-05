@@ -448,6 +448,11 @@ typedef struct cnet_tls_client_config {
    * Unknown/reversed bounds: EINVAL; profile conflict: ENOTSUP. */
   cnet_tls_protocol_version minimum_version;
   cnet_tls_protocol_version maximum_version;
+  /** Maximum peer-supplied issuer certificates after the leaf (after both
+   * TLCP leaves). Transmitted anchors count; local anchors do not. Zero uses
+   * default 4; explicit 1..5 is immutable. Above 5: EINVAL. Nonzero with iOS
+   * implicit system trust: ENOTSUP. Does not bypass other verification. */
+  uint32_t verification_depth;
 } cnet_tls_client_config;
 
 /** Configuration copied into a reusable server context during initialization. */
@@ -487,6 +492,8 @@ typedef struct cnet_tls_server_config {
    * Unknown/reversed bounds: EINVAL; profile conflict: ENOTSUP. */
   cnet_tls_protocol_version minimum_version;
   cnet_tls_protocol_version maximum_version;
+  /** Same depth contract as client; nonzero requires REQUIRED client auth. */
+  uint32_t verification_depth;
 } cnet_tls_server_config;
 
 typedef struct cnet_connect_options {
