@@ -149,7 +149,7 @@ primitives described above.
 
 ### TLS 1.3 peer key updates
 
-`saltscore.cnet_shangmi_key_update` covers 15 independent scenarios: one-way and
+`saltscore.cnet_shangmi_key_update` covers 15 peer-initiated scenarios: one-way and
 requested updates, consecutive requests before an application send, both native
 directions and REQUIRED-mTLS server connections. The peer derives each traffic
 secret with `traffic upd`, resets that direction's sequence and authenticates
@@ -165,10 +165,39 @@ both roles with SM4-GCM/SM3 and AES-128-GCM/SHA-256. It authenticates the exact
 two-record output and checks that control-record retries report zero application
 bytes. All tests link the pinned provider; no second GmSSL build is embedded.
 
-This qualifies peer-initiated updates under the existing owner/write contracts.
-Application-selected local rotation limits, update-flood policy and fragmented
-post-handshake messages remain separate work, as do session resumption, DTLS
-and hardware-backed keys. Additional peer admission is described below.
+### Application-selected local key rotation
+
+Both Crypto and CNet client/server TLS configurations expose
+`key_update_record_limit`. For SHANGMI_TLS13, select a threshold from 1 through
+`CRYPTO_TLS_STREAM_KEY_UPDATE_RECORD_LIMIT_MAX` (CNet has the corresponding
+`CNET_TLS_KEY_UPDATE_RECORD_LIMIT_MAX`), currently 2^20. Zero keeps automatic
+local rotation disabled while mandatory peer-requested responses remain active.
+A value above the maximum returns EINVAL. A nonzero threshold with STANDARD or
+TLCP returns ENOTSUP before allocation/trust loading: the STANDARD profile can
+negotiate TLS 1.2, which cannot honor TLS 1.3 KeyUpdate.
+
+The threshold counts records under the current sending application traffic key,
+not bytes, API writes or elapsed time. At the threshold, the next application
+send first emits KeyUpdate under the old key, rotates the sending secret and
+resets its sequence. Local initiation requests reciprocal rotation; an already
+pending peer response can perform the same sending-key transition without
+another reciprocal request. Control records are separate overhead. Immutable
+TLS contexts own this setting; established connections keep their original
+context. No timer or background worker is added.
+
+The same formal CTest adds 12 independent local-rotation scenarios: thresholds
+1, 2, maximum and disabled, each with native client, server and REQUIRED-mTLS
+server. Five request/reply rounds assert exact update placement, repeated key
+transitions, no early update, successful decryption and reciprocal close under
+the final keys. CNet callbacks count only completed application writes.
+`saltscore.gmssl_tls_io_abi` now covers both local initiation and pending peer
+responses under one-byte-at-a-time writes for both roles and both AEAD suites.
+Configuration negatives reject unsupported profiles and out-of-range limits
+before reading deliberately absent trust/key files.
+
+Update-flood policy and fragmented post-handshake messages remain separate
+work, as do session resumption, DTLS and hardware-backed keys. Additional peer
+admission is described below.
 
 ### Authenticated-peer admission and revocation composition
 

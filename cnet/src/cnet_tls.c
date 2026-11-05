@@ -98,6 +98,7 @@ int cnet_tls_client_context_create(const cnet_tls_client_config *config, cnet_tl
     policy.alpn_protocol_count = config->alpn_protocol_count;
     policy.security_profile = (crypto_tls_stream_security_profile)config->security_profile;
     policy.peer_policy = config->peer_policy;
+    policy.key_update_record_limit = config->key_update_record_limit;
   }
   status = cnet_tls_status(crypto_tls_stream_client_context_create(&policy, &provider));
   return status == SALTS_OK ? cnet_tls_wrap_context(provider, false, out_context) : status;
@@ -153,6 +154,7 @@ int cnet_tls_server_init(cnet_tls_server *server, const cnet_tls_server_config *
   policy.alpn_protocol_count = config->alpn_protocol_count;
   policy.security_profile = (crypto_tls_stream_security_profile)config->security_profile;
   policy.peer_policy = config->peer_policy;
+  policy.key_update_record_limit = config->key_update_record_limit;
   status = cnet_tls_status(crypto_tls_stream_server_context_create(&policy, &provider));
   if (status != SALTS_OK) return status;
   status = cnet_tls_wrap_context(provider, true, &context);

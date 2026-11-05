@@ -82,7 +82,11 @@ func (p *recordPeer) sendKeyUpdate(request byte) error {
 }
 
 func (p *recordPeer) receiveKeyUpdate() error {
-	if err := p.expect(22, []byte{24, 0, 0, 1, 0}); err != nil {
+	return p.receiveKeyUpdateRequest(0)
+}
+
+func (p *recordPeer) receiveKeyUpdateRequest(request byte) error {
+	if err := p.expect(22, []byte{24, 0, 0, 1, request}); err != nil {
 		return err
 	}
 	next, err := tls13gm.HKDFExpandLabel(p.readSecret, "traffic upd", nil, 32)

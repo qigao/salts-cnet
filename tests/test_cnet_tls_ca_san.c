@@ -820,7 +820,12 @@ static int run_python_ssl_server(const char *port_text,
   const char *label = "production CNet -> independent secure stream peer";
   const bool tlcp = strcmp(protocol, "tlcp") == 0;
   const bool key_update_exchange = strcmp(protocol, "shangmi13-update") == 0;
-  const bool shangmi = strcmp(protocol, "shangmi13") == 0 || key_update_exchange;
+  const bool local_rotation = strncmp(protocol, "shangmi13-rotate", 15u) == 0;
+  const uint32_t rotation_limit = strcmp(protocol, "shangmi13-rotate1") == 0 ? 1u :
+      strcmp(protocol, "shangmi13-rotate2") == 0 ? 2u :
+      strcmp(protocol, "shangmi13-rotatemax") == 0 ? CNET_TLS_KEY_UPDATE_RECORD_LIMIT_MAX : 0u;
+  const unsigned rounds = local_rotation ? 5u : key_update_exchange ? 2u : 1u;
+  const bool shangmi = strcmp(protocol, "shangmi13") == 0 || key_update_exchange || local_rotation;
   const bool approved_identity = expect_success;
   const char *expected_version = strcmp(protocol, "tls12") == 0
                                      ? "TLSv1.2" : tlcp ? "TLCPv1.1" : "TLSv1.3";
@@ -842,7 +847,7 @@ static int run_python_ssl_server(const char *port_text,
       .key_file = client_key,
       .security_profile = tlcp ? CNET_TLS_SECURITY_PROFILE_TLCP11 :
           shangmi ? CNET_TLS_SECURITY_PROFILE_SHANGMI_TLS13 : CNET_TLS_SECURITY_PROFILE_STANDARD,
-      .peer_policy = owned_policy};
+      .peer_policy = owned_policy, .key_update_record_limit = rotation_limit};
   char uri[96] = {0};
   bool initialized = false;
   mem_buffer_t *outgoing = NULL;
@@ -863,7 +868,7 @@ static int run_python_ssl_server(const char *port_text,
 
   probe.client = &client;
   probe.expect_python_ok_record = true;
-  probe.receive_limit = key_update_exchange ? 2u : 1u;
+  probe.receive_limit = rounds;
   REQUIRE(cnet_client_init(&client, &client_cfg) == SALTS_OK);
   initialized = true;
   REQUIRE(snprintf(uri, sizeof(uri), "tls://127.0.0.1:%lu", port) > 0);
@@ -927,16 +932,16 @@ static int run_python_ssl_server(const char *port_text,
     REQUIRE(probe.received_count == 1u && probe.received_byte == 'o' &&
             probe.failed == 0u);
     REQUIRE(probe.sent_count == 1u && probe.failed == 0u);
-    if (key_update_exchange) {
-      /* The independent server updated keys before its first reply. A new
-       * native application send must honor the requested reciprocal update. */
+    for (unsigned round = 2u; round <= rounds; ++round) {
+      /* Each round forces a distinct application record across local or
+       * peer-requested rotations; completion counts exclude control records. */
       REQUIRE(cnet_receive(&client, outbound, 1u) == SALTS_OK);
       REQUIRE(send_byte(&client, outbound, 0x46u) == SALTS_OK);
       deadline = cmeta_monotonic_ms() + 9000u;
-      while ((probe.received_count != 2u || probe.sent_count != 2u) &&
+      while ((probe.received_count != round || probe.sent_count != round) &&
              !probe.terminal_count && cmeta_monotonic_ms() < deadline)
         REQUIRE(cnet_client_poll(&client, 1u, &events) == SALTS_OK);
-      REQUIRE(probe.received_count == 2u && probe.sent_count == 2u && probe.failed == 0u);
+      REQUIRE(probe.received_count == round && probe.sent_count == round && probe.failed == 0u);
     }
     REQUIRE(cnet_close(&client, outbound) == SALTS_OK);
     deadline = cmeta_monotonic_ms() + 9000u;
@@ -945,8 +950,8 @@ static int run_python_ssl_server(const char *port_text,
     REQUIRE(probe.terminal_count == 1u && probe.failed == 0u &&
             probe.last_connection_state == CNET_CONNECTION_CLOSED);
     REQUIRE(cnet_client_poll(&client, 0u, &events) == SALTS_OK);
-    REQUIRE(probe.terminal_count == 1u && probe.sent_count == (key_update_exchange ? 2u : 1u) &&
-            probe.received_count == (key_update_exchange ? 2u : 1u) && probe.failed == 0u);
+    REQUIRE(probe.terminal_count == 1u && probe.sent_count == rounds &&
+            probe.received_count == rounds && probe.failed == 0u);
   }
 
 cleanup:
@@ -1041,7 +1046,12 @@ static int run_python_ssl_client(const char *port_path,
   const char *expected_version = strcmp(protocol, "12") == 0
                                      ? "TLSv1.2" : tlcp ? "TLCPv1.1" : "TLSv1.3";
   const bool expect_idle_read_timeout = strcmp(outcome, "idle") == 0;
-  const bool expect_orderly_close = strcmp(outcome, "close") == 0;
+  const bool local_rotation = strncmp(outcome, "rotate", 6u) == 0;
+  const uint32_t rotation_limit = strcmp(outcome, "rotate1") == 0 ? 1u :
+      strcmp(outcome, "rotate2") == 0 ? 2u :
+      strcmp(outcome, "rotatemax") == 0 ? CNET_TLS_KEY_UPDATE_RECORD_LIMIT_MAX : 0u;
+  const unsigned rounds = local_rotation ? 5u : 1u;
+  const bool expect_orderly_close = strcmp(outcome, "close") == 0 || local_rotation;
   const bool expect_local_peer_close = strcmp(outcome, "localclose") == 0;
   const bool expect_final_send_close = strcmp(outcome, "sendclose") == 0;
   const bool expect_gated_receive = strcmp(outcome, "gated") == 0;
@@ -1072,12 +1082,14 @@ static int run_python_ssl_client(const char *port_path,
       .ca_file = server_auth_only ? NULL : ca_file,
       .client_auth = server_auth_only ? CNET_TLS_CLIENT_AUTH_NONE : CNET_TLS_CLIENT_AUTH_REQUIRED,
       .security_profile = tlcp ? CNET_TLS_SECURITY_PROFILE_TLCP11 :
-          shangmi ? CNET_TLS_SECURITY_PROFILE_SHANGMI_TLS13 : CNET_TLS_SECURITY_PROFILE_STANDARD};
+          shangmi ? CNET_TLS_SECURITY_PROFILE_SHANGMI_TLS13 : CNET_TLS_SECURITY_PROFILE_STANDARD,
+      .key_update_record_limit = rotation_limit};
   bool tls_live = false, server_live = false, listener_live = false;
   bool accepted = false, armed = false, response_sent = false;
   bool local_close_started = false;
   bool send_marker_published = false;
   bool gated_ready_published = false;
+  unsigned responses_admitted = 0u;
   unsigned polls_after_receive_admission = 0u;
   mem_buffer_t *outgoing = NULL;
   FILE *port_file = NULL;
@@ -1092,6 +1104,7 @@ static int run_python_ssl_client(const char *port_path,
       (!should_verify && strcmp(outcome, "reject") != 0))
     return 2;
   probe.client = &server;
+  probe.receive_limit = rounds;
   if (expect_incomplete_send) client_cfg.max_send_bytes = response_size;
   REQUIRE(cnet_tls_server_init(&tls_server, &tls_cfg) == SALTS_OK);
   tls_live = true;
@@ -1173,8 +1186,8 @@ static int run_python_ssl_client(const char *port_path,
       }
     }
     if (should_verify && !expect_idle_read_timeout &&
-        probe.received_count && !response_sent) {
-      REQUIRE(probe.received_count == 1u && probe.received_byte == 0x46u);
+        probe.received_count > responses_admitted && probe.sent_count == responses_admitted) {
+      REQUIRE(probe.received_count == responses_admitted + 1u && probe.received_byte == 0x46u);
       REQUIRE(probe.failed == 0u);
       outgoing = mem_get_buffer(mem_global(), response_size);
       REQUIRE(outgoing != NULL);
@@ -1189,6 +1202,9 @@ static int run_python_ssl_client(const char *port_path,
       mem_buffer_release(outgoing);
       outgoing = NULL;
       response_sent = true;
+      ++responses_admitted;
+      if (responses_admitted < rounds)
+        REQUIRE(cnet_receive(&server, probe.connection, 1u) == SALTS_OK);
     }
     if (((expect_invalid_close && !expect_eof_race) || strcmp(outcome, "accept") == 0) &&
         response_sent && probe.sent_count && !send_marker_published) {
@@ -1285,8 +1301,8 @@ static int run_python_ssl_client(const char *port_path,
      * Complete the NativeIO TLS_READ lease and publish exactly one CLOSED. */
     REQUIRE(!expect_local_peer_close || local_close_started);
     REQUIRE(armed && probe.connected_count == 1u);
-    REQUIRE(probe.received_count == 1u && probe.received_byte == 0x46u);
-    REQUIRE(response_sent && probe.sent_count == 1u);
+    REQUIRE(probe.received_count == rounds && probe.received_byte == 0x46u);
+    REQUIRE(response_sent && probe.sent_count == rounds);
     REQUIRE(probe.terminal_count == 1u && probe.failed == 0u);
     REQUIRE(probe.last_connection_state == CNET_CONNECTION_CLOSED);
     /* Drain one more zero-wait owner cycle. A cancel-vs-success native
@@ -1294,7 +1310,7 @@ static int run_python_ssl_client(const char *port_path,
     for (unsigned index = 0u; index < 2u; ++index) {
       REQUIRE(cnet_client_poll(&server, 0u, &events) == SALTS_OK);
       REQUIRE(probe.terminal_count == 1u);
-      REQUIRE(probe.received_count == 1u && probe.sent_count == 1u);
+      REQUIRE(probe.received_count == rounds && probe.sent_count == rounds);
     }
   } else if (expect_idle_read_timeout) {
     /* A real, authenticated idle peer keeps TCP open while CNet owns a
