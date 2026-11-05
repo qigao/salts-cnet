@@ -106,6 +106,42 @@ and separate encrypted TLCP signing/encryption keys, in both memory encodings.
 PKCS#12/PFX, other encrypted PKCS#8 algorithms and retained credential/key objects
 remain unimplemented. SDF/SKF hardware integration is deferred by user decision.
 
+### Handshake failure diagnostics
+
+`crypto_tls_stream_get_diagnostic` copies the first local handshake failure
+into a provider-neutral `crypto_tls_diagnostic`. Query from the stream's
+exclusive progress owner, including after failure and until destroy. ENOENT
+with a zero value means that no failure was recorded; it does not mean that
+authentication succeeded. Invalid queries and repeated handshake calls do not
+replace an existing diagnostic.
+
+CNet delivers the same value in `cnet_error.tls` during the FAILED callback.
+The owner snapshots it before draining alerts and destroying TLS state, and
+copies it through direct dispatch, queued dispatch and queue backpressure.
+The application can copy the value beyond callback return. It contains no
+borrowed certificate/key/provider pointers and allocates no diagnostic payload.
+Non-TLS, transport-only, context-init and post-handshake failures have NONE.
+
+Categories distinguish certificate, chain signature, trust anchor, depth,
+CRL/OCSP, constraints, certificate extensions, identity, absent required
+certificate, application peer-policy rejection, profile and platform trust
+failures when the underlying verifier supplies that information. Generic
+HANDSHAKE means that no more specific local verification result is available.
+An alert from the remote endpoint is not evidence of its detailed verification
+result. In particular, a server can reject SNI before sending any certificate;
+the client may observe a handshake alert or a transport close.
+
+Certificate position is zero-based in the presented peer chain. Identity
+failures identify leaf index 0; other currently unreported positions use
+SIZE_MAX. CERTIFICATE currently groups parsing/validity/usage errors rather
+than inventing an expired/not-yet-valid classification. More detailed provider
+reasons, certificate positions and configurable validation time/depth remain
+separate work.
+
+Formal tests cover real TLS trust/identity rejection, standard and ShangMi
+peer-policy rejection, TLS 1.2/1.3 first-failure stability and peer-alert
+classification, plus owned event snapshots under queue pressure and slot reuse.
+
 ### Context protocol-version policy
 
 Crypto/CNet client and server configurations expose `minimum_version` and

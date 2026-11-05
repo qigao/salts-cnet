@@ -6,6 +6,7 @@
 #include <cnet/resources.h>
 #include <cmeta_buffer.h>
 #include <crypto/tls_peer_policy.h>
+#include <crypto/tls_diagnostic.h>
 #include <crypto/tls_sm2_crl_policy.h>
 #include <crypto/tls_credentials.h>
 
@@ -92,6 +93,10 @@ typedef struct cnet_error {
   int status;
   int native_status;
   const char *stage;
+  /** Local TLS handshake failure snapshot, copied through terminal delivery.
+   * NONE for other failures. Contains no borrowed credential/provider storage;
+   * the application may copy this value beyond the callback. */
+  crypto_tls_diagnostic tls;
 } cnet_error;
 
 /** Borrowed view valid only for the duration of `on_receive`. */

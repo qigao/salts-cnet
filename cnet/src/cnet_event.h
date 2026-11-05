@@ -4,6 +4,7 @@
 #include "cnet_session.h"
 
 #include <cmeta_buffer.h>
+#include <crypto/tls_diagnostic.h>
 
 #include <stdatomic.h>
 #include <stddef.h>
@@ -63,6 +64,7 @@ typedef struct cnet_event {
   size_t size;
   size_t argument;
   mem_buffer_t *backing;
+  crypto_tls_diagnostic tls;
 } cnet_event;
 
 /** Single-consumer borrowed view; release invalidates `data`. */
@@ -78,6 +80,7 @@ typedef struct cnet_event_view {
   uint64_t _sequence;
   /** Canonical retained backing when publication supplied one; otherwise NULL. */
   mem_buffer_t *backing;
+  crypto_tls_diagnostic tls;
 } cnet_event_view;
 
 typedef int (*cnet_event_keep_waiting_fn)(void *context);

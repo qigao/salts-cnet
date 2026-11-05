@@ -95,6 +95,54 @@ spec("Opaque Crypto streams retain policy and bounded storage") {
       crypto_tls_stream_context_release(stream_context[i]);
     }
   }
+  for (unsigned version = 12u; version <= 13u; ++version) {
+    it("TLS %u peer alert does not invent a certificate verification result", version) {
+      tls_memory_contexts(CRYPTO_TLS_ENCODING_DER, 0u, version, 0u);
+      check_equal(crypto_tls_stream_create(stream_context[0], false, "localhost", 32768u,
+          &stream_pair[0]), CRYPTO_TLS_STREAM_OK);
+      bool complete = false;
+      check_equal(crypto_tls_stream_handshake(stream_pair[0], &complete), CRYPTO_TLS_STREAM_OK);
+      const unsigned char alert[] = {21, 3, 3, 0, 2, 2, 40};
+      check_equal(crypto_tls_stream_feed_cipher(stream_pair[0], alert, sizeof(alert)), CRYPTO_TLS_STREAM_OK);
+      check_equal(crypto_tls_stream_handshake(stream_pair[0], &complete), CRYPTO_TLS_STREAM_ECONNABORTED);
+      crypto_tls_diagnostic diagnostic;
+      check_equal(crypto_tls_stream_get_diagnostic(stream_pair[0], &diagnostic), CRYPTO_TLS_STREAM_OK);
+      check_equal(diagnostic.reason, CRYPTO_TLS_FAILURE_HANDSHAKE);
+      check_equal(diagnostic.certificate_index, SIZE_MAX);
+    }
+    it("TLS %u retains its first identity diagnostic across rejected retries", version) {
+      crypto_tls_diagnostic diagnostic = {CRYPTO_TLS_FAILURE_CERTIFICATE, 99u};
+      check_equal(crypto_tls_stream_get_diagnostic(NULL, &diagnostic), CRYPTO_TLS_STREAM_EINVAL);
+      check_equal(diagnostic.reason, CRYPTO_TLS_FAILURE_NONE);
+      tls_memory_contexts(CRYPTO_TLS_ENCODING_DER, 0u, version, 0u);
+      for (unsigned i = 0u; i < 2u; ++i) {
+        check_equal(crypto_tls_stream_create(stream_context[i], i != 0u,
+            i ? NULL : "127.0.0.2", 32768u, &stream_pair[i]), CRYPTO_TLS_STREAM_OK);
+        check_equal(crypto_tls_stream_get_diagnostic(stream_pair[i], &diagnostic), CRYPTO_TLS_STREAM_ENOENT);
+        check_equal(diagnostic.reason, CRYPTO_TLS_FAILURE_NONE);
+      }
+      bool complete[2] = {false, false};
+      int failure = CRYPTO_TLS_STREAM_OK;
+      for (unsigned step = 0u; step < 128u && failure == CRYPTO_TLS_STREAM_OK; ++step) {
+        failure = crypto_tls_stream_handshake(stream_pair[0], &complete[0]);
+        if (failure != CRYPTO_TLS_STREAM_OK) break;
+        transfer_stream_cipher(0u, 1u);
+        check_equal(crypto_tls_stream_handshake(stream_pair[1], &complete[1]), CRYPTO_TLS_STREAM_OK);
+        transfer_stream_cipher(1u, 0u);
+      }
+      check_equal(failure, CRYPTO_TLS_STREAM_ECONNABORTED);
+      check_false(complete[0]);
+      check_equal(crypto_tls_stream_get_diagnostic(stream_pair[0], NULL), CRYPTO_TLS_STREAM_EINVAL);
+      for (unsigned retry = 0u; retry < 3u; ++retry) {
+        complete[0] = true;
+        check_equal(crypto_tls_stream_handshake(stream_pair[0], &complete[0]), failure);
+        check_false(complete[0]);
+        check_equal(crypto_tls_stream_get_diagnostic(stream_pair[0], &diagnostic), CRYPTO_TLS_STREAM_OK);
+        check_equal(diagnostic.reason, CRYPTO_TLS_FAILURE_IDENTITY);
+        check_equal(diagnostic.certificate_index, (size_t)0u);
+      }
+    }
+  }
   for (unsigned encoding = 1u; encoding <= 2u; ++encoding) {
     for (unsigned bad = 1u; bad <= 19u; ++bad) {
       it("memory credentials encoding %u reject invalid input %u without a context", encoding, bad) {

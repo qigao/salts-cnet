@@ -346,7 +346,7 @@ static void cnet_client_observe(void *context, const cnet_dispatch_view *view) {
       ++impl->poll_callback_count;
     }
   } else if (view->kind == CNET_EVENT_STATE && record->observer.on_state != NULL) {
-    cnet_error error;
+    cnet_error error = {0};
     const cnet_error *error_view = NULL;
     if (view->state == CNET_EVENT_STATE_CONNECTED) {
       record->tls_command_pending = false;
@@ -360,6 +360,7 @@ static void cnet_client_observe(void *context, const cnet_dispatch_view *view) {
       error.status = cnet_client_cmeta_status(view->status) ? view->status : SALTS_EIO;
       error.native_status = cnet_client_cmeta_status(view->status) ? 0 : view->status;
       error.stage = cnet_client_stage_name(view->stage);
+      error.tls = view->tls;
       error_view = &error;
     }
     if (cnet_client_terminal(view->state) && record->ws_transport != NULL) {

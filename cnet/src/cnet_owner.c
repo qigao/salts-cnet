@@ -43,6 +43,7 @@ typedef struct cnet_owner_session {
   size_t active_requests;
   int pending_status;
   cnet_session_stage pending_stage;
+  crypto_tls_diagnostic tls_diagnostic;
   cnet_session_stage session_deadline_stage;
   mem_buffer_t *receive_buffer;
   /** Lazy single spare for the common one-outstanding-owned-slice case. */
@@ -465,8 +466,13 @@ static void cnet_owner_record_failure(cnet_owner_session *session, int status,
 static int cnet_owner_queue_state_event(cnet_owner_impl *impl, cnet_session_handle session,
                                         cnet_event_state state, int status,
                                         cnet_session_stage stage) {
-  const cnet_event event = {CNET_EVENT_STATE, session, state, status, stage, NULL, 0u};
+  cnet_event event = {CNET_EVENT_STATE, session, state, status, stage, NULL, 0u};
   int publish_status;
+
+  if (state == CNET_EVENT_STATE_FAILED && stage == CNET_SESSION_STAGE_HANDSHAKE) {
+    cnet_owner_session *record = cnet_owner_find_session(impl, session);
+    if (record) event.tls = record->tls_diagnostic;
+  }
 
   if (impl->pending_event_count == 0u) {
     publish_status = cnet_owner_publish_event(impl, &event);
@@ -1646,6 +1652,7 @@ static int cnet_owner_tls_pump_impl(cnet_owner_impl *impl, cnet_owner_session *s
     bool complete = false;
     status = cnet_tls_handshake(&session->tls, &complete);
     if (status != SALTS_OK) {
+      (void)cnet_tls_get_diagnostic(&session->tls, &session->tls_diagnostic);
       /* The GmSSL handshake may have already encoded a fatal Alert into the
        * bounded ciphertext output ring. Ordinary session failure would
        * cancel the write and close the TCP socket first (peer sees EOF).

@@ -79,6 +79,7 @@ typedef struct tls_probe {
   char tls_version[24];
   char tls_cipher[128];
   char failure_stage[32];
+  crypto_tls_diagnostic tls_diagnostic;
 } tls_probe;
 
 static void state_callback(void *user, cnet_connection connection,
@@ -90,6 +91,7 @@ static void state_callback(void *user, cnet_connection connection,
     /* Numeric terminal metadata only: never print credential material. */
     p->last_error_status = error->status;
     p->last_native_status = error->native_status;
+    p->tls_diagnostic = error->tls;
   }
   if (state == CNET_CONNECTION_TLS_HANDSHAKING)
     ++p->handshaking_count;
@@ -278,6 +280,7 @@ typedef struct tls_case_options {
   cnet_tls_protocol_version client_minimum, client_maximum;
   cnet_tls_protocol_version server_minimum, server_maximum;
   const char *expected_version;
+  crypto_tls_failure_reason expected_failure;
 } tls_case_options;
 
 static int run_case(const tls_case_options *options) {
@@ -427,6 +430,15 @@ static int run_case(const tls_case_options *options) {
 
   REQUIRE(accepted);
   if (!should_verify) {
+    const tls_probe *rejected = options->expect_server_rejection ? &server_probe : &client_probe;
+    if (options->expected_failure != CRYPTO_TLS_FAILURE_NONE) {
+      if (rejected->tls_diagnostic.reason != options->expected_failure)
+        fprintf(stderr, "TLS diagnostic: actual=%d expected=%d status=%d\n",
+            rejected->tls_diagnostic.reason, options->expected_failure, rejected->last_error_status);
+      REQUIRE(rejected->tls_diagnostic.reason == options->expected_failure);
+      REQUIRE(rejected->tls_diagnostic.certificate_index ==
+          (options->expected_failure == CRYPTO_TLS_FAILURE_IDENTITY ? 0u : SIZE_MAX));
+    }
     /* A rejection must never deliver plaintext or publish a verified
      * server connection. Only the handshake-owning side determines rejection. */
     REQUIRE(client_probe.received_count == 0u);
@@ -1536,15 +1548,25 @@ static int saltscore_original_entry_test_cnet_tls_ca_san_c(int argc, char **argv
   }
   const tls_case_options wrong_ca = {
       .label = "wrong trusted root",
+      .expected_failure = CRYPTO_TLS_FAILURE_TRUST_ANCHOR,
       .ca_file = CORE_TLS_TEST_P384_WRONG_CA,
       .verified_hostname = "localhost"};
   result = run_case(&wrong_ca);
   if (result) return result;
   const tls_case_options wrong_san = {
       .label = "wrong DNS SAN",
+      /* Unmatched SNI is rejected before a certificate. Depending on which
+       * terminal arrives first, the client observes peer alert or TCP close. */
       .ca_file = CORE_TLS_TEST_P384_CA,
       .verified_hostname = "wrong.example"};
-  return run_case(&wrong_san);
+  result = run_case(&wrong_san);
+  if (result) return result;
+  const tls_case_options wrong_ip = {
+      .label = "wrong IP SAN",
+      .expected_failure = CRYPTO_TLS_FAILURE_IDENTITY,
+      .ca_file = CORE_TLS_TEST_P384_CA,
+      .verified_hostname = "127.0.0.2"};
+  return run_case(&wrong_ip);
 }
 
 /* Production TLS policy comparison. See docs/CNET-TLS-BENCHMARK.md for the

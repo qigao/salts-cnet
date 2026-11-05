@@ -235,6 +235,9 @@ int cnet_tls_probe_peer_close(cnet_tls_state *state, bool *out_peer_closed, bool
   if (status == SALTS_OK && *out_peer_closed) state->peer_close_notify = true;
   return status;
 }
+int cnet_tls_get_diagnostic(const cnet_tls_state *state, crypto_tls_diagnostic *out) {
+  return cnet_tls_status(crypto_tls_stream_get_diagnostic(cnet_tls_stream(state), out));
+}
 int cnet_tls_shutdown(cnet_tls_state *state, bool *out_notify_generated, bool *out_peer_notify_received) {
   int status = cnet_tls_status(crypto_tls_stream_shutdown(cnet_tls_stream(state), out_notify_generated, out_peer_notify_received));
   if (status == SALTS_OK) {
