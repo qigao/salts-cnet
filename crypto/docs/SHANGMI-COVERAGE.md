@@ -18,6 +18,7 @@ source or falls back to plaintext.
 | SM9 key exchange | First-party bounded exchange over existing GmSSL primitives, with mandatory mutual key confirmation and distinct exchange keys | Published session-key and both confirmation vectors; identity/master/purpose binding, wrong phase, forged/replayed confirmations, RNG failure, cancellation and erasure; cross-platform CI required |
 | SM2 full authenticated key exchange | GB/T 32918.3 curveSM2 agreement with explicit static peer trust, Z bindings and mandatory mutual confirmation | GB/T 32918.5 Annex B shares/key/confirmation vectors; independent gmsm key vector; identity/static-key mismatch, invalid points, infinity sum, zero combined scalar, RNG/phase/replay/erasure; cross-platform CI required |
 | SM2 key containers | Canonical SPKI and PKCS#8 import/export; PBES2 PBKDF2-HMAC-SM3 / SM4-CBC password protection | Public API negatives, RNG failure, GmSSL key-file interop and independent Python bidirectional interop; cross-platform CI required |
+| SM2 certificate primitives | SM2 public-key extraction, local private-key binding and explicit-issuer signature verification | Native and independent gmsm certificates; ID/issuer/DER/algorithm/tamper negatives; these operations do not validate certificate trust |
 | CMS / SM2 certificate workflows | CMS enabled in provider; public workflow qualification pending | Generic ASN1 parsing and existing X509 inspection alone do not qualify signing or trust |
 | TLS 1.3 ShangMi / TLCP | Existing explicit stream profiles; complete independent handshake/authentication matrix remains separate | Existing provider settings/KATs do not replace protocol interoperation |
 | DTLS | Issue #188 resumed; implementation and CNet/SCTP qualification pending | Existing TLS tests do not qualify DTLS |
@@ -113,6 +114,54 @@ cover native GmSSL interoperation and independent Python hashlib/cryptography
 encryption/decryption, including optional inner fields, PRF NULL/absent
 parameters and omitted keyLength. Test-only Python providers introduce no
 explicit native OpenSSL/BoringSSL dependency.
+
+### SM2 certificate primitives
+
+`crypto/sm2_x509.h` consumes one canonical DER certificate up to 4096 bytes.
+`public_key` extracts a validated, finite curveSM2 point using the existing
+id-ecPublicKey/curveSM2 SPKI profile. `matches_private_key` verifies the local
+private scalar derives that subject public key. Neither operation verifies the
+certificate signature or establishes remote possession of the key.
+
+`verify_signature` checks SM2-with-SM3 over the exact encoded TBSCertificate,
+using the caller's explicit issuer public key and binary signing identity
+(1..8191 bytes). It rejects incorrect parameters/OIDs, inner/outer algorithm
+mismatch, noncanonical signature integers, out-of-range scalars, tampered
+content and wrong issuers/identities. Parameters may be absent or NULL, but
+inner/outer AlgorithmIdentifier encodings must match exactly. A subject key of
+another algorithm does not prevent checking its issuer's SM2 signature.
+
+Signing identities are not interchangeable. [RFC 8998 section 3.2.1](https://www.rfc-editor.org/rfc/rfc8998.html#section-3.2.1)
+distinguishes certificate signing identities from the TLS handshake identity;
+CAs can select their own certificate signing identity. The API does not guess
+or retry identities. A published OpenSSL 3 fixture signs with an empty identity;
+the formal test independently establishes that fact with native primitives and
+checks rejection under the supported nonempty-ID profile. This fixture also
+uses an alternate id-SM2 SPKI OID, outside the extraction profile.
+
+All operations are synchronous, allocation-free and borrow input only during
+the call. Extraction returns an owned 65-byte public key; admitted failures
+clear it, while invalid buffer admission preserves it. No pointer to a parsed
+view, provider key or temporary private material escapes the API.
+
+Successful signature verification does not check dates, CA constraints, KU/EKU,
+critical extensions, SAN/hostname, issuer-name chaining, policy or revocation.
+It does not select a trust anchor. Applications must complete those checks
+before authenticating a peer; a self-signature does not establish trust.
+Formal fixtures deliberately include expired certificates and an unsupported
+subject curve with a valid issuer signature to preserve this separation.
+The TLS trust path is unchanged; full SM2 certificate/CMS profile qualification
+remains open in #219.
+
+`crypto.x509.sm2_signatures` contains the native positive/negative cases and
+the attributed OpenSSL fixture from [gmsm v0.41.1](https://github.com/emmansun/gmsm/blob/v0.41.1/smx509/x509_additional_test.go).
+`crypto.x509.sm2_independent` uses a pinned, test-only gmsm Go module to sign
+fresh certificates and call the production-linked native peer through pipes.
+It covers standard, embedded-NUL and maximum identities, separate issuer and
+subject keys, tampering and authentication negatives. Go is required for native
+formal tests; Android remains build-only. CI caches the Go modules/builds with
+the existing SCTP peer. No Go code or new provider is linked into production,
+and no extra consumer/smoke CMake project is created.
 
 ### SM2 confirmed agreement
 

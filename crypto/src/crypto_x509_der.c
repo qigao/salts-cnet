@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: Apache-2.0
- * Pure DER structural inspection. TLS/GmSSL remain sole authorities for
- * authentication, chain building, signature and hostname validation.
+ * Pure DER structural inspection. Signature operations and trust/profile
+ * decisions belong to separate Crypto APIs; this inspector authenticates nothing.
  */
 #include <crypto/x509_der.h>
 
