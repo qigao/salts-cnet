@@ -1545,7 +1545,36 @@ cleanup:
 #include "tls_peer_policy_cases.h"
 #include "tls_sm2_crl_policy_cases.h"
 
+/* Independent Go envelopes exercise both context roles without opening sockets.
+ * Inputs are erased on return; any admitted failure must publish no context. */
+static int run_encrypted_credential_admission(const char *ca, const char *cert,
+    const char *key, bool accept, int expected) {
+  const char *label = "independent encrypted PKCS8 admission";
+  tls_test_memory *m = calloc(1u, sizeof(*m));
+  cnet_tls_client client = {0};
+  cnet_tls_server server = {0};
+  int result = 0;
+  REQUIRE(m != NULL);
+  REQUIRE(tls_test_prepare(m, ca, cert, key, false) == SALTS_OK);
+  cnet_tls_client_config cc = {.size = sizeof(cc), .ca_data = &m->ca, .credentials = &m->credentials};
+  cnet_tls_server_config sc = {.size = sizeof(sc), .credentials = &m->credentials};
+  REQUIRE(cnet_tls_client_init(&client, &cc) == expected);
+  REQUIRE(cnet_tls_server_init(&server, &sc) == expected);
+  REQUIRE((client.impl != NULL) == accept && (server.impl != NULL) == accept);
+cleanup:
+  tls_test_memory_free(m);
+  if (cnet_tls_client_destroy(&client) != SALTS_OK) result = 1;
+  if (cnet_tls_server_destroy(&server) != SALTS_OK) result = 1;
+  return result;
+}
+
 static int saltscore_original_entry_test_cnet_tls_ca_san_c(int argc, char **argv) {
+  if (argc == 6 && strcmp(argv[1], "--encrypted-credential-admission") == 0) {
+    const bool accept = strcmp(argv[5], "accept") == 0;
+    if (!accept && strcmp(argv[5], "reject") != 0 && strcmp(argv[5], "range") != 0) return 2;
+    return run_encrypted_credential_admission(argv[2], argv[3], argv[4], accept,
+        accept ? SALTS_OK : strcmp(argv[5], "range") == 0 ? SALTS_ERANGE : SALTS_EIO);
+  }
   if (argc == 10 && strcmp(argv[1], "--tls-client-identities") == 0) {
     if (strcmp(argv[8], "accept") != 0 && strcmp(argv[8], "reject") != 0) return 2;
     return run_python_ssl_server(argv[2], argv[3], argv[4], argv[5],

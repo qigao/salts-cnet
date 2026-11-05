@@ -67,9 +67,18 @@ func TestShangMiMutual(t *testing.T) {
 	memoryFixtures(t, server.caPath, server.certPath, server.keyPath, client.caPath, client.certPath, client.keyPath)
 	encryptedMemoryFixture(t, server.keyPath)
 	encryptedMemoryFixture(t, client.keyPath)
+	encryptedMemoryFixture(t, server.keyPath, true)
+	encryptedMemoryFixture(t, client.keyPath, true)
 	for _, mode := range []string{"pem", "der"} {
 		t.Run("memory_"+mode, func(t *testing.T) {
 			t.Setenv("SALTS_TEST_TLS_MEMORY", mode)
+			mutual(t, server, client, "accept")
+			runNativeServerWithClient(t, server, &client, "close")
+			runNativeClientWithIdentity(t, server, &client, "localhost", true, "")
+		})
+		t.Run("aes_encrypted_memory_"+mode, func(t *testing.T) {
+			t.Setenv("SALTS_TEST_TLS_MEMORY", mode)
+			t.Setenv("SALTS_TEST_TLS_ENCRYPTED", "aes")
 			mutual(t, server, client, "accept")
 			runNativeServerWithClient(t, server, &client, "close")
 			runNativeClientWithIdentity(t, server, &client, "localhost", true, "")
@@ -119,7 +128,7 @@ func TestShangMiMutual(t *testing.T) {
 	})
 }
 
-func encryptedMemoryFixture(t *testing.T, path string) {
+func encryptedMemoryFixture(t *testing.T, path string, aes ...bool) {
 	t.Helper()
 	plain, err := os.ReadFile(path + ".der")
 	if err != nil {
@@ -129,15 +138,20 @@ func encryptedMemoryFixture(t *testing.T, path string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	der, err := pkcs8.MarshalPrivateKey(key, []byte("memory\x00sign"),
-		pkcs.NewPBESEncrypter(pkcs.SM4CBC, pkcs.NewPBKDF2Opts(pkcs.SM3, 16, 10000)))
+	suffix := ".encrypted"
+	encrypter := pkcs.NewPBESEncrypter(pkcs.SM4CBC, pkcs.NewPBKDF2Opts(pkcs.SM3, 16, 10000))
+	if len(aes) != 0 && aes[0] {
+		suffix = ".aes"
+		encrypter = pkcs.NewPBESEncrypter(pkcs.AES256CBC, pkcs.NewPBKDF2Opts(pkcs.SHA256, 16, 10000))
+	}
+	der, err := pkcs8.MarshalPrivateKey(key, []byte("memory\x00sign"), encrypter)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(path+".encrypted.der", der, 0600); err != nil {
+	if err := os.WriteFile(path+suffix+".der", der, 0600); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(path+".encrypted", pem.EncodeToMemory(&pem.Block{Type: "ENCRYPTED PRIVATE KEY", Bytes: der}), 0600); err != nil {
+	if err := os.WriteFile(path+suffix, pem.EncodeToMemory(&pem.Block{Type: "ENCRYPTED PRIVATE KEY", Bytes: der}), 0600); err != nil {
 		t.Fatal(err)
 	}
 }

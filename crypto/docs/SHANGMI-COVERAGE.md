@@ -89,9 +89,11 @@ Passwords use a byte pointer and length (up to 1024 bytes); embedded NULs are
 significant. NULL/0 selects plaintext, while a non-NULL pointer with zero length
 selects an empty password. Password bytes are borrowed only during init.
 Encrypted inputs use DER `EncryptedPrivateKeyInfo` or `ENCRYPTED PRIVATE KEY`
-PEM: PBES2, explicit PBKDF2-HMAC-SM3, SM4-CBC, 8..64-byte salt, 16-byte IV,
-optional key length absent or 16, and 10000..1000000 iterations. An omitted PRF
-is rejected; it is not reinterpreted as SM3. Padded ciphertext is capped at
+PEM: PBES2 with either explicit PBKDF2-HMAC-SM3 / SM4-CBC or explicit
+PBKDF2-HMAC-SHA256 / AES-256-CBC. Salt is 8..64 bytes, IV is 16 bytes, optional
+key length is absent or the cipher key size (16 or 32), and iterations are
+10000..1000000. PRF AlgorithmIdentifier parameters may be absent or NULL; an
+omitted PRF is rejected, including the implicit SHA1 default. Padded ciphertext is capped at
 8192 bytes before derivation/decryption; decoded keys still undergo exact
 PKCS#8 parsing and certificate binding. Derived keys, cipher state and decoded
 private keys are cleared on every exit. Unsupported schemes and malformed
@@ -103,7 +105,21 @@ salt/key-length/PRF admission, padding and output bounds. Independent Go fixture
 cover encrypted SM2 credentials in native/native and independent ShangMi mTLS,
 and separate encrypted TLCP signing/encryption keys, in both memory encodings.
 
-PKCS#12/PFX, other encrypted PKCS#8 algorithms and retained credential/key objects
+The AES credential tests use independently generated Go standard-library PBES2
+fixtures for RSA/P256 in PEM/DER: explicit/absent key length and PRF parameters,
+empty/binary passwords, salt/iteration bounds, wrong passwords, invalid padding,
+invalid plaintext, malformed/truncated envelopes, unsupported parameters, output
+capacity and key/certificate mismatch. Both context roles must fail atomically.
+Authenticated TLS1.2/1.3 with preconfigured encrypted identities releases the
+input/password storage before progress. Independent gmsm fixtures additionally
+qualify AES-protected SM2 credentials in native/native and independent ShangMi
+mTLS, and both TLCP server keys with separate passwords. The existing SM3/SM4
+cases remain covered. CBC envelope encryption does not provide authentication;
+strict PKCS8 parsing and certificate binding remain mandatory. This addition
+applies to TLS memory credentials; the separate SM2 key-container export API
+keeps its documented SM3/SM4 protection format.
+
+PKCS#12/PFX, AES128/192, other encrypted PKCS#8 algorithms and retained credential/key objects
 remain unimplemented. SDF/SKF hardware integration is deferred by user decision.
 
 ### Immutable server identity selection
