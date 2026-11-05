@@ -148,6 +148,10 @@ func TestShangMiMutualIndependent(t *testing.T) {
 	}
 	server, client := credentials(t, nil), clientCredentials(t, nil)
 	t.Run("verified_client", func(t *testing.T) { runNativeServerWithClient(t, server, &client, "close") })
+	t.Run("certificate_signature_policy", func(t *testing.T) {
+		t.Setenv("SALTS_TEST_TLS_SM2_CERT_POLICY", "1")
+		runNativeServerWithClient(t, server, &client, "close")
+	})
 	t.Run("fragmented_client_flight", func(t *testing.T) { runNativeServerWithClient(t, server, &client, "close", "fragmented") })
 	t.Run("reject_raw_eof", func(t *testing.T) { runNativeServerWithClient(t, server, &client, "eof") })
 	for _, scenario := range []string{"missing", "certificate_verify", "server_context", "certificate_id", "tlcp_signature", "request_context", "finished"} {
@@ -206,6 +210,10 @@ func TestShangMiMutualNativeClient(t *testing.T) {
 		}
 	}
 	t.Run("verified_mutual_client", func(t *testing.T) { run(t, server, true, "") })
+	t.Run("certificate_signature_policy", func(t *testing.T) {
+		t.Setenv("SALTS_TEST_TLS_SM2_CERT_POLICY", "1")
+		run(t, server, true, "")
+	})
 	t.Run("verified_ip_identity", func(t *testing.T) { runNativeClientWithIdentity(t, server, &client, "127.0.0.1", true, "") })
 	for _, identity := range []string{"wrong.example", "127.0.0.2"} {
 		t.Run("reject_identity_"+identity, func(t *testing.T) { runNativeClientWithIdentity(t, server, &client, identity, false, "") })

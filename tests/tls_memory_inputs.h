@@ -50,6 +50,13 @@ static int tls_test_prepare(tls_test_memory *m, const char *ca, const char *cert
   return status;
 }
 static int tls_test_server_init(cnet_tls_server *server, const cnet_tls_server_config *config) {
+  const cnet_tls_signature_scheme sm2 = CRYPTO_TLS_SIGNATURE_SM2_SM3;
+  cnet_tls_server_config certificate_policy = *config;
+  if (getenv("SALTS_TEST_TLS_SM2_CERT_POLICY")) {
+    certificate_policy.certificate_signature_algorithms = &sm2;
+    certificate_policy.certificate_signature_algorithm_count = 1;
+    config = &certificate_policy;
+  }
   const char *alternate = getenv("SALTS_TEST_TLS_ALT_CERT");
   const bool use_memory = getenv("SALTS_TEST_TLS_MEMORY") != NULL;
   if (!alternate && !use_memory) return cnet_tls_server_init(server, config);
@@ -92,6 +99,16 @@ static int tls_test_server_init(cnet_tls_server *server, const cnet_tls_server_c
 
 static int tls_test_connect(cnet_client *client, const cnet_connect_options *options,
     cnet_connection *out) {
+  const cnet_tls_signature_scheme sm2 = CRYPTO_TLS_SIGNATURE_SM2_SM3;
+  cnet_tls_client_config certificate_policy;
+  cnet_connect_options configured = *options;
+  if (options->tls && getenv("SALTS_TEST_TLS_SM2_CERT_POLICY")) {
+    certificate_policy = *options->tls;
+    certificate_policy.certificate_signature_algorithms = &sm2;
+    certificate_policy.certificate_signature_algorithm_count = 1;
+    configured.tls = &certificate_policy;
+    options = &configured;
+  }
   const char *alternate = getenv("SALTS_TEST_TLS_CLIENT_ALT_CERT");
   const bool use_memory = getenv("SALTS_TEST_TLS_MEMORY") != NULL;
   if ((!alternate && !use_memory) || !options->tls) return cnet_connect(client, options, out);

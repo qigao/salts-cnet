@@ -101,13 +101,20 @@ func TestClientIdentities(t *testing.T) {
 	ec := makeIdentity(t, "ec", true, &first)
 	for _, version := range []uint16{tls.VersionTLS12, tls.VersionTLS13} {
 		for _, mode := range []string{"file", "pem", "der"} {
-			for _, scenario := range []string{"first_ca", "second_ca", "range_second_ca", "ordered", "empty_ca", "signature", "no_match", "no_request"} {
+			scenarios := []string{"first_ca", "second_ca", "range_second_ca", "ordered", "empty_ca", "signature", "no_match", "no_request"}
+			if version == tls.VersionTLS13 {
+				scenarios = append(scenarios, "separate_certificate")
+			}
+			for _, scenario := range scenarios {
 				t.Run(fmt.Sprintf("tls%d/%s/%s", version, mode, scenario), func(t *testing.T) {
 					a, b := first, second
 					want := first.leaf
 					hints := x509.NewCertPool()
 					auth := tls.RequireAndVerifyClientCert
 					switch scenario {
+					case "separate_certificate":
+						t.Setenv("SALTS_TEST_TLS_SEPARATE_CERT_SIGNATURES", "1")
+						hints.AddCert(first.root)
 					case "first_ca":
 						hints.AddCert(first.root)
 					case "range_second_ca":

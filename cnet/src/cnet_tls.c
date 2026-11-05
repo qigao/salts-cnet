@@ -109,6 +109,8 @@ int cnet_tls_client_context_create(const cnet_tls_client_config *config, cnet_tl
     policy.cipher_suite_count = config->cipher_suite_count;
     policy.signature_algorithms = config->signature_algorithms;
     policy.signature_algorithm_count = config->signature_algorithm_count;
+    policy.certificate_signature_algorithms = config->certificate_signature_algorithms;
+    policy.certificate_signature_algorithm_count = config->certificate_signature_algorithm_count;
     policy.identities = config->identities;
     policy.identity_count = config->identity_count;
   }
@@ -177,6 +179,8 @@ int cnet_tls_server_init(cnet_tls_server *server, const cnet_tls_server_config *
   policy.cipher_suite_count = config->cipher_suite_count;
   policy.signature_algorithms = config->signature_algorithms;
   policy.signature_algorithm_count = config->signature_algorithm_count;
+  policy.certificate_signature_algorithms = config->certificate_signature_algorithms;
+  policy.certificate_signature_algorithm_count = config->certificate_signature_algorithm_count;
   policy.identities = config->identities;
   policy.identity_count = config->identity_count;
   status = cnet_tls_status(crypto_tls_stream_server_context_create(&policy, &provider));

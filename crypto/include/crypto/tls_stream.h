@@ -135,13 +135,22 @@ typedef struct crypto_tls_stream_client_config {
    * SM2/SM3 only. Pointer/count mismatch, excess count or duplicates: EINVAL;
    * unsupported schemes/profile/version conflicts: ENOTSUP, before trust I/O.
    * Applies to handshake signatures and certificate-chain signature selection
-   * and admission; there is no separate certificate-signature list. Local keys,
+   * and admission when certificate_signature_algorithms is absent. Local keys,
    * peer offers and certificate signatures must also be compatible.
    * iOS implicit system trust with an explicit list: ENOTSUP (issuer keys
    * unavailable to enforce the final certificate signature). Explicit anchors
    * work normally. Trust, identity, purpose and revocation remain mandatory. */
   const crypto_tls_signature_scheme *signature_algorithms;
   size_t signature_algorithm_count;
+  /** Independent TLS1.3 certificate-chain signature allowlist, copied at init.
+   * NULL/0 uses signature_algorithms. Explicit lists contain 1..4 unique
+   * RSA-PKCS1-SHA256 or ECDSA P256/SHA256, P384/SHA384 (STANDARD), or SM2/SM3
+   * (SHANGMI). RSA-PSS certificate signatures are unsupported. STANDARD must
+   * explicitly select TLS1.3 only; ranges/TLS1.2/TLCP return ENOTSUP before I/O.
+   * Controls certificate extension offers, selection and peer-chain verification.
+   * Handshake signatures remain controlled by signature_algorithms. */
+  const crypto_tls_signature_scheme *certificate_signature_algorithms;
+  size_t certificate_signature_algorithm_count;
   /** Immutable, ordered client identities (1..CLIENT_IDENTITY_MAX_COUNT).
    * Excludes top-level cert_file/key_file/key_password/credentials. NULL/0
    * preserves the single-identity configuration. All inputs are copied during
@@ -203,6 +212,15 @@ typedef struct crypto_tls_stream_server_config {
   /** Same immutable signature allowlist contract as the client configuration. */
   const crypto_tls_signature_scheme *signature_algorithms;
   size_t signature_algorithm_count;
+  /** Independent TLS1.3 certificate-chain signature allowlist, copied at init.
+   * NULL/0 uses signature_algorithms. Explicit lists contain 1..4 unique
+   * RSA-PKCS1-SHA256 or ECDSA P256/SHA256, P384/SHA384 (STANDARD), or SM2/SM3
+   * (SHANGMI). RSA-PSS certificate signatures are unsupported. STANDARD must
+   * explicitly select TLS1.3 only; ranges/TLS1.2/TLCP return ENOTSUP before I/O.
+   * Controls certificate extension offers, selection and peer-chain verification.
+   * Handshake signatures remain controlled by signature_algorithms. */
+  const crypto_tls_signature_scheme *certificate_signature_algorithms;
+  size_t certificate_signature_algorithm_count;
   /** Optional ordered identity set (1..SERVER_IDENTITY_MAX_COUNT), replacing
    * cert_file/key_file/key_password/credentials, which must then be NULL.
    * NULL/0 retains single-identity configuration. All entries are validated

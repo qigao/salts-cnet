@@ -16,7 +16,7 @@ The original upstream of the P-384 verifier is
 **Current integration boundary:** `qigao/vcpkg-cache/ports/gmssl` downloads
 the pinned upstream source, applies these inputs from an immutable SaltsCore
 commit, and packages the separate GmSSL static archive. The root manifest and
-registry baseline select `gmssl 3.2.0#29`. Crypto uses
+registry baseline select `gmssl 3.2.0#30`. Crypto uses
 `find_package(GmSSL CONFIG REQUIRED)` and privately links `GmSSL::GmSSL`;
 it does not compile a local `crypto/native/gmssl` mirror or merge provider
 objects into its own archive.

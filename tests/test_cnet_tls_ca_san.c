@@ -287,6 +287,8 @@ typedef struct tls_case_options {
   const char *expected_cipher;
   const cnet_tls_signature_scheme *client_signatures, *server_signatures;
   size_t client_signature_count, server_signature_count;
+  const cnet_tls_signature_scheme *client_certificate_signatures, *server_certificate_signatures;
+  size_t client_certificate_signature_count, server_certificate_signature_count;
 } tls_case_options;
 
 static int run_case(const tls_case_options *options) {
@@ -322,6 +324,14 @@ static int run_case(const tls_case_options *options) {
       options->client_cipher_count * sizeof(*client_ciphers));
   if (options->server_cipher_count) memcpy(server_ciphers, options->server_ciphers,
       options->server_cipher_count * sizeof(*server_ciphers));
+  cnet_tls_signature_scheme client_certificate_signatures[CRYPTO_TLS_SIGNATURE_MAX_COUNT] = {0};
+  cnet_tls_signature_scheme server_certificate_signatures[CRYPTO_TLS_SIGNATURE_MAX_COUNT] = {0};
+  if (options->client_certificate_signature_count > CRYPTO_TLS_SIGNATURE_MAX_COUNT ||
+      options->server_certificate_signature_count > CRYPTO_TLS_SIGNATURE_MAX_COUNT) return 2;
+  if (options->client_certificate_signature_count) memcpy(client_certificate_signatures, options->client_certificate_signatures,
+      options->client_certificate_signature_count * sizeof(*client_certificate_signatures));
+  if (options->server_certificate_signature_count) memcpy(server_certificate_signatures, options->server_certificate_signatures,
+      options->server_certificate_signature_count * sizeof(*server_certificate_signatures));
   cnet_tls_signature_scheme client_signatures[CRYPTO_TLS_SIGNATURE_MAX_COUNT] = {0};
   cnet_tls_signature_scheme server_signatures[CRYPTO_TLS_SIGNATURE_MAX_COUNT] = {0};
   if (options->client_signature_count > CRYPTO_TLS_SIGNATURE_MAX_COUNT ||
@@ -347,7 +357,9 @@ static int run_case(const tls_case_options *options) {
       .cipher_suites = options->server_cipher_count ? server_ciphers : NULL,
       .cipher_suite_count = options->server_cipher_count,
       .signature_algorithms = options->server_signature_count ? server_signatures : NULL,
-      .signature_algorithm_count = options->server_signature_count};
+      .signature_algorithm_count = options->server_signature_count,
+      .certificate_signature_algorithms = options->server_certificate_signature_count ? server_certificate_signatures : NULL,
+      .certificate_signature_algorithm_count = options->server_certificate_signature_count};
   const cnet_tls_client_config client_tls_cfg = {
       .size = sizeof(cnet_tls_client_config),
       .ca_file = options->ca_file,
@@ -361,7 +373,9 @@ static int run_case(const tls_case_options *options) {
       .cipher_suites = options->client_cipher_count ? client_ciphers : NULL,
       .cipher_suite_count = options->client_cipher_count,
       .signature_algorithms = options->client_signature_count ? client_signatures : NULL,
-      .signature_algorithm_count = options->client_signature_count};
+      .signature_algorithm_count = options->client_signature_count,
+      .certificate_signature_algorithms = options->client_certificate_signature_count ? client_certificate_signatures : NULL,
+      .certificate_signature_algorithm_count = options->client_certificate_signature_count};
   tls_probe client_probe = {0}, server_probe = {0};
   cnet_connect_options connect_options = {0};
   cnet_connection outbound = {0};
@@ -431,6 +445,8 @@ static int run_case(const tls_case_options *options) {
    * also creates its stream later, from this already admitted context. */
   memset(client_ciphers, 0, sizeof(client_ciphers));
   memset(server_ciphers, 0, sizeof(server_ciphers));
+  memset(client_certificate_signatures, 0, sizeof(client_certificate_signatures));
+  memset(server_certificate_signatures, 0, sizeof(server_certificate_signatures));
   memset(client_signatures, 0, sizeof(client_signatures));
   memset(server_signatures, 0, sizeof(server_signatures));
   if (options->release_peer_policy != NULL) {
@@ -912,6 +928,7 @@ static int run_python_ssl_server(const char *port_text,
       CRYPTO_TLS_CIPHER_ECDHE_ECDSA_AES_128_GCM_SHA256};
   const cnet_tls_signature_scheme rsa_signatures[] = {
       CRYPTO_TLS_SIGNATURE_RSA_PKCS1_SHA256, CRYPTO_TLS_SIGNATURE_RSA_PSS_RSAE_SHA256};
+  const bool separate_cert = getenv("SALTS_TEST_TLS_SEPARATE_CERT_SIGNATURES") != NULL;
   const bool rsa_only = getenv("SALTS_TEST_TLS_CLIENT_RSA_ONLY") != NULL;
   const cnet_tls_signature_scheme sm2_signature = CRYPTO_TLS_SIGNATURE_SM2_SM3;
   const cnet_tls_client_config tls_config = {
@@ -925,8 +942,10 @@ static int run_python_ssl_server(const char *port_text,
       .key_file = client_key,
       .security_profile = tlcp ? CNET_TLS_SECURITY_PROFILE_TLCP11 :
           shangmi ? CNET_TLS_SECURITY_PROFILE_SHANGMI_TLS13 : CNET_TLS_SECURITY_PROFILE_STANDARD,
-      .signature_algorithms = tlcp || shangmi ? &sm2_signature : rsa_only ? rsa_signatures : NULL,
-      .signature_algorithm_count = tlcp || shangmi ? 1u : rsa_only ? (strcmp(protocol, "tls12") == 0 ? 1u : 2u) : 0u,
+      .signature_algorithms = tlcp || shangmi ? &sm2_signature : separate_cert ? rsa_signatures + 1u : rsa_only ? rsa_signatures : NULL,
+      .signature_algorithm_count = tlcp || shangmi || separate_cert ? 1u : rsa_only ? (strcmp(protocol, "tls12") == 0 ? 1u : 2u) : 0u,
+      .certificate_signature_algorithms = separate_cert ? rsa_signatures : NULL,
+      .certificate_signature_algorithm_count = separate_cert ? 1u : 0u,
       .cipher_suites = version_range ? range_ciphers : peer_ciphers,
       .cipher_suite_count = version_range ? 3u : !tlcp && !shangmi && strcmp(protocol, "tls12") == 0 ? 2u : 1u,
       .peer_policy = owned_policy, .key_update_record_limit = rotation_limit,

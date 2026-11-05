@@ -728,7 +728,8 @@ static int crypto_tls_stream_configure_variant(crypto_tls_stream_context *contex
                                       const crypto_tls_cipher_suite *cipher_suites,
                                       size_t cipher_suite_count,
                                       const crypto_tls_signature_scheme *signature_algorithms,
-                                      size_t signature_algorithm_count) {
+                                      size_t signature_algorithm_count,
+    const crypto_tls_signature_scheme *certificate_signatures, size_t certificate_signature_count) {
   static const int range_ciphers[] = {
       TLS_cipher_aes_128_gcm_sha256,
       TLS_cipher_ecdhe_rsa_with_aes_128_gcm_sha256,
@@ -855,6 +856,13 @@ static int crypto_tls_stream_configure_variant(crypto_tls_stream_context *contex
       tls_ctx_set_signature_algorithms(tls, signatures, signature_count) != 1)
     return CRYPTO_TLS_STREAM_EIO;
 
+  if (certificate_signature_count) {
+    for (size_t i = 0u; i < certificate_signature_count; ++i)
+      tls->certificate_signature_algorithms[i] = (int)certificate_signatures[i];
+    tls->certificate_signature_algorithms_cnt = certificate_signature_count;
+    tls->signature_algorithms_cert = 1;
+  }
+
   if (key_update_record_limit != 0u &&
       (tls13_ctx_enable_key_update(tls, 1) != 1 ||
        tls13_ctx_set_key_update_seq_num_limit(tls, key_update_record_limit) != 1))
@@ -956,6 +964,7 @@ static int crypto_tls_stream_context_create_common(
     uint32_t verification_depth,
     const crypto_tls_cipher_suite *cipher_suites, size_t cipher_suite_count,
     const crypto_tls_signature_scheme *signature_algorithms, size_t signature_algorithm_count,
+    const crypto_tls_signature_scheme *certificate_signatures, size_t certificate_signature_count,
     crypto_tls_stream_context **out_context) {
   crypto_tls_stream_context *context;
   size_t index;
@@ -991,11 +1000,27 @@ static int crypto_tls_stream_context_create_common(
       security_profile, minimum, maximum);
   if (status != CRYPTO_TLS_STREAM_OK) return status;
 
+  if ((certificate_signatures == NULL) != (certificate_signature_count == 0u) ||
+      certificate_signature_count > CRYPTO_TLS_SIGNATURE_MAX_COUNT) return CRYPTO_TLS_STREAM_EINVAL;
+  if (certificate_signature_count) {
+    if (security_profile == CRYPTO_TLS_STREAM_SECURITY_PROFILE_TLCP11 ||
+        minimum != CRYPTO_TLS_STREAM_PROTOCOL_VERSION_1_3 || maximum != CRYPTO_TLS_STREAM_PROTOCOL_VERSION_1_3)
+      return CRYPTO_TLS_STREAM_ENOTSUP;
+    for (size_t i = 0u; i < certificate_signature_count; ++i) {
+      for (size_t j = 0u; j < i; ++j)
+        if (certificate_signatures[i] == certificate_signatures[j]) return CRYPTO_TLS_STREAM_EINVAL;
+      if (security_profile == CRYPTO_TLS_STREAM_SECURITY_PROFILE_SHANGMI_TLS13) {
+        if (certificate_signatures[i] != CRYPTO_TLS_SIGNATURE_SM2_SM3) return CRYPTO_TLS_STREAM_ENOTSUP;
+      } else if (certificate_signatures[i] != CRYPTO_TLS_SIGNATURE_RSA_PKCS1_SHA256 &&
+          certificate_signatures[i] != CRYPTO_TLS_SIGNATURE_ECDSA_SECP256R1_SHA256 &&
+          certificate_signatures[i] != CRYPTO_TLS_SIGNATURE_ECDSA_SECP384R1_SHA384) return CRYPTO_TLS_STREAM_ENOTSUP;
+    }
+  }
   status = crypto_tls_stream_validate_signatures(signature_algorithms, signature_algorithm_count,
       security_profile, minimum, maximum);
   if (status != CRYPTO_TLS_STREAM_OK) return status;
 #if defined(__APPLE__) && !TARGET_OS_OSX
-  if (!server && signature_algorithm_count != 0u &&
+  if (!server && (signature_algorithm_count != 0u || certificate_signature_count != 0u) &&
       ca_file == NULL && ca_path == NULL && ca_data == NULL)
     return CRYPTO_TLS_STREAM_ENOTSUP;
 #endif
@@ -1068,7 +1093,7 @@ static int crypto_tls_stream_context_create_common(
     status = crypto_tls_stream_configure_variant(
         context, (crypto_tls_stream_variant)index, ca_file, ca_path, cert_file, key_file,
         key_password, client_auth, key_update_record_limit, peer_key_update_limit, ca_data, credentials,
-        cipher_suites, cipher_suite_count, signature_algorithms, signature_algorithm_count);
+        cipher_suites, cipher_suite_count, signature_algorithms, signature_algorithm_count, certificate_signatures, certificate_signature_count);
     if (status != CRYPTO_TLS_STREAM_OK) {
       crypto_tls_stream_context_dispose(context);
       return status;
@@ -1182,7 +1207,8 @@ int crypto_tls_stream_client_context_create(const crypto_tls_stream_client_confi
       config->peer_key_update_limit, config->ca_data, config->credentials,
       config->minimum_version, config->maximum_version, config->verification_depth,
       config->cipher_suites, config->cipher_suite_count,
-      config->signature_algorithms, config->signature_algorithm_count, &context);
+      config->signature_algorithms, config->signature_algorithm_count,
+      config->certificate_signature_algorithms, config->certificate_signature_algorithm_count, &context);
   if (status != CRYPTO_TLS_STREAM_OK) return status;
   status = crypto_tls_stream_identities_append(context, config->identities, config->identity_count);
   if (status != CRYPTO_TLS_STREAM_OK) {
@@ -1252,7 +1278,8 @@ int crypto_tls_stream_server_context_create(const crypto_tls_stream_server_confi
       config->key_update_record_limit, config->peer_key_update_limit, config->ca_data, config->credentials,
       config->minimum_version, config->maximum_version, config->verification_depth,
       config->cipher_suites, config->cipher_suite_count,
-      config->signature_algorithms, config->signature_algorithm_count, &context);
+      config->signature_algorithms, config->signature_algorithm_count,
+      config->certificate_signature_algorithms, config->certificate_signature_algorithm_count, &context);
   if (status != CRYPTO_TLS_STREAM_OK) return status;
   status = crypto_tls_stream_identities_append(context, config->identities, config->identity_count);
   if (status != CRYPTO_TLS_STREAM_OK) {
