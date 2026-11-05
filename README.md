@@ -52,7 +52,7 @@ invariant on Linux, Windows and macOS.
 
 | Mandatory | Optional on supported platforms |
 |---|---|
-| Core byte views, Platform, Concurrency, FS, Coroutine, NativeIO, ASN1, Crypto, URI, CNet | Process, Unicode, IDNA, Serial, USB, Media (Capture + Playback) |
+| Core byte views, Platform, Concurrency, FS, Coroutine, NativeIO, ASN1, Crypto, URI, CNet | Process, Unicode, IDNA, Serial, Media (Capture + Playback) |
 
 Unicode stays pinned to Unicode 17.0.0 with re2c as a **build-time** tool only;
 IDNA depends only on the new Unicode module. FS and Process are native system
@@ -127,9 +127,9 @@ pins baseline `e71c0261c1c596f6201f730068f75731e42967ad`. GmSSL 3.2.0#22
 includes TLS 1.2 negotiation, RSA-PSS, enabled ShangMi algorithms, SM9 retry/secret
 cleanup, TLCP dual-key/signature-extension fixes and mandatory TLS 1.3 KeyUpdate
 responses with correct partial-write continuation; its complete port tree is
-pinned in the Crypto source lock. The pinned vcpkg-make helper also
-excludes MSYS pkgconf from its Windows autotools bundle and requires the
-configured native PKG_CONFIG.
+pinned in the Crypto source lock. The USB module and its libusb dependency
+have been removed from the SDK. The remaining dependency graph does not
+request the libusb Autotools/MSYS2 tool bundle.
 
 An unavailable dependency fails configuration, without substituting another
 TLS provider or an implicit transport fallback. Local source ownership does

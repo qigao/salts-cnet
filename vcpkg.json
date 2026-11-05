@@ -9,12 +9,6 @@
         "zstd"
       ]
     },
-    "usb": {
-      "description": "Private libusb provider for the native USB module",
-      "dependencies": [
-        "libusb"
-      ]
-    },
     "cnet": {
       "description": "Compatibility feature: CNet is always built with local Crypto; networking dependencies belong to the base SDK"
     },

@@ -15,7 +15,7 @@ Salts::Core [C11 base byte views / future buffer/error]
   ├── Unicode 17 ──> IDNA UTS #46
   ├── Serial [POSIX / Win32, SPSC]
   ├── ASN1 ──> Crypto [locked local native objects, one static archive] ──> CNet
-  └── optional USB / Capture / Playback
+  └── optional Media (Capture / Playback)
 ```
 
 **No arrow points from SaltsCore to a Salts or SaltsUtils package.**
@@ -49,9 +49,6 @@ reflection. Source/API renaming is not itself a reason to discard ABI tests.
 - `qigao/salts-utils/cflow-process`: keep native process owner and pipes;
   reimplement IOCP/epoll/kqueue admission/completion independent of CFlow
   IO Actor before retiring its old wrapper.
-- `qigao/salts-utils/cflow-usb`: current libusb event-thread and callback
-  queue are already independent of CFlow's Actor; remove unnecessary CFlow
-  linkage and remap thread/error dependencies to Core.
 - `qigao/salts-utils/salts_serial`: migrate POSIX/Win32 backends, SPSC ring,
   pump, and events. Replace CSTL `vec_t` with private counted port snapshot,
   preserving deep copy, ownership and allocation-failure semantics.
@@ -66,8 +63,8 @@ reflection. Source/API renaming is not itself a reason to discard ABI tests.
    names are allowed solely as historical compatibility while implementing
    their functionality without reflection/actor runtime.
 2. **Lifetime correctness**: FS sandbox paths and watch event ownership;
-   Process cancellation, pipe drain, forced child-tree reaping; USB device
-   removal and terminal acknowledgment; Serial background pump join and SPSC
+   Process cancellation, pipe drain, forced child-tree reaping;
+   Serial background pump join and SPSC
    producer/consumer contract; Capture/Playback stop/unload.
 3. **Crypto**: remove incompatible GmSSL/libecc `sha256_*` global symbols and
    duplicate `get_random`; unique include guards; test real final-image
@@ -81,6 +78,9 @@ reflection. Source/API renaming is not itself a reason to discard ABI tests.
    Keep legacy implementations until coordinated migration passes.
 
 ## Current status
+
+The USB module and libusb dependency were removed on 2026-11-05.
+The SDK no longer exports `Salts::USB` or installs `cflow/usb.h`.
 
 **Draft migration candidate under qualification:** the default graph includes
 Core, Platform, Concurrency, Coroutine, NativeIO, ASN1, local static Crypto,

@@ -11,7 +11,7 @@ import re
 ROOT = Path(__file__).resolve().parents[1]
 MODULES = (
     "core", "platform", "concurrency", "coroutine", "native-io",
-    "cnet", "uri", "fs", "process", "sctp", "usb",
+    "cnet", "uri", "fs", "process", "sctp",
 )
 OWNER_FILES = (
     "core/include/base64_utils.h",
@@ -35,8 +35,6 @@ OWNER_FILES = (
     "uri/include/uri_parser.h",
     "uri/src/uri_parser.c",
     "uri/parser/uri_lexer.re",
-    "usb/include/cflow/usb.h",
-    "usb/src/usb.c",
 )
 for old in ("include", "src", "utils", "cflow-fs", "cflow-process", "salts_serial", "capture", "playback"):
     if (ROOT / old).exists():
@@ -58,7 +56,7 @@ source = (ROOT / "CMakeLists.txt").read_text(encoding="utf-8")
 
 # Discover every *current or future* root-level source module. An explicit
 # MODULES tuple alone is insufficient: it would silently miss a new vendor/,
-# usb/, capture/ etc. A source-owning directory must have its own CMake
+# media/, capture/ etc. A source-owning directory must have its own CMake
 # definition AND an actual add_subdirectory() route from the root.
 CODE_SUFFIXES = frozenset({".c", ".h", ".cc", ".cpp", ".cxx", ".hpp", ".m", ".mm", ".S"})
 root_code_modules = {
@@ -144,7 +142,6 @@ extra = {
     "native-io/src/native_io.c": "Salts::NativeIO",
     "uri/parser/uri_lexer.re": "Salts::URI",
     "sctp/src/sctp_wire.c": "Salts::SCTPWire",
-    "usb/src/usb.c": "Salts::USB",
 }
 for rel, alias in extra.items():
     module, local = rel.split("/", 1)

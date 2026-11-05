@@ -21,21 +21,6 @@ class DependencyGateTest(unittest.TestCase):
     def test_native_historical_symbol_is_not_cmeta_runtime(self):
         self.assertEqual(self.check_text("int cmeta_fs_stat(void *arg);\n"), [])
 
-    def test_native_usb_header_permission_does_not_admit_cflow_runtime(self):
-        for relative in module.NATIVE_USB_HEADER_USERS:
-            with self.subTest(path=relative), tempfile.TemporaryDirectory() as directory:
-                root = Path(directory)
-                path = root / relative
-                path.parent.mkdir(parents=True)
-                path.write_text('#include <cflow/usb.h>\n', encoding='utf-8')
-                self.assertEqual(module.check_repository(root), [])
-                path.write_text('#include <cflow/executor.h>\n', encoding='utf-8')
-                self.assertEqual(len(module.check_repository(root)), 1)
-                path.write_text('#include <cflow/usb.h>\ncflow_executor *executor;\n',
-                                encoding='utf-8')
-                self.assertEqual(len(module.check_repository(root)), 1)
-        self.assertEqual(len(self.check_text('#include <cflow/usb.h>\n')), 1)
-
     def test_legacy_cmake_package_and_target_rejected(self):
         output = self.check_text("find_package(Salts CONFIG REQUIRED)\n"
                                  "target_link_libraries(app PRIVATE Salts::CFlow)\n",

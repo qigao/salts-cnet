@@ -66,9 +66,6 @@
   project must guard C++ flag probes with `CMAKE_CXX_COMPILER_LOADED`, not the
   mere presence of `CMAKE_CXX_COMPILER`. This is fixed in vcpkg-cache PR 262,
   merge commit `529019437597fa71f7d8dcc561d26fc7b0603ae6`.
-- MinGW's libusb provider may be a static `.a` archive. Stage a runtime DLL
-  only when the discovered provider is an MSVC `.lib` or MinGW `.dll.a`
-  import library; do not require or invent a DLL for a static archive.
 - MinGW DLL import libraries require explicit public API export annotations.
   Do not rely on `WINDOWS_EXPORT_ALL_SYMBOLS` to recover legacy Platform
   functions.
@@ -103,10 +100,6 @@
   retained MediaProjection ABI calls `ANativeWindow_toSurface`, and its
   compiler guard intentionally rejects API 24; do not weaken that guard or
   add a lower-API fallback.
-- The Intel macOS runner can provide `autoreconf` without Automake's
-  `aclocal`. Install Homebrew `automake` and `libtool` before vcpkg configures
-  libusb; otherwise a cleared binary cache fails before the Salts graph is
-  generated.
 - `SaltsCore.Native` publication stays inside the existing eight-RID LLVM CI.
   The tag run installs the already-qualified graph and packages those install
   trees; do not restore the removed standalone consumer/installer workflow or
@@ -135,3 +128,13 @@
   the historical donor path recorded in frozen migration inventories and must
   not return as a root source directory. Public `salts_serial_*` ABI names and
   `<serial.h>` remain unchanged.
+
+## 2026-11-05 USB removal
+
+- The user requested removal of the entire USB module. The SDK no longer
+  builds or installs `Salts::USB`, `cflow/usb.h`, or the libusb provider.
+  Native and Android presets omit the `usb` manifest feature; CI no longer
+  installs the Autotools bundle needed only by libusb.
+- Historical migration inventories remain provenance snapshots, not the
+  current SDK surface. Serial USB metadata uses native OS APIs and remains
+  part of Serial.
