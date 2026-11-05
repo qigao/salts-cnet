@@ -117,6 +117,7 @@ func (c *alteredHelloConn) Write(p []byte) (int, error) {
 
 type fixture struct {
 	root                      *smx509.Certificate
+	rootKey                   *sm2.PrivateKey
 	certificates              []tlcp.Certificate
 	caPath, certPath, keyPath string
 }
@@ -155,7 +156,7 @@ func credentials(t *testing.T, change func(int, *x509.Certificate)) fixture {
 			t.Fatal(err)
 		}
 	}
-	f := fixture{caPath: filepath.Join(dir, "ca.pem"), certPath: filepath.Join(dir, "dual.pem"), keyPath: filepath.Join(dir, "keys.pem")}
+	f := fixture{rootKey: keys[0], caPath: filepath.Join(dir, "ca.pem"), certPath: filepath.Join(dir, "dual.pem"), keyPath: filepath.Join(dir, "keys.pem")}
 	f.root, err = smx509.ParseCertificate(certs[0])
 	if err != nil {
 		t.Fatal(err)
@@ -192,7 +193,7 @@ func checkNegotiation(c *tlcp.Conn, client bool) error {
 	}
 	return nil
 }
-func runNativeClient(t *testing.T, f fixture, identity string, accept bool, suites []uint16) {
+func runNativeClient(t *testing.T, f fixture, identity string, accept bool, suites []uint16, policy ...string) {
 	t.Helper()
 	listener, err := net.ListenTCP("tcp4", &net.TCPAddr{IP: net.ParseIP("127.0.0.1")})
 	if err != nil {
@@ -246,6 +247,11 @@ func runNativeClient(t *testing.T, f fixture, identity string, accept bool, suit
 			if err == nil {
 				finished <- errors.New("rejected case released application data")
 			} else {
+				var timeout net.Error
+				if len(policy) != 0 && errors.As(err, &timeout) && timeout.Timeout() {
+					finished <- fmt.Errorf("policy rejection timed out: %w", err)
+					return
+				}
 				finished <- nil
 			}
 			return
@@ -271,7 +277,14 @@ func runNativeClient(t *testing.T, f fixture, identity string, accept bool, suit
 	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
 	defer cancel()
 	port := fmt.Sprint(listener.Addr().(*net.TCPAddr).Port)
-	command := exec.CommandContext(ctx, *native, "--external-ip-san", port, "tlcp", identity, f.caPath, expectation)
+	args := []string{"--external-ip-san", port, "tlcp", identity, f.caPath, expectation}
+	if len(policy) != 0 {
+		if len(policy) != 3 {
+			t.Fatal("expected issuer, CRL, policy mode")
+		}
+		args = []string{"--tlcp-crl-policy", port, identity, f.caPath, policy[0], policy[1], expectation, policy[2]}
+	}
+	command := exec.CommandContext(ctx, *native, args...)
 	output, runErr := command.CombinedOutput()
 	listener.Close()
 	peerErr := <-finished

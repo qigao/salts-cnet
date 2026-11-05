@@ -15,6 +15,7 @@ typedef struct crl_snapshot {
   size_t certificate_identity_size;
   uint8_t issuer_key[65];
   bool peer_is_server;
+  crypto_tls_stream_security_profile profile;
   uint8_t bytes[];
 } crl_snapshot;
 
@@ -34,25 +35,36 @@ static void release_snapshot(void *context) {
 static int check_snapshot(void *context, const crypto_tls_stream_peer_certificate_chain *chain,
     bool peer_is_server, crypto_tls_stream_security_profile profile) {
   const crl_snapshot *snapshot = context;
-  if (profile != CRYPTO_TLS_STREAM_SECURITY_PROFILE_SHANGMI_TLS13 ||
+  const size_t leaves = snapshot->profile == CRYPTO_TLS_STREAM_SECURITY_PROFILE_TLCP11 ? 2u : 1u;
+  if (profile != snapshot->profile ||
       peer_is_server != snapshot->peer_is_server || chain == NULL ||
-      chain->count == 0u || chain->count > 2u)
+      chain->count < leaves || chain->count > leaves + 1u)
     return CRYPTO_TLS_STREAM_ECONNABORTED;
-  if (chain->count == 2u && (chain->certificates[1].data == NULL ||
-      chain->certificates[1].size != snapshot->issuer.size ||
-      memcmp(chain->certificates[1].data, snapshot->issuer.der, snapshot->issuer.size) != 0))
+  if (chain->count == leaves + 1u && (chain->certificates[leaves].data == NULL ||
+      chain->certificates[leaves].size != snapshot->issuer.size ||
+      memcmp(chain->certificates[leaves].data, snapshot->issuer.der, snapshot->issuer.size) != 0))
     return CRYPTO_TLS_STREAM_ECONNABORTED;
-  const salts_crypto_sm2_cert_span leaf = {chain->certificates[0].data, chain->certificates[0].size};
+  for (size_t i = 0u; i < leaves; ++i)
+    if (chain->certificates[i].data == NULL || chain->certificates[i].size == 0u ||
+        chain->certificates[i].size > SALTS_CRYPTO_SM2_X509_MAX_CERT_SIZE)
+      return CRYPTO_TLS_STREAM_ECONNABORTED;
+  if (leaves == 2u && chain->certificates[0].size == chain->certificates[1].size &&
+      memcmp(chain->certificates[0].data, chain->certificates[1].data, chain->certificates[0].size) == 0)
+    return CRYPTO_TLS_STREAM_ECONNABORTED;
   int64_t now = current_time();
-  if (now < 0 || salts_crypto_sm2_x509_verify_signature(leaf.der, leaf.size,
-      snapshot->issuer_key, snapshot->certificate_identity, snapshot->certificate_identity_size) != SALTS_CRYPTO_OK ||
-      salts_crypto_sm2_check_crl(&leaf, &snapshot->issuer, now, &snapshot->crl) != SALTS_CRYPTO_OK)
-    return CRYPTO_TLS_STREAM_ECONNABORTED;
+  if (now < 0) return CRYPTO_TLS_STREAM_ECONNABORTED;
+  for (size_t i = 0u; i < leaves; ++i) {
+    const salts_crypto_sm2_cert_span leaf = {chain->certificates[i].data, chain->certificates[i].size};
+    if (salts_crypto_sm2_x509_verify_signature(leaf.der, leaf.size,
+        snapshot->issuer_key, snapshot->certificate_identity, snapshot->certificate_identity_size) != SALTS_CRYPTO_OK ||
+        salts_crypto_sm2_check_crl(&leaf, &snapshot->issuer, now, &snapshot->crl) != SALTS_CRYPTO_OK)
+      return CRYPTO_TLS_STREAM_ECONNABORTED;
+  }
   return CRYPTO_TLS_STREAM_OK;
 }
 
-int crypto_tls_sm2_crl_peer_policy_create(const crypto_tls_sm2_crl_config *config,
-    crypto_tls_stream_peer_policy *out_policy) {
+static int create_policy(const crypto_tls_sm2_crl_config *config,
+    crypto_tls_stream_security_profile profile, crypto_tls_stream_peer_policy *out_policy) {
   if (out_policy == NULL) return CRYPTO_TLS_STREAM_EINVAL;
   memset(out_policy, 0, sizeof(*out_policy));
   if (config == NULL || config->size != sizeof(*config) ||
@@ -62,6 +74,8 @@ int crypto_tls_sm2_crl_peer_policy_create(const crypto_tls_sm2_crl_config *confi
       config->crl_signing_identity == NULL || config->crl_signing_identity_size == 0u || config->crl_signing_identity_size > 8191u ||
       config->maximum_age_seconds == 0u)
     return CRYPTO_TLS_STREAM_EINVAL;
+  if (profile == CRYPTO_TLS_STREAM_SECURITY_PROFILE_TLCP11 && !config->peer_is_server)
+    return CRYPTO_TLS_STREAM_ENOTSUP;
   const salts_crypto_sm2_cert_span issuer = {config->issuer_certificate, config->issuer_certificate_size};
   const salts_crypto_sm2_crl_policy crl = {config->crl, config->crl_size,
       config->crl_signing_identity, config->crl_signing_identity_size,
@@ -79,6 +93,7 @@ int crypto_tls_sm2_crl_peer_policy_create(const crypto_tls_sm2_crl_config *confi
   if (snapshot == NULL) return CRYPTO_TLS_STREAM_ENOMEM;
   atomic_init(&snapshot->references, 1u);
   snapshot->peer_is_server = config->peer_is_server;
+  snapshot->profile = profile;
   memcpy(snapshot->issuer_key, key, sizeof(key));
   uint8_t *cursor = snapshot->bytes;
   memcpy(cursor, issuer.der, issuer.size);
@@ -96,4 +111,14 @@ int crypto_tls_sm2_crl_peer_policy_create(const crypto_tls_sm2_crl_config *confi
   snapshot->certificate_identity_size = config->certificate_signing_identity_size;
   *out_policy = (crypto_tls_stream_peer_policy){check_snapshot, retain_snapshot, release_snapshot, snapshot};
   return CRYPTO_TLS_STREAM_OK;
+}
+
+int crypto_tls_sm2_crl_peer_policy_create(const crypto_tls_sm2_crl_config *config,
+    crypto_tls_stream_peer_policy *out_policy) {
+  return create_policy(config, CRYPTO_TLS_STREAM_SECURITY_PROFILE_SHANGMI_TLS13, out_policy);
+}
+
+int crypto_tlcp_sm2_crl_peer_policy_create(const crypto_tls_sm2_crl_config *config,
+    crypto_tls_stream_peer_policy *out_policy) {
+  return create_policy(config, CRYPTO_TLS_STREAM_SECURITY_PROFILE_TLCP11, out_policy);
 }
