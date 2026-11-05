@@ -221,3 +221,10 @@
   Successful checks must leave verify_result unchanged.
 - Invalid intervals and clock failure remain generic. Certificate positions are
   unknown unless reported explicitly; do not label every validity error index 0.
+
+## 2026-11-06 TSan audio runtime package indexes
+
+- The private PulseAudio runtime is installed before the Linux capture SDK
+  step refreshes apt metadata. A hosted image's stale package lists can name
+  removed libsoup builds and fail with HTTP 404 before configure. Refresh the
+  index at the audio install boundary; retain fail-fast package installation.

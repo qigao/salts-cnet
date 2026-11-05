@@ -233,7 +233,10 @@ jobs:
       - name: Install private virtual audio test runtime
         if: matrix.preset == 'ci-tsan'
         shell: bash
-        run: sudo apt-get install -y --no-install-recommends pulseaudio pulseaudio-utils
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends pulseaudio pulseaudio-utils
 
       - name: Select preset toolchains
         shell: bash
