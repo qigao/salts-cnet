@@ -105,6 +105,17 @@ func TestClientIdentities(t *testing.T) {
 	emptySecond.keyFile = filepath.Join(t.TempDir(), "key.pem")
 	writeAESFixtureFrom(t, first, emptyFirst, "empty", "")
 	writeAESFixtureFrom(t, second, emptySecond, "empty", "")
+	extra := map[string][2]identity{}
+	for _, bits := range []int{128, 192} {
+		for _, password := range []string{"binary", "empty"} {
+			pair := [2]identity{first, second}
+			for i, source := range []identity{first, second} {
+				pair[i].keyFile = filepath.Join(t.TempDir(), "key.pem")
+				writeAESFixtureFrom(t, source, pair[i], password, "", bits)
+			}
+			extra[fmt.Sprintf("encrypted_%s%d", password, bits)] = pair
+		}
+	}
 	// ECDSA leaf under an RSA issuer: only the leaf scheme excludes this identity.
 	ec := makeIdentity(t, "ec", true, &first)
 	for _, version := range []uint16{tls.VersionTLS12, tls.VersionTLS13} {
@@ -114,7 +125,7 @@ func TestClientIdentities(t *testing.T) {
 				scenarios = append(scenarios, "separate_certificate")
 			}
 			if mode != "file" {
-				scenarios = append(scenarios, "encrypted_binary", "encrypted_empty")
+				scenarios = append(scenarios, "encrypted_binary", "encrypted_empty", "encrypted_binary128", "encrypted_empty128", "encrypted_binary192", "encrypted_empty192")
 			}
 			for _, scenario := range scenarios {
 				t.Run(fmt.Sprintf("tls%d/%s/%s", version, mode, scenario), func(t *testing.T) {
@@ -123,10 +134,15 @@ func TestClientIdentities(t *testing.T) {
 					hints := x509.NewCertPool()
 					auth := tls.RequireAndVerifyClientCert
 					switch scenario {
-					case "encrypted_binary", "encrypted_empty":
+					case "encrypted_binary", "encrypted_empty", "encrypted_binary128", "encrypted_empty128", "encrypted_binary192", "encrypted_empty192":
 						t.Setenv("SALTS_TEST_TLS_ENCRYPTED", "1")
-						if scenario == "encrypted_empty" {
-							a, b = emptyFirst, emptySecond
+						if pair, ok := extra[scenario]; ok {
+							a, b = pair[0], pair[1]
+						}
+						if scenario == "encrypted_empty" || scenario == "encrypted_empty128" || scenario == "encrypted_empty192" {
+							if scenario == "encrypted_empty" {
+								a, b = emptyFirst, emptySecond
+							}
 							t.Setenv("SALTS_TEST_TLS_EMPTY_PASSWORD", "1")
 						}
 						hints.AddCert(second.root)

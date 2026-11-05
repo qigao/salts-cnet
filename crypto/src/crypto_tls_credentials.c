@@ -154,8 +154,10 @@ static int decode_key(const crypto_tls_data *input, const crypto_tls_password *p
       &prf, &cipher, &iv, &iv_size, &ciphertext, &ciphertext_size, &cursor, &remaining) != 1 || remaining)
     goto end;
   const bool sm4 = prf == OID_hmac_sm3 && cipher == OID_sm4_cbc;
-  const bool aes = prf == OID_hmac_sha256 && cipher == OID_aes256_cbc;
-  const size_t derived_size = aes ? AES256_KEY_SIZE : SM4_KEY_SIZE;
+  const bool aes = prf == OID_hmac_sha256 &&
+      (cipher == OID_aes128_cbc || cipher == OID_aes192_cbc || cipher == OID_aes256_cbc);
+  const size_t derived_size = cipher == OID_aes192_cbc ? AES192_KEY_SIZE :
+      cipher == OID_aes256_cbc ? AES256_KEY_SIZE : SM4_KEY_SIZE;
   if ((!sm4 && !aes) || (key_size != -1 && key_size != (int)derived_size) ||
       iv_size != 16u || salt_size < 8u || salt_size > 64u ||
       iterations < CRYPTO_TLS_PKCS8_MIN_ITERATIONS || iterations > CRYPTO_TLS_PKCS8_MAX_ITERATIONS ||

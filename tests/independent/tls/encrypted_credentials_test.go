@@ -10,6 +10,7 @@ import (
 	"crypto/x509/pkix"
 	"encoding/asn1"
 	"encoding/pem"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -34,7 +35,21 @@ func writeAESFixture(t *testing.T, f identity, password, scenario string) {
 	t.Helper()
 	writeAESFixtureFrom(t, f, f, password, scenario)
 }
-func writeAESFixtureFrom(t *testing.T, source, target identity, password, scenario string) {
+func writeAESFixtureFrom(t *testing.T, source, target identity, password, scenario string, bits ...int) {
+	keyBytes := 32
+	if len(bits) != 0 {
+		keyBytes = bits[0] / 8
+	}
+	oid := append(asn1.ObjectIdentifier{}, aes256CBCOID...)
+	switch keyBytes {
+	case 16:
+		oid[len(oid)-1] = 2
+	case 24:
+		oid[len(oid)-1] = 22
+	case 32:
+	default:
+		t.Fatal("unsupported fixture key size")
+	}
 	t.Helper()
 	plain, err := os.ReadFile(source.keyFile + ".der")
 	if err != nil {
@@ -82,7 +97,7 @@ func writeAESFixtureFrom(t *testing.T, source, target identity, password, scenar
 	if work > 1000000 {
 		work = 10000
 	}
-	key, err := pbkdf2.Key(sha256.New, string(pass), salt, work, 32)
+	key, err := pbkdf2.Key(sha256.New, string(pass), salt, work, keyBytes)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -100,12 +115,12 @@ func writeAESFixtureFrom(t *testing.T, source, target identity, password, scenar
 	ciphertext := make([]byte, len(padded))
 	cipher.NewCBCEncrypter(block, iv).CryptBlocks(ciphertext, padded)
 	prf := pkix.AlgorithmIdentifier{Algorithm: sha256PRFOID, Parameters: asn1.RawValue{FullBytes: []byte{5, 0}}}
-	keyLength := 32
+	keyLength := keyBytes
 	switch scenario {
 	case "absent_length":
 		keyLength = 0
 	case "wrong_length":
-		keyLength = 16
+		keyLength = keyBytes + 8
 	case "absent_prf":
 		prf = pkix.AlgorithmIdentifier{}
 	case "unsupported_prf":
@@ -129,10 +144,10 @@ func writeAESFixtureFrom(t *testing.T, source, target identity, password, scenar
 		KeyLength  int                      `asn1:"optional"`
 		PRF        pkix.AlgorithmIdentifier `asn1:"optional"`
 	}{salt, iterations, keyLength, prf}
-	enc := pkix.AlgorithmIdentifier{Algorithm: aes256CBCOID, Parameters: asn1.RawValue{FullBytes: marshalDER(t, iv)}}
+	enc := pkix.AlgorithmIdentifier{Algorithm: oid, Parameters: asn1.RawValue{FullBytes: marshalDER(t, iv)}}
 	switch scenario {
 	case "unsupported_cipher":
-		enc.Algorithm = asn1.ObjectIdentifier{2, 16, 840, 1, 101, 3, 4, 1, 2}
+		enc.Algorithm = asn1.ObjectIdentifier{2, 16, 840, 1, 101, 3, 4, 1, 6}
 	case "mixed_sm4":
 		enc.Algorithm = asn1.ObjectIdentifier{1, 2, 156, 10197, 1, 104, 2}
 	case "short_iv":
@@ -167,43 +182,49 @@ func TestEncryptedCredentials(t *testing.T) {
 	for _, ec := range []bool{false, true} {
 		f := makeIdentity(t, "encrypted", ec, nil)
 		other := makeIdentity(t, "other", ec, nil)
-		for _, mode := range []string{"pem", "der"} {
-			for _, scenario := range []string{"valid", "absent_length", "absent_prf_parameters", "minimum_salt", "maximum_salt", "maximum_iterations", "empty_password", "wrong_password", "wrong_length", "absent_prf", "unsupported_prf", "bad_prf_parameters", "padding", "unaligned", "empty_ciphertext", "oversized_ciphertext", "unsupported_cipher", "mixed_sm4", "short_iv", "long_iv", "short_salt", "long_salt", "low_iterations", "high_iterations", "plaintext", "mismatched_key", "trailing", "truncated"} {
-				name := "rsa/"
-				if ec {
-					name = "p256/"
+		for _, bits := range []int{128, 192, 256} {
+			for _, mode := range []string{"pem", "der"} {
+				scenarios := []string{"valid", "absent_length", "absent_prf_parameters", "minimum_salt", "maximum_salt", "empty_password", "wrong_password", "wrong_length", "absent_prf", "unsupported_prf", "bad_prf_parameters", "padding", "unaligned", "empty_ciphertext", "oversized_ciphertext", "unsupported_cipher", "mixed_sm4", "short_iv", "long_iv", "short_salt", "long_salt", "low_iterations", "high_iterations", "plaintext", "mismatched_key", "trailing", "truncated"}
+				if bits == 256 {
+					scenarios = append(scenarios, "maximum_iterations")
 				}
-				t.Run(name+mode+"/"+scenario, func(t *testing.T) {
-					target := f
-					target.keyFile = filepath.Join(t.TempDir(), "key.pem")
-					password := "binary"
-					expect := "reject"
-					switch scenario {
-					case "valid", "absent_length", "absent_prf_parameters", "minimum_salt", "maximum_salt", "maximum_iterations":
-						expect = "accept"
-					case "empty_password":
-						password = "empty"
-						expect = "accept"
-						t.Setenv("SALTS_TEST_TLS_EMPTY_PASSWORD", "1")
-					case "wrong_password":
-						password = "wrong"
-					case "oversized_ciphertext":
-						expect = "range"
+				for _, scenario := range scenarios {
+					name := "rsa/"
+					if ec {
+						name = "p256/"
 					}
-					source := f
-					if scenario == "mismatched_key" {
-						source = other
-					}
-					writeAESFixtureFrom(t, source, target, password, scenario)
-					t.Setenv("SALTS_TEST_TLS_MEMORY", mode)
-					t.Setenv("SALTS_TEST_TLS_ENCRYPTED", "1")
-					ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-					defer cancel()
-					out, err := exec.CommandContext(ctx, *native, "--encrypted-credential-admission", f.ca, f.cert, target.keyFile, expect).CombinedOutput()
-					if err != nil {
-						t.Fatalf("native: %v\n%s", err, out)
-					}
-				})
+					t.Run(fmt.Sprintf("%s%d/%s/%s", name, bits, mode, scenario), func(t *testing.T) {
+						target := f
+						target.keyFile = filepath.Join(t.TempDir(), "key.pem")
+						password := "binary"
+						expect := "reject"
+						switch scenario {
+						case "valid", "absent_length", "absent_prf_parameters", "minimum_salt", "maximum_salt", "maximum_iterations":
+							expect = "accept"
+						case "empty_password":
+							password = "empty"
+							expect = "accept"
+							t.Setenv("SALTS_TEST_TLS_EMPTY_PASSWORD", "1")
+						case "wrong_password":
+							password = "wrong"
+						case "oversized_ciphertext":
+							expect = "range"
+						}
+						source := f
+						if scenario == "mismatched_key" {
+							source = other
+						}
+						writeAESFixtureFrom(t, source, target, password, scenario, bits)
+						t.Setenv("SALTS_TEST_TLS_MEMORY", mode)
+						t.Setenv("SALTS_TEST_TLS_ENCRYPTED", "1")
+						ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+						defer cancel()
+						out, err := exec.CommandContext(ctx, *native, "--encrypted-credential-admission", f.ca, f.cert, target.keyFile, expect).CombinedOutput()
+						if err != nil {
+							t.Fatalf("native: %v\n%s", err, out)
+						}
+					})
+				}
 			}
 		}
 	}

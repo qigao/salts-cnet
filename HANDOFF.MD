@@ -199,3 +199,14 @@
   Preserve all work/output bounds and erase both AES/SM4 schedules on exit.
 - Keep separate independent .aes and .encrypted fixture files so AES tests
   cannot silently replace SM3/SM4 coverage in subsequent subtests.
+
+## 2026-11-05 PKCS8 AES key sizes
+
+- GmSSL's common X509 algorithm parser knew AES128/192 CBC, but the later
+  pbes2_enc_algor_from_der whitelist admitted only AES256 and SM4. Update that
+  owning whitelist; no new OID decoder or ASN1 parser belongs in Crypto.
+- Derive exactly the cipher-OID key size (16/24/32), never infer it from an
+  optional PBKDF2 keyLength. Preserve the negative mismatched-length cases.
+- The maximum-iteration check is shared by all AES key sizes. Keep its full
+  boundary case with AES256 while exercising each size's other acceptance and
+  failure cases, so the formal suite does not repeat the same expensive KDF.
