@@ -93,6 +93,46 @@ spec("Opaque Crypto streams retain policy and bounded storage") {
     }
   }
   for (unsigned version = 0; version < 2u; ++version) {
+    for (unsigned scenario = 0u; scenario < 4u; ++scenario) {
+      it("TLS1.%u permanently rejects cross-API progress after AEAD failure, scenario %u", version + 2u, scenario) {
+        uint8_t wire[32768], byte = 0x5a;
+        size_t size = 0u;
+        bool complete = false, closed = false, pending = false;
+        const unsigned receiver = scenario / 2u, sender = 1u - receiver;
+        establish_stream_pair(version ? CRYPTO_TLS_STREAM_PROTOCOL_VERSION_1_3
+                                            : CRYPTO_TLS_STREAM_PROTOCOL_VERSION_1_2);
+        check_equal(crypto_tls_stream_write(stream_pair[sender], NULL, 1u, &complete), CRYPTO_TLS_STREAM_EINVAL);
+        check_equal(crypto_tls_stream_write(stream_pair[sender], "X", 1u, &complete), CRYPTO_TLS_STREAM_OK);
+        check_true(complete);
+        check_equal(crypto_tls_stream_take_cipher(stream_pair[sender], wire, sizeof(wire), &size), CRYPTO_TLS_STREAM_OK);
+        check(size > 5u);
+        wire[size - 1u] ^= 1u;
+        check_equal(crypto_tls_stream_feed_cipher(stream_pair[receiver], wire, size), CRYPTO_TLS_STREAM_OK);
+        const int status = scenario % 2u ? crypto_tls_stream_probe_peer_close(stream_pair[receiver], &closed, &pending) :
+            crypto_tls_stream_read(stream_pair[receiver], &byte, 1u, &size, &closed);
+        check_equal(status, CRYPTO_TLS_STREAM_EPROTO);
+        int drain = crypto_tls_stream_take_cipher(stream_pair[receiver], wire, sizeof(wire), &size);
+        check(drain == CRYPTO_TLS_STREAM_OK || drain == CRYPTO_TLS_STREAM_ENOENT);
+        for (unsigned retry = 0u; retry < 3u; ++retry) {
+          complete = true;
+          check_equal(crypto_tls_stream_write(stream_pair[receiver], "X", 1u, &complete), status);
+          check_false(complete);
+          byte = 0x5a; size = 99u; closed = true;
+          check_equal(crypto_tls_stream_read(stream_pair[receiver], &byte, 1u, &size, &closed), status);
+          check_equal(size, (size_t)0u); check_equal(byte, (uint8_t)0x5a); check_false(closed);
+          closed = pending = true;
+          check_equal(crypto_tls_stream_probe_peer_close(stream_pair[receiver], &closed, &pending), status);
+          check_false(closed); check_false(pending);
+          complete = closed = true;
+          check_equal(crypto_tls_stream_shutdown(stream_pair[receiver], &complete, &closed), status);
+          check_false(complete); check_false(closed);
+          complete = true;
+          check_equal(crypto_tls_stream_handshake(stream_pair[receiver], &complete), status);
+          check_false(complete); check_false(crypto_tls_stream_handshake_complete(stream_pair[receiver]));
+          check_true(crypto_tls_stream_cipher_output_empty(stream_pair[receiver]));
+        }
+      }
+    }
     it("TLS1.%u server endpoint binding agrees at both endpoints", version + 2u) {
       uint8_t client_binding[CRYPTO_TLS_STREAM_SERVER_END_POINT_MAX_BYTES];
       uint8_t server_binding[CRYPTO_TLS_STREAM_SERVER_END_POINT_MAX_BYTES];

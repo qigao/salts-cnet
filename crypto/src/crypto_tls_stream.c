@@ -118,6 +118,7 @@ struct crypto_tls_stream {
   bool handshake_started;
   bool handshake_complete;
   int handshake_error;
+  int terminal_error;
   bool peer_close_notify;
   bool shutdown_started;
   bool close_notify_started;
@@ -1537,6 +1538,8 @@ int crypto_tls_stream_handshake(crypto_tls_stream *state, bool *out_complete) {
       (engine = CRYPTO_TLS_STREAM_ENGINE(state)) == NULL ||
       !engine->connection_ready)
     return CRYPTO_TLS_STREAM_EINVAL;
+  *out_complete = false;
+  if (state->terminal_error != CRYPTO_TLS_STREAM_OK) return state->terminal_error;
   *out_complete = state->handshake_complete;
   if (state->handshake_complete) return CRYPTO_TLS_STREAM_OK;
   if (state->handshake_error != CRYPTO_TLS_STREAM_OK) return state->handshake_error;
@@ -1553,7 +1556,8 @@ int crypto_tls_stream_handshake(crypto_tls_stream *state, bool *out_complete) {
 }
 
 bool crypto_tls_stream_handshake_complete(const crypto_tls_stream *state) {
-  return state != NULL && state->handshake_complete;
+  return state != NULL && state->handshake_complete &&
+         state->terminal_error == CRYPTO_TLS_STREAM_OK;
 }
 
 static int crypto_tls_stream_select_variant(crypto_tls_stream_protocol_version minimum,
@@ -1693,6 +1697,19 @@ int crypto_tls_stream_take_cipher(crypto_tls_stream *state, void *buffer,
   return CRYPTO_TLS_STREAM_OK;
 }
 
+/* Owner-only terminal transition. Release logical borrows, not native storage:
+ * transport buffers and queued ciphertext remain valid until the host drains
+ * actual native completions and destroys the stream. No provider reentry after
+ * this point, even when the caller retries through a different progress API. */
+static int crypto_tls_stream_fail(crypto_tls_stream *state, int status) {
+  crypto_tls_stream_gmssl_state *engine = CRYPTO_TLS_STREAM_ENGINE(state);
+  if (state->terminal_error == CRYPTO_TLS_STREAM_OK) state->terminal_error = status;
+  engine->write_source = NULL;
+  engine->write_size = engine->write_offset = 0u;
+  engine->plaintext_pending_size = engine->plaintext_pending_offset = 0u;
+  return state->terminal_error;
+}
+
 int crypto_tls_stream_write(crypto_tls_stream *state, const void *data, size_t size,
                    bool *out_complete) {
   crypto_tls_stream_gmssl_state *engine;
@@ -1702,6 +1719,7 @@ int crypto_tls_stream_write(crypto_tls_stream *state, const void *data, size_t s
       (engine = CRYPTO_TLS_STREAM_ENGINE(state)) == NULL)
     return CRYPTO_TLS_STREAM_EINVAL;
   *out_complete = false;
+  if (state->terminal_error != CRYPTO_TLS_STREAM_OK) return state->terminal_error;
   if (!state->handshake_complete || state->shutdown_started)
     return CRYPTO_TLS_STREAM_ENOTCONN;
 
@@ -1721,15 +1739,13 @@ int crypto_tls_stream_write(crypto_tls_stream *state, const void *data, size_t s
                           engine->write_source + engine->write_offset,
                           remaining, &sent_size);
     if (result == 1) {
-      if (sent_size == 0u || sent_size > remaining) return CRYPTO_TLS_STREAM_EPROTO;
+      if (sent_size == 0u || sent_size > remaining)
+        return crypto_tls_stream_fail(state, CRYPTO_TLS_STREAM_EPROTO);
       engine->write_offset += sent_size;
       continue;
     }
     if (crypto_tls_stream_retryable(result)) return CRYPTO_TLS_STREAM_OK;
-    engine->write_source = NULL;
-    engine->write_size = 0u;
-    engine->write_offset = 0u;
-    return CRYPTO_TLS_STREAM_EPROTO;
+    return crypto_tls_stream_fail(state, CRYPTO_TLS_STREAM_EPROTO);
   }
 
   engine->write_source = NULL;
@@ -1773,6 +1789,7 @@ int crypto_tls_stream_read(crypto_tls_stream *state, void *buffer, size_t capaci
   if (state == NULL || buffer == NULL || capacity == 0u ||
       (engine = CRYPTO_TLS_STREAM_ENGINE(state)) == NULL)
     return CRYPTO_TLS_STREAM_EINVAL;
+  if (state->terminal_error != CRYPTO_TLS_STREAM_OK) return state->terminal_error;
   if (!state->handshake_complete) return CRYPTO_TLS_STREAM_ENOTCONN;
   if (state->peer_close_notify) {
     *out_peer_closed = true;
@@ -1794,13 +1811,14 @@ int crypto_tls_stream_read(crypto_tls_stream *state, void *buffer, size_t capaci
   if (engine->write_size != 0u) return CRYPTO_TLS_STREAM_OK;
 
   status = crypto_tls_stream_cipher_record_ready(engine, &record_ready);
-  if (status != CRYPTO_TLS_STREAM_OK) return status;
+  if (status != CRYPTO_TLS_STREAM_OK) return crypto_tls_stream_fail(state, status);
   if (!record_ready) return CRYPTO_TLS_STREAM_OK;
 
   result = tls_recv(&engine->connection, engine->plaintext,
                     state->io_buffer_bytes, &received_size);
   if (result == 1) {
-    if (received_size > state->io_buffer_bytes) return CRYPTO_TLS_STREAM_EPROTO;
+    if (received_size > state->io_buffer_bytes)
+      return crypto_tls_stream_fail(state, CRYPTO_TLS_STREAM_EPROTO);
     copy_size = capacity < received_size ? capacity : received_size;
     if (copy_size != 0u) crypto_tls_stream_copy(CRYPTO_TLS_TEST_COPY_PLAINTEXT, buffer, engine->plaintext, copy_size);
     *out_size = copy_size;
@@ -1813,14 +1831,14 @@ int crypto_tls_stream_read(crypto_tls_stream *state, void *buffer, size_t capaci
   if (result == 0 || result == TLS_ERROR_TCP_CLOSED) {
     int received = 0;
     if (tls_get_peer_close_notify(&engine->connection, &received) != 1)
-      return CRYPTO_TLS_STREAM_EIO;
-    if (received != 1) return CRYPTO_TLS_STREAM_ECONNABORTED;
+      return crypto_tls_stream_fail(state, CRYPTO_TLS_STREAM_EIO);
+    if (received != 1) return crypto_tls_stream_fail(state, CRYPTO_TLS_STREAM_ECONNABORTED);
     state->peer_close_notify = true;
     *out_peer_closed = true;
     return CRYPTO_TLS_STREAM_OK;
   }
   if (crypto_tls_stream_retryable(result)) return CRYPTO_TLS_STREAM_OK;
-  return CRYPTO_TLS_STREAM_EPROTO;
+  return crypto_tls_stream_fail(state, CRYPTO_TLS_STREAM_EPROTO);
 }
 
 int crypto_tls_stream_probe_peer_close(crypto_tls_stream *state, bool *out_peer_closed,
@@ -1836,6 +1854,7 @@ int crypto_tls_stream_probe_peer_close(crypto_tls_stream *state, bool *out_peer_
   *out_plaintext_pending = false;
   if (state == NULL || (engine = CRYPTO_TLS_STREAM_ENGINE(state)) == NULL)
     return CRYPTO_TLS_STREAM_EINVAL;
+  if (state->terminal_error != CRYPTO_TLS_STREAM_OK) return state->terminal_error;
   if (!state->handshake_complete) return CRYPTO_TLS_STREAM_ENOTCONN;
   if (state->peer_close_notify) {
     *out_peer_closed = true;
@@ -1850,13 +1869,15 @@ int crypto_tls_stream_probe_peer_close(crypto_tls_stream *state, bool *out_peer_
   {
     bool record_ready = false;
     int status = crypto_tls_stream_cipher_record_ready(engine, &record_ready);
-    if (status != CRYPTO_TLS_STREAM_OK) return status;
+    if (status != CRYPTO_TLS_STREAM_OK) return crypto_tls_stream_fail(state, status);
     if (!record_ready) return CRYPTO_TLS_STREAM_OK;
   }
 
   result = tls_recv(&engine->connection, engine->plaintext,
                     state->io_buffer_bytes, &received_size);
   if (result == 1 && received_size != 0u) {
+    if (received_size > state->io_buffer_bytes)
+      return crypto_tls_stream_fail(state, CRYPTO_TLS_STREAM_EPROTO);
     engine->plaintext_pending_offset = 0u;
     engine->plaintext_pending_size = received_size;
     *out_plaintext_pending = true;
@@ -1864,16 +1885,17 @@ int crypto_tls_stream_probe_peer_close(crypto_tls_stream *state, bool *out_peer_
   }
   if (result == 0 || result == TLS_ERROR_TCP_CLOSED) {
     if (tls_get_peer_close_notify(&engine->connection, &received) != 1)
-      return CRYPTO_TLS_STREAM_EIO;
-    if (received != 1) return CRYPTO_TLS_STREAM_ECONNABORTED;
+      return crypto_tls_stream_fail(state, CRYPTO_TLS_STREAM_EIO);
+    if (received != 1) return crypto_tls_stream_fail(state, CRYPTO_TLS_STREAM_ECONNABORTED);
     state->peer_close_notify = true;
     *out_peer_closed = true;
     return CRYPTO_TLS_STREAM_OK;
   }
-  if (!crypto_tls_stream_retryable(result) && result != 1) return CRYPTO_TLS_STREAM_EPROTO;
+  if (!crypto_tls_stream_retryable(result) && result != 1)
+    return crypto_tls_stream_fail(state, CRYPTO_TLS_STREAM_EPROTO);
 
   if (tls_get_peer_close_notify(&engine->connection, &received) != 1)
-    return CRYPTO_TLS_STREAM_EIO;
+    return crypto_tls_stream_fail(state, CRYPTO_TLS_STREAM_EIO);
   if (received) {
     state->peer_close_notify = true;
     *out_peer_closed = true;
@@ -1891,8 +1913,10 @@ int crypto_tls_stream_shutdown(crypto_tls_stream *state, bool *out_notify_genera
       out_peer_notify_received == NULL ||
       (engine = CRYPTO_TLS_STREAM_ENGINE(state)) == NULL)
     return CRYPTO_TLS_STREAM_EINVAL;
-  *out_notify_generated = state->close_notify_started;
+  *out_notify_generated = false;
   *out_peer_notify_received = false;
+  if (state->terminal_error != CRYPTO_TLS_STREAM_OK) return state->terminal_error;
+  *out_notify_generated = state->close_notify_started;
   if (!state->handshake_complete) return CRYPTO_TLS_STREAM_ENOTCONN;
   /* tls_shutdown shares the provider's record scratch with tls_send.
    * Never let it flush an application record as if it were close_notify. */
@@ -1906,14 +1930,14 @@ int crypto_tls_stream_shutdown(crypto_tls_stream *state, bool *out_notify_genera
 
   if (result != 1 && result != TLS_ERROR_TCP_CLOSED &&
       !crypto_tls_stream_retryable(result))
-    return CRYPTO_TLS_STREAM_EPROTO;
+    return crypto_tls_stream_fail(state, CRYPTO_TLS_STREAM_EPROTO);
 
   /* The TLS protocol owner alone authenticates close_notify. GmSSL may
    * complete its shutdown API after raw TCP closure, but EOF cannot count
    * as a reciprocal close_notify when our local application initiated it.
    * Do not infer authentication from output flushing or socket status. */
   if (tls_get_peer_close_notify(&engine->connection, &received) != 1)
-    return CRYPTO_TLS_STREAM_EIO;
+    return crypto_tls_stream_fail(state, CRYPTO_TLS_STREAM_EIO);
   if (received) state->peer_close_notify = true;
   *out_peer_notify_received = received != 0;
   return CRYPTO_TLS_STREAM_OK;

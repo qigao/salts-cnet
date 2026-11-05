@@ -156,6 +156,13 @@ int crypto_tls_stream_create(crypto_tls_stream_context *context, bool server,
     const char *server_name, size_t io_buffer_bytes, crypto_tls_stream **out_stream);
 void crypto_tls_stream_destroy(crypto_tls_stream *stream);
 
+/* After an established stream reports fatal EIO/EPROTO/ECONNABORTED, all
+ * subsequent valid handshake/read/write/probe/shutdown calls return that first
+ * error without provider progress. Readiness and success/close outputs are
+ * false, reads produce no plaintext. Admission errors and incomplete OK are
+ * not terminal. Ciphertext queues and native I/O storage remain owned until
+ * quiescent destruction; failure does not cancel host requests or free buffers.
+ * Negotiated metadata remains historical inspection, not readiness evidence. */
 int crypto_tls_stream_handshake(crypto_tls_stream *state, bool *out_complete);
 bool crypto_tls_stream_handshake_complete(const crypto_tls_stream *state);
 /* Select before the first handshake call; changes after that call are rejected. */

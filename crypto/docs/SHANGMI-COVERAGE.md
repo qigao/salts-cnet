@@ -259,6 +259,24 @@ releases the retained snapshot. These are 17 scenarios, not independent TLS
 engine interoperation or production network CRL distribution. TLCP dual-certificate
 revocation has the separate profile and tests described below.
 
+Established streams also latch their first fatal protocol/I/O error. Subsequent
+valid handshake, read, write, close-probe and shutdown calls return that same
+error without entering the provider, reporting readiness, producing plaintext
+or completing an orderly close. Logical pending plaintext/write borrows are
+discarded; transport buffers and native requests retain their existing drain
+and destruction contract. Queued ciphertext can still be inspected/drained;
+historical negotiated metadata is not evidence that the stream remains usable.
+Invalid arguments, capacity admission and incomplete progress do not poison an
+otherwise live stream.
+
+The formal Crypto fixture peer adds eight established ShangMi failures across
+both roles: corrupted AEAD tags and oversized record headers, each first
+observed through application read or the close probe. Each checks three rounds
+of cross-API retries and retained-policy release. `saltscore.gmssl_tls_io_abi`
+adds eight equivalent AEAD failures for standard TLS 1.2/1.3 and both roles.
+The regression reproduced continued writes/reads before the fix. This does not
+qualify KeyUpdate flood limits or fragmented post-handshake message support.
+
 ### Ready-to-configure CNet SM2 CRL snapshots
 
 `cnet_tls_sm2_crl_peer_policy_create` provides a retained immutable policy inside
