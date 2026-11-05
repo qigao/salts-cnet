@@ -70,7 +70,7 @@ See [architecture](docs/ARCHITECTURE.md) for ownership and migration gates.
 The default graph builds the whole CNet transport source tree, including the
 original IPC FIFO, peer index and native-path changes. Production CNet links
 the first-party static `Salts::Crypto` facade and the **separately installed**
-vcpkg `GmSSL::GmSSL` static library (GmSSL 3.2.0#22). No local native GmSSL
+vcpkg `GmSSL::GmSSL` static library (GmSSL 3.2.0#26). No local native GmSSL
 source mirror is compiled into `Salts::Crypto`; Ed448 remains first-party
 under `crypto/vendor/libecc/`. CNet is the single production DSO owner of the
 linked native TLS implementation; two independently loaded plugins must import
@@ -117,19 +117,30 @@ synthetic consumer or installer projects. With `BUILD_TESTING=OFF`,
 production-only consumers may explicitly disable the TinyTest library.
 
 The checked-in vcpkg manifest declares GmSSL and CNet dependencies directly.
-Compiler/host-data Actions use published `qigao/vcpkg-cache@v0.1.0`.
-The dependency setup Action is pinned to `e71c0261c1c596f6201f730068f75731e42967ad`,
-which supplies native Windows pkg-config and preserves `PKG_CONFIG` in vcpkg's
+Compiler, ccache, host-data and dependency setup Actions use published
+`qigao/vcpkg-cache@v0.1.6`, which supplies native Windows pkg-config and
+preserves `PKG_CONFIG` in vcpkg's
 port environment. The manifest requests `pkgconf` only on non-Windows targets;
 Windows uses that native host tool without acquiring pkg-config from MSYS2.
-The custom registry selects `reference: e71c0261c1c596f6201f730068f75731e42967ad` and
-pins baseline `e71c0261c1c596f6201f730068f75731e42967ad`. GmSSL 3.2.0#22
+The custom registry selects `reference: v0.1.6` and pins baseline
+`e5ce681a8d95f5330999dad66f4ea33214d7faff`. GmSSL 3.2.0#26
 includes TLS 1.2 negotiation, RSA-PSS, enabled ShangMi algorithms, SM9 retry/secret
 cleanup, TLCP dual-key/signature-extension fixes and mandatory TLS 1.3 KeyUpdate
-responses with correct partial-write continuation; its complete port tree is
+responses with correct partial-write continuation, cipher/version filtering
+and signature-policy enforcement; its complete port tree is
 pinned in the Crypto source lock. The USB module and its libusb dependency
 have been removed from the SDK. The remaining dependency graph does not
 request the libusb Autotools/MSYS2 tool bundle.
+
+CI must use the shared `qigao/vcpkg-cache` setup Actions. Normal builds set
+`restore-packages: "false"` and restore vcpkg binary/download caches through
+GitHub Actions before configuring the complete `cnet,media,zstd` graph.
+vcpkg builds missing ABI packages from the pinned manifest and saves them to
+the local files cache; CI preserves that cache after configure, before product
+builds and tests. Cache misses are supported; dependency build errors fail the
+job. These Actions caches are repository-scoped and do not share package bytes
+with cmeta or salts-utils. Compiler-cache restoration is independent of registry
+revisions. Publishing dependency packages to a shared feed is a separate operation.
 
 An unavailable dependency fails configuration, without substituting another
 TLS provider or an implicit transport fallback. Local source ownership does

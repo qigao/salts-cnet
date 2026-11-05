@@ -174,7 +174,7 @@ jobs:
 
       - name: Set up native LLVM
         if: runner.os != 'Windows'
-        uses: qigao/vcpkg-cache/.github/actions/setup-llvm-native@v0.1.5
+        uses: qigao/vcpkg-cache/.github/actions/setup-llvm-native@v0.1.6
         with:
           build-type: toolchain-only
           obfuscator: "false"
@@ -182,7 +182,7 @@ jobs:
       - name: Set up Windows LLVM-MinGW
         id: windows-llvm
         if: runner.os == 'Windows'
-        uses: qigao/vcpkg-cache/.github/actions/setup-llvm-mingw@v0.1.5
+        uses: qigao/vcpkg-cache/.github/actions/setup-llvm-mingw@v0.1.6
         with:
           target: ${{ matrix.target }}
           build-type: toolchain-only
@@ -190,18 +190,19 @@ jobs:
 
       - name: Set up shared dependency contract
         id: vcpkg
-        # Keep the overlay source aligned with vcpkg-configuration.json (GmSSL #26).
+        # v0.1.6 retains the GmSSL #26 registry and overlay used by Core.
         # Includes native Windows pkg-config; avoid MSYS2 for pkg-config.
-        uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-curl-cache@84fb64a3ef9221ae838ab0ac70296f4afee0bd03
+        uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-curl-cache@v0.1.6
         with:
           mode: read
           triplet: ${{ matrix.triplet }}
           host-triplet: ${{ matrix.host }}
+          # Restore the local files cache below; CMake builds and caches misses.
           restore-packages: "false"
           token: ${{ github.token }}
 
       - name: Restore re2c and Unicode host data
-        uses: qigao/vcpkg-cache/.github/actions/setup-re2c-tools@v0.1.5
+        uses: qigao/vcpkg-cache/.github/actions/setup-re2c-tools@v0.1.6
         with:
           token: ${{ github.token }}
 
@@ -274,16 +275,18 @@ jobs:
 
       - name: Install native ccache
         id: ccache
-        uses: qigao/vcpkg-cache/.github/actions/setup-ccache@v0.1.5
+        uses: qigao/vcpkg-cache/.github/actions/setup-ccache@v0.1.6
 
       - name: Restore compiler cache
         id: compiler-cache
         uses: actions/cache/restore@v4
         with:
           path: ${{ env.CCACHE_DIR }}
-          key: ccache-${{ steps.ccache.outputs.version }}-${{ steps.vcpkg-cache.outputs.cache-primary-key }}-${{ github.sha }}
+          # ccache validates compiler content, flags and included headers itself.
+          # A port/registry update must not discard unrelated compilation entries.
+          key: ccache-v2-${{ steps.ccache.outputs.version }}-${{ runner.os }}-${{ runner.arch }}-${{ matrix.rid }}-${{ matrix.preset }}-${{ github.sha }}
           restore-keys: |
-            ccache-${{ steps.ccache.outputs.version }}-${{ steps.vcpkg-cache.outputs.cache-primary-key }}-
+            ccache-v2-${{ steps.ccache.outputs.version }}-${{ runner.os }}-${{ runner.arch }}-${{ matrix.rid }}-${{ matrix.preset }}-
             ccache-${{ steps.ccache.outputs.version }}-vcpkg-v1-${{ runner.os }}-${{ runner.arch }}-${{ matrix.rid }}-${{ matrix.preset }}-${{ steps.vcpkg.outputs.cache_revision }}-
 
       - name: Start compiler cache statistics
@@ -315,6 +318,7 @@ jobs:
         env:
           CMAKE_C_COMPILER_LAUNCHER: ccache
           CMAKE_CXX_COMPILER_LAUNCHER: ccache
+          CMAKE_OBJC_COMPILER_LAUNCHER: ccache
         run: |
           set -euo pipefail
           tls_options=()
@@ -346,8 +350,8 @@ jobs:
           fi
           cmake --preset "${{ matrix.preset }}" "${tls_options[@]}"
 
-      # Configure completes vcpkg installation and local binary-cache writes.
-      # Save now so a later project build/test failure does not discard them.
+      # Configure completes vcpkg installation and caches newly built ports.
+      # Save now so a later product build/test failure does not discard them.
       - name: Save vcpkg binaries and downloads
         if: steps.vcpkg-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@v4

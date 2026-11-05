@@ -39,11 +39,17 @@
 - When removing an installer/consumer source tree, remove its native-graph
   registration in the same change. A stale `add_executable` is detected only
   at CMake generation, even when configure has otherwise found all packages.
-- `setup-vcpkg-curl-cache` is a binary-only admission gate and fails on the
-  first absent immutable ABI package. After the package registry is cleared,
-  product CI must use `setup-vcpkg-cache` in read mode so vcpkg can compile a
-  cache miss from the pinned source graph without publishing from the product
-  repository.
+- Use the shared `qigao/vcpkg-cache` Actions for compiler, host tools and vcpkg
+  setup. As in cmeta PR #1351, normal product builds set `restore-packages: "false"`
+  and restore the repository's Actions-backed local files cache before CMake.
+  Missing ABI packages are built from the pinned manifest and saved to that
+  cache after configure. A cold cache is supported; dependency build errors
+  still fail the job. Do not impose `--only-binarycaching` on these presets.
+  Actions caches are repository-scoped, not a cross-repository package feed.
+  Publishing GitHub Packages remains a separate operation.
+- Keep ccache restoration independent of the complete registry/port revision.
+  ccache checks compiler contents, flags and headers; keep OS/architecture
+  and preset namespaces separate.
 
 ## 2026-11-01 CNet numeric-host endpoint
 
