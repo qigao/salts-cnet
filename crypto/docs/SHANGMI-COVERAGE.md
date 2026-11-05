@@ -19,6 +19,7 @@ source or falls back to plaintext.
 | SM2 full authenticated key exchange | GB/T 32918.3 curveSM2 agreement with explicit static peer trust, Z bindings and mandatory mutual confirmation | GB/T 32918.5 Annex B shares/key/confirmation vectors; independent gmsm key vector; identity/static-key mismatch, invalid points, infinity sum, zero combined scalar, RNG/phase/replay/erasure; cross-platform CI required |
 | SM2 key containers | Canonical SPKI and PKCS#8 import/export; PBES2 PBKDF2-HMAC-SM3 / SM4-CBC password protection | Public API negatives, RNG failure, GmSSL key-file interop and independent Python bidirectional interop; cross-platform CI required |
 | SM2 certificate primitives | SM2 public-key extraction, local private-key binding and explicit-issuer signature verification | Native and independent gmsm certificates; ID/issuer/DER/algorithm/tamper negatives; these operations do not validate certificate trust |
+| SM2 pinned-peer trust | Explicit bounded chain/anchor, leaf-key identity, validation time, signing purpose and revocation policy | Independently signed paths, CA/pathLen/KU/EKU/time/constraint negatives, callback gating and failure erasure; cross-platform CI required |
 | CMS / SM2 certificate workflows | CMS enabled in provider; public workflow qualification pending | Generic ASN1 parsing and existing X509 inspection alone do not qualify signing or trust |
 | TLS 1.3 ShangMi / TLCP | Existing explicit stream profiles; complete independent handshake/authentication matrix remains separate | Existing provider settings/KATs do not replace protocol interoperation |
 | DTLS | Issue #188 resumed; implementation and CNet/SCTP qualification pending | Existing TLS tests do not qualify DTLS |
@@ -162,6 +163,67 @@ subject keys, tampering and authentication negatives. Go is required for native
 formal tests; Android remains build-only. CI caches the Go modules/builds with
 the existing SCTP peer. No Go code or new provider is linked into production,
 and no extra consumer/smoke CMake project is created.
+
+### Pinned SM2 peer trust policy
+
+`crypto/sm2_trust.h` adds a restricted path-validation profile for applications
+that already authenticate an expected peer public key and an explicit CA anchor
+through configuration. The same `salts_crypto_sm2_validate_pinned_chain` API
+accepts server-signing or client-signing purpose and either external revocation
+checking or an explicit decision not to check revocation. Zero/default policy
+values are rejected. The existing TLS constructor/handshake trust path is not
+changed by this API.
+
+Pass one to four non-anchor certificates, leaf first, with an explicit SM2
+signing identity for each signature. The anchor is a separate configured
+certificate, not a root selected from peer input. Each certificate is bounded
+to 4096 bytes and must have a validated curveSM2 key and canonical v3 structure.
+Every child signature and exact encoded issuer/subject Name link is checked.
+Empty/malformed RDNs, duplicate certificates and self-issued intermediates are
+rejected; no path search or DN normalization is performed. An anchor's
+self-signature is not its trust source and is not required to verify.
+
+Validation time is supplied explicitly as Unix seconds, with Gregorian date
+checks and inclusive validity boundaries. Anchor and intermediates require
+critical CA=true basicConstraints, keyCertSign and sufficient pathLen; CA EKU,
+when present, must permit the requested purpose. The leaf must be an end entity
+with digitalSignature, no certificate/CRL signing usage and the exact requested
+serverAuth/clientAuth EKU. anyExtendedKeyUsage alone is insufficient. This
+profile deliberately applies these constraints and time checks to the anchor
+as well, rather than inheriting implicit platform trust-store exceptions.
+
+Unsupported critical extensions are rejected. Name constraints, certificate
+policies, policy mappings/constraints and inhibitAnyPolicy are also rejected
+when noncritical. Noncritical SAN/SKI/AKI and unrelated metadata do not replace
+identity checking: the leaf public key must equal the authenticated expected
+key. Critical SAN and SAN-only empty-subject certificates are outside this
+profile. DNS/HTTP hostname identity, alternate trust paths, TLCP encryption
+certificates and unrestricted PKIX policy processing remain separate work.
+
+External revocation mode invokes the caller's synchronous callback only after
+all other checks pass, once per non-anchor certificate in leaf-first order.
+Only OK admits a certificate; revoked, unknown, stale or unavailable status
+must fail. The callback owns freshness and CRL/OCSP authenticity validation.
+Core does not fetch or parse revocation data for it. NOT_CHECKED requires NULL
+callback/context and provides no revocation assurance. There is no fallback
+from unavailable status to acceptance.
+
+All inputs remain immutable and borrowed only for the call; the callback must
+not retain spans or mutate the policy, chain or output. Core allocates no heap,
+reads no clock and performs no network/file I/O. Output is a caller-owned
+65-byte leaf key, published only after every required check succeeds. Invalid
+pointer/size/overlap/policy admission preserves it; admitted rejection clears
+it. CNet/application owners still control scheduling, peer proof of possession,
+session binding, deadlines and generation lifetime.
+
+Formal C admission tests and independently generated gmsm path tests cover
+depths one through four, both purposes, per-issuer binary identities, Gregorian
+dates and UTC/GeneralizedTime boundaries, missing/wrong CA and usage constraints,
+unknown/unsupported extensions, invalid Names, wrong pins/anchors/signatures,
+callback ordering/rejection and failure erasure. The checks implement this
+documented restricted profile using [RFC 5280](https://www.rfc-editor.org/rfc/rfc5280.html)
+certificate fields; they do not claim a general WebPKI validator or completion
+of all certificate/CMS/TLS qualification in #219.
 
 ### SM2 confirmed agreement
 
