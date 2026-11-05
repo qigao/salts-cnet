@@ -75,3 +75,104 @@ cleanup:
   if (policy.release != NULL) policy.release(policy.context);
   return result;
 }
+
+typedef struct tlcp_crl_probe {
+  cnet_tls_peer_policy actual;
+  atomic_uint references, calls, invalid;
+  size_t expected_certificates;
+} tlcp_crl_probe;
+
+static void tlcp_crl_probe_retain(void *context) {
+  tlcp_crl_probe *p = context;
+  p->actual.retain(p->actual.context);
+  atomic_fetch_add(&p->references, 1u);
+}
+static void tlcp_crl_probe_release(void *context) {
+  tlcp_crl_probe *p = context;
+  p->actual.release(p->actual.context);
+  atomic_fetch_sub(&p->references, 1u);
+}
+static int tlcp_crl_probe_check(void *context,
+    const crypto_tls_stream_peer_certificate_chain *chain, bool peer_is_server,
+    crypto_tls_stream_security_profile profile) {
+  tlcp_crl_probe *p = context;
+  atomic_fetch_add(&p->calls, 1u);
+  if (!peer_is_server || profile != CRYPTO_TLS_STREAM_SECURITY_PROFILE_TLCP11 ||
+      chain->count != p->expected_certificates) {
+    atomic_fetch_add(&p->invalid, 1u);
+    return SALTS_ECONNABORTED;
+  }
+  int status = (p->actual.check)(p->actual.context, chain, peer_is_server, profile);
+  if (status != 0) return status;
+  /* Exercise structural and profile gates with authenticated real DER views.
+   * Inspection does not publish CONNECTED or transfer ownership of these views. */
+  crypto_tls_stream_peer_certificate_chain bad = *chain;
+  bad.certificates[1] = bad.certificates[0];
+  if ((p->actual.check)(p->actual.context, &bad, true, profile) == 0) goto invalid;
+  bad = *chain; bad.count = 1u;
+  if ((p->actual.check)(p->actual.context, &bad, true, profile) == 0) goto invalid;
+  bad = *chain; bad.count = 4u;
+  if ((p->actual.check)(p->actual.context, &bad, true, profile) == 0) goto invalid;
+  bad = *chain; bad.count = 3u; bad.certificates[2] = bad.certificates[0];
+  if ((p->actual.check)(p->actual.context, &bad, true, profile) == 0) goto invalid;
+  bad = *chain; bad.certificates[1].data = NULL;
+  if ((p->actual.check)(p->actual.context, &bad, true, profile) == 0) goto invalid;
+  if ((p->actual.check)(p->actual.context, chain, false, profile) == 0 ||
+      (p->actual.check)(p->actual.context, chain, true, CRYPTO_TLS_STREAM_SECURITY_PROFILE_SHANGMI_TLS13) == 0 ||
+      (p->actual.check)(p->actual.context, chain, true, CRYPTO_TLS_STREAM_SECURITY_PROFILE_STANDARD) == 0) goto invalid;
+  return 0;
+invalid:
+  atomic_fetch_add(&p->invalid, 1u);
+  return SALTS_ECONNABORTED;
+}
+
+static int run_cnet_tlcp_crl_policy_case(char **argv) {
+  const char *label = "CNet TLCP dual-certificate CRL admission";
+  uint8_t issuer[4096], crl[65536];
+  char certificate_id[] = "1234567812345678", crl_id[] = "1234567812345678";
+  cnet_tls_peer_policy policy = {0};
+  tlcp_crl_probe probe = {0};
+  atomic_init(&probe.references, 0u);
+  atomic_init(&probe.calls, 0u);
+  atomic_init(&probe.invalid, 0u);
+  probe.expected_certificates = strcmp(argv[8], "with-issuer") == 0 ? 3u : 2u;
+  int result = 0;
+  cnet_tls_sm2_crl_config config = {.size = sizeof(config),
+      .issuer_certificate = issuer, .issuer_certificate_size = crl_policy_read_file(argv[5], issuer, sizeof(issuer)),
+      .crl = crl, .crl_size = crl_policy_read_file(argv[6], crl, sizeof(crl)),
+      .certificate_signing_identity = certificate_id, .certificate_signing_identity_size = 16u,
+      .crl_signing_identity = crl_id, .crl_signing_identity_size = 16u,
+      .minimum_crl_number = 42u, .maximum_age_seconds = 3600u, .peer_is_server = true};
+  REQUIRE(config.issuer_certificate_size != 0u && config.crl_size != 0u);
+  if (strcmp(argv[8], "unsupported-client-auth") == 0) {
+    config.peer_is_server = false;
+    REQUIRE(cnet_tlcp_sm2_crl_peer_policy_create(&config, &policy) == SALTS_ENOTSUP);
+    REQUIRE(policy.check == NULL && policy.release == NULL && policy.retain == NULL && policy.context == NULL);
+    goto cleanup;
+  }
+  if (strcmp(argv[8], "factory-reject") == 0) {
+    REQUIRE(cnet_tlcp_sm2_crl_peer_policy_create(&config, &policy) == SALTS_ECONNABORTED);
+    REQUIRE(policy.check == NULL && policy.release == NULL && policy.retain == NULL && policy.context == NULL);
+    goto cleanup;
+  }
+  if (strcmp(argv[8], "wrong-cert-id") == 0) certificate_id[0] = '!';
+  if (strcmp(argv[8], "wrong-profile") == 0)
+    REQUIRE(cnet_tls_sm2_crl_peer_policy_create(&config, &policy) == SALTS_OK);
+  else
+    REQUIRE(cnet_tlcp_sm2_crl_peer_policy_create(&config, &policy) == SALTS_OK);
+  probe.actual = policy;
+  atomic_store(&probe.references, 1u);
+  policy = (cnet_tls_peer_policy){tlcp_crl_probe_check, tlcp_crl_probe_retain,
+                                tlcp_crl_probe_release, &probe};
+  /* No native or policy engine may depend on these caller buffers afterward. */
+  memset(issuer, 0, sizeof(issuer)); memset(crl, 0, sizeof(crl));
+  memset(certificate_id, 0, sizeof(certificate_id)); memset(crl_id, 0, sizeof(crl_id));
+  REQUIRE(run_python_ssl_server(argv[2], "tlcp", argv[3], argv[4],
+      strcmp(argv[7], "accept") == 0, NULL, NULL, NULL, &policy) == 0);
+  REQUIRE(policy.context == NULL);
+  REQUIRE(atomic_load(&probe.references) == 0u && atomic_load(&probe.invalid) == 0u);
+  REQUIRE(atomic_load(&probe.calls) == (strcmp(argv[3], "127.0.0.2") == 0 ? 0u : 1u));
+cleanup:
+  if (policy.release != NULL) policy.release(policy.context);
+  return result;
+}

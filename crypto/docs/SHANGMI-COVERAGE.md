@@ -218,7 +218,7 @@ rolled-back, wrong-issuer, malformed and future CRLs. An IP identity mismatch
 skips the callback, rejected streams remain rejected on retry, and final destroy
 releases the retained snapshot. These are 17 scenarios, not independent TLS
 engine interoperation or production network CRL distribution. TLCP dual-certificate
-revocation remains separate qualification work.
+revocation has the separate profile and tests described below.
 
 ### Ready-to-configure CNet SM2 CRL snapshots
 
@@ -289,6 +289,43 @@ all original DER/ID buffers and releases the caller's policy reference before
 handshake progress; the server TLS facade is released early too. Formal ownership
 audits retain the single CNet provider owner. These tests do not qualify TLCP
 revocation, live CRL distribution or hardware-backed signing.
+
+### TLCP dual-certificate CRL admission
+
+`cnet_tlcp_sm2_crl_peer_policy_create` (or the direct Crypto equivalent
+`crypto_tlcp_sm2_crl_peer_policy_create`) uses the same immutable snapshot
+configuration and ownership contract for TLCP11 server authentication. Set
+`peer_is_server=true`, create this policy, then attach it to a client configuration
+with `CNET_TLS_SECURITY_PROFILE_TLCP11`. The RFC 8998 factory remains separate;
+using either policy under the other profile rejects rather than changing protocol.
+
+The policy requires two distinct DER certificates in TLCP wire order: signing,
+then encryption, with an optional third certificate equal to the configured
+issuer. It checks the signature binding and CRL status of **both** certificates
+against that one explicit issuer, certificate-signing ID and complete CRL.
+Revocation of either serial rejects before CONNECTED. The check uses one current
+UTC timestamp for both certificates. Duplicate/missing leaves, malformed views,
+wrong role/profile, substituted issuers and extra chain entries reject. Snapshot
+authentication, freshness, minimum-number enforcement, bounded storage and
+reference ownership are unchanged from the RFC 8998 policy.
+
+TLCP client authentication remains unsupported: creation with
+`peer_is_server=false` returns ENOTSUP before acquiring a snapshot. Separate
+signing/encryption issuers or signing IDs, longer paths, CRL fetching/OCSP and
+automatic revalidation of established connections are outside this profile.
+
+Formal `saltscore.cnet_tlcp_crl_policy` adds 15 scenarios with an independent
+GoTLCP server and independently signed certificates/CRLs. Real handshakes cover
+current/unrelated-serial CRLs, revocation of just the signing certificate, just
+the encryption certificate or both, an optional transmitted issuer, signature-ID
+and policy-profile mismatch, same-name issuer substitution and IP identity
+rejection. Factory tests cover stale/invalid-signature/rolled-back/future CRLs
+and unsupported client authentication. Native failures must report the handshake
+stage without CONNECTED/application data; timeouts are not accepted as rejection.
+Positive cases exchange data and reciprocal close_notify. The harness also checks
+structural/profile negatives using the authenticated DER views, overwrites input
+DER/IDs, releases the caller's reference before progress, and verifies final
+reference balance. Go dependencies remain test-only; no new provider is linked.
 
 ## API use and boundaries
 

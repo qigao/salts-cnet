@@ -47,6 +47,18 @@ typedef struct crypto_tls_sm2_crl_config {
 int crypto_tls_sm2_crl_peer_policy_create(const crypto_tls_sm2_crl_config *config,
     crypto_tls_stream_peer_policy *out_policy);
 
+/* TLCP11 server-authentication variant, with the same ownership and snapshot
+ * limits. peer_is_server must be true; false returns ENOTSUP. Checks BOTH the
+ * signing and encryption certificate, in wire order, against the same explicit
+ * issuer, certificate-signing ID and complete CRL. Two distinct certificates
+ * are required; a third must be the byte-identical configured issuer. Different
+ * issuers/IDs, longer paths, STANDARD and SHANGMI_TLS13 reject. Mandatory TLCP
+ * authentication/role/identity checks still precede this additional policy.
+ * Does not add TLCP client authentication or silently select another profile.
+ */
+int crypto_tlcp_sm2_crl_peer_policy_create(const crypto_tls_sm2_crl_config *config,
+    crypto_tls_stream_peer_policy *out_policy);
+
 #ifdef __cplusplus
 }
 #endif

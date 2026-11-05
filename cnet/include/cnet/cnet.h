@@ -378,6 +378,12 @@ typedef crypto_tls_sm2_crl_config cnet_tls_sm2_crl_config;
 int cnet_tls_sm2_crl_peer_policy_create(const cnet_tls_sm2_crl_config *config,
     cnet_tls_peer_policy *out_policy);
 
+/** TLCP11 dual-server-certificate variant; peer_is_server must be true.
+ * Same retained snapshot contract, checks both certificates against one issuer.
+ * Unsupported client authentication returns SALTS_ENOTSUP at creation. */
+int cnet_tlcp_sm2_crl_peer_policy_create(const cnet_tls_sm2_crl_config *config,
+    cnet_tls_peer_policy *out_policy);
+
 /**
  * Per-connection client policy. The configuration is consumed synchronously
  * by `cnet_connect()` and is not retained. Peer and hostname verification are
