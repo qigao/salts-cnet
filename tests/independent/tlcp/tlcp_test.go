@@ -298,11 +298,19 @@ func runNativeClient(t *testing.T, f fixture, identity string, accept bool, suit
 	}
 }
 func runNativeServer(t *testing.T, f fixture, clientConfig *tlcp.Config, outcome string, signature ...byte) {
+	runNativeServerIdentities(t, f, nil, clientConfig, outcome, signature...)
+}
+
+func runNativeServerIdentities(t *testing.T, f fixture, primary *fixture, clientConfig *tlcp.Config, outcome string, signature ...byte) {
 	t.Helper()
 	portPath := filepath.Join(t.TempDir(), "port")
 	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
 	defer cancel()
 	command := exec.CommandContext(ctx, *native, "--gotlcp-client", portPath, f.certPath, f.keyPath, outcome)
+	if primary != nil {
+		command.Args[3], command.Args[4] = primary.certPath, primary.keyPath
+		command.Env = append(os.Environ(), "SALTS_TEST_TLS_ALT_CERT="+f.certPath, "SALTS_TEST_TLS_ALT_KEY="+f.keyPath)
+	}
 	var output bytes.Buffer
 	command.Stdout = &output
 	command.Stderr = &output
@@ -401,6 +409,37 @@ func TestTLCP(t *testing.T) {
 		t.Fatal("missing native peer")
 	}
 	f := credentials(t, nil)
+	t.Run("sni_identity_set", func(t *testing.T) {
+		first := credentials(t, func(_ int, cert *x509.Certificate) { cert.DNSNames = []string{"first.test"} })
+		for _, identity := range []fixture{first, f} {
+			memoryFixtures(t, identity.certPath)
+			bundle, err := os.ReadFile(identity.keyPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, part := range []string{".sign", ".enc"} {
+				block, rest := pem.Decode(bundle)
+				if block == nil {
+					t.Fatal("missing dual key")
+				}
+				if err := os.WriteFile(identity.keyPath+part, pem.EncodeToMemory(block), 0600); err != nil {
+					t.Fatal(err)
+				}
+				memoryFixtures(t, identity.keyPath+part)
+				bundle = rest
+			}
+		}
+		for _, mode := range []string{"file", "pem", "der"} {
+			t.Run(mode, func(t *testing.T) {
+				if mode != "file" {
+					t.Setenv("SALTS_TEST_TLS_MEMORY", mode)
+				}
+				// Trust only the second identity's CA; both signing and encryption
+				// keys must be selected together for authenticated application IO.
+				runNativeServerIdentities(t, f, &first, verifiedConfig(f), "close")
+			})
+		}
+	})
 	memoryFixtures(t, f.caPath, f.certPath)
 	bundle, err := os.ReadFile(f.keyPath)
 	if err != nil {

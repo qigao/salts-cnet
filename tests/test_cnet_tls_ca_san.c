@@ -1243,6 +1243,10 @@ static int run_python_ssl_client(const char *port_path,
             &listener, &server, &tls_server, &observer,
             &probe.connection) == SALTS_OK);
         accepted = true;
+        if (getenv("SALTS_TEST_TLS_ALT_CERT")) {
+          REQUIRE(cnet_tls_server_destroy(&tls_server) == SALTS_OK);
+          tls_live = false; /* Accepted stream retains the selected identity set. */
+        }
       }
     }
     REQUIRE((expect_eof_race
@@ -1512,6 +1516,7 @@ cleanup:
 
 #include "tls_cipher_policy_cases.h"
 #include "tls_signature_policy_cases.h"
+#include "tls_server_identity_cases.h"
 #include "tls_peer_policy_cases.h"
 #include "tls_sm2_crl_policy_cases.h"
 
@@ -1626,6 +1631,8 @@ static int saltscore_original_entry_test_cnet_tls_ca_san_c(int argc, char **argv
     return run_case(&required_mtls);
   }
   if (argc != 1) return 2;
+  result = run_server_identity_cases();
+  if (result) return result;
   result = run_signature_policy_cases();
   if (result) return result;
   result = run_cipher_policy_cases();

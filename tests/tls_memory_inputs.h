@@ -50,19 +50,46 @@ static int tls_test_prepare(tls_test_memory *m, const char *ca, const char *cert
   return status;
 }
 static int tls_test_server_init(cnet_tls_server *server, const cnet_tls_server_config *config) {
-  if (!getenv("SALTS_TEST_TLS_MEMORY")) return cnet_tls_server_init(server, config);
-  tls_test_memory *m = calloc(1u, sizeof(*m));
-  if (!m) return SALTS_ENOMEM;
-  int status = tls_test_prepare(m, config->ca_file, config->cert_file, config->key_file,
-      config->security_profile == CNET_TLS_SECURITY_PROFILE_TLCP11);
-  cnet_tls_server_config memory = *config;
-  memory.ca_data = config->ca_file ? &m->ca : NULL;
-  memory.credentials = &m->credentials;
-  memory.ca_file = memory.cert_file = memory.key_file = NULL;
-  if (status == SALTS_OK) status = cnet_tls_server_init(server, &memory);
-  tls_test_memory_free(m);
+  const char *alternate = getenv("SALTS_TEST_TLS_ALT_CERT");
+  const bool use_memory = getenv("SALTS_TEST_TLS_MEMORY") != NULL;
+  if (!alternate && !use_memory) return cnet_tls_server_init(server, config);
+  cnet_tls_server_config selected = *config;
+  cnet_tls_server_identity ids[2] = {
+      {.size = sizeof(ids[0]), .cert_file = config->cert_file, .key_file = config->key_file,
+       .key_password = config->key_password},
+      {.size = sizeof(ids[0]), .cert_file = alternate, .key_file = getenv("SALTS_TEST_TLS_ALT_KEY")}};
+  tls_test_memory *memory[2] = {NULL, NULL};
+  const size_t count = alternate ? 2u : 1u;
+  int status = SALTS_OK;
+  if (use_memory) {
+    for (size_t i = 0u; i < count && status == SALTS_OK; ++i) {
+      memory[i] = calloc(1u, sizeof(*memory[i]));
+      if (!memory[i]) { status = SALTS_ENOMEM; break; }
+      status = tls_test_prepare(memory[i], i == 0u ? config->ca_file : NULL,
+          ids[i].cert_file, ids[i].key_file, config->security_profile == CNET_TLS_SECURITY_PROFILE_TLCP11);
+      ids[i].credentials = &memory[i]->credentials;
+      ids[i].cert_file = ids[i].key_file = NULL;
+      ids[i].key_password = NULL;
+    }
+    if (status == SALTS_OK) {
+      selected.ca_data = config->ca_file ? &memory[0]->ca : NULL;
+      selected.ca_file = NULL;
+    }
+  }
+  if (alternate) {
+    selected.identities = ids; selected.identity_count = count;
+    selected.cert_file = selected.key_file = selected.key_password = NULL;
+    selected.credentials = NULL;
+  } else if (status == SALTS_OK) {
+    selected.credentials = &memory[0]->credentials;
+    selected.cert_file = selected.key_file = selected.key_password = NULL;
+  }
+  if (status == SALTS_OK) status = cnet_tls_server_init(server, &selected);
+  for (size_t i = 0u; i < count; ++i) tls_test_memory_free(memory[i]);
+  memset(ids, 0, sizeof(ids));
   return status;
 }
+
 static int tls_test_connect(cnet_client *client, const cnet_connect_options *options,
     cnet_connection *out) {
   if (!getenv("SALTS_TEST_TLS_MEMORY") || !options->tls) return cnet_connect(client, options, out);

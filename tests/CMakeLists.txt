@@ -457,6 +457,14 @@ if(TARGET Salts::CNet)
         --work "${PROJECT_BINARY_DIR}/native-python-client-mtls")
     set_tests_properties(saltscore.cnet_python_ssl_client_required_mtls
       PROPERTIES TIMEOUT 300 RESOURCE_LOCK cnet_native_required_mtls)
+    add_test(NAME saltscore.cnet_tls_sni_identities
+      COMMAND "${Python3_EXECUTABLE}" -B
+        "${PROJECT_SOURCE_DIR}/tests/test_cnet_tls_sni.py"
+        --binary "$<TARGET_FILE:saltscore_cnet_tls_ca_san_test>"
+        --fixture-generator "${PROJECT_SOURCE_DIR}/crypto/tests/sdk/python_mtls.py"
+        --work "${PROJECT_BINARY_DIR}/native-sni-identities")
+    set_tests_properties(saltscore.cnet_tls_sni_identities
+      PROPERTIES TIMEOUT 180 RESOURCE_LOCK cnet_native_required_mtls)
   endif()
 endif()
 

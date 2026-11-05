@@ -190,9 +190,9 @@ jobs:
 
       - name: Set up shared dependency contract
         id: vcpkg
-        # v0.1.6 retains the GmSSL #26 registry and overlay used by Core.
+        # GmSSL #27 adds bounded memory identity sets and full DNS SAN matching.
         # Includes native Windows pkg-config; avoid MSYS2 for pkg-config.
-        uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-curl-cache@v0.1.6
+        uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-curl-cache@af51681bc4317fe8b35e3aaf1c30198019410a7d
         with:
           mode: read
           triplet: ${{ matrix.triplet }}

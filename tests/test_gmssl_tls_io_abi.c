@@ -185,6 +185,11 @@ spec("Opaque Crypto streams retain policy and bounded storage") {
     }
   }
   for (unsigned encoding = 1u; encoding <= 2u; ++encoding) {
+    for (unsigned bad = 0u; bad < 4u; ++bad) {
+      it("server identity set encoding %u admits all four or rejects atomically, case %u", encoding, bad) {
+        tls_memory_identity_bounds(encoding, bad);
+      }
+    }
     for (unsigned bad = 1u; bad <= 19u; ++bad) {
       it("memory credentials encoding %u reject invalid input %u without a context", encoding, bad) {
         tls_memory_contexts(encoding, bad, 0u, 0u);

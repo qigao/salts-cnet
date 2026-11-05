@@ -1132,11 +1132,40 @@ int crypto_tls_stream_client_context_create(const crypto_tls_stream_client_confi
 int crypto_tls_stream_server_context_create(const crypto_tls_stream_server_config *config,
                                      crypto_tls_stream_context **out_context) {
   crypto_tls_stream_context *context = NULL;
+  crypto_tls_stream_server_config selected;
   int status;
 
   if (out_context == NULL) return CRYPTO_TLS_STREAM_EINVAL;
   *out_context = NULL;
   if (config == NULL) return CRYPTO_TLS_STREAM_EINVAL;
+  if (config->size != sizeof(*config) ||
+      (config->identities == NULL) != (config->identity_count == 0u) ||
+      config->identity_count > CRYPTO_TLS_SERVER_IDENTITY_MAX_COUNT)
+    return CRYPTO_TLS_STREAM_EINVAL;
+  if (config->identity_count) {
+    if (config->cert_file || config->key_file || config->key_password || config->credentials)
+      return CRYPTO_TLS_STREAM_EINVAL;
+    /* Validate every descriptor before opening any file or retaining policy. */
+    for (size_t i = 0u; i < config->identity_count; ++i) {
+      const crypto_tls_server_identity *id = &config->identities[i];
+      if (id->size != sizeof(*id) ||
+          !crypto_tls_stream_optional_path_valid(id->cert_file) ||
+          !crypto_tls_stream_optional_path_valid(id->key_file) ||
+          !crypto_tls_stream_bounded_string(id->key_password, CRYPTO_TLS_STREAM_PASSWORD_MAX_BYTES, NULL) ||
+          (id->credentials && (id->cert_file || id->key_file || id->key_password)) ||
+          (!id->credentials && (!id->cert_file || !id->key_file)))
+        return CRYPTO_TLS_STREAM_EINVAL;
+      status = crypto_tls_memory_validate(NULL, id->credentials,
+          config->security_profile == CRYPTO_TLS_STREAM_SECURITY_PROFILE_TLCP11);
+      if (status != CRYPTO_TLS_STREAM_OK) return status;
+    }
+    selected = *config;
+    selected.cert_file = config->identities[0].cert_file;
+    selected.key_file = config->identities[0].key_file;
+    selected.key_password = config->identities[0].key_password;
+    selected.credentials = config->identities[0].credentials;
+    config = &selected;
+  }
   if (config->size != sizeof(*config) ||
       !crypto_tls_stream_optional_path_valid(config->cert_file) ||
       !crypto_tls_stream_optional_path_valid(config->key_file) ||
@@ -1169,6 +1198,27 @@ int crypto_tls_stream_server_context_create(const crypto_tls_stream_server_confi
       config->cipher_suites, config->cipher_suite_count,
       config->signature_algorithms, config->signature_algorithm_count, &context);
   if (status != CRYPTO_TLS_STREAM_OK) return status;
+  for (size_t i = 1u; i < config->identity_count; ++i) {
+    const crypto_tls_server_identity *id = &config->identities[i];
+    for (size_t variant = 0u; variant < CRYPTO_TLS_STREAM_VARIANT_COUNT; ++variant) {
+      TLS_CTX *tls = &context->tls[variant];
+      if (!context->tls_ready[variant]) continue;
+      if (id->credentials) status = crypto_tls_memory_identity(tls, id->credentials);
+      else if (variant == CRYPTO_TLS_STREAM_VARIANT_TLCP11) {
+        status = crypto_tls_stream_tlcp_certificate_roles_valid(id->cert_file);
+        if (status == CRYPTO_TLS_STREAM_OK &&
+            tlcp_ctx_add_server_certificate_and_keys(tls, id->cert_file, id->key_file,
+                id->key_password ? id->key_password : "") != 1) status = CRYPTO_TLS_STREAM_EIO;
+      } else {
+        status = tls_ctx_add_certificate_chain_and_key(tls, id->cert_file, id->key_file,
+            id->key_password ? id->key_password : "") == 1 ? CRYPTO_TLS_STREAM_OK : CRYPTO_TLS_STREAM_EIO;
+      }
+      if (status != CRYPTO_TLS_STREAM_OK) {
+        crypto_tls_stream_context_release(context);
+        return status;
+      }
+    }
+  }
   *out_context = context;
   return CRYPTO_TLS_STREAM_OK;
 }

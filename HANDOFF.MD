@@ -144,3 +144,15 @@
 - Historical migration inventories remain provenance snapshots, not the
   current SDK surface. Serial USB metadata uses native OS APIs and remains
   part of Serial.
+
+## 2026-11-05 SNI identity selection qualification
+
+- The independent pollux-go non-mTLS handshaker's `ServerName` verifies the
+  certificate but does not send SNI. Use the existing independent mTLS client
+  with an explicit SNI extension when qualifying ShangMi certificate selection;
+  never count a default-certificate handshake as SNI coverage.
+- The new Python SNI test uses the existing explicit P-256 peer profile.
+  Removing `set_ecdh_curve("prime256v1")` on the local Python/OpenSSL runtime
+  exposed a separate TLS 1.3 HRR failure at GmSSL's ClientHello2 extension
+  comparison (`tls13.c`, `matching_ext_found`). Default-group HRR remains a
+  follow-up under #219 and is not qualified by these SNI results.
