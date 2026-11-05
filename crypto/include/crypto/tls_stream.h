@@ -6,6 +6,7 @@
 #include <crypto/tls_peer_policy.h>
 #include <crypto/tls_credentials.h>
 #include <crypto/tls_diagnostic.h>
+#include <crypto/tls_cipher.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -113,6 +114,18 @@ typedef struct crypto_tls_stream_client_config {
    * Larger values: EINVAL. iOS implicit system trust: ENOTSUP for nonzero.
    * Authentication and other path/size/constraint limits remain mandatory. */
   uint32_t verification_depth;
+  /** Optional ordered cipher allowlist, copied synchronously. NULL/0 keeps
+   * profile defaults. Nonempty lists contain at most MAX_COUNT unique suites.
+   * STANDARD admits AES-128-GCM: TLS1.3, or TLS1.2 ECDHE-RSA/ECDHE-ECDSA.
+   * SHANGMI admits SM4_GCM_SM3; TLCP admits TLCP_ECC_SM4_GCM_SM3 only.
+   * Every enabled protocol version must have a suite; every supplied suite
+   * must apply to the configured profile/version bounds. No implicit version
+   * narrowing or fallback. Unknown/unsupported/profile/version conflict:
+   * ENOTSUP; pointer/count mismatch, duplicates or excess count: EINVAL.
+   * Local order is preserved; peer/key compatibility still gates negotiation.
+   * Signature algorithms and groups retain their existing profile policy. */
+  const crypto_tls_cipher_suite *cipher_suites;
+  size_t cipher_suite_count;
 } crypto_tls_stream_client_config;
 
 /** Configuration copied into a reusable server context during initialization. */
@@ -155,6 +168,9 @@ typedef struct crypto_tls_stream_server_config {
   crypto_tls_stream_protocol_version maximum_version;
   /** Same depth contract as client. Nonzero requires REQUIRED client auth. */
   uint32_t verification_depth;
+  /** Same immutable cipher allowlist contract as the client configuration. */
+  const crypto_tls_cipher_suite *cipher_suites;
+  size_t cipher_suite_count;
 } crypto_tls_stream_server_config;
 
 typedef struct crypto_tls_stream_context crypto_tls_stream_context;

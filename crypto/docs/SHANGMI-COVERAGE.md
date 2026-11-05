@@ -172,6 +172,42 @@ root accounting and early context release. Five invalid configuration cases
 fail before reading nonexistent credential paths. Independent TLCP clients use
 depth 1 with dual-leaf server identities. iOS device execution is not claimed.
 
+### Cipher-suite policy
+
+Crypto/CNet client and server configurations accept `cipher_suites` and
+`cipher_suite_count`. NULL/0 retains the existing profile defaults. An explicit
+list is bounded to three unique `crypto_tls_cipher_suite` values and is consumed
+synchronously; callers can overwrite/release it after initialization. Contexts
+and subsequently created streams retain the copied policy. There is no hot update.
+
+STANDARD permits TLS_AES_128_GCM_SHA256 for TLS 1.3, and
+TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256 / TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256 for
+TLS 1.2. SHANGMI_TLS13 permits TLS_SM4_GCM_SM3; TLCP11 permits its distinct
+ECC_SM4_GCM_SM3 identifier. These are restrictions of the qualified profile,
+not a pass-through to every suite the provider recognizes. Signature/group
+selection remains the existing profile policy.
+
+Each enabled protocol version must have a permitted suite, and every supplied
+suite must apply to the context's profile and version bounds. For TLS 1.3 only,
+set `minimum_version = maximum_version = 13` together with its one-suite list.
+For the default TLS 1.2–1.3 range, include at least one TLS 1.2 suite and the TLS
+1.3 suite. Selection never silently narrows protocol bounds or restores defaults.
+Pointer/count mismatches, duplicate entries and excess count return EINVAL;
+unknown/unqualified suites and profile/version conflicts return ENOTSUP before
+credential loading, allocation or peer-policy retention. Local order is preserved
+within each protocol; peer offers, credentials and signature policy still govern
+successful negotiation. No suite intersection fails before application readiness.
+
+GmSSL revision #25 filters range-context suites by the negotiated TLS 1.3
+protocol before initial and certificate-based selection. A regression against
+#24 reproduced selection of a TLS 1.2 suite when it appeared first in a mixed
+list. Formal tests cover that ordering, 28 invalid client/server configurations,
+nine explicit/default endpoint/version combinations, two disjoint-suite failures,
+caller-list erasure and direct stream narrowing. A TLS 1.3 ClientHello offering
+only TLS 1.2 suites must receive a fatal alert before any ServerHello. Independent
+Python TLS 1.2/1.3 and Go ShangMi/TLCP peers exercise explicit lists in both roles,
+including authenticated data/close and existing authentication negatives.
+
 ### Context protocol-version policy
 
 Crypto/CNet client and server configurations expose `minimum_version` and
@@ -196,7 +232,7 @@ failed widening and default selection preserve both TLS 1.2 and TLS 1.3
 connections. Independent Python peers exercise explicit bounds in both native
 directions; ShangMi and TLCP formal suites retain their profile checks.
 
-This does not add configurable cipher/signature/group lists, verification
+This does not add configurable signature/group lists, verification
 time/depth/purpose or session restoration.
 
 ### TLCP stream qualification
