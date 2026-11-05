@@ -5,6 +5,7 @@ import (
 	"crypto/ecdsa"
 	"crypto/hmac"
 	"crypto/rand"
+	"crypto/x509"
 	"errors"
 	"fmt"
 
@@ -172,7 +173,7 @@ func (p *recordPeer) mutualClient(server, client fixture, scenario string) error
 	if err != nil {
 		return err
 	}
-	leaf, err := mutualServerCertificate(body, server)
+	leaf, err := mutualCertificate(body, server, false)
 	if err != nil {
 		return err
 	}
@@ -304,18 +305,18 @@ func mutualExtensions(data cryptobyte.String) (map[uint16][]byte, error) {
 	return ext, nil
 }
 
-func mutualServerCertificate(body cryptobyte.String, expected fixture) (*ecdsa.PublicKey, error) {
+func mutualCertificate(body cryptobyte.String, expected fixture, clientAuth bool) (*ecdsa.PublicKey, error) {
 	var context, list cryptobyte.String
 	if !body.ReadUint8LengthPrefixed(&context) || !context.Empty() ||
 		!body.ReadUint24LengthPrefixed(&list) || !body.Empty() || list.Empty() {
-		return nil, errors.New("invalid server certificate list")
+		return nil, errors.New("invalid peer certificate list")
 	}
 	var first []byte
 	for count := 0; !list.Empty(); count++ {
 		var der, extensions cryptobyte.String
 		if count >= 8 || !list.ReadUint24LengthPrefixed(&der) || len(der) == 0 ||
 			!list.ReadUint16LengthPrefixed(&extensions) || !extensions.Empty() {
-			return nil, errors.New("invalid server certificate entry")
+			return nil, errors.New("invalid peer certificate entry")
 		}
 		if count == 0 {
 			first = der
@@ -324,7 +325,7 @@ func mutualServerCertificate(body cryptobyte.String, expected fixture) (*ecdsa.P
 	// The test uses a direct-root leaf; match the independently generated DER
 	// in addition to chain, time and DNS verification by the independent library.
 	if !bytes.Equal(first, expected.leaf.Raw) {
-		return nil, errors.New("unexpected server identity")
+		return nil, errors.New("unexpected peer identity")
 	}
 	leaf, err := peerx509.ParseCertificate(first)
 	if err != nil {
@@ -332,12 +333,20 @@ func mutualServerCertificate(body cryptobyte.String, expected fixture) (*ecdsa.P
 	}
 	roots := peerx509.NewCertPool()
 	roots.AddCert(expected.root)
-	if err = peerx509.Verify(leaf, peerx509.VerifyOptions{Roots: roots, DNSName: "localhost"}); err != nil {
+	opts := peerx509.VerifyOptions{Roots: roots, DNSName: "localhost"}
+	if clientAuth {
+		opts.DNSName = ""
+		opts.KeyUsages = []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}
+	}
+	if leaf.KeyUsage&x509.KeyUsageDigitalSignature == 0 {
+		return nil, errors.New("peer certificate does not permit signatures")
+	}
+	if err = peerx509.Verify(leaf, opts); err != nil {
 		return nil, err
 	}
 	pub, ok := leaf.PublicKey.(*ecdsa.PublicKey)
 	if !ok {
-		return nil, errors.New("server key is not SM2")
+		return nil, errors.New("peer key is not SM2")
 	}
 	return pub, nil
 }

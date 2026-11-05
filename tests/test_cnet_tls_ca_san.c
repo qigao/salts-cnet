@@ -796,7 +796,10 @@ static int run_python_ssl_server(const char *port_text,
                                  const char *protocol,
                                  const char *identity,
                                  const char *trust_ca,
-                                 bool expect_success) {
+                                 bool expect_success,
+                                 const char *client_cert,
+                                 const char *client_key,
+                                 const char *expected_server_sha256) {
   const char *label = "production CNet -> independent secure stream peer";
   const bool tlcp = strcmp(protocol, "tlcp") == 0;
   const bool shangmi = strcmp(protocol, "shangmi13") == 0;
@@ -817,6 +820,8 @@ static int run_python_ssl_server(const char *port_text,
        * CNet system trust path, with no test-only TLS provider. */
       .ca_file = strcmp(trust_ca, "-") == 0 ? NULL : trust_ca,
       .server_name = identity,
+      .cert_file = client_cert,
+      .key_file = client_key,
       .security_profile = tlcp ? CNET_TLS_SECURITY_PROFILE_TLCP11 :
           shangmi ? CNET_TLS_SECURITY_PROFILE_SHANGMI_TLS13 : CNET_TLS_SECURITY_PROFILE_STANDARD};
   char uri[96] = {0};
@@ -873,6 +878,8 @@ static int run_python_ssl_server(const char *port_text,
     if (shangmi) REQUIRE(strcmp(probe.tls_cipher, "TLS_SM4_GCM_SM3") == 0);
     REQUIRE(cnet_tls_peer_certificate_sha256(&client, outbound, digest) == SALTS_OK);
     REQUIRE(strlen(digest) == 64u);
+    if (expected_server_sha256 != NULL)
+      REQUIRE(strcmp(digest, expected_server_sha256) == 0);
     REQUIRE(cnet_receive(&client, outbound, 1u) == SALTS_OK);
 
     outgoing = mem_get_buffer(mem_global(), 1u);
@@ -909,8 +916,10 @@ static int run_python_ssl_server(const char *port_text,
 cleanup:
   if (outgoing != NULL) mem_buffer_release(outgoing);
   if (initialized) {
-    (void)cnet_client_stop(&client, 5000u);
-    (void)cnet_client_destroy(&client);
+    const int stop_status = cnet_client_stop(&client, 5000u);
+    const int destroy_status = cnet_client_destroy(&client);
+    if (stop_status != SALTS_OK || destroy_status != SALTS_OK ||
+        probe.terminal_count != 1u) result = 1;
   }
   return result;
 }
@@ -1343,6 +1352,11 @@ cleanup:
 }
 
 static int saltscore_original_entry_test_cnet_tls_ca_san_c(int argc, char **argv) {
+  if (argc == 9 && strcmp(argv[1], "--shangmi-required-server") == 0) {
+    if (strcmp(argv[7], "accept") != 0 && strcmp(argv[7], "reject") != 0) return 2;
+    return run_python_ssl_server(argv[2], "shangmi13", argv[3], argv[4],
+        strcmp(argv[7], "accept") == 0, argv[5], argv[6], argv[8]);
+  }
   if (argc == 8 && strcmp(argv[1], "--shangmi-required-client") == 0)
     return run_python_ssl_client(argv[2], argv[3], argv[4], argv[5], "shangmi13-mtls", argv[6], argv[7]);
   if (argc == 12 && strcmp(argv[1], "--shangmi-mtls") == 0) {
@@ -1375,13 +1389,13 @@ static int saltscore_original_entry_test_cnet_tls_ca_san_c(int argc, char **argv
   if (argc == 5 && strcmp(argv[1], "--external-san") == 0)
     return run_python_ssl_server(
         argv[2], argv[3], argv[4], CORE_TLS_TEST_EXTERNAL_CA,
-        strcmp(argv[4], "localhost") == 0);
+        strcmp(argv[4], "localhost") == 0, NULL, NULL, NULL);
   if (argc == 7 && strcmp(argv[1], "--external-ip-san") == 0) {
     if (strcmp(argv[6], "accept") != 0 && strcmp(argv[6], "reject") != 0)
       return 2;
     return run_python_ssl_server(
         argv[2], argv[3], argv[4], argv[5],
-        strcmp(argv[6], "accept") == 0);
+        strcmp(argv[6], "accept") == 0, NULL, NULL, NULL);
   }
   int result;
   if (argc == 8 && strcmp(argv[1], "--required-mtls") == 0) {

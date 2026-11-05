@@ -23,7 +23,7 @@ source or falls back to plaintext.
 | SM2 complete direct CRL | Explicit issuer/SM2 signing ID, full-CRL scope, time/age/number policy and serial checking | Independent gmsm CRLs, real pinned-trust callback, revoked/stale/rollback/scope/DER negatives; cross-platform CI required |
 | CMS / SM2 certificate workflows | CMS enabled in provider; public workflow qualification pending | Generic ASN1 parsing and existing X509 inspection alone do not qualify signing or trust |
 | TLCP 1.1 ECC_SM4_GCM_SM3 | Explicit CNet client/server profile with dual SM2 server certificates | Independent GoTLCP bidirectional handshake/data/close, CA/DNS/IP/time/signature/KU negatives, local dual-identity admission and signature-extension/cipher rejection; cross-platform CI required |
-| TLS 1.3 ShangMi | Explicit CNet client/server RFC 8998 SM4-GCM profile with SM2 server authentication and REQUIRED-mTLS | Independent server-authenticated handshake/data/close, certificate/CertificateVerify/Finished negatives, exact profile rejection, fragmentation and abnormal EOF; native/native mTLS with independent certificates/digests and native-server mTLS with an independent client; cross-platform CI required |
+| TLS 1.3 ShangMi | Explicit CNet client/server RFC 8998 SM4-GCM profile with SM2 server authentication and REQUIRED-mTLS | Independent server-authenticated handshake/data/close, certificate/CertificateVerify/Finished negatives, exact profile rejection, fragmentation and abnormal EOF; native/native mTLS with independent certificates/digests and independent mTLS in both native directions; cross-platform CI required |
 | DTLS | Issue #188 resumed; implementation and CNet/SCTP qualification pending | Existing TLS tests do not qualify DTLS |
 | SDF / SKF hardware | Requires selected vendor runtime/device and its integration tests | No software fallback for non-exportable keys |
 
@@ -127,9 +127,22 @@ occur before CONNECTED or plaintext and cannot be a timeout; the test also
 requires proof that the independent client reached its certificate flight.
 Raw-EOF injection waits for the native SEND completion marker after the reply.
 
-The reverse independent mTLS direction (native client against independent
-server), revocation integration, resumption/key-update qualification, DTLS and
-hardware-backed keys remain separate gates.
+`saltscore.cnet_shangmi_mtls_native_client` covers the reverse direction with
+19 cases. Its independent server authenticates the native client's exact
+certificate, clientAuth purpose, CertificateVerify possession proof and Finished
+before exchanging data. The native client validates the server's independent
+SHA-256 fingerprint, exact suite and DNS/IP identity. Success includes encrypted
+server-flight fragmentation, reciprocal close and checked owner stop/destroy.
+Negative cases cover server trust/time/KU/EKU/signature, incorrect DNS/IP,
+CertificateVerify context/SM2 ID/scheme/signature and Finished authentication.
+Nonempty initial request contexts, absent signature_algorithms and duplicate
+signature_algorithms in CertificateRequest must fail before CONNECTED/plaintext;
+timeouts cannot count as authentication rejection. The peer confirms that its
+negative authentication flight was actually sent.
+
+Both independent mTLS peers use the finite test-only state machine and external
+primitives described above. Revocation integration, resumption/key-update
+qualification, DTLS and hardware-backed keys remain separate gates.
 
 ## API use and boundaries
 
