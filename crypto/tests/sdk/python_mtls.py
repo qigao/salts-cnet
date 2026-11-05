@@ -77,6 +77,7 @@ def cert(
     server_san: bool = False,
     server_ip_san: bool = False,
     server_dns_ip_san: bool = False,
+    server_dns_names: tuple[str, ...] | None = None,
 ) -> x509.Certificate:
     now = datetime.now(timezone.utc)
     if expired:
@@ -110,9 +111,9 @@ def cert(
     )
     if eku is not None:
         obj = obj.add_extension(x509.ExtendedKeyUsage([eku]), critical=False)
-    if server_san:
+    if server_san or server_dns_names is not None:
         obj = obj.add_extension(x509.SubjectAlternativeName([
-            x509.DNSName("localhost")
+            x509.DNSName(name) for name in (server_dns_names if server_dns_names is not None else ("localhost",))
         ]), critical=False)
     if server_ip_san:
         # RFC 5280 iPAddress contains raw 4/16-byte addresses, never DNS text.

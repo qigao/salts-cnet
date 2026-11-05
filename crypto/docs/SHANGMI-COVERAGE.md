@@ -106,6 +106,44 @@ and separate encrypted TLCP signing/encryption keys, in both memory encodings.
 PKCS#12/PFX, other encrypted PKCS#8 algorithms and retained credential/key objects
 remain unimplemented. SDF/SKF hardware integration is deferred by user decision.
 
+### Immutable server identity selection
+
+Crypto streams and CNet servers accept an ordered `identities` array with
+`identity_count` from 1 to `CRYPTO_TLS_SERVER_IDENTITY_MAX_COUNT` (4). Each
+`crypto_tls_server_identity` / `cnet_tls_server_identity` uses either certificate
+and key files or the memory credential descriptor above. Clear the top-level
+`cert_file`, `key_file`, `key_password` and `credentials` when supplying the set.
+NULL/0 keeps the existing single identity configuration.
+
+Initialization validates every descriptor before file access, then loads and
+binds every identity before publishing a context. A later entry failure releases
+the entire context. Inputs, passwords and descriptors can be erased on return;
+accepted streams retain the context after the creator releases it. The provider
+has one 8192-byte encoded chain budget per protocol variant, including three
+bytes per identity. A valid individual chain can still exceed the aggregate
+budget when combined with others. Descriptor/count errors return EINVAL,
+oversized memory inputs ERANGE, and loading/binding/aggregate failures EIO.
+
+GmSSL selects the first identity compatible with SNI, signature schemes and
+other handshake parameters. All DNS SAN entries participate, matching ASCII
+case-insensitively. Only a complete leftmost wildcard label is supported and
+it consumes exactly one host label. There is no CN fallback. Unknown SNI
+rejects the handshake; absent SNI selects the first compatible identity.
+Prepare internationalized host names as ASCII A-labels. Trust, mTLS, ALPN,
+version, cipher and signature policies apply to the whole immutable set.
+There are no selection callbacks, handshake-time file reads or hot replacement.
+Client CertificateRequest identity selection remains outstanding.
+
+TLS 1.2/1.3 independent Python clients check the selected certificate bytes,
+required client authentication, all input encodings, secondary SANs, case,
+wildcards, absent/unknown SNI and skipping a signature-incompatible first key.
+The peers use the existing explicit P-256 group profile. GoTLCP verifies the
+second dual identity under its separate CA through authenticated IO and close;
+the independent ShangMi mTLS client sends SNI and checks the second SM2
+identity, including encrypted PEM/DER keys. Native formal tests cover four
+identities, malformed descriptors, late key/password failures and aggregate
+capacity. Cross-platform qualification still requires the matching LLVM CI.
+
 ### Handshake failure diagnostics
 
 `crypto_tls_stream_get_diagnostic` copies the first local handshake failure

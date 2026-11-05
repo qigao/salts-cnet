@@ -190,6 +190,22 @@ typedef struct crypto_tls_stream_server_config {
   /** Same immutable signature allowlist contract as the client configuration. */
   const crypto_tls_signature_scheme *signature_algorithms;
   size_t signature_algorithm_count;
+  /** Optional ordered identity set (1..SERVER_IDENTITY_MAX_COUNT), replacing
+   * cert_file/key_file/key_password/credentials, which must then be NULL.
+   * NULL/0 retains single-identity configuration. All entries are validated
+   * and loaded before publishing the context; input can then be erased.
+   * Encoded chains share an 8192-byte provider budget including three bytes
+   * per chain. Invalid pointer/count/entry: EINVAL; oversized memory input:
+   * ERANGE; loading, key binding or
+   * aggregate capacity failure: EIO. No partial context is returned.
+   * Selects the first identity compatible with SNI and handshake parameters.
+   * DNS SANs match ASCII case-insensitively; only a complete leftmost wildcard
+   * label is supported. No CN fallback. Unknown SNI fails the handshake;
+   * without SNI, the first compatible identity is used. Certificate selection
+   * is not authentication of the client. Trust, mTLS, ALPN, protocol and cipher
+   * policies are common to the entire immutable set. No hot replacement. */
+  const crypto_tls_server_identity *identities;
+  size_t identity_count;
 } crypto_tls_stream_server_config;
 
 typedef struct crypto_tls_stream_context crypto_tls_stream_context;

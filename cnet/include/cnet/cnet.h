@@ -391,6 +391,8 @@ typedef crypto_tls_data cnet_tls_data;
 typedef crypto_tls_cipher_suite cnet_tls_cipher_suite;
 typedef crypto_tls_signature_scheme cnet_tls_signature_scheme;
 typedef crypto_tls_credentials cnet_tls_credentials;
+enum { CNET_TLS_SERVER_IDENTITY_MAX_COUNT = CRYPTO_TLS_SERVER_IDENTITY_MAX_COUNT };
+typedef crypto_tls_server_identity cnet_tls_server_identity;
 
 /** Creates a retained direct-issuer SM2 CRL policy inside CNet's Crypto owner.
  * Uses the snapshot contract in crypto/tls_sm2_crl_policy.h; returns SALTS status.
@@ -512,6 +514,10 @@ typedef struct cnet_tls_server_config {
   /** Same copied signature-list contract as Crypto TLS stream configuration. */
   const cnet_tls_signature_scheme *signature_algorithms;
   size_t signature_algorithm_count;
+  /** Same immutable SNI identity-set contract as Crypto server configuration.
+   * Replaces the single identity fields; consumed during server init. */
+  const cnet_tls_server_identity *identities;
+  size_t identity_count;
 } cnet_tls_server_config;
 
 typedef struct cnet_connect_options {

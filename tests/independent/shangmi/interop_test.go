@@ -222,6 +222,11 @@ func runNativeServer(t *testing.T, f fixture, outcome string, corrupt ...string)
 }
 
 func runNativeServerWithClient(t *testing.T, f fixture, client *fixture, outcome string, corrupt ...string) {
+	runNativeServerIdentities(t, f, client, nil, outcome, corrupt...)
+}
+
+// f is the independently trusted identity; primary, when set, precedes it.
+func runNativeServerIdentities(t *testing.T, f fixture, client, primary *fixture, outcome string, corrupt ...string) {
 	t.Helper()
 	portPath := filepath.Join(t.TempDir(), "port")
 	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
@@ -232,6 +237,14 @@ func runNativeServerWithClient(t *testing.T, f fixture, client *fixture, outcome
 			fmt.Sprintf("%x", sha256.Sum256(client.leaf.Raw))}
 	}
 	command := exec.CommandContext(ctx, *native, args...)
+	if primary != nil {
+		certIndex := 3
+		if client != nil {
+			certIndex = 4
+		}
+		command.Args[certIndex], command.Args[certIndex+1] = primary.certPath, primary.keyPath
+		command.Env = append(os.Environ(), "SALTS_TEST_TLS_ALT_CERT="+f.certPath, "SALTS_TEST_TLS_ALT_KEY="+f.keyPath)
+	}
 	var output bytes.Buffer
 	command.Stdout, command.Stderr = &output, &output
 	if err := command.Start(); err != nil {
@@ -433,6 +446,26 @@ func TestShangMi(t *testing.T) {
 		t.Fatal("missing native peer")
 	}
 	f := credentials(t, nil)
+	t.Run("sni_identity_set", func(t *testing.T) {
+		first := credentials(t, func(cert *x509.Certificate) { cert.DNSNames = []string{"first.test"} })
+		client := clientCredentials(t, nil)
+		memoryFixtures(t, client.caPath)
+		for _, identity := range []fixture{first, f} {
+			memoryFixtures(t, identity.certPath, identity.keyPath)
+			encryptedMemoryFixture(t, identity.keyPath)
+		}
+		for _, mode := range []string{"file", "pem", "der", "encrypted_pem", "encrypted_der"} {
+			t.Run(mode, func(t *testing.T) {
+				if mode != "file" {
+					t.Setenv("SALTS_TEST_TLS_MEMORY", strings.TrimPrefix(mode, "encrypted_"))
+				}
+				if strings.HasPrefix(mode, "encrypted_") {
+					t.Setenv("SALTS_TEST_TLS_ENCRYPTED", "1")
+				}
+				runNativeServerIdentities(t, f, &client, &first, "close", "sni")
+			})
+		}
+	})
 	t.Run("native_client", func(t *testing.T) { runNativeClient(t, f, "localhost", true, "") })
 	t.Run("native_client_ip", func(t *testing.T) { runNativeClient(t, f, "127.0.0.1", true, "") })
 	t.Run("native_server", func(t *testing.T) { runNativeServer(t, f, "close") })

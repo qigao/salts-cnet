@@ -181,7 +181,7 @@ int crypto_tls_memory_identity(TLS_CTX *tls, const crypto_tls_credentials *crede
     status = decode_key(&credentials->encryption_key, &credentials->encryption_key_password, enc_key, sizeof(enc_key), &enc_size);
     if (status == 0 && !tlcp_roles(certs, certs_size)) status = CRYPTO_TLS_STREAM_EIO;
   }
-  if (status == 0 && tls_ctx_set_certificate_and_keys_der(tls, certs, certs_size, key, key_size,
+  if (status == 0 && tls_ctx_add_certificate_and_keys_der(tls, certs, certs_size, key, key_size,
       enc_size ? enc_key : NULL, enc_size) != 1) status = CRYPTO_TLS_STREAM_EIO;
   gmssl_secure_clear(key, sizeof(key));
   gmssl_secure_clear(enc_key, sizeof(enc_key));

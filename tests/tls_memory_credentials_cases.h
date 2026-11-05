@@ -56,6 +56,51 @@ static size_t tls_memory_encrypt(unsigned encoding, unsigned scenario, unsigned 
   return size;
 }
 
+static void tls_memory_identity_bounds(unsigned encoding, unsigned bad) {
+  unsigned char cert[16384], key[16384], wrong_cert[16384];
+  const unsigned wire_encoding = bad == 3u ? CRYPTO_TLS_ENCODING_DER : encoding;
+  crypto_tls_credentials credentials = {.size = sizeof(credentials),
+      .certificate_chain = {cert, tls_memory_fixture(CRYPTO_CLOSE_TEST_SERVER_CERT, "CERTIFICATE", wire_encoding, cert, sizeof(cert)), wire_encoding},
+      .private_key = {key, tls_memory_fixture(CRYPTO_CLOSE_TEST_SERVER_KEY, "PRIVATE KEY", wire_encoding, key, sizeof(key)), wire_encoding}};
+  check(credentials.certificate_chain.size && credentials.private_key.size);
+  crypto_tls_credentials last = credentials;
+  crypto_tls_server_identity ids[4];
+  for (unsigned i = 0u; i < 4u; ++i)
+    ids[i] = (crypto_tls_server_identity){.size = sizeof(ids[i]), .credentials = &credentials};
+  ids[3].credentials = &last;
+  crypto_tls_stream_server_config server = {.size = sizeof(server), .identities = ids, .identity_count = 4u};
+  unsigned char password[] = {'m', 'e', 'm', 0, 'k', 'e', 'y'};
+  if (bad == 1u) {
+    last.certificate_chain = (crypto_tls_data){wrong_cert,
+        tls_memory_fixture(CRYPTO_CLOSE_TEST_CA, "CERTIFICATE", encoding, wrong_cert, sizeof(wrong_cert)), encoding};
+    check(last.certificate_chain.size);
+  } else if (bad == 2u) {
+    /* Only the last identity is encrypted and has a wrong password. */
+    last.private_key = (crypto_tls_data){wrong_cert,
+        tls_memory_encrypt(encoding, 0u, wrong_cert, password, sizeof(password)), encoding};
+    password[6] ^= 1u;
+    last.private_key_password = (crypto_tls_password){password, sizeof(password)};
+  } else if (bad == 3u) {
+    size_t issuer_size = tls_memory_fixture(CRYPTO_CLOSE_TEST_CA, "CERTIFICATE",
+        CRYPTO_TLS_ENCODING_DER, wrong_cert, sizeof(wrong_cert));
+    check(issuer_size && issuer_size < 4096u);
+    while (credentials.certificate_chain.size <= 4096u) {
+      memcpy(cert + credentials.certificate_chain.size, wrong_cert, issuer_size);
+      credentials.certificate_chain.size += issuer_size;
+    }
+    check(credentials.certificate_chain.size <= CRYPTO_TLS_CERTIFICATE_CHAIN_DER_MAX_BYTES);
+    server.identity_count = 1u;
+    check_equal(crypto_tls_stream_server_context_create(&server, &stream_context[1]), CRYPTO_TLS_STREAM_OK);
+    crypto_tls_stream_context_release(stream_context[1]); stream_context[1] = NULL;
+    server.identity_count = 2u; /* Individually valid, aggregate exceeds 8192. */
+  }
+  check_equal(crypto_tls_stream_server_context_create(&server, &stream_context[1]),
+      bad ? CRYPTO_TLS_STREAM_EIO : CRYPTO_TLS_STREAM_OK);
+  if (bad) check_null(stream_context[1]);
+  memset(cert, 0, sizeof(cert)); memset(key, 0, sizeof(key));
+  memset(wrong_cert, 0, sizeof(wrong_cert)); memset(password, 0, sizeof(password));
+}
+
 static void tls_memory_contexts(unsigned encoding, unsigned bad, unsigned version, unsigned encrypted) {
   unsigned char ca[16384], cert[16384], key[16384];
   crypto_tls_data trust = {ca, tls_memory_fixture(CRYPTO_CLOSE_TEST_CA, "CERTIFICATE", encoding, ca, sizeof(ca)), encoding};

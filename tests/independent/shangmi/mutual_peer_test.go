@@ -57,6 +57,12 @@ func (p *recordPeer) mutualClient(server, client fixture, scenario string) error
 		{Type: 13, Data: []byte{0, 2, 7, 8}},
 		{Type: 51, Data: append([]byte{0, 69, 0, 41, 0, 65}, share...)},
 	}}
+	if scenario == "sni" {
+		// The upstream non-mTLS handshaker uses ServerName for verification
+		// only. This existing independent client explicitly sends RFC 6066 SNI.
+		ch.Extensions = append(ch.Extensions, tls13gm.Extension{Type: 0,
+			Data: append([]byte{0, 12, 0, 0, 9}, []byte("localhost")...)})
+	}
 	if _, err = rand.Read(ch.Random[:]); err != nil {
 		return err
 	}
@@ -136,6 +142,9 @@ func (p *recordPeer) mutualClient(server, client fixture, scenario string) error
 	// supported_groups is permitted in EE; no other extensions were offered
 	// that can be acknowledged here (in particular, no ALPN or early data).
 	for kind := range ext {
+		if kind == 0 && scenario == "sni" && len(ext[kind]) == 0 {
+			continue
+		}
 		if kind != 10 {
 			return fmt.Errorf("unexpected EE extension %d", kind)
 		}

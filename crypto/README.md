@@ -60,6 +60,11 @@ plaintext staging and remain valid until stream destruction. The host must stop
 admission and drain native completions before destroying the stream; Crypto does
 not own sockets, cancellation completion, timers or a progress thread.
 
+Servers can configure up to four ordered file or memory identities for SNI
+selection in TLS 1.2/1.3, ShangMi TLS 1.3 and TLCP. All identities are loaded at
+context creation, share one trust/authentication policy and remain immutable.
+See [identity selection and its bounds](docs/SHANGMI-COVERAGE.md#immutable-server-identity-selection).
+
 Protocol range selection is rejected after the first handshake call. TLS errors
 cannot trigger plaintext fallback or a new trust source. A local shutdown record
 is distinct from authenticated peer close_notify. CNet translates stream results

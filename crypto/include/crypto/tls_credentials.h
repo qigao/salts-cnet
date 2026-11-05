@@ -54,4 +54,17 @@ typedef struct crypto_tls_credentials {
   crypto_tls_password private_key_password;
   crypto_tls_password encryption_key_password;
 } crypto_tls_credentials;
+
+enum { CRYPTO_TLS_SERVER_IDENTITY_MAX_COUNT = 4 };
+
+/* One server identity: either file chain/key/password or memory credentials.
+ * Inputs are borrowed only during context creation. TLCP uses the existing
+ * dual-certificate/dual-key contract for each identity. */
+typedef struct crypto_tls_server_identity {
+  size_t size;
+  const char *cert_file;
+  const char *key_file;
+  const char *key_password;
+  const crypto_tls_credentials *credentials;
+} crypto_tls_server_identity;
 #endif
