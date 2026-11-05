@@ -391,7 +391,11 @@ typedef crypto_tls_data cnet_tls_data;
 typedef crypto_tls_cipher_suite cnet_tls_cipher_suite;
 typedef crypto_tls_signature_scheme cnet_tls_signature_scheme;
 typedef crypto_tls_credentials cnet_tls_credentials;
-enum { CNET_TLS_SERVER_IDENTITY_MAX_COUNT = CRYPTO_TLS_SERVER_IDENTITY_MAX_COUNT };
+enum {
+  CNET_TLS_SERVER_IDENTITY_MAX_COUNT = CRYPTO_TLS_SERVER_IDENTITY_MAX_COUNT,
+  CNET_TLS_CLIENT_IDENTITY_MAX_COUNT = CRYPTO_TLS_CLIENT_IDENTITY_MAX_COUNT
+};
+typedef crypto_tls_client_identity cnet_tls_client_identity;
 typedef crypto_tls_server_identity cnet_tls_server_identity;
 
 /** Creates a retained direct-issuer SM2 CRL policy inside CNet's Crypto owner.
@@ -466,6 +470,13 @@ typedef struct cnet_tls_client_config {
   /** Same copied signature-list contract as Crypto TLS stream configuration. */
   const cnet_tls_signature_scheme *signature_algorithms;
   size_t signature_algorithm_count;
+  /** Ordered immutable client identities; see crypto_tls_stream_client_config.
+   * Borrowed only during cnet_connect; copied before handshake progress.
+   * Excludes top-level identity fields. NULL/0 keeps single-identity behavior.
+   * First CertificateRequest-compatible identity wins; no match sends an empty
+   * Certificate. TLCP client identities are unsupported. */
+  const cnet_tls_client_identity *identities;
+  size_t identity_count;
 } cnet_tls_client_config;
 
 /** Configuration copied into a reusable server context during initialization. */

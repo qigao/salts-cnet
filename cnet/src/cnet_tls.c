@@ -109,6 +109,8 @@ int cnet_tls_client_context_create(const cnet_tls_client_config *config, cnet_tl
     policy.cipher_suite_count = config->cipher_suite_count;
     policy.signature_algorithms = config->signature_algorithms;
     policy.signature_algorithm_count = config->signature_algorithm_count;
+    policy.identities = config->identities;
+    policy.identity_count = config->identity_count;
   }
   status = cnet_tls_status(crypto_tls_stream_client_context_create(&policy, &provider));
   return status == SALTS_OK ? cnet_tls_wrap_context(provider, false, out_context) : status;

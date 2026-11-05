@@ -14,7 +14,7 @@ CMake targets, C11 source and C++17-usable C headers.
 
 Use the repository's user presets for the ASN1/Crypto/CNet build and formal
 CTest suite. The native GmSSL implementation is installed from the immutable
-`gmssl 3.2.0#20` vcpkg port, whose extension sources are pinned from
+`gmssl 3.2.0#29` vcpkg port, whose extension sources are pinned from
 `gmssl-extensions/`. `Salts::Crypto` links the imported `GmSSL::GmSSL` static
 library; it never compiles a duplicate GmSSL implementation.
 Private Ed448 libecc objects live under `vendor/libecc/` in this module.
@@ -64,6 +64,12 @@ Servers can configure up to four ordered file or memory identities for SNI
 selection in TLS 1.2/1.3, ShangMi TLS 1.3 and TLCP. All identities are loaded at
 context creation, share one trust/authentication policy and remain immutable.
 See [identity selection and its bounds](docs/SHANGMI-COVERAGE.md#immutable-server-identity-selection).
+
+Clients can similarly configure up to four file or memory identities. TLS 1.2,
+TLS 1.3 and ShangMi select the first compatible identity from CertificateRequest
+CA hints and signature constraints. With no match they send an empty certificate;
+without a request they send no identity. Trust policy remains independent and
+mandatory. See [client identity selection](docs/SHANGMI-COVERAGE.md#immutable-client-identity-selection).
 
 Protocol range selection is rejected after the first handshake call. TLS errors
 cannot trigger plaintext fallback or a new trust source. A local shutdown record
