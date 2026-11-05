@@ -11,6 +11,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/emmansun/gmsm/pkcs"
+	"github.com/emmansun/gmsm/pkcs8"
 	"github.com/emmansun/gmsm/sm3"
 )
 
@@ -61,9 +63,18 @@ func TestShangMiMutual(t *testing.T) {
 	}
 	server, client := credentials(t, nil), clientCredentials(t, nil)
 	memoryFixtures(t, server.caPath, server.certPath, server.keyPath, client.caPath, client.certPath, client.keyPath)
+	encryptedMemoryFixture(t, server.keyPath)
+	encryptedMemoryFixture(t, client.keyPath)
 	for _, mode := range []string{"pem", "der"} {
 		t.Run("memory_"+mode, func(t *testing.T) {
 			t.Setenv("SALTS_TEST_TLS_MEMORY", mode)
+			mutual(t, server, client, "accept")
+			runNativeServerWithClient(t, server, &client, "close")
+			runNativeClientWithIdentity(t, server, &client, "localhost", true, "")
+		})
+		t.Run("encrypted_memory_"+mode, func(t *testing.T) {
+			t.Setenv("SALTS_TEST_TLS_MEMORY", mode)
+			t.Setenv("SALTS_TEST_TLS_ENCRYPTED", "1")
 			mutual(t, server, client, "accept")
 			runNativeServerWithClient(t, server, &client, "close")
 			runNativeClientWithIdentity(t, server, &client, "localhost", true, "")
@@ -104,6 +115,29 @@ func TestShangMiMutual(t *testing.T) {
 	t.Run("reject_server_certificate_signature", func(t *testing.T) {
 		mutual(t, corruptCertificate(t, credentials(t, nil)), client, "reject-client")
 	})
+}
+
+func encryptedMemoryFixture(t *testing.T, path string) {
+	t.Helper()
+	plain, err := os.ReadFile(path + ".der")
+	if err != nil {
+		t.Fatal(err)
+	}
+	key, err := pkcs8.ParsePKCS8PrivateKey(plain)
+	if err != nil {
+		t.Fatal(err)
+	}
+	der, err := pkcs8.MarshalPrivateKey(key, []byte("memory\x00sign"),
+		pkcs.NewPBESEncrypter(pkcs.SM4CBC, pkcs.NewPBKDF2Opts(pkcs.SM3, 16, 10000)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path+".encrypted.der", der, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path+".encrypted", pem.EncodeToMemory(&pem.Block{Type: "ENCRYPTED PRIVATE KEY", Bytes: der}), 0600); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func TestShangMiMutualIndependent(t *testing.T) {

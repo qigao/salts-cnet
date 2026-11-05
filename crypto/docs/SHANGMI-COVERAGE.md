@@ -54,7 +54,7 @@ Crypto/CNet client and server configurations accept `ca_data` and `credentials`
 from `crypto/tls_credentials.h`. Each input explicitly selects DER or PEM and
 provides a byte length; no NUL terminator, temporary file or filesystem lookup
 is needed for memory inputs. Certificate chains and anchors use concatenated
-DER certificates or `CERTIFICATE` PEM blocks. Private keys use one unencrypted
+DER certificates or `CERTIFICATE` PEM blocks. Plain private keys use one
 PKCS#8 `PrivateKeyInfo`, DER or `PRIVATE KEY` PEM, for RSA or EC SM2/P-256.
 TLCP servers provide separate signing and encryption keys and a chain ordered
 as signing leaf, encryption leaf, then issuers. Both certificate/key bindings
@@ -83,9 +83,28 @@ TLCP in both directions, and malformed dual identities. The CNet adapter frees
 all credential input before progressing a handshake and links only CNet's
 canonical Crypto owner.
 
-Encrypted memory PKCS#8, PKCS#12/PFX, retained credential/key objects and
-hardware-backed keys are not supplied by this slice. They must not be inferred
-from existing encrypted file input or standalone SM2 key-container APIs.
+Set `private_key_password` or `encryption_key_password` in the credential
+descriptor to load an encrypted PKCS#8 key, independently for either TLCP key.
+Passwords use a byte pointer and length (up to 1024 bytes); embedded NULs are
+significant. NULL/0 selects plaintext, while a non-NULL pointer with zero length
+selects an empty password. Password bytes are borrowed only during init.
+Encrypted inputs use DER `EncryptedPrivateKeyInfo` or `ENCRYPTED PRIVATE KEY`
+PEM: PBES2, explicit PBKDF2-HMAC-SM3, SM4-CBC, 8..64-byte salt, 16-byte IV,
+optional key length absent or 16, and 10000..1000000 iterations. An omitted PRF
+is rejected; it is not reinterpreted as SM3. Padded ciphertext is capped at
+8192 bytes before derivation/decryption; decoded keys still undergo exact
+PKCS#8 parsing and certificate binding. Derived keys, cipher state and decoded
+private keys are cleared on every exit. Unsupported schemes and malformed
+input fail without publishing a context or trying a plaintext fallback.
+
+Formal tests cover encrypted RSA TLS 1.2/1.3 IO after password/input erasure,
+empty and embedded-NUL passwords, malformed PKCS#8, wrong passwords, KDF bounds,
+salt/key-length/PRF admission, padding and output bounds. Independent Go fixtures
+cover encrypted SM2 credentials in native/native and independent ShangMi mTLS,
+and separate encrypted TLCP signing/encryption keys, in both memory encodings.
+
+PKCS#12/PFX, other encrypted PKCS#8 algorithms and retained credential/key objects
+remain unimplemented. SDF/SKF hardware integration is deferred by user decision.
 
 ### Context protocol-version policy
 

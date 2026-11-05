@@ -1,6 +1,9 @@
 #include "crypto_tls_credentials.h"
 #include <gmssl/base64.h>
 #include <gmssl/mem.h>
+#include <gmssl/pkcs8.h>
+#include <gmssl/sm3.h>
+#include <gmssl/sm4.h>
 #include <gmssl/x509.h>
 #include <gmssl/x509_ext.h>
 #include <stdlib.h>
@@ -13,17 +16,25 @@ static int validate_data(const crypto_tls_data *data, size_t maximum) {
   return data->size > maximum ? CRYPTO_TLS_STREAM_ERANGE : CRYPTO_TLS_STREAM_OK;
 }
 
+static int validate_password(const crypto_tls_password *password) {
+  if (!password->data && password->size) return CRYPTO_TLS_STREAM_EINVAL;
+  return password->size > CRYPTO_TLS_PASSWORD_MAX_BYTES ? CRYPTO_TLS_STREAM_ERANGE : CRYPTO_TLS_STREAM_OK;
+}
+
 int crypto_tls_memory_validate(const crypto_tls_data *ca,
     const crypto_tls_credentials *credentials, bool tlcp_server) {
   int status;
   if (ca && (status = validate_data(ca, CRYPTO_TLS_TRUST_INPUT_MAX_BYTES)) != 0) return status;
   if (!credentials) return CRYPTO_TLS_STREAM_OK;
   if (credentials->size != sizeof(*credentials)) return CRYPTO_TLS_STREAM_EINVAL;
+  if ((status = validate_password(&credentials->private_key_password)) != 0 ||
+      (status = validate_password(&credentials->encryption_key_password)) != 0) return status;
   if ((status = validate_data(&credentials->certificate_chain, CRYPTO_TLS_CREDENTIAL_INPUT_MAX_BYTES)) != 0 ||
       (status = validate_data(&credentials->private_key, CRYPTO_TLS_CREDENTIAL_INPUT_MAX_BYTES)) != 0)
     return status;
   if (tlcp_server) return validate_data(&credentials->encryption_key, CRYPTO_TLS_CREDENTIAL_INPUT_MAX_BYTES);
-  if (credentials->encryption_key.data || credentials->encryption_key.size || credentials->encryption_key.encoding)
+  if (credentials->encryption_key.data || credentials->encryption_key.size || credentials->encryption_key.encoding ||
+      credentials->encryption_key_password.data || credentials->encryption_key_password.size)
     return CRYPTO_TLS_STREAM_EINVAL;
   return CRYPTO_TLS_STREAM_OK;
 }
@@ -123,15 +134,51 @@ static bool tlcp_roles(const unsigned char *der, size_t size) {
   return true;
 }
 
+static int decode_key(const crypto_tls_data *input, const crypto_tls_password *password,
+    unsigned char *out, size_t capacity, size_t *out_size) {
+  if (!password->data) return decode(input, "PRIVATE KEY", false, out, capacity, out_size);
+  unsigned char envelope[CRYPTO_TLS_CREDENTIAL_INPUT_MAX_BYTES];
+  unsigned char derived[16] = {0};
+  SM4_KEY cipher_key = {0};
+  const unsigned char *salt, *iv, *ciphertext, *cursor = envelope;
+  size_t remaining = 0u, salt_size, iv_size, ciphertext_size;
+  int iterations, key_size, prf, cipher;
+  *out_size = 0u;
+  int status = decode(input, "ENCRYPTED PRIVATE KEY", false, envelope, sizeof(envelope), &remaining);
+  if (status != 0) goto end;
+  status = CRYPTO_TLS_STREAM_EIO;
+  if (pkcs8_enced_private_key_info_from_der(&salt, &salt_size, &iterations, &key_size,
+      &prf, &cipher, &iv, &iv_size, &ciphertext, &ciphertext_size, &cursor, &remaining) != 1 || remaining)
+    goto end;
+  if (prf != OID_hmac_sm3 || cipher != OID_sm4_cbc || (key_size != -1 && key_size != 16) ||
+      iv_size != 16u || salt_size < 8u || salt_size > 64u ||
+      iterations < CRYPTO_TLS_PKCS8_MIN_ITERATIONS || iterations > CRYPTO_TLS_PKCS8_MAX_ITERATIONS ||
+      !ciphertext_size || ciphertext_size % 16u) goto end;
+  /* The provider writes at most the ciphertext length, including padding. */
+  if (ciphertext_size > capacity) { status = CRYPTO_TLS_STREAM_ERANGE; goto end; }
+  if (sm3_pbkdf2(password->data, password->size, salt, salt_size, (size_t)iterations,
+      sizeof(derived), derived) != 1) goto end;
+  sm4_set_decrypt_key(&cipher_key, derived);
+  if (sm4_cbc_padding_decrypt(&cipher_key, iv, ciphertext, ciphertext_size, out, out_size) != 1)
+    goto end;
+  status = CRYPTO_TLS_STREAM_OK;
+end:
+  gmssl_secure_clear(&cipher_key, sizeof(cipher_key));
+  gmssl_secure_clear(derived, sizeof(derived));
+  gmssl_secure_clear(envelope, sizeof(envelope));
+  if (status != 0) { gmssl_secure_clear(out, capacity); *out_size = 0u; }
+  return status;
+}
+
 int crypto_tls_memory_identity(TLS_CTX *tls, const crypto_tls_credentials *credentials) {
   unsigned char certs[CRYPTO_TLS_CERTIFICATE_CHAIN_DER_MAX_BYTES];
   unsigned char key[CRYPTO_TLS_PRIVATE_KEY_DER_MAX_BYTES] = {0};
   unsigned char enc_key[CRYPTO_TLS_PRIVATE_KEY_DER_MAX_BYTES] = {0};
   size_t certs_size = 0u, key_size = 0u, enc_size = 0u;
   int status = decode(&credentials->certificate_chain, "CERTIFICATE", true, certs, sizeof(certs), &certs_size);
-  if (status == 0) status = decode(&credentials->private_key, "PRIVATE KEY", false, key, sizeof(key), &key_size);
+  if (status == 0) status = decode_key(&credentials->private_key, &credentials->private_key_password, key, sizeof(key), &key_size);
   if (status == 0 && tls->protocol == TLS_protocol_tlcp) {
-    status = decode(&credentials->encryption_key, "PRIVATE KEY", false, enc_key, sizeof(enc_key), &enc_size);
+    status = decode_key(&credentials->encryption_key, &credentials->encryption_key_password, enc_key, sizeof(enc_key), &enc_size);
     if (status == 0 && !tlcp_roles(certs, certs_size)) status = CRYPTO_TLS_STREAM_EIO;
   }
   if (status == 0 && tls_ctx_set_certificate_and_keys_der(tls, certs, certs_size, key, key_size,

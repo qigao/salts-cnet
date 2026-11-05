@@ -2,6 +2,7 @@
  * files. Erase and release all source storage before any handshake progress. */
 typedef struct tls_test_memory {
   unsigned char bytes[4][CRYPTO_TLS_CREDENTIAL_INPUT_MAX_BYTES];
+  unsigned char passwords[2][32];
   cnet_tls_data ca;
   cnet_tls_credentials credentials;
 } tls_test_memory;
@@ -10,7 +11,8 @@ static int tls_test_read(tls_test_memory *m, unsigned slot, const char *path,
     const char *part, cnet_tls_data *out) {
   const char *mode = getenv("SALTS_TEST_TLS_MEMORY");
   char name[2048];
-  if (!path || snprintf(name, sizeof(name), "%s%s%s", path, part,
+  if (!path || snprintf(name, sizeof(name), "%s%s%s%s", path, part,
+      slot >= 2u && getenv("SALTS_TEST_TLS_ENCRYPTED") ? ".encrypted" : "",
       strcmp(mode, "der") == 0 ? ".der" : "") >= (int)sizeof(name)) return SALTS_EINVAL;
   FILE *f = fopen(name, "rb");
   if (!f) return SALTS_EIO;
@@ -37,6 +39,14 @@ static int tls_test_prepare(tls_test_memory *m, const char *ca, const char *cert
   if (status == SALTS_OK && cert) status = tls_test_read(m, 1u, cert, "", &m->credentials.certificate_chain);
   if (status == SALTS_OK && key) status = tls_test_read(m, 2u, key, tlcp ? ".sign" : "", &m->credentials.private_key);
   if (status == SALTS_OK && tlcp) status = tls_test_read(m, 3u, key, ".enc", &m->credentials.encryption_key);
+  if (getenv("SALTS_TEST_TLS_ENCRYPTED")) {
+    const char sign_password[] = "memory\0sign", enc_password[] = "memory\0encryption";
+    memcpy(m->passwords[0], sign_password, sizeof(sign_password) - 1u);
+    memcpy(m->passwords[1], enc_password, sizeof(enc_password) - 1u);
+    m->credentials.private_key_password = (crypto_tls_password){m->passwords[0], sizeof(sign_password) - 1u};
+    if (tlcp) m->credentials.encryption_key_password =
+        (crypto_tls_password){m->passwords[1], sizeof(enc_password) - 1u};
+  }
   return status;
 }
 static int tls_test_server_init(cnet_tls_server *server, const cnet_tls_server_config *config) {
