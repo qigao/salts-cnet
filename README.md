@@ -70,7 +70,7 @@ See [architecture](docs/ARCHITECTURE.md) for ownership and migration gates.
 The default graph builds the whole CNet transport source tree, including the
 original IPC FIFO, peer index and native-path changes. Production CNet links
 the first-party static `Salts::Crypto` facade and the **separately installed**
-vcpkg `GmSSL::GmSSL` static library (GmSSL 3.2.0#20). No local native GmSSL
+vcpkg `GmSSL::GmSSL` static library (GmSSL 3.2.0#21). No local native GmSSL
 source mirror is compiled into `Salts::Crypto`; Ed448 remains first-party
 under `crypto/vendor/libecc/`. CNet is the single production DSO owner of the
 linked native TLS implementation; two independently loaded plugins must import
@@ -118,22 +118,23 @@ production-only consumers may explicitly disable the TinyTest library.
 
 The checked-in vcpkg manifest declares GmSSL and CNet dependencies directly.
 Compiler/host-data Actions use published `qigao/vcpkg-cache@v0.1.0`.
-The dependency setup Action is pinned to `0d99dc18f4d9652c0c9f8b0768ec3ce28b6e2001`,
+The dependency setup Action is pinned to `60bf20b8d50b59897e68d6ab184c5b1e8def06d7`,
 which supplies native Windows pkg-config and preserves `PKG_CONFIG` in vcpkg's
 port environment. The manifest requests `pkgconf` only on non-Windows targets;
 Windows uses that native host tool without acquiring pkg-config from MSYS2.
-The custom registry selects `reference: 0d99dc18f4d9652c0c9f8b0768ec3ce28b6e2001` and
-pins baseline `0d99dc18f4d9652c0c9f8b0768ec3ce28b6e2001`. GmSSL 3.2.0#20
-includes TLS 1.2 negotiation, RSA-PSS, enabled ShangMi algorithms and SM9 retry/secret cleanup; its complete port
-tree is pinned in the Crypto source lock. The pinned vcpkg-make helper also
+The custom registry selects `reference: 60bf20b8d50b59897e68d6ab184c5b1e8def06d7` and
+pins baseline `60bf20b8d50b59897e68d6ab184c5b1e8def06d7`. GmSSL 3.2.0#21
+includes TLS 1.2 negotiation, RSA-PSS, enabled ShangMi algorithms, SM9 retry/secret
+cleanup and TLCP dual-key/signature-extension fixes; its complete port tree is
+pinned in the Crypto source lock. The pinned vcpkg-make helper also
 excludes MSYS pkgconf from its Windows autotools bundle and requires the
-configured native PKG_CONFIG. These dependency updates are under review.
+configured native PKG_CONFIG.
 
 An unavailable dependency fails configuration, without substituting another
 TLS provider or an implicit transport fallback. Local source ownership does
 not make the retained GmSSL-derived implementation third-party-free. Exact
 current-source platform CI, TLS/CA/SAN and independent peer tests, sanitizers,
-installed consumers, and physical runtime ownership still gate acceptance.
+and physical runtime ownership still gate acceptance.
 No downstream cutover or production release is implied by this candidate.
 
 ## Local build

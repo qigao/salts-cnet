@@ -22,17 +22,49 @@ source or falls back to plaintext.
 | SM2 pinned-peer trust | Explicit bounded chain/anchor, leaf-key identity, validation time, signing purpose and revocation policy | Independently signed paths, CA/pathLen/KU/EKU/time/constraint negatives, callback gating and failure erasure; cross-platform CI required |
 | SM2 complete direct CRL | Explicit issuer/SM2 signing ID, full-CRL scope, time/age/number policy and serial checking | Independent gmsm CRLs, real pinned-trust callback, revoked/stale/rollback/scope/DER negatives; cross-platform CI required |
 | CMS / SM2 certificate workflows | CMS enabled in provider; public workflow qualification pending | Generic ASN1 parsing and existing X509 inspection alone do not qualify signing or trust |
-| TLS 1.3 ShangMi / TLCP | Existing explicit stream profiles; complete independent handshake/authentication matrix remains separate | Existing provider settings/KATs do not replace protocol interoperation |
+| TLCP 1.1 ECC_SM4_GCM_SM3 | Explicit CNet client/server profile with dual SM2 server certificates | Independent GoTLCP bidirectional handshake/data/close, CA/DNS/IP/time/signature/KU negatives, local dual-identity admission and signature-extension/cipher rejection; cross-platform CI required |
+| TLS 1.3 ShangMi | Existing explicit stream profile; independent handshake/authentication matrix remains separate | Existing provider settings/KATs do not replace protocol interoperation |
 | DTLS | Issue #188 resumed; implementation and CNet/SCTP qualification pending | Existing TLS tests do not qualify DTLS |
 | SDF / SKF hardware | Requires selected vendor runtime/device and its integration tests | No software fallback for non-exportable keys |
 
-GmSSL 3.2.0 port revision 20 enables SM9, ZUC and CMS and exports the enabled
+GmSSL 3.2.0 port revision 21 enables SM9, ZUC and CMS and exports the enabled
 algorithm feature definitions. It also clears the PBKDF2 password-derived
 template and rejects invalid/infinity uncompressed SM2 points. These changes
 belong to the external package, not a duplicate in-tree GmSSL build. Revision 20
 preserves the original digest/pairing base and recipient point across SM9
 retries, bounds attempts, rejects zero KEM nonces/infinity and cleans up
 extraction scalars and KEM/signing working state on error paths.
+Revision 21 admits curveSM2 plain PKCS#8 keys in the existing bounded loader
+and uses the TLCP SM3/SM2 signature pair `0x0704` in ClientHello extensions.
+The internal SM2 scheme and RFC 8998 TLS 1.3 wire identifier remain `0x0708`.
+
+### TLCP stream qualification
+
+Select `CNET_TLS_SECURITY_PROFILE_TLCP11` on the existing CNet TLS configuration.
+The server certificate PEM contains signing then encryption certificates; its
+key PEM contains the two matching private keys in the same order. The client
+uses an explicit trusted CA and expected DNS/IP identity. The admitted suite
+is `TLS_ECC_SM4_GCM_SM3`; CBC-only peers fail negotiation. TLCP client
+certificates and server `REQUIRED` client authentication remain unsupported
+and fail explicitly.
+
+`saltscore.cnet_tlcp_independent` runs production CNet/NativeIO through the
+existing native TLS test executable against test-only
+[GoTLCP v1.4.3](https://github.com/Trisia/gotlcp/tree/v1.4.3), using independently
+generated SM2 identities. Both directions exchange authenticated application
+data and reciprocal close_notify, with one CNet terminal event. Negative
+cases cover unknown roots, DNS/IP mismatch, both certificates' validity,
+signatures and key usages, missing/reversed/mismatched local dual identities,
+CBC-only offers and malformed or wrong-protocol signature lists. Native
+failures must occur during handshake without CONNECTED/plaintext events;
+timeouts are not accepted as authentication rejection. The test checks the
+actual native ClientHello signature extension as well as the independent
+client's offer.
+
+This gate covers the server-authenticated TLCP profile. It does not establish
+TLCP mutual authentication, TLS 1.3 ShangMi interoperation, revocation-policy
+integration or DTLS support. GoTLCP and gmsm are formal test dependencies only;
+production continues to link the single packaged GmSSL provider.
 
 ## API use and boundaries
 

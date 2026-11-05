@@ -304,6 +304,15 @@ if(TARGET Salts::CNet)
   add_test(NAME saltscore.cnet_tls_ca_san
     COMMAND saltscore_cnet_tls_ca_san_test)
   set_tests_properties(saltscore.cnet_tls_ca_san PROPERTIES TIMEOUT 65)
+  if(NOT CMAKE_SYSTEM_NAME STREQUAL "Android")
+    find_program(SALTS_CNET_TEST_GO go REQUIRED)
+    add_test(NAME saltscore.cnet_tlcp_independent
+      COMMAND "${SALTS_CNET_TEST_GO}" test -mod=readonly -count=1 -timeout=150s
+        -args -native "$<TARGET_FILE:saltscore_cnet_tls_ca_san_test>")
+    set_tests_properties(saltscore.cnet_tlcp_independent PROPERTIES
+      WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/independent/tlcp"
+      ENVIRONMENT "CGO_ENABLED=0;GOWORK=off" TIMEOUT 180)
+  endif()
 
   # Reuse the actual opt-in TinyTest cases, one fresh process per sample. The
   # dependency chain rotates all five modes and preserves order with ctest -j.

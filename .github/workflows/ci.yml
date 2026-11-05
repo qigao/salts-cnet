@@ -195,7 +195,7 @@ jobs:
       - name: Set up shared dependency contract
         id: vcpkg
         # Includes the pinned native Windows pkg-config; avoid MSYS2 for pkg-config.
-        uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-curl-cache@0d99dc18f4d9652c0c9f8b0768ec3ce28b6e2001
+        uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-curl-cache@60bf20b8d50b59897e68d6ab184c5b1e8def06d7
         with:
           mode: read
           triplet: ${{ matrix.triplet }}
@@ -228,6 +228,7 @@ jobs:
           go-version-file: crypto/tests/x509/independent/go.mod
           cache-dependency-path: |
             crypto/tests/x509/independent/go.sum
+            tests/independent/tlcp/go.sum
             sctp/tests/independent/pion/go.sum
 
       - name: Install macOS native autotools

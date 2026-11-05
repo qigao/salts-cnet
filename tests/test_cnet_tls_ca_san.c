@@ -733,8 +733,8 @@ cleanup:
 
 
 /*
- * Native, production Salts::CNet client to independent Python stdlib ssl
- * server. Python fixes TLS1.2 or TLS1.3 and supplies the same valid X.509
+ * Native, production Salts::CNet client to independent Python ssl or GoTLCP
+ * server. The peer fixes TLS1.2/TLS1.3 or TLCP and supplies the same valid X.509
  * leaf for both SAN-positive and SAN-negative controls. This mode never
  * imports the alternate test-only CNet TLS facade or its Provider.
  */
@@ -743,10 +743,11 @@ static int run_python_ssl_server(const char *port_text,
                                  const char *identity,
                                  const char *trust_ca,
                                  bool expect_success) {
-  const char *label = "production CNet -> pinned Python ssl TLS peer";
+  const char *label = "production CNet -> independent secure stream peer";
+  const bool tlcp = strcmp(protocol, "tlcp") == 0;
   const bool approved_identity = expect_success;
   const char *expected_version = strcmp(protocol, "tls12") == 0
-                                     ? "TLSv1.2" : "TLSv1.3";
+                                     ? "TLSv1.2" : tlcp ? "TLCPv1.1" : "TLSv1.3";
   char *end = NULL;
   unsigned long port = strtoul(port_text, &end, 10);
   cnet_client client = {0};
@@ -760,7 +761,8 @@ static int run_python_ssl_server(const char *port_text,
        * Windows native system-root negative. NULL enables the production
        * CNet system trust path, with no test-only TLS provider. */
       .ca_file = strcmp(trust_ca, "-") == 0 ? NULL : trust_ca,
-      .server_name = identity};
+      .server_name = identity,
+      .security_profile = tlcp ? CNET_TLS_SECURITY_PROFILE_TLCP11 : CNET_TLS_SECURITY_PROFILE_STANDARD};
   char uri[96] = {0};
   bool initialized = false;
   mem_buffer_t *outgoing = NULL;
@@ -769,7 +771,7 @@ static int run_python_ssl_server(const char *port_text,
   int result = 0;
 
   if (end == port_text || *end != '\0' || port == 0u || port > 65535u ||
-      (strcmp(protocol, "tls12") != 0 && strcmp(protocol, "tls13") != 0) ||
+      (strcmp(protocol, "tls12") != 0 && strcmp(protocol, "tls13") != 0 && !tlcp) ||
       trust_ca == NULL || trust_ca[0] == '\0' ||
       (strcmp(identity, "localhost") != 0 &&
        strcmp(identity, "wrong.example") != 0 &&
@@ -800,6 +802,7 @@ static int run_python_ssl_server(const char *port_text,
      * a timeout, refused connect, or successful encrypted connection. */
     REQUIRE(probe.terminal_count == 1u);
     REQUIRE(probe.failed != 0u);
+    REQUIRE(probe.last_error_status != SALTS_ETIMEDOUT);
     REQUIRE(probe.connected_count == 0u);
     REQUIRE(probe.received_count == 0u && probe.sent_count == 0u);
     REQUIRE(strcmp(probe.failure_stage, "handshake") == 0);
@@ -810,6 +813,7 @@ static int run_python_ssl_server(const char *port_text,
     REQUIRE(strcmp(probe.tls_version, expected_version) == 0);
     REQUIRE(probe.tls_cipher_status == SALTS_OK);
     REQUIRE(probe.tls_cipher[0] != '\0');
+    if (tlcp) REQUIRE(strcmp(probe.tls_cipher, "TLS_ECC_SM4_GCM_SM3") == 0);
     REQUIRE(cnet_tls_peer_certificate_sha256(&client, outbound, digest) == SALTS_OK);
     REQUIRE(strlen(digest) == 64u);
     REQUIRE(cnet_receive(&client, outbound, 1u) == SALTS_OK);
@@ -856,7 +860,7 @@ cleanup:
 
 
 /*
- * Production CNet server against a genuinely separate Python stdlib ssl
+ * Production CNet server against a separate Python ssl or GoTLCP
  * client. The server retains exactly one Salts::CNet native owner; Python
  * supplies ephemeral client credentials and pins TLS 1.2 or TLS 1.3.
  * Port handoff is a private test file to avoid any extra server/consumer app.
@@ -927,9 +931,10 @@ static int run_python_ssl_client(const char *port_path,
                                  const char *protocol,
                                  const char *outcome,
                                  const char *expected_client_sha256) {
-  const char *label = "production CNet <- Python ssl TLS REQUIRED-mTLS";
+  const char *label = "production CNet <- independent secure stream peer";
+  const bool tlcp = strcmp(protocol, "tlcp") == 0;
   const char *expected_version = strcmp(protocol, "12") == 0
-                                     ? "TLSv1.2" : "TLSv1.3";
+                                     ? "TLSv1.2" : tlcp ? "TLCPv1.1" : "TLSv1.3";
   const bool expect_idle_read_timeout = strcmp(outcome, "idle") == 0;
   const bool expect_orderly_close = strcmp(outcome, "close") == 0;
   const bool expect_local_peer_close = strcmp(outcome, "localclose") == 0;
@@ -958,8 +963,9 @@ static int run_python_ssl_client(const char *port_path,
       .size = sizeof(cnet_tls_server_config),
       .cert_file = cert_file,
       .key_file = key_file,
-      .ca_file = ca_file,
-      .client_auth = CNET_TLS_CLIENT_AUTH_REQUIRED};
+      .ca_file = tlcp ? NULL : ca_file,
+      .client_auth = tlcp ? CNET_TLS_CLIENT_AUTH_NONE : CNET_TLS_CLIENT_AUTH_REQUIRED,
+      .security_profile = tlcp ? CNET_TLS_SECURITY_PROFILE_TLCP11 : CNET_TLS_SECURITY_PROFILE_STANDARD};
   bool tls_live = false, server_live = false, listener_live = false;
   bool accepted = false, armed = false, response_sent = false;
   bool local_close_started = false;
@@ -975,7 +981,7 @@ static int run_python_ssl_client(const char *port_path,
 
   if (port_path == NULL || !*port_path || ca_file == NULL ||
       cert_file == NULL || key_file == NULL ||
-      (strcmp(protocol, "12") != 0 && strcmp(protocol, "13") != 0) ||
+      (strcmp(protocol, "12") != 0 && strcmp(protocol, "13") != 0 && !tlcp) ||
       (!should_verify && strcmp(outcome, "reject") != 0))
     return 2;
   probe.client = &server;
@@ -1025,12 +1031,18 @@ static int run_python_ssl_client(const char *port_path,
       REQUIRE(strcmp(probe.tls_version, expected_version) == 0);
       REQUIRE(probe.tls_cipher_status == SALTS_OK);
       REQUIRE(probe.tls_cipher[0] != '\0');
-      REQUIRE(cnet_tls_peer_certificate_sha256(
+      if (tlcp) {
+        REQUIRE(strcmp(probe.tls_cipher, "TLS_ECC_SM4_GCM_SM3") == 0);
+        REQUIRE(cnet_tls_peer_certificate_sha256(
+            &server, probe.connection, fingerprint) == SALTS_ENOENT);
+      } else {
+        REQUIRE(cnet_tls_peer_certificate_sha256(
           &server, probe.connection, fingerprint) == SALTS_OK);
-      REQUIRE(strlen(fingerprint) == 64u);
-      REQUIRE(expected_client_sha256 != NULL &&
+        REQUIRE(strlen(fingerprint) == 64u);
+        REQUIRE(expected_client_sha256 != NULL &&
               strlen(expected_client_sha256) == 64u &&
               strcmp(fingerprint, expected_client_sha256) == 0);
+      }
       REQUIRE(cnet_receive(&server, probe.connection, 1u) == SALTS_OK);
       armed = true;
     }
@@ -1216,6 +1228,7 @@ static int run_python_ssl_client(const char *port_path,
      * This must be a TLS handshake failure, not a timeout or socket refusal. */
     REQUIRE(probe.terminal_count == 1u);
     REQUIRE(probe.failed != 0u && probe.connected_count == 0u);
+    REQUIRE(probe.last_error_status != SALTS_ETIMEDOUT);
     REQUIRE(probe.sent_count == 0u && probe.received_count == 0u);
     REQUIRE(strcmp(probe.failure_stage, "handshake") == 0);
   }
@@ -1252,7 +1265,26 @@ cleanup:
   return result;
 }
 
+static int reject_tlcp_identity(const char *cert_file, const char *key_file) {
+  const char *label = "TLCP rejects invalid local dual identity";
+  cnet_tls_server server = {0};
+  const cnet_tls_server_config cfg = {
+      .size = sizeof(cfg), .cert_file = cert_file, .key_file = key_file,
+      .client_auth = CNET_TLS_CLIENT_AUTH_NONE,
+      .security_profile = CNET_TLS_SECURITY_PROFILE_TLCP11};
+  int result = 0;
+  REQUIRE(cnet_tls_server_init(&server, &cfg) == SALTS_EIO);
+  REQUIRE(server.impl == NULL);
+cleanup:
+  (void)cnet_tls_server_destroy(&server);
+  return result;
+}
+
 static int saltscore_original_entry_test_cnet_tls_ca_san_c(int argc, char **argv) {
+  if (argc == 4 && strcmp(argv[1], "--reject-tlcp-identity") == 0)
+    return reject_tlcp_identity(argv[2], argv[3]);
+  if (argc == 6 && strcmp(argv[1], "--gotlcp-client") == 0)
+    return run_python_ssl_client(argv[2], "-", argv[3], argv[4], "tlcp", argv[5], "-");
   if (argc == 9 && strcmp(argv[1], "--python-ssl-client") == 0)
     return run_python_ssl_client(
         argv[2], argv[3], argv[4], argv[5], argv[6], argv[7], argv[8]);
