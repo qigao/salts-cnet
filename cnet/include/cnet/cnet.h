@@ -367,7 +367,9 @@ typedef enum cnet_tls_security_profile {
 
 /** Crypto-owned authenticated-peer policy and callback-scoped certificate views.
  * Runs before CONNECTED; cannot bypass built-in TLS verification. See the
- * retain/release and concurrency contract in crypto/tls_peer_policy.h. */
+ * applicability masks, retain/release and concurrency contract in
+ * crypto/tls_peer_policy.h. Unknown mask bits return SALTS_EINVAL; excluded
+ * profiles/peer roles return SALTS_ENOTSUP during TLS initialization. */
 typedef crypto_tls_stream_peer_policy cnet_tls_peer_policy;
 typedef crypto_tls_sm2_crl_config cnet_tls_sm2_crl_config;
 

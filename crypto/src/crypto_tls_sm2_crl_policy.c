@@ -109,7 +109,10 @@ static int create_policy(const crypto_tls_sm2_crl_config *config,
   memcpy(cursor, config->certificate_signing_identity, config->certificate_signing_identity_size);
   snapshot->certificate_identity = cursor;
   snapshot->certificate_identity_size = config->certificate_signing_identity_size;
-  *out_policy = (crypto_tls_stream_peer_policy){check_snapshot, retain_snapshot, release_snapshot, snapshot};
+  *out_policy = (crypto_tls_stream_peer_policy){
+      .check = check_snapshot, .retain = retain_snapshot, .release = release_snapshot,
+      .context = snapshot, .supported_profiles = 1u << profile,
+      .supported_peer_roles = config->peer_is_server ? CRYPTO_TLS_PEER_POLICY_SERVER : CRYPTO_TLS_PEER_POLICY_CLIENT};
   return CRYPTO_TLS_STREAM_OK;
 }
 

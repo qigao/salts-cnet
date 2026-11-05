@@ -180,6 +180,16 @@ TLS verification but supplies no additional revocation assurance. Server policie
 require REQUIRED client authentication; partial callback descriptors fail at
 context creation.
 
+Policies declare `supported_profiles` and `supported_peer_roles` using the
+`CRYPTO_TLS_PEER_POLICY_*` bits. Zero means unrestricted in that dimension;
+otherwise the selected profile and remote peer role must be included. Unknown
+bits return EINVAL; an excluded profile or role returns ENOTSUP during TLS context
+creation, before allocation, trust loading or policy retain. A server context
+checks the CLIENT role; a client context checks SERVER. These declarations do
+not authorize peers or change protocols. Policy decorators must preserve the
+wrapped restrictions. Built-in CRL factories declare their exact profile and
+configured peer role; their handshake checks still enforce both.
+
 The hook cannot override certificate/hostname/proof-of-possession failures.
 It receives the bounded peer-supplied DER chain, peer role and security profile
 only after mandatory authentication. The chain is not a constructed trust path:
@@ -227,8 +237,8 @@ CNet's existing Crypto owner. Applications link only `Salts::CNet`. Direct Crypt
 stream users have `crypto_tls_sm2_crl_peer_policy_create` with the same configuration
 and lifetime. The supported profile is RFC 8998 SHANGMI_TLS13, for either server
 authentication or REQUIRED client authentication, with one explicitly configured
-direct issuer. STANDARD, TLCP and paths beyond leaf + optional identical issuer
-are rejected.
+direct issuer. STANDARD, TLCP and the wrong peer role fail TLS context creation
+with ENOTSUP. Paths beyond leaf + optional identical issuer fail the handshake.
 
 Creation copies DER and both explicit SM2 signing identities into one bounded
 allocation below 87 KiB. It first authenticates the entire CRL and checks issuer
@@ -297,7 +307,8 @@ revocation, live CRL distribution or hardware-backed signing.
 configuration and ownership contract for TLCP11 server authentication. Set
 `peer_is_server=true`, create this policy, then attach it to a client configuration
 with `CNET_TLS_SECURITY_PROFILE_TLCP11`. The RFC 8998 factory remains separate;
-using either policy under the other profile rejects rather than changing protocol.
+using either policy under the other profile returns ENOTSUP at TLS context
+creation, before trust loading or connection establishment.
 
 The policy requires two distinct DER certificates in TLCP wire order: signing,
 then encryption, with an optional third certificate equal to the configured
@@ -313,14 +324,19 @@ TLCP client authentication remains unsupported: creation with
 `peer_is_server=false` returns ENOTSUP before acquiring a snapshot. Separate
 signing/encryption issuers or signing IDs, longer paths, CRL fetching/OCSP and
 automatic revalidation of established connections are outside this profile.
+The current GmSSL TLCP verifier uses one CA for both leaves and the default SM2
+certificate-signing ID. Separate issuers/IDs require provider verification work;
+adding revocation configuration alone cannot enable them.
 
 Formal `saltscore.cnet_tlcp_crl_policy` adds 15 scenarios with an independent
 GoTLCP server and independently signed certificates/CRLs. Real handshakes cover
 current/unrelated-serial CRLs, revocation of just the signing certificate, just
 the encryption certificate or both, an optional transmitted issuer, signature-ID
-and policy-profile mismatch, same-name issuer substitution and IP identity
+mismatch, same-name issuer substitution and IP identity
 rejection. Factory tests cover stale/invalid-signature/rolled-back/future CRLs
-and unsupported client authentication. Native failures must report the handshake
+and unsupported client authentication. Context tests reject a mismatched policy
+profile before loading an absent trust file, with no retained reference or
+callback. Native handshake failures must report the handshake
 stage without CONNECTED/application data; timeouts are not accepted as rejection.
 Positive cases exchange data and reciprocal close_notify. The harness also checks
 structural/profile negatives using the authenticated DER views, overwrites input

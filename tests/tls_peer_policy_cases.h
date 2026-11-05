@@ -26,6 +26,34 @@ static int run_peer_policy_cases(void) {
     REQUIRE(server.impl == NULL && client.impl == NULL);
   }
   policy = peer_policy_descriptor(&p);
+  /* Unsupported declarations fail before loading deliberately absent files,
+   * without acquiring a policy reference or opening any connection. */
+  for (unsigned local_server = 0u; local_server < 2u; ++local_server) {
+    for (unsigned profile = 0u; profile < (local_server ? 2u : 3u); ++profile) {
+      for (unsigned invalid = 0u; invalid < 4u; ++invalid) {
+        policy = peer_policy_descriptor(&p);
+        if (invalid == 0u) policy.supported_profiles = 7u ^ (1u << profile);
+        if (invalid == 1u) policy.supported_peer_roles = local_server ?
+            CRYPTO_TLS_PEER_POLICY_SERVER : CRYPTO_TLS_PEER_POLICY_CLIENT;
+        if (invalid == 2u) policy.supported_profiles = 8u;
+        if (invalid == 3u) policy.supported_peer_roles = 4u;
+        cnet_tls_client_config bad_client = {.size = sizeof(bad_client),
+            .ca_file = "absent-policy-trust.pem", .security_profile = (cnet_tls_security_profile)profile,
+            .peer_policy = &policy};
+        cnet_tls_server_config bad_server = {.size = sizeof(bad_server),
+            .ca_file = "absent-policy-trust.pem", .cert_file = "absent-policy-cert.pem",
+            .key_file = "absent-policy-key.pem", .client_auth = CNET_TLS_CLIENT_AUTH_REQUIRED,
+            .security_profile = (cnet_tls_security_profile)profile, .peer_policy = &policy};
+        int status = local_server ? cnet_tls_server_init(&server, &bad_server) :
+                                   cnet_tls_client_init(&client, &bad_client);
+        REQUIRE(status == (invalid < 2u ? SALTS_ENOTSUP : SALTS_EINVAL));
+        REQUIRE(client.impl == NULL && server.impl == NULL);
+        REQUIRE(atomic_load(&p.retains) == 0u && atomic_load(&p.releases) == 0u &&
+                atomic_load(&p.calls) == 0u && atomic_load(&p.references) == 1u);
+      }
+    }
+  }
+  policy = peer_policy_descriptor(&p);
   cfg.ca_file = "this-test-trust-file-does-not-exist.pem";
   REQUIRE(cnet_tls_client_init(&client, &cfg) != SALTS_OK);
   REQUIRE(client.impl == NULL && atomic_load(&p.retains) == 0u && atomic_load(&p.releases) == 0u);
@@ -46,6 +74,10 @@ static int run_peer_policy_cases(void) {
   for (unsigned scenario = 0u; scenario < 5u; ++scenario) {
     peer_policy_init(&p, true);
     policy = peer_policy_descriptor(&p);
+    if (scenario == 0u) {
+      policy.supported_profiles = CRYPTO_TLS_PEER_POLICY_STANDARD | CRYPTO_TLS_PEER_POLICY_SHANGMI_TLS13;
+      policy.supported_peer_roles = CRYPTO_TLS_PEER_POLICY_CLIENT | CRYPTO_TLS_PEER_POLICY_SERVER;
+    }
     p.decision = scenario == 1u ? CRYPTO_TLS_STREAM_EIO : scenario == 2u ? 1 : 0;
     const tls_case_options options = {
         .label = "real TLS peer admission",
@@ -75,6 +107,9 @@ static int run_mutual_peer_policy_case(const tls_case_options *original,
   server.decision = reject_server ? 1 : 0;
   cnet_tls_peer_policy cp = peer_policy_descriptor(&client);
   cnet_tls_peer_policy sp = peer_policy_descriptor(&server);
+  cp.supported_profiles = sp.supported_profiles = CRYPTO_TLS_PEER_POLICY_SHANGMI_TLS13;
+  cp.supported_peer_roles = CRYPTO_TLS_PEER_POLICY_SERVER;
+  sp.supported_peer_roles = CRYPTO_TLS_PEER_POLICY_CLIENT;
   tls_case_options options = *original;
   options.client_peer_policy = &cp;
   options.server_peer_policy = &sp;

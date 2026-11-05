@@ -837,6 +837,21 @@ static int crypto_tls_stream_context_create_common(
        peer_policy->retain == NULL || peer_policy->release == NULL))
     return CRYPTO_TLS_STREAM_EINVAL;
 
+  if (peer_policy != NULL) {
+    const uint32_t known_profiles = CRYPTO_TLS_PEER_POLICY_STANDARD |
+        CRYPTO_TLS_PEER_POLICY_SHANGMI_TLS13 | CRYPTO_TLS_PEER_POLICY_TLCP11;
+    const uint32_t known_roles = CRYPTO_TLS_PEER_POLICY_CLIENT | CRYPTO_TLS_PEER_POLICY_SERVER;
+    const uint32_t peer_role = server ? CRYPTO_TLS_PEER_POLICY_CLIENT : CRYPTO_TLS_PEER_POLICY_SERVER;
+    if ((peer_policy->supported_profiles & ~known_profiles) != 0u ||
+        (peer_policy->supported_peer_roles & ~known_roles) != 0u)
+      return CRYPTO_TLS_STREAM_EINVAL;
+    if ((peer_policy->supported_profiles != 0u &&
+         (peer_policy->supported_profiles & (1u << security_profile)) == 0u) ||
+        (peer_policy->supported_peer_roles != 0u &&
+         (peer_policy->supported_peer_roles & peer_role) == 0u))
+      return CRYPTO_TLS_STREAM_ENOTSUP;
+  }
+
   context = (crypto_tls_stream_context *)crypto_tls_stream_calloc(1u, sizeof(*context));
   if (context == NULL) return CRYPTO_TLS_STREAM_ENOMEM;
   context->server = server;
