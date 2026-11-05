@@ -261,6 +261,10 @@ typedef struct tls_case_options {
   const char *server_key_file;
   const char *client_cert_file;
   const char *client_key_file;
+  cnet_tls_security_profile security_profile;
+  const char *expected_server_fingerprint;
+  const char *expected_client_fingerprint;
+  const char *expected_server_binding;
   bool stream_transfer;
   bool pool_reuse;
 } tls_case_options;
@@ -299,13 +303,15 @@ static int run_case(const tls_case_options *options) {
       .ca_file = options->server_ca_file,
       .client_auth = options->server_ca_file != NULL
                          ? CNET_TLS_CLIENT_AUTH_REQUIRED
-                         : CNET_TLS_CLIENT_AUTH_NONE};
+                         : CNET_TLS_CLIENT_AUTH_NONE,
+      .security_profile = options->security_profile};
   const cnet_tls_client_config client_tls_cfg = {
       .size = sizeof(cnet_tls_client_config),
       .ca_file = options->ca_file,
       .cert_file = options->client_cert_file,
       .key_file = options->client_key_file,
-      .server_name = options->verified_hostname};
+      .server_name = options->verified_hostname,
+      .security_profile = options->security_profile};
   tls_probe client_probe = {0}, server_probe = {0};
   cnet_connect_options connect_options = {0};
   cnet_connection outbound = {0};
@@ -407,11 +413,13 @@ static int run_case(const tls_case_options *options) {
     if (options->expect_server_rejection) {
       REQUIRE(server_probe.terminal_count == 1u);
       REQUIRE(server_probe.failed != 0u);
+      REQUIRE(server_probe.last_error_status != SALTS_ETIMEDOUT);
       REQUIRE(server_probe.connected_count == 0u);
       REQUIRE(strcmp(server_probe.failure_stage, "handshake") == 0);
     } else {
       REQUIRE(client_probe.terminal_count == 1u);
       REQUIRE(client_probe.failed != 0u);
+      REQUIRE(client_probe.last_error_status != SALTS_ETIMEDOUT);
       REQUIRE(client_probe.connected_count == 0u);
       REQUIRE(strcmp(client_probe.failure_stage, "handshake") == 0);
     }
@@ -429,6 +437,14 @@ static int run_case(const tls_case_options *options) {
     REQUIRE(cnet_tls_peer_certificate_sha256(&client, outbound,
                                              fingerprint) == SALTS_OK);
     REQUIRE(strlen(fingerprint) == 64u);
+    if (options->expected_server_fingerprint != NULL)
+      REQUIRE(strcmp(fingerprint, options->expected_server_fingerprint) == 0);
+    if (options->security_profile == CNET_TLS_SECURITY_PROFILE_SHANGMI_TLS13) {
+      REQUIRE(strcmp(client_probe.tls_version, "TLSv1.3") == 0 &&
+              strcmp(server_probe.tls_version, "TLSv1.3") == 0);
+      REQUIRE(strcmp(client_probe.tls_cipher, "TLS_SM4_GCM_SM3") == 0 &&
+              strcmp(server_probe.tls_cipher, "TLS_SM4_GCM_SM3") == 0);
+    }
     {
       uint8_t client_binding[CNET_TLS_SERVER_END_POINT_MAX_BYTES];
       uint8_t server_binding[CNET_TLS_SERVER_END_POINT_MAX_BYTES];
@@ -439,12 +455,24 @@ static int run_case(const tls_case_options *options) {
           server_binding, sizeof(server_binding), &server_size) == SALTS_OK);
       REQUIRE(client_size != 0u && client_size == server_size);
       REQUIRE(memcmp(client_binding, server_binding, client_size) == 0);
+      if (options->expected_server_binding != NULL) {
+        static const char hex[] = "0123456789abcdef";
+        char encoded[65] = {0};
+        REQUIRE(client_size == 32u);
+        for (size_t i = 0u; i < client_size; ++i) {
+          encoded[2u * i] = hex[client_binding[i] >> 4];
+          encoded[2u * i + 1u] = hex[client_binding[i] & 15u];
+        }
+        REQUIRE(strcmp(encoded, options->expected_server_binding) == 0);
+      }
     }
     if (options->server_ca_file != NULL) {
       char client_certificate_hash[CNET_TLS_PEER_CERTIFICATE_SHA256_CAPACITY] = {0};
       REQUIRE(cnet_tls_peer_certificate_sha256(
           &server, server_probe.connection, client_certificate_hash) == SALTS_OK);
       REQUIRE(strlen(client_certificate_hash) == 64u);
+      if (options->expected_client_fingerprint != NULL)
+        REQUIRE(strcmp(client_certificate_hash, options->expected_client_fingerprint) == 0);
     }
     if (options->pool_reuse) {
       cnet_pool_snapshot snapshot = {0};
@@ -629,6 +657,18 @@ static int run_case(const tls_case_options *options) {
       REQUIRE(client_probe.sent_count == 1u);
       REQUIRE(client_probe.failed == 0u && server_probe.failed == 0u);
 
+      if (options->security_profile == CNET_TLS_SECURITY_PROFILE_SHANGMI_TLS13) {
+        REQUIRE(cnet_receive(&client, outbound, 1u) == SALTS_OK);
+        REQUIRE(send_byte(&server, server_probe.connection, 0x47u) == SALTS_OK);
+        deadline = cmeta_monotonic_ms() + 7000u;
+        while ((!client_probe.received_count || !server_probe.sent_count) &&
+               !client_probe.terminal_count && !server_probe.terminal_count &&
+               cmeta_monotonic_ms() < deadline)
+          REQUIRE(drive(&client, &server, &listener, &tls_server,
+                        &server_probe, &accepted) == SALTS_OK);
+        REQUIRE(client_probe.received_count == 1u && client_probe.received_byte == 0x47u);
+        REQUIRE(server_probe.sent_count == 1u && client_probe.failed == 0u && server_probe.failed == 0u);
+      }
       REQUIRE(cnet_close(&client, outbound) == SALTS_OK);
     }
     deadline = cmeta_monotonic_ms() + 7000u;
@@ -692,6 +732,20 @@ static int run_case(const tls_case_options *options) {
       REQUIRE(cnet_tls_server_destroy(&tls_server) == SALTS_OK);
       tls_live = false;
     }
+  }
+  if (options->security_profile == CNET_TLS_SECURITY_PROFILE_SHANGMI_TLS13 && client_live) {
+    REQUIRE(cnet_client_stop(&client, 5000u) == SALTS_OK);
+    REQUIRE(cnet_client_stop(&server, 5000u) == SALTS_OK);
+    REQUIRE(client_probe.terminal_count == 1u && server_probe.terminal_count == 1u);
+    REQUIRE(cnet_client_destroy(&client) == SALTS_OK);
+    client_live = false;
+    REQUIRE(cnet_client_destroy(&server) == SALTS_OK);
+    server_live = false;
+    REQUIRE(cnet_listener_close(&listener) == SALTS_OK);
+    REQUIRE(cnet_listener_destroy(&listener) == SALTS_OK);
+    listener_live = false;
+    REQUIRE(cnet_tls_server_destroy(&tls_server) == SALTS_OK);
+    tls_live = false;
   }
 
 cleanup:
@@ -1287,6 +1341,24 @@ cleanup:
 }
 
 static int saltscore_original_entry_test_cnet_tls_ca_san_c(int argc, char **argv) {
+  if (argc == 12 && strcmp(argv[1], "--shangmi-mtls") == 0) {
+    const bool success = strcmp(argv[8], "accept") == 0;
+    const bool server_rejection = strcmp(argv[8], "reject-server") == 0;
+    if ((!success && !server_rejection && strcmp(argv[8], "reject-client") != 0) ||
+        ((strcmp(argv[6], "-") == 0) != (strcmp(argv[7], "-") == 0))) return 2;
+    const tls_case_options mtls = {
+        .label = "production CNet ShangMi REQUIRED-mTLS",
+        .ca_file = argv[2], .server_ca_file = argv[3],
+        .server_cert_file = argv[4], .server_key_file = argv[5],
+        .client_cert_file = strcmp(argv[6], "-") == 0 ? NULL : argv[6],
+        .client_key_file = strcmp(argv[7], "-") == 0 ? NULL : argv[7],
+        .verified_hostname = "localhost", .expect_success = success,
+        .expect_server_rejection = server_rejection,
+        .security_profile = CNET_TLS_SECURITY_PROFILE_SHANGMI_TLS13,
+        .expected_server_fingerprint = argv[9], .expected_client_fingerprint = argv[10],
+        .expected_server_binding = argv[11]};
+    return run_case(&mtls);
+  }
   if (argc == 6 && strcmp(argv[1], "--shangmi-client") == 0)
     return run_python_ssl_client(argv[2], "-", argv[3], argv[4], "shangmi13", argv[5], "-");
   if (argc == 4 && strcmp(argv[1], "--reject-tlcp-identity") == 0)

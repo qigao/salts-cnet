@@ -313,9 +313,15 @@ if(TARGET Salts::CNet)
       WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/independent/tlcp"
       ENVIRONMENT "CGO_ENABLED=0;GOWORK=off" TIMEOUT 180)
     add_test(NAME saltscore.cnet_shangmi_tls13_independent
-      COMMAND "${SALTS_CNET_TEST_GO}" test -mod=readonly -count=1 -timeout=150s
+      COMMAND "${SALTS_CNET_TEST_GO}" test -mod=readonly -count=1 -timeout=150s -run "^TestShangMi$"
         -args -native "$<TARGET_FILE:saltscore_cnet_tls_ca_san_test>")
     set_tests_properties(saltscore.cnet_shangmi_tls13_independent PROPERTIES
+      WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/independent/shangmi"
+      ENVIRONMENT "CGO_ENABLED=0;GOWORK=off" TIMEOUT 180)
+    add_test(NAME saltscore.cnet_shangmi_required_mtls
+      COMMAND "${SALTS_CNET_TEST_GO}" test -mod=readonly -count=1 -timeout=150s -run "^TestShangMiMutual$"
+        -args -native "$<TARGET_FILE:saltscore_cnet_tls_ca_san_test>")
+    set_tests_properties(saltscore.cnet_shangmi_required_mtls PROPERTIES
       WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/independent/shangmi"
       ENVIRONMENT "CGO_ENABLED=0;GOWORK=off" TIMEOUT 180)
   endif()
