@@ -1100,3 +1100,29 @@ both positions and all input formats, plus malformed CA hints with and without
 compatible signature schemes. Native API cases reject malformed lists before
 I/O and verify four identities, late load failure and unsupported TLCP.
 Cross-platform/sanitizer qualification is the PR's normal LLVM CI gate.
+
+## Separate certificate signature policy (TLS 1.3)
+
+Crypto and CNet client/server configurations accept an immutable
+`certificate_signature_algorithms` / `certificate_signature_algorithm_count`
+list. NULL/0 retains the shared handshake/certificate policy. An explicit list
+is copied before publication, contains at most four unique supported schemes,
+and independently controls CertificateRequest/ClientHello certificate offers,
+local identity selection and remote chain signature admission. Trust, hostname,
+purpose and revocation checks remain mandatory.
+
+STANDARD requires explicit TLS1.3-only bounds. SHANGMI_TLS13 accepts SM2/SM3.
+TLS1.2/ranges and TLCP reject explicit certificate lists with ENOTSUP before
+trust/credential I/O. RSA-PSS certificate signatures are not supported by this
+slice; RSA-PSS handshake signatures remain available. The STANDARD certificate
+list admits PKCS1/SHA256 and ECDSA P256/SHA256 or P384/SHA384. Invalid counts,
+pointer/count mismatches and duplicates return EINVAL. iOS implicit system trust
+rejects explicit policy because issuer keys needed for final signature admission
+are unavailable; explicit anchors work normally.
+
+The TLS1.3 provider sends extension 50 independently and uses the same copied
+list for chain selection and verification. If a peer omits extension 50, its
+signature_algorithms offer also constrains its certificate acceptance, per
+[RFC 8446 section 4.2.3](https://www.rfc-editor.org/rfc/rfc8446.html#section-4.2.3).
+Both this peer constraint and local policy must match; an empty intersection
+never falls back to a wider list.

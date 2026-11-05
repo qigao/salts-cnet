@@ -53,6 +53,47 @@ static int run_signature_policy_cases(void) {
       REQUIRE(run_case(&options) == 0);
     }
   }
+  {
+    const cnet_tls_signature_scheme handshake = CRYPTO_TLS_SIGNATURE_ECDSA_SECP256R1_SHA256;
+    const cnet_tls_signature_scheme certificate = CRYPTO_TLS_SIGNATURE_ECDSA_SECP384R1_SHA384;
+    for (unsigned side = 0; side < 3; ++side) {
+      tls_case_options options = {.label = "separate handshake and certificate signatures",
+          .ca_file = CORE_TLS_TEST_P384_CA, .verified_hostname = "localhost", .expect_success = true,
+          .client_minimum = 13, .client_maximum = 13, .server_minimum = 13, .server_maximum = 13,
+          .client_signatures = &handshake, .client_signature_count = 1,
+          .server_signatures = &handshake, .server_signature_count = 1,
+          .client_certificate_signatures = &certificate, .client_certificate_signature_count = 1,
+          .server_certificate_signatures = &certificate, .server_certificate_signature_count = 1,
+          .expected_version = "TLSv1.3", .release_tls_context_early = true};
+      if (side == 1) { options.client_certificate_signatures = &handshake; options.expect_success = false; }
+      if (side == 2) { options.server_certificate_signatures = &handshake; options.expect_success = false; options.expect_server_rejection = true; }
+      REQUIRE(run_case(&options) == 0);
+    }
+  }
+  for (unsigned bad = 0; bad < 9; ++bad) {
+    cnet_tls_signature_scheme certs[2] = {CRYPTO_TLS_SIGNATURE_RSA_PKCS1_SHA256, CRYPTO_TLS_SIGNATURE_ECDSA_SECP256R1_SHA256};
+    cnet_tls_client_config cc = {.size = sizeof(cc), .ca_file = "missing.pem", .minimum_version = 13,
+        .maximum_version = 13, .certificate_signature_algorithms = certs, .certificate_signature_algorithm_count = 2};
+    switch (bad) {
+      case 0: cc.certificate_signature_algorithms = NULL; break;
+      case 1: cc.certificate_signature_algorithm_count = 0; break;
+      case 2: cc.certificate_signature_algorithm_count = 5; break;
+      case 3: certs[1] = certs[0]; break;
+      case 4: certs[1] = CRYPTO_TLS_SIGNATURE_RSA_PSS_RSAE_SHA256; break;
+      case 5: cc.minimum_version = 12; break;
+      case 6: cc.security_profile = CNET_TLS_SECURITY_PROFILE_TLCP11; cc.minimum_version = cc.maximum_version = 0; break;
+      case 7: cc.security_profile = CNET_TLS_SECURITY_PROFILE_SHANGMI_TLS13; break;
+      case 8: certs[1] = (cnet_tls_signature_scheme)0xffff; break;
+    }
+    REQUIRE(cnet_tls_client_init(&client, &cc) == (bad < 4 ? SALTS_EINVAL : SALTS_ENOTSUP));
+    REQUIRE(client.impl == NULL);
+    cnet_tls_server_config sc = {.size = sizeof(sc), .cert_file = "missing-cert.pem", .key_file = "missing-key.pem",
+        .security_profile = cc.security_profile, .minimum_version = cc.minimum_version, .maximum_version = cc.maximum_version,
+        .certificate_signature_algorithms = cc.certificate_signature_algorithms,
+        .certificate_signature_algorithm_count = cc.certificate_signature_algorithm_count};
+    REQUIRE(cnet_tls_server_init(&server, &sc) == (bad < 4 ? SALTS_EINVAL : SALTS_ENOTSUP));
+    REQUIRE(server.impl == NULL);
+  }
 cleanup:
   (void)cnet_tls_client_destroy(&client);
   (void)cnet_tls_server_destroy(&server);

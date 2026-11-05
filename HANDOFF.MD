@@ -178,3 +178,13 @@
   to the raw CertificateVerify transcript. The range context also advertises
   PSS for TLS1.3; TLS1.2's local signing selector must not label PKCS1 as PSS.
   Keep independent range-to-TLS1.2 mTLS cases as regression coverage.
+
+## 2026-11-05 certificate signature policy
+
+- GmSSL's TLS1.3 context has an extension-50 switch, but tls13_init previously
+  did not copy it into the connection. A populated certificate policy alone
+  therefore neither advertised the list nor selected it for verification.
+  Keep mixed handshake/issuer-signature tests; identical lists miss this bug.
+- Certificate lists do not require a handshake-capable algorithm. PKCS1-only
+  certificates are valid with RSA-PSS TLS1.3 CertificateVerify. Do not reuse
+  handshake-list version validation for certificate policy.

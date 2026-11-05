@@ -470,6 +470,15 @@ typedef struct cnet_tls_client_config {
   /** Same copied signature-list contract as Crypto TLS stream configuration. */
   const cnet_tls_signature_scheme *signature_algorithms;
   size_t signature_algorithm_count;
+  /** Independent TLS1.3 certificate-chain signature allowlist, copied at init.
+   * NULL/0 uses signature_algorithms. Explicit lists contain 1..4 unique
+   * RSA-PKCS1-SHA256 or ECDSA P256/SHA256, P384/SHA384 (STANDARD), or SM2/SM3
+   * (SHANGMI). RSA-PSS certificate signatures are unsupported. STANDARD must
+   * explicitly select TLS1.3 only; ranges/TLS1.2/TLCP return ENOTSUP before I/O.
+   * Controls certificate extension offers, selection and peer-chain verification.
+   * Handshake signatures remain controlled by signature_algorithms. */
+  const cnet_tls_signature_scheme *certificate_signature_algorithms;
+  size_t certificate_signature_algorithm_count;
   /** Ordered immutable client identities; see crypto_tls_stream_client_config.
    * Borrowed only during cnet_connect; copied before handshake progress.
    * Excludes top-level identity fields. NULL/0 keeps single-identity behavior.
@@ -525,6 +534,15 @@ typedef struct cnet_tls_server_config {
   /** Same copied signature-list contract as Crypto TLS stream configuration. */
   const cnet_tls_signature_scheme *signature_algorithms;
   size_t signature_algorithm_count;
+  /** Independent TLS1.3 certificate-chain signature allowlist, copied at init.
+   * NULL/0 uses signature_algorithms. Explicit lists contain 1..4 unique
+   * RSA-PKCS1-SHA256 or ECDSA P256/SHA256, P384/SHA384 (STANDARD), or SM2/SM3
+   * (SHANGMI). RSA-PSS certificate signatures are unsupported. STANDARD must
+   * explicitly select TLS1.3 only; ranges/TLS1.2/TLCP return ENOTSUP before I/O.
+   * Controls certificate extension offers, selection and peer-chain verification.
+   * Handshake signatures remain controlled by signature_algorithms. */
+  const cnet_tls_signature_scheme *certificate_signature_algorithms;
+  size_t certificate_signature_algorithm_count;
   /** Same immutable SNI identity-set contract as Crypto server configuration.
    * Replaces the single identity fields; consumed during server init. */
   const cnet_tls_server_identity *identities;
