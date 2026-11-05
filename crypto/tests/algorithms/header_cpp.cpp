@@ -4,6 +4,7 @@
 #include <crypto/sm3.h>
 #include <crypto/sm2.h>
 #include <crypto/sm2_exchange.h>
+#include <crypto/sm2_keys.h>
 #include <crypto/zuc.h>
 #include <crypto/sm4.h>
 #include <crypto/sm9.h>
