@@ -67,8 +67,10 @@ func TestShangMiMutual(t *testing.T) {
 	memoryFixtures(t, server.caPath, server.certPath, server.keyPath, client.caPath, client.certPath, client.keyPath)
 	encryptedMemoryFixture(t, server.keyPath)
 	encryptedMemoryFixture(t, client.keyPath)
-	encryptedMemoryFixture(t, server.keyPath, true)
-	encryptedMemoryFixture(t, client.keyPath, true)
+	for _, bits := range []int{128, 192, 256} {
+		encryptedMemoryFixture(t, server.keyPath, bits)
+		encryptedMemoryFixture(t, client.keyPath, bits)
+	}
 	for _, mode := range []string{"pem", "der"} {
 		t.Run("memory_"+mode, func(t *testing.T) {
 			t.Setenv("SALTS_TEST_TLS_MEMORY", mode)
@@ -76,13 +78,15 @@ func TestShangMiMutual(t *testing.T) {
 			runNativeServerWithClient(t, server, &client, "close")
 			runNativeClientWithIdentity(t, server, &client, "localhost", true, "")
 		})
-		t.Run("aes_encrypted_memory_"+mode, func(t *testing.T) {
-			t.Setenv("SALTS_TEST_TLS_MEMORY", mode)
-			t.Setenv("SALTS_TEST_TLS_ENCRYPTED", "aes")
-			mutual(t, server, client, "accept")
-			runNativeServerWithClient(t, server, &client, "close")
-			runNativeClientWithIdentity(t, server, &client, "localhost", true, "")
-		})
+		for _, encryption := range []string{"aes128", "aes192", "aes"} {
+			t.Run(encryption+"_encrypted_memory_"+mode, func(t *testing.T) {
+				t.Setenv("SALTS_TEST_TLS_MEMORY", mode)
+				t.Setenv("SALTS_TEST_TLS_ENCRYPTED", encryption)
+				mutual(t, server, client, "accept")
+				runNativeServerWithClient(t, server, &client, "close")
+				runNativeClientWithIdentity(t, server, &client, "localhost", true, "")
+			})
+		}
 		t.Run("encrypted_memory_"+mode, func(t *testing.T) {
 			t.Setenv("SALTS_TEST_TLS_MEMORY", mode)
 			t.Setenv("SALTS_TEST_TLS_ENCRYPTED", "1")
@@ -128,7 +132,7 @@ func TestShangMiMutual(t *testing.T) {
 	})
 }
 
-func encryptedMemoryFixture(t *testing.T, path string, aes ...bool) {
+func encryptedMemoryFixture(t *testing.T, path string, aesBits ...int) {
 	t.Helper()
 	plain, err := os.ReadFile(path + ".der")
 	if err != nil {
@@ -140,9 +144,18 @@ func encryptedMemoryFixture(t *testing.T, path string, aes ...bool) {
 	}
 	suffix := ".encrypted"
 	encrypter := pkcs.NewPBESEncrypter(pkcs.SM4CBC, pkcs.NewPBKDF2Opts(pkcs.SM3, 16, 10000))
-	if len(aes) != 0 && aes[0] {
+	if len(aesBits) != 0 {
 		suffix = ".aes"
-		encrypter = pkcs.NewPBESEncrypter(pkcs.AES256CBC, pkcs.NewPBKDF2Opts(pkcs.SHA256, 16, 10000))
+		algorithm := pkcs.AES256CBC
+		if aesBits[0] == 128 {
+			suffix = ".aes128"
+			algorithm = pkcs.AES128CBC
+		}
+		if aesBits[0] == 192 {
+			suffix = ".aes192"
+			algorithm = pkcs.AES192CBC
+		}
+		encrypter = pkcs.NewPBESEncrypter(algorithm, pkcs.NewPBKDF2Opts(pkcs.SHA256, 16, 10000))
 	}
 	der, err := pkcs8.MarshalPrivateKey(key, []byte("memory\x00sign"), encrypter)
 	if err != nil {

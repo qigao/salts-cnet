@@ -13,7 +13,9 @@ static int tls_test_read(tls_test_memory *m, unsigned slot, const char *path,
   char name[2048];
   if (!path || snprintf(name, sizeof(name), "%s%s%s%s", path, part,
       slot >= 2u && getenv("SALTS_TEST_TLS_ENCRYPTED") ?
-          (strcmp(getenv("SALTS_TEST_TLS_ENCRYPTED"), "aes") == 0 ? ".aes" : ".encrypted") : "",
+          (strcmp(getenv("SALTS_TEST_TLS_ENCRYPTED"), "aes") == 0 ? ".aes" :
+           strcmp(getenv("SALTS_TEST_TLS_ENCRYPTED"), "aes128") == 0 ? ".aes128" :
+           strcmp(getenv("SALTS_TEST_TLS_ENCRYPTED"), "aes192") == 0 ? ".aes192" : ".encrypted") : "",
       strcmp(mode, "der") == 0 ? ".der" : "") >= (int)sizeof(name)) return SALTS_EINVAL;
   FILE *f = fopen(name, "rb");
   if (!f) return SALTS_EIO;
