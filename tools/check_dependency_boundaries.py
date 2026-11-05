@@ -13,25 +13,12 @@ import re
 SCANNED_EXTENSIONS = {".c", ".cc", ".cpp", ".h", ".hpp", ".m", ".mm", ".cmake"}
 IGNORED_DIRECTORIES = {".git", ".github", "vendor", "third_party", "build", "out", "tools", "docs", "_build", "_installed", "_sdk", "CMakeFiles"}
 PATTERNS = {
-    "forbidden high-level Salts target": re.compile(r"\bSalts::(?!Core\b|Platform\b|Concurrency\b|Coroutine\b|NativeIO\b|URI\b|CNet\b|Unicode\b|IDNA\b|CSerde\b|TinyTest\b|SCTP\b|SCTPWire\b|FS\b|Process\b|Crypto\b|ASN1\b|USB\b|Playback\b|Serial\b|Capture\b)[A-Za-z_0-9]+"),
+    "forbidden high-level Salts target": re.compile(r"\bSalts::(?!Core\b|Platform\b|Concurrency\b|Coroutine\b|NativeIO\b|URI\b|CNet\b|Unicode\b|IDNA\b|CSerde\b|TinyTest\b|SCTP\b|SCTPWire\b|FS\b|Process\b|Crypto\b|ASN1\b|Playback\b|Serial\b|Capture\b)[A-Za-z_0-9]+"),
     "forbidden alternate target namespace": re.compile(r"\b(?:SaltsCore|SaltsCrypto|Crypto)::[A-Za-z_0-9]+"),
     "legacy package lookup": re.compile(r"\b(?:find_package|find_dependency)\s*\(\s*Salts(?:Utils)?(?:\s|\))", re.IGNORECASE),
     "CMeta/CFlow/CSTL include": re.compile(r'^\s*#\s*include\s*[<"](?:cmeta/|cflow/|cstl(?:/|\.h))'),
     "CMeta/CFlow runtime object": re.compile(r"\b(?:CMETA_STRUCT|CMETA_IMPLEMENTS|cmeta_type_desc|cflow_executor|cflow_io_actor|cflow_waker|cflow_publisher)\b"),
 }
-
-# USB's original header has a historical cflow/ path but contains only native
-# opaque handles and C callbacks. Keep that exact public path without admitting
-# any reactive CFlow header or runtime into the native dependency graph.
-NATIVE_USB_HEADER_USERS = frozenset({
-    Path("usb/src/usb.c"),
-    Path("usb/tests/cflow_usb_test.c"),
-    Path("usb/tests/cflow_usb_state_test.c"),
-    Path("usb/tests/cflow_usb_header_cpp_test.cpp"),
-    Path("usb/tests/usb_lifecycle_test.c"),
-})
-NATIVE_USB_INCLUDE = re.compile(r'^\s*#\s*include\s*[<"]cflow/usb\.h[>"]\s*$')
-
 
 # Negative CMake checks are prohibitions, not dependencies. Only these
 # exact source-contract locations can opt out, and only when the entire
@@ -118,10 +105,6 @@ def check_repository(root: Path) -> list[str]:
             # reflection/actor types remain forbidden in all C/C++ sources.
             is_cmake = relative.name == "CMakeLists.txt" or relative.suffix == ".cmake"
             for rule, regex in PATTERNS.items():
-                if (rule == "CMeta/CFlow/CSTL include"
-                        and relative in NATIVE_USB_HEADER_USERS
-                        and NATIVE_USB_INCLUDE.fullmatch(line)):
-                    continue
                 if rule in ("forbidden high-level Salts target",
                             "forbidden alternate target namespace") and not is_cmake:
                     continue

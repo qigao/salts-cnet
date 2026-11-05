@@ -1,7 +1,9 @@
 # Whole-tree Salts / Salts-utils migration completeness admission
 
 > Historical provenance ledger. The SIMD owner recorded below moved to
-> SaltsUtils; it is no longer a SaltsCore build/install target.
+> SaltsUtils; it is no longer a SaltsCore build/install target. USB and
+> libusb were removed on 2026-11-05. Their entries below preserve the original
+> source inventory and do not describe the current SDK.
 
 ## Immutable source identities
 

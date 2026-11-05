@@ -27,7 +27,6 @@ option(SALTSCORE_CNET_TLS_MIXED_PERF
   "Sample CPU callchains of the formal Linux TLS measurement cases" OFF)
 option(SALTSCORE_GMSSL_COPY_PROFILE
   "Count explicit provider copies with the diagnostic GmSSL triplet" OFF)
-option(SALTSCORE_BUILD_USB "Build the native libusb USB owner" OFF)
 option(SALTSCORE_BUILD_SERIAL "Build the native Serial owner" OFF)
 option(SALTSCORE_BUILD_MEDIA "Build combined static Capture/Playback Media owner" OFF)
 

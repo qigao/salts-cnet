@@ -40,8 +40,6 @@ on:
       - "process/include/**"
       - "sctp/src/**"
       - "sctp/include/**"
-      - "usb/src/**"
-      - "usb/include/**"
       - "media/**"
       - "serial/*.c"
       - "serial/*.h"
@@ -99,8 +97,6 @@ on:
       - "process/include/**"
       - "sctp/src/**"
       - "sctp/include/**"
-      - "usb/src/**"
-      - "usb/include/**"
       - "media/**"
       - "serial/*.c"
       - "serial/*.h"
@@ -194,7 +190,7 @@ jobs:
 
       - name: Set up shared dependency contract
         id: vcpkg
-        # Keep the overlay source aligned with vcpkg-configuration.json (GmSSL #24).
+        # Keep the overlay source aligned with vcpkg-configuration.json (GmSSL #26).
         # Includes native Windows pkg-config; avoid MSYS2 for pkg-config.
         uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-curl-cache@84fb64a3ef9221ae838ab0ac70296f4afee0bd03
         with:
@@ -232,22 +228,6 @@ jobs:
             tests/independent/tlcp/go.sum
             tests/independent/shangmi/go.sum
             sctp/tests/independent/pion/go.sum
-
-      - name: Install macOS native autotools
-        if: runner.os == 'macOS'
-        shell: bash
-        env:
-          HOMEBREW_NO_AUTO_UPDATE: "1"
-        run: brew install autoconf autoconf-archive automake libtool
-
-      - name: Install Linux autotools (native and Android host)
-        if: runner.os == 'Linux'
-        shell: bash
-        run: |
-          set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            autoconf autoconf-archive automake libtool
 
       - name: Install private virtual audio test runtime
         if: matrix.preset == 'ci-tsan'
