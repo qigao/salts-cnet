@@ -190,9 +190,9 @@ jobs:
 
       - name: Set up shared dependency contract
         id: vcpkg
-        # GmSSL #27 adds bounded memory identity sets and full DNS SAN matching.
+        # GmSSL #28 fixes HRR padding changes and pre-key rejection alerts.
         # Includes native Windows pkg-config; avoid MSYS2 for pkg-config.
-        uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-curl-cache@af51681bc4317fe8b35e3aaf1c30198019410a7d
+        uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-curl-cache@9936b5d958755cff47b304e25b794df7ac9a071f
         with:
           mode: read
           triplet: ${{ matrix.triplet }}

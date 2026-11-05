@@ -70,7 +70,7 @@ See [architecture](docs/ARCHITECTURE.md) for ownership and migration gates.
 The default graph builds the whole CNet transport source tree, including the
 original IPC FIFO, peer index and native-path changes. Production CNet links
 the first-party static `Salts::Crypto` facade and the **separately installed**
-vcpkg `GmSSL::GmSSL` static library (GmSSL 3.2.0#27). No local native GmSSL
+vcpkg `GmSSL::GmSSL` static library (GmSSL 3.2.0#28). No local native GmSSL
 source mirror is compiled into `Salts::Crypto`; Ed448 remains first-party
 under `crypto/vendor/libecc/`. CNet is the single production DSO owner of the
 linked native TLS implementation; two independently loaded plugins must import
@@ -124,12 +124,12 @@ preserves `PKG_CONFIG` in vcpkg's
 port environment. The manifest requests `pkgconf` only on non-Windows targets;
 Windows uses that native host tool without acquiring pkg-config from MSYS2.
 The custom registry reference and baseline both pin
-`af51681bc4317fe8b35e3aaf1c30198019410a7d`. GmSSL 3.2.0#27
+`9936b5d958755cff47b304e25b794df7ac9a071f`. GmSSL 3.2.0#28
 includes TLS 1.2 negotiation, RSA-PSS, enabled ShangMi algorithms, SM9 retry/secret
 cleanup, TLCP dual-key/signature-extension fixes and mandatory TLS 1.3 KeyUpdate
 responses with correct partial-write continuation, cipher/version filtering
 and signature-policy enforcement, bounded memory identity sets and DNS SAN
-selection; its complete port tree is
+selection, and HRR padding/pre-key alert fixes; its complete port tree is
 pinned in the Crypto source lock. The USB module and its libusb dependency
 have been removed from the SDK. The remaining dependency graph does not
 request the libusb Autotools/MSYS2 tool bundle.

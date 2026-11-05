@@ -137,12 +137,34 @@ Client CertificateRequest identity selection remains outstanding.
 TLS 1.2/1.3 independent Python clients check the selected certificate bytes,
 required client authentication, all input encodings, secondary SANs, case,
 wildcards, absent/unknown SNI and skipping a signature-incompatible first key.
-The peers use the existing explicit P-256 group profile. GoTLCP verifies the
+The SNI matrix uses the explicit P-256 group profile; additional TLS 1.3 cases
+use Python's default groups to cover HRR negotiation. GoTLCP verifies the
 second dual identity under its separate CA through authenticated IO and close;
 the independent ShangMi mTLS client sends SNI and checks the second SM2
 identity, including encrypted PEM/DER keys. Native formal tests cover four
 identities, malformed descriptors, late key/password failures and aggregate
 capacity. Cross-platform qualification still requires the matching LLVM CI.
+
+### TLS 1.3 HelloRetryRequest padding and rejection
+
+GmSSL #28 accepts adding, removing, growing, shrinking or emptying ClientHello2
+padding, as permitted by [RFC 8446 section 4.1.2](https://www.rfc-editor.org/rfc/rfc8446.html#section-4.1.2).
+Present ClientHello2 padding must contain only zeros. Duplicate extensions,
+truncation, changed random/SNI, removed SNI/signature algorithms and an unrelated
+new extension still reject before ServerHello. HRR rejection sends a plaintext
+fatal alert before handshake traffic keys exist, avoiding the previous
+uninitialized-key access. Failure remains terminal on subsequent progress.
+
+Fifteen native formal cases force HRR and inspect ServerHello or fatal-alert
+output. These cases qualify the parsing/rejection boundary, not a full client
+handshake. Independent Python clients separately complete TLS 1.3 mTLS and
+authenticated application IO with the second SNI identity, using file, PEM and
+DER credentials and default key shares. The test observes HRR and ClientHello
+padding lengths without rewriting the transcript. On the local Windows
+runtime all three cases took one HRR with padding changing from absent to 237
+bytes. Default shares may differ on other Python platforms; the native cases
+remain deterministic. This does not qualify PSK resumption, 0-RTT or every HRR
+extension combination.
 
 ### Handshake failure diagnostics
 

@@ -151,8 +151,15 @@
   certificate but does not send SNI. Use the existing independent mTLS client
   with an explicit SNI extension when qualifying ShangMi certificate selection;
   never count a default-certificate handshake as SNI coverage.
-- The new Python SNI test uses the existing explicit P-256 peer profile.
-  Removing `set_ecdh_curve("prime256v1")` on the local Python/OpenSSL runtime
-  exposed a separate TLS 1.3 HRR failure at GmSSL's ClientHello2 extension
-  comparison (`tls13.c`, `matching_ext_found`). Default-group HRR remains a
-  follow-up under #219 and is not qualified by these SNI results.
+- Default Python key shares exposed a TLS 1.3 HRR failure: ClientHello2 added
+  padding after a larger ClientHello1 omitted it. RFC 8446 permits padding
+  addition/removal/length changes. GmSSL #28 handles that exception while
+  retaining duplicate-extension and other ClientHello consistency checks.
+- Rejecting ClientHello2 also exposed an uninitialized-key dereference in
+  `tls13_send_alert`: `TLS_state_client_hello_again` must use a plaintext alert,
+  because HRR has not established handshake traffic keys. Keep the negative
+  HRR cases; successful negotiation alone misses this failure path.
+- The Python SNI suite now includes default-group handshakes and observes the
+  wire HRR and padding lengths without modifying the independent TLS engine.
+  The native formal suite forces HRR deterministically, independent of Python's
+  platform-specific default groups, and checks valid and rejected mutations.
