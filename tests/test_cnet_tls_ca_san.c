@@ -252,6 +252,8 @@ static int drive(cnet_client *client, cnet_client *server,
   }                                                                           \
 } while (0)
 
+#include "tls_memory_inputs.h"
+
 typedef struct tls_case_options {
   const char *label;
   const char *ca_file;
@@ -354,7 +356,7 @@ static int run_case(const tls_case_options *options) {
     memcpy(expected_stream + TLS_STREAM_CONTROL_BYTES + TLS_STREAM_BULK_BYTES,
            "FIN!!", TLS_STREAM_FINAL_BYTES);
   }
-  REQUIRE(cnet_tls_server_init(&tls_server, &server_tls_cfg) == SALTS_OK);
+  REQUIRE(tls_test_server_init(&tls_server, &server_tls_cfg) == SALTS_OK);
   tls_live = true;
   REQUIRE(cnet_client_init(&client, &client_cfg) == SALTS_OK);
   client_live = true;
@@ -383,7 +385,7 @@ static int run_case(const tls_case_options *options) {
     REQUIRE(tls_pool_acquire_rejected(&pool, &pool_key));
     REQUIRE(cnet_manager_connect(&manager, managed, &connect_options, &outbound) == SALTS_OK);
   } else {
-    REQUIRE(cnet_connect(&client, &connect_options, &outbound) == SALTS_OK);
+    REQUIRE(tls_test_connect(&client, &connect_options, &outbound) == SALTS_OK);
   }
   if (options->release_peer_policy != NULL) {
     options->release_peer_policy->release(options->release_peer_policy->context);
@@ -879,7 +881,7 @@ static int run_python_ssl_server(const char *port_text,
       .uri = uri,
       .observer = {state_callback, receive_callback, &probe, send_callback},
       .tls = &tls_config};
-  REQUIRE(cnet_connect(&client, &connect_options, &outbound) == SALTS_OK);
+  REQUIRE(tls_test_connect(&client, &connect_options, &outbound) == SALTS_OK);
 
   if (owned_policy != NULL) {
     owned_policy->release(owned_policy->context);
@@ -1119,7 +1121,7 @@ static int run_python_ssl_client(const char *port_path,
   probe.client = &server;
   probe.receive_limit = rounds;
   if (expect_incomplete_send) client_cfg.max_send_bytes = response_size;
-  REQUIRE(cnet_tls_server_init(&tls_server, &tls_cfg) == SALTS_OK);
+  REQUIRE(tls_test_server_init(&tls_server, &tls_cfg) == SALTS_OK);
   tls_live = true;
   if (expect_eof_race) {
     const native_io_backend_config backend_cfg = {
@@ -1411,7 +1413,7 @@ static int reject_tlcp_identity(const char *cert_file, const char *key_file) {
       .client_auth = CNET_TLS_CLIENT_AUTH_NONE,
       .security_profile = CNET_TLS_SECURITY_PROFILE_TLCP11};
   int result = 0;
-  REQUIRE(cnet_tls_server_init(&server, &cfg) == SALTS_EIO);
+  REQUIRE(tls_test_server_init(&server, &cfg) == SALTS_EIO);
   REQUIRE(server.impl == NULL);
 cleanup:
   (void)cnet_tls_server_destroy(&server);
@@ -1776,7 +1778,7 @@ static int tls_bench_setup(tls_bench_fixture *f, bool callback, size_t window, u
       .size = sizeof(cnet_tls_client_config), .ca_file = CORE_TLS_TEST_P384_CA,
       .server_name = "localhost"};
   REQUIRE(window == 1u || window == 8u);
-  REQUIRE(cnet_tls_server_init(&f->context, &server_cfg) == SALTS_OK);
+  REQUIRE(tls_test_server_init(&f->context, &server_cfg) == SALTS_OK);
   for (size_t e = 0u; e < 2u; ++e) {
     tls_bench_end *end = &f->ends[e];
     end->fixture = f;
@@ -1800,7 +1802,7 @@ static int tls_bench_setup(tls_bench_fixture *f, bool callback, size_t window, u
   const cnet_connect_options connect = {.uri = uri, .tls = &tls_cfg,
       .observer = {tls_bench_state, tls_bench_received, &f->ends[0], tls_bench_sent}};
   const uint64_t handshake_start = cmeta_hrtime();
-  REQUIRE(cnet_connect(&f->ends[0].client, &connect, &f->ends[0].state.connection) == SALTS_OK);
+  REQUIRE(tls_test_connect(&f->ends[0].client, &connect, &f->ends[0].state.connection) == SALTS_OK);
   REQUIRE(cnet_send_buffer(&f->ends[0].client, f->ends[0].state.connection, f->source) == SALTS_EBUSY);
   REQUIRE(mem_buffer_ref_count(f->source) == 1u);
   bool accepted = false;
