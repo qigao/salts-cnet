@@ -221,12 +221,14 @@ jobs:
         run: |
           python -m pip install --only-binary=:all: cryptography==46.0.3
 
-      - name: Set up independent SCTP test peer
-        if: matrix.rid == 'linux-x64'
+      - name: Set up independent Crypto and SCTP test peers
+        if: matrix.preset != 'ci-android'
         uses: actions/setup-go@v5
         with:
-          go-version-file: sctp/tests/independent/pion/go.mod
-          cache-dependency-path: sctp/tests/independent/pion/go.sum
+          go-version-file: crypto/tests/x509/independent/go.mod
+          cache-dependency-path: |
+            crypto/tests/x509/independent/go.sum
+            sctp/tests/independent/pion/go.sum
 
       - name: Install macOS native autotools
         if: runner.os == 'macOS'

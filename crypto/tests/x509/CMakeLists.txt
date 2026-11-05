@@ -30,3 +30,24 @@ target_compile_features(crypto_x509_moved_saltsnet_fixture PRIVATE c_std_11)
 target_link_libraries(crypto_x509_moved_saltsnet_fixture PRIVATE Salts::ASN1 Salts::TinyTest)
 add_test(NAME crypto.x509.migrated_saltsnet_fixture
          COMMAND crypto_x509_moved_saltsnet_fixture)
+
+add_executable(crypto_sm2_x509_test sm2_x509.c)
+target_link_libraries(crypto_sm2_x509_test PRIVATE Salts::Crypto Salts::TinyTest GmSSL::GmSSL)
+set_target_properties(crypto_sm2_x509_test PROPERTIES FOLDER "Crypto/tests/x509")
+add_test(NAME crypto.x509.sm2_signatures COMMAND crypto_sm2_x509_test)
+set_tests_properties(crypto.x509.sm2_signatures PROPERTIES TIMEOUT 120)
+
+# Formal independent certificate generation/verification, never a consumer project.
+# Android is build-only in the established CI; Go is a host test peer.
+if(NOT CMAKE_SYSTEM_NAME STREQUAL "Android")
+  find_program(SALTS_CRYPTO_TEST_GO go REQUIRED)
+  add_executable(crypto_sm2_x509_peer sm2_peer.c)
+  target_link_libraries(crypto_sm2_x509_peer PRIVATE Salts::Crypto)
+  set_target_properties(crypto_sm2_x509_peer PROPERTIES FOLDER "Crypto/tests/x509")
+  add_test(NAME crypto.x509.sm2_independent
+    COMMAND "${SALTS_CRYPTO_TEST_GO}" test -mod=readonly -count=1 -timeout=90s
+      -args -peer "$<TARGET_FILE:crypto_sm2_x509_peer>")
+  set_tests_properties(crypto.x509.sm2_independent PROPERTIES
+    WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/independent"
+    ENVIRONMENT "CGO_ENABLED=0;GOWORK=off" TIMEOUT 180)
+endif()
