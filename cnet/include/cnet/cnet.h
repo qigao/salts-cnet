@@ -418,8 +418,13 @@ typedef struct cnet_tls_client_config {
    * Counts records per application traffic key,
    * not CNet sends/bytes/time; control records are separate overhead.
    * Nonzero STANDARD/TLCP returns SALTS_ENOTSUP; above maximum SALTS_EINVAL.
-   * Fixed per TLS context; no timer or peer-update flood policy. */
+   * Fixed per TLS context; no timer. Peer updates use peer_key_update_limit. */
   uint32_t key_update_record_limit;
+  /** SHANGMI_TLS13 consecutive authenticated peer KeyUpdate limit; zero is
+   * unlimited. Both request kinds count across polls. Only nonempty authenticated
+   * application data resets the count. Exceeding it fails with SALTS_EPROTO.
+   * Burst bound only, not a time/byte rate. Nonzero STANDARD/TLCP: SALTS_ENOTSUP. */
+  uint32_t peer_key_update_limit;
 } cnet_tls_client_config;
 
 /** Configuration copied into a reusable server context during initialization. */
@@ -449,6 +454,8 @@ typedef struct cnet_tls_server_config {
   const cnet_tls_peer_policy *peer_policy;
   /** Same local sending-key rotation contract as the client configuration. */
   uint32_t key_update_record_limit;
+  /** Same consecutive peer-update contract as the client configuration. */
+  uint32_t peer_key_update_limit;
 } cnet_tls_server_config;
 
 typedef struct cnet_connect_options {

@@ -501,6 +501,7 @@ typedef struct key_update_wire {
   uint8_t bytes[2048];
   size_t size;
   size_t budget;
+  size_t read_offset, read_budget;
 } key_update_wire;
 
 static tls_ret_t key_update_capture(void *user, const void *data, size_t size, int flags) {
@@ -518,6 +519,77 @@ static tls_ret_t key_update_capture(void *user, const void *data, size_t size, i
 static tls_ret_t key_update_no_receive(void *user, void *data, size_t size, int flags) {
   (void)user; (void)data; (void)size; (void)flags;
   return TLS_ERROR_SYSCALL;
+}
+
+static tls_ret_t key_update_fragmented_receive(void *user, void *data, size_t size, int flags) {
+  key_update_wire *wire = user;
+  (void)flags;
+  if (wire->read_budget == 0u || wire->read_offset == wire->size) return TLS_ERROR_RECV_AGAIN;
+  if (size > wire->read_budget) size = wire->read_budget;
+  if (size > wire->size - wire->read_offset) size = wire->size - wire->read_offset;
+  memcpy(data, wire->bytes + wire->read_offset, size);
+  wire->read_offset += size;
+  wire->read_budget -= size;
+  return (tls_ret_t)size;
+}
+
+spec("GmSSL authenticated peer update budget across fragmented reads") {
+  for (unsigned scenario = 0u; scenario < 4u; ++scenario) {
+    it("role and AEAD scenario %u rejects before the excess key derivation", scenario) {
+      TLS_CTX ctx[2] = {0};
+      TLS_CONNECT conn[2] = {0};
+      key_update_wire wire = {0};
+      wire.budget = sizeof(wire.bytes);
+      TLS_IO io = {.user = &wire, .send = key_update_capture, .recv = key_update_fragmented_receive};
+      for (unsigned endpoint = 0u; endpoint < 2u; ++endpoint) {
+        ctx[endpoint].protocol = TLS_protocol_tls13;
+        conn[endpoint].ctx = &ctx[endpoint];
+        conn[endpoint].protocol = TLS_protocol_tls13;
+        conn[endpoint].is_client = (scenario % 2u) != endpoint;
+        conn[endpoint].cipher_suite = scenario < 2u ? TLS_cipher_sm4_gcm_sm3 : TLS_cipher_aes_128_gcm_sha256;
+        tls_record_set_protocol(conn[endpoint].plain_record, TLS_protocol_tls12);
+        tls_record_set_protocol(conn[endpoint].record, TLS_protocol_tls12);
+        check_equal(tls_cipher_suite_get(conn[endpoint].cipher_suite, &conn[endpoint].cipher, &conn[endpoint].digest), 1);
+        memset(conn[endpoint].client_application_traffic_secret, 0x35, 32u);
+        memset(conn[endpoint].server_application_traffic_secret, 0x59, 32u);
+        for (unsigned role = 0u; role < 2u; ++role) {
+          uint8_t key[16];
+          const uint8_t *secret = role ? conn[endpoint].client_application_traffic_secret : conn[endpoint].server_application_traffic_secret;
+          uint8_t *iv = role ? conn[endpoint].client_write_iv : conn[endpoint].server_write_iv;
+          BLOCK_CIPHER_KEY *cipher = role ? &conn[endpoint].client_write_key : &conn[endpoint].server_write_key;
+          check_equal(tls13_hkdf_expand_label(conn[endpoint].digest, secret, "key", NULL, 0u, sizeof(key), key), 1);
+          check_equal(tls13_hkdf_expand_label(conn[endpoint].digest, secret, "iv", NULL, 0u, 12u, iv), 1);
+          check_equal(block_cipher_set_encrypt_key(cipher, conn[endpoint].cipher, key), 1);
+        }
+        check_equal(tls_set_io(&conn[endpoint], &io), 1);
+      }
+      check_equal(tls13_ctx_set_peer_key_update_limit(&ctx[1], 2u), 1);
+      for (unsigned update = 0u; update < 3u; ++update) {
+        uint8_t previous_secret[32], byte = 0x5a;
+        uint8_t *secret = conn[1].is_client ? conn[1].server_application_traffic_secret : conn[1].client_application_traffic_secret;
+        memcpy(previous_secret, secret, sizeof(previous_secret));
+        check_equal(conn[0].is_client ? tls13_send_client_key_update(&conn[0], (int)(update % 2u)) :
+                                      tls13_send_server_key_update(&conn[0], (int)(update % 2u)), 1);
+        int status = TLS_ERROR_RECV_AGAIN;
+        for (unsigned step = 0u; step < sizeof(wire.bytes) && wire.read_offset < wire.size; ++step) {
+          size_t received = 99u;
+          wire.read_budget = 1u;
+          status = tls13_recv(&conn[1], &byte, 1u, &received);
+          check_equal(received, (size_t)0u); check_equal(byte, (uint8_t)0x5a);
+          if (status != TLS_ERROR_RECV_AGAIN) break;
+        }
+        check_equal(wire.read_offset, wire.size);
+        check_equal(conn[1].consecutive_peer_key_updates, update < 2u ? (size_t)update + 1u : (size_t)2u);
+        if (update < 2u) {
+          check_equal(status, TLS_ERROR_RECV_AGAIN);
+          check_not_equal(previous_secret, secret, sizeof(previous_secret));
+        } else {
+          check_equal(status, -1);
+          check_equal(previous_secret, secret, sizeof(previous_secret));
+        }
+      }
+    }
+  }
 }
 
 spec("GmSSL TLS 1.3 KeyUpdate under bounded external writes") {

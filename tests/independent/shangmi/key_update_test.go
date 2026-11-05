@@ -1,9 +1,95 @@
 package shangmiinterop
 
 import (
+	"errors"
 	"fmt"
+	"net"
+	"strings"
 	"testing"
 )
+
+func (p *recordPeer) peerUpdateLimit(nativeServer bool, scenario string, waitSent func() error) error {
+	failure := strings.Contains(scenario, "fail")
+	for round := 0; round < 2; round++ {
+		if !nativeServer {
+			if round == 1 && !failure {
+				if err := p.receiveKeyUpdate(); err != nil {
+					return err
+				}
+			}
+			if err := p.expect(23, []byte{'F'}); err != nil {
+				return err
+			}
+		}
+		updates := 2
+		if scenario == "limit-off" || failure {
+			updates = 3
+		}
+		if failure && round == 0 {
+			updates = 0
+		}
+		for i := 0; i < updates; i++ {
+			request := byte(1)
+			if !nativeServer && round == 1 {
+				request = 0
+			}
+			if failure {
+				request = byte(i % 2)
+			}
+			if err := p.sendKeyUpdate(request); err != nil {
+				return err
+			}
+			if scenario == "limit-empty-fail" && i == 1 {
+				if err := p.send(23, nil); err != nil {
+					return err
+				}
+			}
+		}
+		if failure && round == 1 {
+			kind, _, err := p.record()
+			var timeout net.Error
+			if errors.As(err, &timeout) && timeout.Timeout() {
+				return err
+			}
+			if err == nil && kind != 21 {
+				return errors.New("update limit delivered data instead of failing")
+			}
+			return nil // The native peer separately requires FAILED/EPROTO/read.
+		}
+		if nativeServer {
+			if err := p.send(23, []byte{'F'}); err != nil {
+				return err
+			}
+			if updates != 0 {
+				if err := p.receiveKeyUpdate(); err != nil {
+					return err
+				}
+			}
+			if err := p.expect(23, []byte{'G'}); err != nil {
+				return err
+			}
+			if failure && round == 0 {
+				if err := waitSent(); err != nil {
+					return err
+				}
+			}
+		} else if err := p.send(23, []byte("ok")); err != nil {
+			return err
+		}
+	}
+	if nativeServer {
+		if err := p.send(21, []byte{1, 0}); err != nil {
+			return err
+		}
+	}
+	if err := p.expect(21, []byte{1, 0}); err != nil {
+		return err
+	}
+	if !nativeServer {
+		return p.send(21, []byte{1, 0})
+	}
+	return nil
+}
 
 // Assert exact record order at and across repeated local thresholds. The
 // independent peer never initiates rotation, only answers native requests.
@@ -68,6 +154,11 @@ func TestShangMiKeyUpdate(t *testing.T) {
 	}
 	f := credentials(t, nil)
 	client := clientCredentials(t, nil)
+	for _, scenario := range []string{"limit", "limit-off", "limit-fail", "limit-empty-fail"} {
+		t.Run("native_server_"+scenario, func(t *testing.T) { runNativeServer(t, f, scenario, scenario) })
+		t.Run("native_client_"+scenario, func(t *testing.T) { runNativeClient(t, f, "localhost", true, scenario) })
+		t.Run("native_mtls_server_"+scenario, func(t *testing.T) { runNativeServerWithClient(t, f, &client, scenario, scenario) })
+	}
 	for _, scenario := range []string{"rotateoff", "rotate1", "rotate2", "rotatemax"} {
 		t.Run("native_server_"+scenario, func(t *testing.T) { runNativeServer(t, f, scenario, scenario) })
 		t.Run("native_client_"+scenario, func(t *testing.T) { runNativeClient(t, f, "localhost", true, scenario) })

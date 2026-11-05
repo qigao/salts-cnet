@@ -27,7 +27,7 @@ source or falls back to plaintext.
 | DTLS | Issue #188 resumed; implementation and CNet/SCTP qualification pending | Existing TLS tests do not qualify DTLS |
 | SDF / SKF hardware | Requires selected vendor runtime/device and its integration tests | No software fallback for non-exportable keys |
 
-GmSSL 3.2.0 port revision 22 enables SM9, ZUC and CMS and exports the enabled
+GmSSL 3.2.0 port revision 23 enables SM9, ZUC and CMS and exports the enabled
 algorithm feature definitions. It also clears the PBKDF2 password-derived
 template and rejects invalid/infinity uncompressed SM2 points. These changes
 belong to the external package, not a duplicate in-tree GmSSL build. Revision 20
@@ -41,6 +41,9 @@ Revision 22 honors peer-requested TLS 1.3 KeyUpdate independently of automatic
 local rotation settings or previous record count. A pending encrypted update
 retains its control-write state across backpressure, so it cannot report stale
 application completion or rotate the sending key twice.
+Revision 23 adds a per-context consecutive authenticated peer-KeyUpdate limit.
+It checks the budget before deriving new traffic keys and resets only when a
+nonempty authenticated application record is received.
 
 ### TLCP stream qualification
 
@@ -195,9 +198,38 @@ responses under one-byte-at-a-time writes for both roles and both AEAD suites.
 Configuration negatives reject unsupported profiles and out-of-range limits
 before reading deliberately absent trust/key files.
 
-Update-flood policy and fragmented post-handshake messages remain separate
-work, as do session resumption, DTLS and hardware-backed keys. Additional peer
-admission is described below.
+### Consecutive peer KeyUpdate admission
+
+Set `peer_key_update_limit` in a Crypto/CNet client or server TLS context to
+bound consecutive authenticated KeyUpdates in SHANGMI_TLS13. Zero disables the
+bound; any nonzero uint32 value selects the permitted count. STANDARD/TLCP
+reject a nonzero request with ENOTSUP during configuration. Both update request
+kinds count, including responses to locally initiated rotation. Only receiving
+nonempty authenticated application data resets the counter; outgoing application
+data, repeated progress calls, empty records and other control messages do not.
+
+GmSSL authenticates and parses the record before checking the limit. The excess
+update fails before another traffic-secret derivation. Crypto permanently
+latches EPROTO; CNet publishes FAILED without delivering subsequent plaintext.
+The counter is fixed-size per connection, is owned by its progress thread and
+survives partial records and retryable reads. Snapshot replacement affects new
+connections; it does not reset existing counters. Mandatory update responses
+remain active for admitted updates.
+
+`saltscore.cnet_shangmi_key_update` adds 12 independent scenarios across native
+client/server and REQUIRED-mTLS server: the exact two-update boundary twice with
+application progress between, disabled admission accepting three updates,
+third-update rejection, and rejection despite an intervening empty record.
+Failures require EPROTO at the read stage after an authenticated exchange;
+timeouts and orderly close do not qualify. Four provider cases cover both roles
+and SM4-GCM/AES-GCM with one-byte read budgets; the third update leaves the
+receiving traffic secret unchanged after two admitted updates. Public context
+tests reject unsupported profiles before loading absent files.
+
+This is a consecutive-update burst bound, not a time/byte rate limiter: a peer
+that sends nonempty application records can reset it. Time/byte budgets,
+fragmented post-handshake messages, session resumption, DTLS and hardware-backed
+keys remain separate work. Additional peer admission is described below.
 
 ### Authenticated-peer admission and revocation composition
 

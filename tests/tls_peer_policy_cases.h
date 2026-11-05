@@ -55,6 +55,17 @@ static int run_peer_policy_cases(void) {
   }
   policy = peer_policy_descriptor(&p);
   cfg.ca_file = "this-test-trust-file-does-not-exist.pem";
+  for (unsigned invalid = 0u; invalid < 2u; ++invalid) {
+    cnet_tls_security_profile profile = invalid ? CNET_TLS_SECURITY_PROFILE_TLCP11 : CNET_TLS_SECURITY_PROFILE_STANDARD;
+    cnet_tls_client_config bad_client = {.size = sizeof(bad_client),
+        .ca_file = cfg.ca_file, .security_profile = profile, .peer_key_update_limit = 2u};
+    cnet_tls_server_config bad_server = {.size = sizeof(bad_server),
+        .cert_file = "absent-update-cert.pem", .key_file = "absent-update-key.pem",
+        .security_profile = profile, .peer_key_update_limit = 2u};
+    REQUIRE(cnet_tls_client_init(&client, &bad_client) == SALTS_ENOTSUP);
+    REQUIRE(cnet_tls_server_init(&server, &bad_server) == SALTS_ENOTSUP);
+    REQUIRE(client.impl == NULL && server.impl == NULL);
+  }
   for (unsigned invalid = 0u; invalid < 3u; ++invalid) {
     cnet_tls_security_profile profile = invalid == 0u ? CNET_TLS_SECURITY_PROFILE_STANDARD :
         invalid == 1u ? CNET_TLS_SECURITY_PROFILE_TLCP11 : CNET_TLS_SECURITY_PROFILE_SHANGMI_TLS13;
