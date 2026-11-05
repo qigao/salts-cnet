@@ -285,6 +285,8 @@ typedef struct tls_case_options {
   const cnet_tls_cipher_suite *client_ciphers, *server_ciphers;
   size_t client_cipher_count, server_cipher_count;
   const char *expected_cipher;
+  const cnet_tls_signature_scheme *client_signatures, *server_signatures;
+  size_t client_signature_count, server_signature_count;
 } tls_case_options;
 
 static int run_case(const tls_case_options *options) {
@@ -320,6 +322,14 @@ static int run_case(const tls_case_options *options) {
       options->client_cipher_count * sizeof(*client_ciphers));
   if (options->server_cipher_count) memcpy(server_ciphers, options->server_ciphers,
       options->server_cipher_count * sizeof(*server_ciphers));
+  cnet_tls_signature_scheme client_signatures[CRYPTO_TLS_SIGNATURE_MAX_COUNT] = {0};
+  cnet_tls_signature_scheme server_signatures[CRYPTO_TLS_SIGNATURE_MAX_COUNT] = {0};
+  if (options->client_signature_count > CRYPTO_TLS_SIGNATURE_MAX_COUNT ||
+      options->server_signature_count > CRYPTO_TLS_SIGNATURE_MAX_COUNT) return 2;
+  if (options->client_signature_count) memcpy(client_signatures, options->client_signatures,
+      options->client_signature_count * sizeof(*client_signatures));
+  if (options->server_signature_count) memcpy(server_signatures, options->server_signatures,
+      options->server_signature_count * sizeof(*server_signatures));
   const cnet_tls_server_config server_tls_cfg = {
       .size = sizeof(cnet_tls_server_config),
       .cert_file = options->server_cert_file != NULL
@@ -335,7 +345,9 @@ static int run_case(const tls_case_options *options) {
       .minimum_version = options->server_minimum, .maximum_version = options->server_maximum,
       .verification_depth = options->server_depth,
       .cipher_suites = options->server_cipher_count ? server_ciphers : NULL,
-      .cipher_suite_count = options->server_cipher_count};
+      .cipher_suite_count = options->server_cipher_count,
+      .signature_algorithms = options->server_signature_count ? server_signatures : NULL,
+      .signature_algorithm_count = options->server_signature_count};
   const cnet_tls_client_config client_tls_cfg = {
       .size = sizeof(cnet_tls_client_config),
       .ca_file = options->ca_file,
@@ -347,7 +359,9 @@ static int run_case(const tls_case_options *options) {
       .minimum_version = options->client_minimum, .maximum_version = options->client_maximum,
       .verification_depth = options->client_depth,
       .cipher_suites = options->client_cipher_count ? client_ciphers : NULL,
-      .cipher_suite_count = options->client_cipher_count};
+      .cipher_suite_count = options->client_cipher_count,
+      .signature_algorithms = options->client_signature_count ? client_signatures : NULL,
+      .signature_algorithm_count = options->client_signature_count};
   tls_probe client_probe = {0}, server_probe = {0};
   cnet_connect_options connect_options = {0};
   cnet_connection outbound = {0};
@@ -417,6 +431,8 @@ static int run_case(const tls_case_options *options) {
    * also creates its stream later, from this already admitted context. */
   memset(client_ciphers, 0, sizeof(client_ciphers));
   memset(server_ciphers, 0, sizeof(server_ciphers));
+  memset(client_signatures, 0, sizeof(client_signatures));
+  memset(server_signatures, 0, sizeof(server_signatures));
   if (options->release_peer_policy != NULL) {
     options->release_peer_policy->release(options->release_peer_policy->context);
     memset(options->release_peer_policy, 0, sizeof(*options->release_peer_policy));
@@ -891,6 +907,7 @@ static int run_python_ssl_server(const char *port_text,
       tlcp ? CRYPTO_TLS_CIPHER_TLCP_ECC_SM4_GCM_SM3 : shangmi ? CRYPTO_TLS_CIPHER_SM4_GCM_SM3 :
       strcmp(protocol, "tls12") == 0 ? CRYPTO_TLS_CIPHER_ECDHE_RSA_AES_128_GCM_SHA256 : CRYPTO_TLS_CIPHER_AES_128_GCM_SHA256,
       CRYPTO_TLS_CIPHER_ECDHE_ECDSA_AES_128_GCM_SHA256};
+  const cnet_tls_signature_scheme sm2_signature = CRYPTO_TLS_SIGNATURE_SM2_SM3;
   const cnet_tls_client_config tls_config = {
       .size = sizeof(cnet_tls_client_config),
       /* The existing external peer CLI uses "-" only for the independent
@@ -902,6 +919,8 @@ static int run_python_ssl_server(const char *port_text,
       .key_file = client_key,
       .security_profile = tlcp ? CNET_TLS_SECURITY_PROFILE_TLCP11 :
           shangmi ? CNET_TLS_SECURITY_PROFILE_SHANGMI_TLS13 : CNET_TLS_SECURITY_PROFILE_STANDARD,
+      .signature_algorithms = tlcp || shangmi ? &sm2_signature : NULL,
+      .signature_algorithm_count = tlcp || shangmi ? 1u : 0u,
       .cipher_suites = peer_ciphers,
       .cipher_suite_count = !tlcp && !shangmi && strcmp(protocol, "tls12") == 0 ? 2u : 1u,
       .peer_policy = owned_policy, .key_update_record_limit = rotation_limit,
@@ -1151,6 +1170,9 @@ static int run_python_ssl_client(const char *port_path,
       tlcp ? CRYPTO_TLS_CIPHER_TLCP_ECC_SM4_GCM_SM3 : shangmi ? CRYPTO_TLS_CIPHER_SM4_GCM_SM3 :
       strcmp(protocol, "12") == 0 ? CRYPTO_TLS_CIPHER_ECDHE_RSA_AES_128_GCM_SHA256 : CRYPTO_TLS_CIPHER_AES_128_GCM_SHA256,
       CRYPTO_TLS_CIPHER_ECDHE_ECDSA_AES_128_GCM_SHA256};
+  const cnet_tls_signature_scheme sm2_signature = CRYPTO_TLS_SIGNATURE_SM2_SM3;
+  const cnet_tls_signature_scheme rsa_signatures[] = {CRYPTO_TLS_SIGNATURE_RSA_PKCS1_SHA256,
+      CRYPTO_TLS_SIGNATURE_RSA_PSS_RSAE_SHA256};
   const cnet_tls_server_config tls_cfg = {
       .size = sizeof(cnet_tls_server_config),
       .cert_file = cert_file,
@@ -1159,6 +1181,8 @@ static int run_python_ssl_client(const char *port_path,
       .client_auth = server_auth_only ? CNET_TLS_CLIENT_AUTH_NONE : CNET_TLS_CLIENT_AUTH_REQUIRED,
       .security_profile = tlcp ? CNET_TLS_SECURITY_PROFILE_TLCP11 :
           shangmi ? CNET_TLS_SECURITY_PROFILE_SHANGMI_TLS13 : CNET_TLS_SECURITY_PROFILE_STANDARD,
+      .signature_algorithms = tlcp || shangmi ? &sm2_signature : rsa_signatures,
+      .signature_algorithm_count = tlcp || shangmi || strcmp(protocol, "12") == 0 ? 1u : 2u,
       .cipher_suites = peer_ciphers,
       .cipher_suite_count = !tlcp && !shangmi && strcmp(protocol, "12") == 0 ? 2u : 1u,
       .key_update_record_limit = rotation_limit,
@@ -1487,6 +1511,7 @@ cleanup:
 }
 
 #include "tls_cipher_policy_cases.h"
+#include "tls_signature_policy_cases.h"
 #include "tls_peer_policy_cases.h"
 #include "tls_sm2_crl_policy_cases.h"
 
@@ -1503,7 +1528,7 @@ static int saltscore_original_entry_test_cnet_tls_ca_san_c(int argc, char **argv
   if (argc == 8 && strcmp(argv[1], "--shangmi-required-client") == 0)
     return run_python_ssl_client(argv[2], argv[3], argv[4], argv[5], "shangmi13-mtls", argv[6], argv[7]);
   if ((argc == 12 && strcmp(argv[1], "--shangmi-mtls") == 0) ||
-      (argc == 16 && strcmp(argv[1], "--depth-mtls") == 0)) {
+      (argc == 16 && (strcmp(argv[1], "--depth-mtls") == 0 || strcmp(argv[1], "--signature-mtls") == 0))) {
     const bool success = strcmp(argv[8], "accept") == 0;
     const bool policy_client = strcmp(argv[8], "reject-policy-client") == 0;
     const bool policy_server = strcmp(argv[8], "reject-policy-server") == 0;
@@ -1529,6 +1554,23 @@ static int saltscore_original_entry_test_cnet_tls_ca_san_c(int argc, char **argv
       mtls.security_profile = (cnet_tls_security_profile)(argv[12][0] - '0');
       mtls.client_minimum = mtls.client_maximum = mtls.server_minimum = mtls.server_maximum =
           (cnet_tls_protocol_version)atoi(argv[13]);
+      if (strcmp(argv[1], "--signature-mtls") == 0) {
+        const cnet_tls_signature_scheme ecdsa[] = {CRYPTO_TLS_SIGNATURE_ECDSA_SECP256R1_SHA256};
+        const cnet_tls_signature_scheme rsa[] = {CRYPTO_TLS_SIGNATURE_RSA_PKCS1_SHA256,
+            CRYPTO_TLS_SIGNATURE_RSA_PSS_RSAE_SHA256};
+        const cnet_tls_signature_scheme sm2[] = {CRYPTO_TLS_SIGNATURE_SM2_SM3};
+        const cnet_tls_signature_scheme ecdsa_ca[] = {CRYPTO_TLS_SIGNATURE_ECDSA_SECP256R1_SHA256,
+            CRYPTO_TLS_SIGNATURE_ECDSA_SECP384R1_SHA384};
+        unsigned client_mode = (unsigned)(argv[14][0] - '0'), server_mode = (unsigned)(argv[15][0] - '0');
+        if (client_mode > 4u || server_mode > 4u) return 2;
+        mtls.client_signatures = client_mode == 1u ? ecdsa : client_mode == 2u ? rsa : client_mode == 3u ? sm2 : client_mode == 4u ? ecdsa_ca : NULL;
+        mtls.server_signatures = server_mode == 1u ? ecdsa : server_mode == 2u ? rsa : server_mode == 3u ? sm2 : server_mode == 4u ? ecdsa_ca : NULL;
+        mtls.client_signature_count = client_mode ? (client_mode == 4u || (client_mode == 2u && mtls.client_maximum != 12) ? 2u : 1u) : 0u;
+        mtls.server_signature_count = server_mode ? (server_mode == 4u || (server_mode == 2u && mtls.server_maximum != 12) ? 2u : 1u) : 0u;
+        mtls.release_tls_context_early = true;
+        if (mtls.security_profile == CNET_TLS_SECURITY_PROFILE_STANDARD) mtls.expected_server_binding = NULL;
+        return run_case(&mtls);
+      }
       mtls.client_depth = (uint32_t)(argv[14][0] - '0');
       mtls.server_depth = (uint32_t)(argv[15][0] - '0');
       mtls.release_tls_context_early = true;
@@ -1566,8 +1608,12 @@ static int saltscore_original_entry_test_cnet_tls_ca_san_c(int argc, char **argv
     if (!expect_success && !expect_rejection) return 2;
     if ((strcmp(argv[5], "-") == 0) != (strcmp(argv[6], "-") == 0))
       return 2;
+    const cnet_tls_signature_scheme rsa_signatures[] = {CRYPTO_TLS_SIGNATURE_RSA_PKCS1_SHA256,
+        CRYPTO_TLS_SIGNATURE_RSA_PSS_RSAE_SHA256};
     const tls_case_options required_mtls = {
         .label = "production CNet REQUIRED-mTLS",
+        .client_signatures = rsa_signatures, .server_signatures = rsa_signatures,
+        .client_signature_count = 2u, .server_signature_count = 2u,
         .ca_file = argv[2],
         .verified_hostname = "localhost",
         .expect_success = expect_success,
@@ -1580,6 +1626,8 @@ static int saltscore_original_entry_test_cnet_tls_ca_san_c(int argc, char **argv
     return run_case(&required_mtls);
   }
   if (argc != 1) return 2;
+  result = run_signature_policy_cases();
+  if (result) return result;
   result = run_cipher_policy_cases();
   if (result) return result;
   result = run_peer_policy_cases();

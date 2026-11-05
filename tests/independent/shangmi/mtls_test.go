@@ -62,6 +62,7 @@ func TestShangMiMutual(t *testing.T) {
 		t.Fatal("missing native peer")
 	}
 	t.Run("verification_depth", testVerificationDepth)
+	t.Run("signature_policy", testSignaturePolicy)
 	server, client := credentials(t, nil), clientCredentials(t, nil)
 	memoryFixtures(t, server.caPath, server.certPath, server.keyPath, client.caPath, client.certPath, client.keyPath)
 	encryptedMemoryFixture(t, server.keyPath)

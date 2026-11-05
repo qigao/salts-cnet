@@ -69,12 +69,17 @@ static void establish_stream_pair(crypto_tls_stream_protocol_version protocol) {
       CRYPTO_TLS_CIPHER_AES_128_GCM_SHA256};
   client.cipher_suites = server.cipher_suites = suites;
   client.cipher_suite_count = server.cipher_suite_count = 2u;
+  crypto_tls_signature_scheme signatures[] = {CRYPTO_TLS_SIGNATURE_RSA_PKCS1_SHA256,
+      CRYPTO_TLS_SIGNATURE_RSA_PSS_RSAE_SHA256};
+  client.signature_algorithms = server.signature_algorithms = signatures;
+  client.signature_algorithm_count = server.signature_algorithm_count = 2u;
   client.ca_file = CRYPTO_CLOSE_TEST_CA;
   server.cert_file = CRYPTO_CLOSE_TEST_SERVER_CERT;
   server.key_file = CRYPTO_CLOSE_TEST_SERVER_KEY;
   check_equal(crypto_tls_stream_client_context_create(&client, &stream_context[0]), CRYPTO_TLS_STREAM_OK);
   check_equal(crypto_tls_stream_server_context_create(&server, &stream_context[1]), CRYPTO_TLS_STREAM_OK);
   memset(suites, 0, sizeof(suites));
+  memset(signatures, 0, sizeof(signatures));
   for (unsigned i = 0u; i < 2u; ++i) {
     check_equal(crypto_tls_stream_create(stream_context[i], i != 0u,
                   i == 0u ? "localhost" : NULL, 32768u, &stream_pair[i]), CRYPTO_TLS_STREAM_OK);

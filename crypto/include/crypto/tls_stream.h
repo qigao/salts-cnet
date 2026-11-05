@@ -7,6 +7,7 @@
 #include <crypto/tls_credentials.h>
 #include <crypto/tls_diagnostic.h>
 #include <crypto/tls_cipher.h>
+#include <crypto/tls_signature.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -123,9 +124,24 @@ typedef struct crypto_tls_stream_client_config {
    * narrowing or fallback. Unknown/unsupported/profile/version conflict:
    * ENOTSUP; pointer/count mismatch, duplicates or excess count: EINVAL.
    * Local order is preserved; peer/key compatibility still gates negotiation.
-   * Signature algorithms and groups retain their existing profile policy. */
+   * Signature algorithms use their separate list; groups keep profile defaults. */
   const crypto_tls_cipher_suite *cipher_suites;
   size_t cipher_suite_count;
+  /** Optional ordered signature allowlist, copied during initialization.
+   * NULL/0 keeps profile defaults; explicit lists contain 1..4 unique schemes.
+   * STANDARD admits RSA-PKCS1-SHA256, RSA-PSS-RSAE-SHA256 and ECDSA P256/SHA256
+   * or P384/SHA384. PSS requires TLS1.3; PKCS1 is certificate-only in TLS1.3.
+   * Each enabled version needs a handshake-capable scheme. SHANGMI/TLCP admit
+   * SM2/SM3 only. Pointer/count mismatch, excess count or duplicates: EINVAL;
+   * unsupported schemes/profile/version conflicts: ENOTSUP, before trust I/O.
+   * Applies to handshake signatures and certificate-chain signature selection
+   * and admission; there is no separate certificate-signature list. Local keys,
+   * peer offers and certificate signatures must also be compatible.
+   * iOS implicit system trust with an explicit list: ENOTSUP (issuer keys
+   * unavailable to enforce the final certificate signature). Explicit anchors
+   * work normally. Trust, identity, purpose and revocation remain mandatory. */
+  const crypto_tls_signature_scheme *signature_algorithms;
+  size_t signature_algorithm_count;
 } crypto_tls_stream_client_config;
 
 /** Configuration copied into a reusable server context during initialization. */
@@ -171,6 +187,9 @@ typedef struct crypto_tls_stream_server_config {
   /** Same immutable cipher allowlist contract as the client configuration. */
   const crypto_tls_cipher_suite *cipher_suites;
   size_t cipher_suite_count;
+  /** Same immutable signature allowlist contract as the client configuration. */
+  const crypto_tls_signature_scheme *signature_algorithms;
+  size_t signature_algorithm_count;
 } crypto_tls_stream_server_config;
 
 typedef struct crypto_tls_stream_context crypto_tls_stream_context;

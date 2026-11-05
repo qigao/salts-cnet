@@ -27,7 +27,7 @@ import (
 
 // Independently signed chains exercise production validation on both endpoints.
 // Transmitted root inclusion is intentional: it counts toward the public bound.
-func depthFixture(t *testing.T, shangmi, client bool, intermediates int, sendRoot bool) fixture {
+func depthFixture(t *testing.T, shangmi, client bool, intermediates int, sendRoot bool, p384Issuer ...bool) fixture {
 	t.Helper()
 	newKey := func() crypto.Signer {
 		var key crypto.Signer
@@ -44,6 +44,13 @@ func depthFixture(t *testing.T, shangmi, client bool, intermediates int, sendRoo
 	}
 	now := time.Now().UTC()
 	rootKey := newKey()
+	if len(p384Issuer) != 0 && p384Issuer[0] {
+		key, err := ecdsa.GenerateKey(elliptic.P384(), rand.Reader)
+		if err != nil {
+			t.Fatal(err)
+		}
+		rootKey = key
+	}
 	root := &x509.Certificate{SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: "Depth root"},
 		NotBefore: now.Add(-time.Hour), NotAfter: now.Add(24 * time.Hour), IsCA: true, BasicConstraintsValid: true,
 		MaxPathLen: intermediates, MaxPathLenZero: intermediates == 0, KeyUsage: x509.KeyUsageCertSign | x509.KeyUsageCRLSign}
