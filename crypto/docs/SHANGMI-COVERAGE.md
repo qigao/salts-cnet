@@ -27,7 +27,7 @@ source or falls back to plaintext.
 | DTLS | Issue #188 resumed; implementation and CNet/SCTP qualification pending | Existing TLS tests do not qualify DTLS |
 | SDF / SKF hardware | Requires selected vendor runtime/device and its integration tests | No software fallback for non-exportable keys |
 
-GmSSL 3.2.0 port revision 21 enables SM9, ZUC and CMS and exports the enabled
+GmSSL 3.2.0 port revision 22 enables SM9, ZUC and CMS and exports the enabled
 algorithm feature definitions. It also clears the PBKDF2 password-derived
 template and rejects invalid/infinity uncompressed SM2 points. These changes
 belong to the external package, not a duplicate in-tree GmSSL build. Revision 20
@@ -37,6 +37,10 @@ extraction scalars and KEM/signing working state on error paths.
 Revision 21 admits curveSM2 plain PKCS#8 keys in the existing bounded loader
 and uses the TLCP SM3/SM2 signature pair `0x0704` in ClientHello extensions.
 The internal SM2 scheme and RFC 8998 TLS 1.3 wire identifier remain `0x0708`.
+Revision 22 honors peer-requested TLS 1.3 KeyUpdate independently of automatic
+local rotation settings or previous record count. A pending encrypted update
+retains its control-write state across backpressure, so it cannot report stale
+application completion or rotate the sending key twice.
 
 ### TLCP stream qualification
 
@@ -93,7 +97,7 @@ Finished processing while the CNet connection remains in handshake admission.
 
 The formal peer requires Go 1.26; CI selects it from this test module and
 caches all independent-peer modules together. The production dependency stays
-GmSSL 3.2.0#21. These independent protocol cases qualify server authentication.
+GmSSL 3.2.0#22. These independent protocol cases qualify server authentication.
 
 For mutual authentication, configure the client's SM2 certificate/key and set
 the server's `client_auth` to `CNET_TLS_CLIENT_AUTH_REQUIRED` with an explicit
@@ -141,8 +145,30 @@ timeouts cannot count as authentication rejection. The peer confirms that its
 negative authentication flight was actually sent.
 
 Both independent mTLS peers use the finite test-only state machine and external
-primitives described above. Revocation integration, resumption/key-update
-qualification, DTLS and hardware-backed keys remain separate gates.
+primitives described above.
+
+### TLS 1.3 peer key updates
+
+`saltscore.cnet_shangmi_key_update` covers 15 independent scenarios: one-way and
+requested updates, consecutive requests before an application send, both native
+directions and REQUIRED-mTLS server connections. The peer derives each traffic
+secret with `traffic upd`, resets that direction's sequence and authenticates
+the next records with the new key. A requested response must be encrypted under
+the old sending key and precede the next Application Data; automatic local
+rotation remains disabled in these tests. Reciprocal close uses the final keys.
+Illegal request values, malformed message length and old-key application data
+after a valid update must fail the authenticated native stream without delivering
+extra plaintext; these rejection cases run with and without mutual authentication.
+
+`saltscore.gmssl_tls_io_abi` also checks one-byte-at-a-time external writes for
+both roles with SM4-GCM/SM3 and AES-128-GCM/SHA-256. It authenticates the exact
+two-record output and checks that control-record retries report zero application
+bytes. All tests link the pinned provider; no second GmSSL build is embedded.
+
+This qualifies peer-initiated updates under the existing owner/write contracts.
+Application-selected local rotation limits, update-flood policy and fragmented
+post-handshake messages remain separate work, as do revocation integration,
+session resumption, DTLS and hardware-backed keys.
 
 ## API use and boundaries
 

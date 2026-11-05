@@ -16,6 +16,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -106,10 +107,16 @@ func runNativeClientWithIdentity(t *testing.T, f fixture, client *fixture, ident
 		defer raw.Close()
 		_ = raw.SetDeadline(time.Now().Add(15 * time.Second))
 		p := &recordPeer{Conn: raw}
+		defer p.clearSecrets()
+		handshakeScenario := corrupt
+		keyUpdate := strings.HasPrefix(corrupt, "key_update")
+		if keyUpdate {
+			handshakeScenario = ""
+		}
 		if client == nil {
-			result = p.server(tls13gm.ServerConfig{DCID: []byte("formal TCP peer"), Certificate: f.leaf, PrivateKey: f.key}, corrupt)
+			result = p.server(tls13gm.ServerConfig{DCID: []byte("formal TCP peer"), Certificate: f.leaf, PrivateKey: f.key}, handshakeScenario)
 		} else {
-			result = p.mutualServer(f, *client, corrupt)
+			result = p.mutualServer(f, *client, handshakeScenario)
 			if !accept && !p.authFlightSent {
 				result = fmt.Errorf("server authentication flight did not execute: %w", result)
 				return
@@ -136,8 +143,29 @@ func runNativeClientWithIdentity(t *testing.T, f fixture, client *fixture, ident
 		if result == nil {
 			result = p.expect(23, []byte{'F'})
 		}
+		if result == nil && keyUpdate {
+			request := byte(1)
+			if corrupt == "key_update_one_way" {
+				request = 0
+			}
+			result = p.sendKeyUpdate(request)
+			if result == nil && corrupt == "key_update_coalesced" {
+				result = p.sendKeyUpdate(request)
+			}
+		}
 		if result == nil {
 			result = p.send(23, []byte("ok"))
+		}
+		if result == nil && keyUpdate {
+			if corrupt != "key_update_one_way" {
+				result = p.receiveKeyUpdate()
+			}
+			if result == nil {
+				result = p.expect(23, []byte{'F'})
+			}
+			if result == nil {
+				result = p.send(23, []byte("ok"))
+			}
 		}
 		if result == nil {
 			result = p.expect(21, []byte{1, 0})
@@ -153,7 +181,11 @@ func runNativeClientWithIdentity(t *testing.T, f fixture, client *fixture, ident
 	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
 	defer cancel()
 	port := fmt.Sprint(listener.Addr().(*net.TCPAddr).Port)
-	args := []string{"--external-ip-san", port, "shangmi13", identity, f.caPath, expect}
+	protocol := "shangmi13"
+	if strings.HasPrefix(corrupt, "key_update") {
+		protocol = "shangmi13-update"
+	}
+	args := []string{"--external-ip-san", port, protocol, identity, f.caPath, expect}
 	if client != nil {
 		args = []string{"--shangmi-required-server", port, identity, f.caPath, client.certPath, client.keyPath, expect,
 			fmt.Sprintf("%x", sha256.Sum256(f.leaf.Raw))}
@@ -222,14 +254,20 @@ func runNativeServerWithClient(t *testing.T, f fixture, client *fixture, outcome
 	roots := peerx509.NewCertPool()
 	roots.AddCert(f.root)
 	p := &recordPeer{Conn: raw}
+	defer p.clearSecrets()
 	scenario := ""
 	if len(corrupt) != 0 {
 		scenario = corrupt[0]
 	}
+	handshakeScenario := scenario
+	keyUpdateFailure := strings.HasPrefix(scenario, "key_update_bad")
+	if strings.HasPrefix(scenario, "key_update") {
+		handshakeScenario = ""
+	}
 	if client == nil {
-		err = p.client(tls13gm.ClientConfig{DCID: []byte("formal TCP peer"), Roots: roots, ServerName: "localhost"}, scenario)
+		err = p.client(tls13gm.ClientConfig{DCID: []byte("formal TCP peer"), Roots: roots, ServerName: "localhost"}, handshakeScenario)
 	} else {
-		err = p.mutualClient(f, *client, scenario)
+		err = p.mutualClient(f, *client, handshakeScenario)
 	}
 	if outcome == "reject" {
 		if (client == nil && !p.altered) || (client != nil && !p.authFlightSent) {
@@ -254,8 +292,21 @@ func runNativeServerWithClient(t *testing.T, f fixture, client *fixture, outcome
 		}
 		return
 	}
+	if err == nil && strings.HasPrefix(scenario, "key_update") && !keyUpdateFailure {
+		request := byte(1)
+		if scenario == "key_update_one_way" {
+			request = 0
+		}
+		err = p.sendKeyUpdate(request)
+		if err == nil && scenario == "key_update_coalesced" {
+			err = p.sendKeyUpdate(request)
+		}
+	}
 	if err == nil {
 		err = p.send(23, []byte{'F'})
+	}
+	if err == nil && strings.HasPrefix(scenario, "key_update") && scenario != "key_update_one_way" && !keyUpdateFailure {
+		err = p.receiveKeyUpdate()
 	}
 	if err == nil {
 		err = p.expect(23, []byte{'G'})
@@ -266,7 +317,7 @@ func runNativeServerWithClient(t *testing.T, f fixture, client *fixture, outcome
 	if err == nil && outcome == "close" {
 		err = p.expect(21, []byte{1, 0})
 	}
-	if outcome == "eof" {
+	if outcome == "eof" || keyUpdateFailure {
 		// Ciphertext receipt does not prove the native SEND callback ran.
 		// Let the formal native peer publish completion before injecting EOF.
 		deadline := time.Now().Add(5 * time.Second)
@@ -280,7 +331,33 @@ func runNativeServerWithClient(t *testing.T, f fixture, client *fixture, outcome
 			}
 			time.Sleep(5 * time.Millisecond)
 		}
-		raw.Close()
+		if outcome == "eof" {
+			raw.Close()
+		}
+	}
+	if err == nil && keyUpdateFailure {
+		switch scenario {
+		case "key_update_bad_value":
+			err = p.send(22, []byte{24, 0, 0, 1, 2})
+		case "key_update_bad_length":
+			err = p.send(22, []byte{24, 0, 0, 0})
+		case "key_update_bad_stale_key":
+			oldCipher, oldSeq := p.writeCipher, p.writeSeq
+			err = p.sendKeyUpdate(0)
+			p.writeCipher, p.writeSeq = oldCipher, oldSeq+1
+			if err == nil {
+				err = p.send(23, []byte{'X'})
+			}
+		}
+		if err == nil {
+			kind, _, readErr := p.record()
+			var timeout net.Error
+			if errors.As(readErr, &timeout) && timeout.Timeout() {
+				err = readErr
+			} else if readErr == nil && kind != 21 {
+				err = errors.New("invalid KeyUpdate did not terminate the stream")
+			}
+		}
 	}
 	if err != nil {
 		raw.Close()

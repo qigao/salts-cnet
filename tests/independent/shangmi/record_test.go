@@ -19,6 +19,7 @@ type recordPeer struct {
 	authFlightSent          bool
 	readCipher, writeCipher *tls13gm.AEAD
 	readSeq, writeSeq       uint64
+	readSecret, writeSecret []byte
 	altered                 bool
 	pending                 []byte
 }
@@ -54,6 +55,47 @@ func (p *recordPeer) keys(read, write []byte) error {
 		return err
 	}
 	p.readSeq, p.writeSeq = 0, 0
+	clear(p.readSecret)
+	clear(p.writeSecret)
+	p.readSecret, p.writeSecret = bytes.Clone(read), bytes.Clone(write)
+	return nil
+}
+
+func (p *recordPeer) clearSecrets() { clear(p.readSecret); clear(p.writeSecret) }
+
+func (p *recordPeer) sendKeyUpdate(request byte) error {
+	if err := p.send(22, []byte{24, 0, 0, 1, request}); err != nil {
+		return err
+	}
+	next, err := tls13gm.HKDFExpandLabel(p.writeSecret, "traffic upd", nil, 32)
+	if err != nil {
+		return err
+	}
+	p.writeCipher, err = recordCipher(next)
+	if err != nil {
+		clear(next)
+		return err
+	}
+	clear(p.writeSecret)
+	p.writeSecret, p.writeSeq = next, 0
+	return nil
+}
+
+func (p *recordPeer) receiveKeyUpdate() error {
+	if err := p.expect(22, []byte{24, 0, 0, 1, 0}); err != nil {
+		return err
+	}
+	next, err := tls13gm.HKDFExpandLabel(p.readSecret, "traffic upd", nil, 32)
+	if err != nil {
+		return err
+	}
+	p.readCipher, err = recordCipher(next)
+	if err != nil {
+		clear(next)
+		return err
+	}
+	clear(p.readSecret)
+	p.readSecret, p.readSeq = next, 0
 	return nil
 }
 
