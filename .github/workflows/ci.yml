@@ -192,7 +192,7 @@ jobs:
         id: vcpkg
         # GmSSL #28 fixes HRR padding changes and pre-key rejection alerts.
         # Includes native Windows pkg-config; avoid MSYS2 for pkg-config.
-        uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-curl-cache@b99d7fc50451864011fd2e27b9aebc4d939c493b
+        uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-curl-cache@276dd2870bc675db0b3bc5af914343c32441ca64
         with:
           mode: read
           triplet: ${{ matrix.triplet }}
@@ -233,7 +233,10 @@ jobs:
       - name: Install private virtual audio test runtime
         if: matrix.preset == 'ci-tsan'
         shell: bash
-        run: sudo apt-get install -y --no-install-recommends pulseaudio pulseaudio-utils
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends pulseaudio pulseaudio-utils
 
       - name: Select preset toolchains
         shell: bash

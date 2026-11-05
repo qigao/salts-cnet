@@ -210,3 +210,21 @@
 - The maximum-iteration check is shared by all AES key sizes. Keep its full
   boundary case with AES256 while exercising each size's other acceptance and
   failure cases, so the formal suite does not repeat the same expensive KDF.
+
+## 2026-11-06 TLS validity diagnostics
+
+- A date rescan after a generic certificate error can mislabel the first failure
+  or use a different clock sample. Capture expiry/not-yet-valid where GmSSL's
+  actual x509_cert_check fails, preserving verification order and status.
+- Propagate the specific result through CA-purpose, normal-chain and TLCP
+  verification; their generic certificate assignments must not overwrite it.
+  Successful checks must leave verify_result unchanged.
+- Invalid intervals and clock failure remain generic. Certificate positions are
+  unknown unless reported explicitly; do not label every validity error index 0.
+
+## 2026-11-06 TSan audio runtime package indexes
+
+- The private PulseAudio runtime is installed before the Linux capture SDK
+  step refreshes apt metadata. A hosted image's stale package lists can name
+  removed libsoup builds and fail with HTTP 404 before configure. Refresh the
+  index at the audio install boundary; retain fail-fast package installation.

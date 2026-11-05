@@ -1758,6 +1758,8 @@ static int crypto_tls_stream_fail_handshake(crypto_tls_stream *state, int status
 static crypto_tls_failure_reason crypto_tls_stream_verify_reason(int result) {
   switch (result) {
     case X509_verify_err_certificate: return CRYPTO_TLS_FAILURE_CERTIFICATE;
+    case X509_verify_err_not_yet_valid: return CRYPTO_TLS_FAILURE_NOT_YET_VALID;
+    case X509_verify_err_expired: return CRYPTO_TLS_FAILURE_EXPIRED;
     case X509_verify_err_cert_chain: return CRYPTO_TLS_FAILURE_CHAIN_SIGNATURE;
     case X509_verify_err_trust_anchor: return CRYPTO_TLS_FAILURE_TRUST_ANCHOR;
     case X509_verify_err_depth: return CRYPTO_TLS_FAILURE_DEPTH;

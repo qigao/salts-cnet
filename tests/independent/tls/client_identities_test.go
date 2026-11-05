@@ -35,7 +35,7 @@ type identity struct {
 	ca, cert, keyFile string
 }
 
-func makeIdentity(t *testing.T, name string, ec bool, issuer *identity) identity {
+func makeIdentity(t *testing.T, name string, ec bool, issuer *identity, change ...func(*x509.Certificate)) identity {
 	t.Helper()
 	var key crypto.Signer
 	var err error
@@ -66,6 +66,9 @@ func makeIdentity(t *testing.T, name string, ec bool, issuer *identity) identity
 		}
 	}
 	leaf := &x509.Certificate{SerialNumber: big.NewInt(2), Subject: pkix.Name{CommonName: name}, DNSNames: []string{"localhost"}, NotBefore: now.Add(-time.Hour), NotAfter: now.Add(time.Hour), BasicConstraintsValid: true, KeyUsage: x509.KeyUsageDigitalSignature, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth, x509.ExtKeyUsageServerAuth}}
+	if len(change) != 0 {
+		change[0](leaf)
+	}
 	der, err := x509.CreateCertificate(rand.Reader, leaf, root, key.Public(), rootKey)
 	if err != nil {
 		t.Fatal(err)

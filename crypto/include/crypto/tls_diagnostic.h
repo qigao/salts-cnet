@@ -22,7 +22,12 @@ typedef enum crypto_tls_failure_reason {
   CRYPTO_TLS_FAILURE_MISSING_CERTIFICATE,
   CRYPTO_TLS_FAILURE_PEER_POLICY,
   CRYPTO_TLS_FAILURE_PROFILE,
-  CRYPTO_TLS_FAILURE_PLATFORM_TRUST
+  CRYPTO_TLS_FAILURE_PLATFORM_TRUST,
+  /* Actual local verifier time failure, not inferred from a remote alert.
+   * Missing certificate position remains SIZE_MAX. Malformed validity keeps
+   * the existing generic diagnosis; an unavailable clock remains CERTIFICATE. */
+  CRYPTO_TLS_FAILURE_NOT_YET_VALID,
+  CRYPTO_TLS_FAILURE_EXPIRED
 } crypto_tls_failure_reason;
 
 /* Owned value with no certificate, key, hostname or provider pointers.
