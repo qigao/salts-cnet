@@ -78,7 +78,7 @@ func TestTLCPCRLPolicy(t *testing.T) {
 			if scenario == "unsupported-client-auth" {
 				mode = scenario
 			}
-			if mode == "factory-reject" || mode == "unsupported-client-auth" {
+			if mode == "factory-reject" || mode == "unsupported-client-auth" || mode == "wrong-profile" {
 				ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 				defer cancel()
 				out, err := exec.CommandContext(ctx, *native, "--tlcp-crl-policy", "1", "localhost", f.caPath,

@@ -28,7 +28,9 @@ typedef struct crypto_tls_sm2_crl_config {
  * status. Handshake checks peer role/profile, issuer signature binding and CRL
  * status after mandatory TLS PKI/identity/possession verification. Peer chain
  * must contain just the leaf, or leaf + the byte-identical configured issuer.
- * STANDARD/TLCP and longer paths reject; there is no discovery or fallback.
+ * Declares exactly SHANGMI_TLS13 and the configured peer role: incompatible
+ * TLS context creation returns ENOTSUP before trust loading or retain.
+ * Longer paths reject during handshake; there is no discovery or fallback.
  *
  * Immutable snapshot copies all bytes in one bounded allocation (less than
  * 87 KiB including metadata); no allocation/fetching or locks during checking.
@@ -52,7 +54,9 @@ int crypto_tls_sm2_crl_peer_policy_create(const crypto_tls_sm2_crl_config *confi
  * signing and encryption certificate, in wire order, against the same explicit
  * issuer, certificate-signing ID and complete CRL. Two distinct certificates
  * are required; a third must be the byte-identical configured issuer. Different
- * issuers/IDs, longer paths, STANDARD and SHANGMI_TLS13 reject. Mandatory TLCP
+ * issuers/IDs and longer paths reject during handshake. Declares TLCP11 and
+ * the SERVER peer role; incompatible TLS context creation returns ENOTSUP.
+ * Mandatory TLCP
  * authentication/role/identity checks still precede this additional policy.
  * Does not add TLCP client authentication or silently select another profile.
  */

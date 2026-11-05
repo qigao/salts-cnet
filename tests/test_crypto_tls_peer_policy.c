@@ -73,6 +73,8 @@ int main(int argc, char **argv) {
   crypto_tls_stream_peer_policy policy = peer_policy_descriptor(&p.base);
   policy.check = check_revocation;
   policy.context = &p;
+  policy.supported_profiles = CRYPTO_TLS_PEER_POLICY_SHANGMI_TLS13;
+  policy.supported_peer_roles = peer_is_server ? CRYPTO_TLS_PEER_POLICY_SERVER : CRYPTO_TLS_PEER_POLICY_CLIENT;
   crypto_tls_stream_client_config cc = {.size = sizeof(cc),
       .ca_file = argv[2], .cert_file = argv[6], .key_file = argv[7],
       .security_profile = p.base.profile, .peer_policy = peer_is_server ? &policy : NULL};

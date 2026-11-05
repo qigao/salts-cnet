@@ -15,6 +15,8 @@ static int run_cnet_crl_policy_case(char **argv) {
   const bool peer_is_server = strcmp(argv[8], "client") == 0;
   const bool accept = strcmp(argv[12], "accept") == 0;
   cnet_tls_peer_policy policy = {0};
+  cnet_tls_client client = {0};
+  cnet_tls_server server = {0};
   peer_policy_probe rejected;
   peer_policy_init(&rejected, peer_is_server);
   int result = 0;
@@ -51,6 +53,19 @@ static int run_cnet_crl_policy_case(char **argv) {
   }
   REQUIRE(cnet_tls_sm2_crl_peer_policy_create(&config, &policy) == SALTS_OK);
   REQUIRE(policy.check != NULL && policy.retain != NULL && policy.release != NULL && policy.context != NULL);
+  REQUIRE(policy.supported_profiles == CRYPTO_TLS_PEER_POLICY_SHANGMI_TLS13);
+  REQUIRE(policy.supported_peer_roles == (config.peer_is_server ? CRYPTO_TLS_PEER_POLICY_SERVER : CRYPTO_TLS_PEER_POLICY_CLIENT));
+  if (strcmp(argv[13], "wrong-role") == 0) {
+    cnet_tls_client_config cc = {.size = sizeof(cc), .ca_file = "absent-policy-trust.pem",
+        .security_profile = CNET_TLS_SECURITY_PROFILE_SHANGMI_TLS13, .peer_policy = &policy};
+    cnet_tls_server_config sc = {.size = sizeof(sc), .ca_file = "absent-policy-trust.pem",
+        .cert_file = "absent-policy-cert.pem", .key_file = "absent-policy-key.pem",
+        .client_auth = CNET_TLS_CLIENT_AUTH_REQUIRED,
+        .security_profile = CNET_TLS_SECURITY_PROFILE_SHANGMI_TLS13, .peer_policy = &policy};
+    REQUIRE((peer_is_server ? cnet_tls_client_init(&client, &cc) : cnet_tls_server_init(&server, &sc)) == SALTS_ENOTSUP);
+    REQUIRE(client.impl == NULL && server.impl == NULL);
+    goto cleanup;
+  }
   /* Creation consumes all data synchronously; corrupt the original buffers. */
   memset(issuer, 0, sizeof(issuer)); memset(crl, 0, sizeof(crl));
   memset(certificate_id, 0, sizeof(certificate_id)); memset(crl_id, 0, sizeof(crl_id));
@@ -72,6 +87,8 @@ static int run_cnet_crl_policy_case(char **argv) {
   REQUIRE(run_case(&options) == 0);
   REQUIRE(policy.context == NULL); /* Caller ref released before handshake progress. */
 cleanup:
+  (void)cnet_tls_client_destroy(&client);
+  (void)cnet_tls_server_destroy(&server);
   if (policy.release != NULL) policy.release(policy.context);
   return result;
 }
@@ -131,6 +148,7 @@ static int run_cnet_tlcp_crl_policy_case(char **argv) {
   uint8_t issuer[4096], crl[65536];
   char certificate_id[] = "1234567812345678", crl_id[] = "1234567812345678";
   cnet_tls_peer_policy policy = {0};
+  cnet_tls_client client = {0};
   tlcp_crl_probe probe = {0};
   atomic_init(&probe.references, 0u);
   atomic_init(&probe.calls, 0u);
@@ -160,10 +178,25 @@ static int run_cnet_tlcp_crl_policy_case(char **argv) {
     REQUIRE(cnet_tls_sm2_crl_peer_policy_create(&config, &policy) == SALTS_OK);
   else
     REQUIRE(cnet_tlcp_sm2_crl_peer_policy_create(&config, &policy) == SALTS_OK);
+  REQUIRE(policy.supported_profiles == (strcmp(argv[8], "wrong-profile") == 0 ?
+      CRYPTO_TLS_PEER_POLICY_SHANGMI_TLS13 : CRYPTO_TLS_PEER_POLICY_TLCP11));
+  REQUIRE(policy.supported_peer_roles == CRYPTO_TLS_PEER_POLICY_SERVER);
   probe.actual = policy;
   atomic_store(&probe.references, 1u);
-  policy = (cnet_tls_peer_policy){tlcp_crl_probe_check, tlcp_crl_probe_retain,
-                                tlcp_crl_probe_release, &probe};
+  policy = (cnet_tls_peer_policy){.check = tlcp_crl_probe_check, .retain = tlcp_crl_probe_retain,
+      .release = tlcp_crl_probe_release, .context = &probe,
+      .supported_profiles = probe.actual.supported_profiles,
+      .supported_peer_roles = probe.actual.supported_peer_roles};
+  if (strcmp(argv[8], "wrong-profile") == 0) {
+    cnet_tls_client_config cc = {.size = sizeof(cc), .ca_file = "absent-policy-trust.pem",
+        .security_profile = CNET_TLS_SECURITY_PROFILE_TLCP11, .peer_policy = &policy};
+    REQUIRE(cnet_tls_client_init(&client, &cc) == SALTS_ENOTSUP);
+    REQUIRE(client.impl == NULL && atomic_load(&probe.references) == 1u && atomic_load(&probe.calls) == 0u);
+    policy.release(policy.context);
+    memset(&policy, 0, sizeof(policy));
+    REQUIRE(atomic_load(&probe.references) == 0u);
+    goto cleanup;
+  }
   /* No native or policy engine may depend on these caller buffers afterward. */
   memset(issuer, 0, sizeof(issuer)); memset(crl, 0, sizeof(crl));
   memset(certificate_id, 0, sizeof(certificate_id)); memset(crl_id, 0, sizeof(crl_id));
@@ -173,6 +206,7 @@ static int run_cnet_tlcp_crl_policy_case(char **argv) {
   REQUIRE(atomic_load(&probe.references) == 0u && atomic_load(&probe.invalid) == 0u);
   REQUIRE(atomic_load(&probe.calls) == (strcmp(argv[3], "127.0.0.2") == 0 ? 0u : 1u));
 cleanup:
+  (void)cnet_tls_client_destroy(&client);
   if (policy.release != NULL) policy.release(policy.context);
   return result;
 }

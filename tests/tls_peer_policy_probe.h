@@ -43,8 +43,8 @@ static int peer_policy_check(void *ctx,
   return p->decision;
 }
 static crypto_tls_stream_peer_policy peer_policy_descriptor(peer_policy_probe *p) {
-  return (crypto_tls_stream_peer_policy){peer_policy_check, peer_policy_retain,
-                               peer_policy_release, p};
+  return (crypto_tls_stream_peer_policy){.check = peer_policy_check, .retain = peer_policy_retain,
+                               .release = peer_policy_release, .context = p};
 }
 static bool peer_policy_finished(peer_policy_probe *p, unsigned calls) {
   return atomic_load(&p->references) == 1u && atomic_load(&p->retains) == 1u &&
