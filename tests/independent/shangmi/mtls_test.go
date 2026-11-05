@@ -203,6 +203,12 @@ func TestShangMiMutualIndependent(t *testing.T) {
 		"server_only_eku": func(c *x509.Certificate) { c.ExtKeyUsage = []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth} },
 	} {
 		t.Run("reject_client_"+name, func(t *testing.T) {
+			if name == "expired" || name == "future" {
+				t.Setenv("SALTS_TEST_TLS_VALIDITY_DIAGNOSTIC", name)
+			}
+			if name == "key_usage" || name == "server_only_eku" {
+				t.Setenv("SALTS_TEST_TLS_VALIDITY_DIAGNOSTIC", "certificate")
+			}
 			bad := clientCredentials(t, change)
 			runNativeServerWithClient(t, server, &bad, "reject")
 		})
@@ -263,7 +269,15 @@ func TestShangMiMutualNativeClient(t *testing.T) {
 		"key_usage":       func(c *x509.Certificate) { c.KeyUsage = x509.KeyUsageKeyEncipherment },
 		"client_only_eku": func(c *x509.Certificate) { c.ExtKeyUsage = []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth} },
 	} {
-		t.Run("reject_server_"+name, func(t *testing.T) { run(t, credentials(t, change), false, "") })
+		t.Run("reject_server_"+name, func(t *testing.T) {
+			if name == "expired" || name == "future" {
+				t.Setenv("SALTS_TEST_TLS_VALIDITY_DIAGNOSTIC", name)
+			}
+			if name == "key_usage" || name == "client_only_eku" {
+				t.Setenv("SALTS_TEST_TLS_VALIDITY_DIAGNOSTIC", "certificate")
+			}
+			run(t, credentials(t, change), false, "")
+		})
 	}
 	t.Run("reject_server_certificate_signature", func(t *testing.T) { run(t, corruptCertificate(t, credentials(t, nil)), false, "") })
 }

@@ -1148,3 +1148,28 @@ signature_algorithms offer also constrains its certificate acceptance, per
 [RFC 8446 section 4.2.3](https://www.rfc-editor.org/rfc/rfc8446.html#section-4.2.3).
 Both this peer constraint and local policy must match; an empty intersection
 never falls back to a wider list.
+
+## Retained certificate validity diagnostics
+
+`crypto_tls_diagnostic.reason` now distinguishes `CRYPTO_TLS_FAILURE_EXPIRED`
+and `CRYPTO_TLS_FAILURE_NOT_YET_VALID` when GmSSL's actual certificate check
+rejects the current host time. Crypto maps the provider result, and CNet retains
+the same owned value in the terminal error. Existing enum values remain stable.
+No post-failure date rescan or interpretation of a remote alert is used. The
+first failure remains latched across retries and TLS object teardown.
+
+The provider retains its existing verification order, clock and inclusive
+notBefore/notAfter checks from
+[RFC 5280 section 4.1.2.5](https://www.rfc-editor.org/rfc/rfc5280.html#section-4.1.2.5).
+Malformed dates/intervals, parsing and usage failures keep their existing generic
+category (TLS1.2 can reject malformed Certificate data before verification and
+report HANDSHAKE); an unavailable clock remains CERTIFICATE. Native platform trust can still report its
+existing platform category. These values do not add a validation-time override
+or change admission. The certificate position stays SIZE_MAX when unavailable;
+no leaf/issuer position is guessed from the error category.
+
+Formal tests use independently signed RSA/P256 certificates for TLS1.2/1.3,
+file/PEM/DER anchors, expired/future leaf and local anchor, and malformed validity
+intervals. Independent SM2 peers verify both mTLS roles and generic usage
+failures; TLCP peers cover signing and encryption leaf validity separately.
+The CNet probe checks the retained value again after owner destruction.

@@ -889,6 +889,20 @@ cleanup:
  * leaf for both SAN-positive and SAN-negative controls. This mode never
  * imports the alternate test-only CNet TLS facade or its Provider.
  */
+static bool tls_probe_expected_validity(const tls_probe *probe) {
+  const char *expected = getenv("SALTS_TEST_TLS_VALIDITY_DIAGNOSTIC");
+  if (!expected) return true;
+  crypto_tls_failure_reason reason;
+  if (strcmp(expected, "expired") == 0) reason = CRYPTO_TLS_FAILURE_EXPIRED;
+  else if (strcmp(expected, "future") == 0) reason = CRYPTO_TLS_FAILURE_NOT_YET_VALID;
+  else if (strcmp(expected, "certificate") == 0) reason = CRYPTO_TLS_FAILURE_CERTIFICATE;
+  else if (strcmp(expected, "handshake") == 0) reason = CRYPTO_TLS_FAILURE_HANDSHAKE;
+  else return false;
+  if (probe->tls_diagnostic.reason != reason)
+    fprintf(stderr, "validity diagnostic actual=%d expected=%d\n", probe->tls_diagnostic.reason, reason);
+  return probe->tls_diagnostic.reason == reason && probe->tls_diagnostic.certificate_index == SIZE_MAX;
+}
+
 static int run_python_ssl_server(const char *port_text,
                                  const char *protocol,
                                  const char *identity,
@@ -1003,6 +1017,7 @@ static int run_python_ssl_server(const char *port_text,
     REQUIRE(probe.connected_count == 0u);
     REQUIRE(probe.received_count == 0u && probe.sent_count == 0u);
     REQUIRE(strcmp(probe.failure_stage, "handshake") == 0);
+    REQUIRE(tls_probe_expected_validity(&probe));
   } else {
     char digest[CNET_TLS_PEER_CERTIFICATE_SHA256_CAPACITY] = {0};
     REQUIRE(probe.connected_count == 1u && probe.failed == 0u);
@@ -1076,6 +1091,8 @@ cleanup:
     if (stop_status != SALTS_OK || destroy_status != SALTS_OK ||
         probe.terminal_count != 1u) result = 1;
   }
+  if (result == 0 && getenv("SALTS_TEST_TLS_VALIDITY_DIAGNOSTIC") &&
+      !tls_probe_expected_validity(&probe)) result = 1;
   return result;
 }
 
@@ -1490,6 +1507,7 @@ static int run_python_ssl_client(const char *port_path,
     REQUIRE(probe.last_error_status != SALTS_ETIMEDOUT);
     REQUIRE(probe.sent_count == 0u && probe.received_count == 0u);
     REQUIRE(strcmp(probe.failure_stage, "handshake") == 0);
+    REQUIRE(tls_probe_expected_validity(&probe));
   }
 
 cleanup:
@@ -1521,6 +1539,8 @@ cleanup:
   if (result == 0)
     printf("PASS production NativeIO CNet server / TLS%s / %s\n",
            protocol, outcome);
+  if (result == 0 && getenv("SALTS_TEST_TLS_VALIDITY_DIAGNOSTIC") &&
+      !tls_probe_expected_validity(&probe)) result = 1;
   return result;
 }
 
