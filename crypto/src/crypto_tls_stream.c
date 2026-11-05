@@ -652,6 +652,38 @@ static int crypto_tls_stream_variant_protocol(crypto_tls_stream_variant variant)
   return TLS_protocol_tls13;
 }
 
+/* Reject an unusable explicit policy before allocation, credential I/O or
+ * peer-policy retention. Protocol bounds are independent of suite selection. */
+static int crypto_tls_stream_validate_ciphers(const crypto_tls_cipher_suite *suites,
+    size_t count, crypto_tls_stream_security_profile profile,
+    crypto_tls_stream_protocol_version minimum, crypto_tls_stream_protocol_version maximum) {
+  bool tls12 = false, tls13 = false;
+  if ((suites == NULL) != (count == 0u) || count > CRYPTO_TLS_CIPHER_SUITE_MAX_COUNT)
+    return CRYPTO_TLS_STREAM_EINVAL;
+  if (count == 0u) return CRYPTO_TLS_STREAM_OK;
+  for (size_t i = 0u; i < count; ++i) {
+    for (size_t j = 0u; j < i; ++j)
+      if (suites[i] == suites[j]) return CRYPTO_TLS_STREAM_EINVAL;
+    if (profile == CRYPTO_TLS_STREAM_SECURITY_PROFILE_SHANGMI_TLS13) {
+      if (suites[i] != CRYPTO_TLS_CIPHER_SM4_GCM_SM3) return CRYPTO_TLS_STREAM_ENOTSUP;
+    } else if (profile == CRYPTO_TLS_STREAM_SECURITY_PROFILE_TLCP11) {
+      if (suites[i] != CRYPTO_TLS_CIPHER_TLCP_ECC_SM4_GCM_SM3) return CRYPTO_TLS_STREAM_ENOTSUP;
+    } else if (suites[i] == CRYPTO_TLS_CIPHER_AES_128_GCM_SHA256) {
+      if (maximum < CRYPTO_TLS_STREAM_PROTOCOL_VERSION_1_3) return CRYPTO_TLS_STREAM_ENOTSUP;
+      tls13 = true;
+    } else if (suites[i] == CRYPTO_TLS_CIPHER_ECDHE_RSA_AES_128_GCM_SHA256 ||
+               suites[i] == CRYPTO_TLS_CIPHER_ECDHE_ECDSA_AES_128_GCM_SHA256) {
+      if (minimum > CRYPTO_TLS_STREAM_PROTOCOL_VERSION_1_2) return CRYPTO_TLS_STREAM_ENOTSUP;
+      tls12 = true;
+    } else return CRYPTO_TLS_STREAM_ENOTSUP;
+  }
+  if (profile == CRYPTO_TLS_STREAM_SECURITY_PROFILE_STANDARD &&
+      ((minimum == CRYPTO_TLS_STREAM_PROTOCOL_VERSION_1_2 && !tls12) ||
+       (maximum == CRYPTO_TLS_STREAM_PROTOCOL_VERSION_1_3 && !tls13)))
+    return CRYPTO_TLS_STREAM_ENOTSUP;
+  return CRYPTO_TLS_STREAM_OK;
+}
+
 static int crypto_tls_stream_configure_variant(crypto_tls_stream_context *context,
                                       crypto_tls_stream_variant variant,
                                       const char *ca_file,
@@ -663,7 +695,9 @@ static int crypto_tls_stream_configure_variant(crypto_tls_stream_context *contex
                                       uint32_t key_update_record_limit,
                                       uint32_t peer_key_update_limit,
                                       const crypto_tls_data *ca_data,
-                                      const crypto_tls_credentials *credentials) {
+                                      const crypto_tls_credentials *credentials,
+                                      const crypto_tls_cipher_suite *cipher_suites,
+                                      size_t cipher_suite_count) {
   static const int range_ciphers[] = {
       TLS_cipher_aes_128_gcm_sha256,
       TLS_cipher_ecdhe_rsa_with_aes_128_gcm_sha256,
@@ -695,6 +729,7 @@ static int crypto_tls_stream_configure_variant(crypto_tls_stream_context *contex
   size_t group_count = sizeof(groups) / sizeof(groups[0]);
   TLS_CTX *tls;
   const int *ciphers;
+  int selected_ciphers[CRYPTO_TLS_CIPHER_SUITE_MAX_COUNT];
   const int *signatures;
   size_t cipher_count;
   size_t signature_count;
@@ -749,6 +784,23 @@ static int crypto_tls_stream_configure_variant(crypto_tls_stream_context *contex
     cipher_count = sizeof(tls13_ciphers) / sizeof(tls13_ciphers[0]);
     signatures = tls13_signatures;
     signature_count = sizeof(tls13_signatures) / sizeof(tls13_signatures[0]);
+  }
+
+  if (cipher_suite_count != 0u) {
+    size_t selected_count = 0u;
+    /* Filter the already validated list for each prebuilt version variant.
+     * The provider copies this bounded array into its immutable TLS_CTX. */
+    for (size_t i = 0u; i < cipher_suite_count; ++i) {
+      for (size_t j = 0u; j < cipher_count; ++j) {
+        if ((int)cipher_suites[i] == ciphers[j]) {
+          selected_ciphers[selected_count++] = ciphers[j];
+          break;
+        }
+      }
+    }
+    if (selected_count == 0u) return CRYPTO_TLS_STREAM_ENOTSUP;
+    ciphers = selected_ciphers;
+    cipher_count = selected_count;
   }
 
   if (tls_ctx_set_cipher_suites(tls, ciphers, cipher_count) != 1 ||
@@ -855,6 +907,7 @@ static int crypto_tls_stream_context_create_common(
     const crypto_tls_data *ca_data, const crypto_tls_credentials *credentials,
     crypto_tls_stream_protocol_version minimum, crypto_tls_stream_protocol_version maximum,
     uint32_t verification_depth,
+    const crypto_tls_cipher_suite *cipher_suites, size_t cipher_suite_count,
     crypto_tls_stream_context **out_context) {
   crypto_tls_stream_context *context;
   size_t index;
@@ -885,6 +938,10 @@ static int crypto_tls_stream_context_create_common(
   }
   if (minimum == CRYPTO_TLS_STREAM_PROTOCOL_VERSION_DEFAULT) minimum = CRYPTO_TLS_STREAM_PROTOCOL_VERSION_1_2;
   if (maximum == CRYPTO_TLS_STREAM_PROTOCOL_VERSION_DEFAULT) maximum = CRYPTO_TLS_STREAM_PROTOCOL_VERSION_1_3;
+
+  status = crypto_tls_stream_validate_ciphers(cipher_suites, cipher_suite_count,
+      security_profile, minimum, maximum);
+  if (status != CRYPTO_TLS_STREAM_OK) return status;
 
   if ((ca_data != NULL && (ca_file != NULL || ca_path != NULL)) ||
       (credentials != NULL && (cert_file != NULL || key_file != NULL || key_password != NULL)))
@@ -953,7 +1010,8 @@ static int crypto_tls_stream_context_create_common(
         index != CRYPTO_TLS_STREAM_VARIANT_TLCP11) continue;
     status = crypto_tls_stream_configure_variant(
         context, (crypto_tls_stream_variant)index, ca_file, ca_path, cert_file, key_file,
-        key_password, client_auth, key_update_record_limit, peer_key_update_limit, ca_data, credentials);
+        key_password, client_auth, key_update_record_limit, peer_key_update_limit, ca_data, credentials,
+        cipher_suites, cipher_suite_count);
     if (status != CRYPTO_TLS_STREAM_OK) {
       crypto_tls_stream_context_dispose(context);
       return status;
@@ -1003,7 +1061,8 @@ int crypto_tls_stream_client_context_create(const crypto_tls_stream_client_confi
       config->alpn_protocols, config->alpn_protocol_count,
       config->security_profile, config->peer_policy, config->key_update_record_limit,
       config->peer_key_update_limit, config->ca_data, config->credentials,
-      config->minimum_version, config->maximum_version, config->verification_depth, &context);
+      config->minimum_version, config->maximum_version, config->verification_depth,
+      config->cipher_suites, config->cipher_suite_count, &context);
   if (status != CRYPTO_TLS_STREAM_OK) return status;
   if (config->server_name != NULL)
     crypto_tls_stream_copy(CRYPTO_TLS_TEST_COPY_METADATA, context->client_server_name, config->server_name,
@@ -1048,7 +1107,8 @@ int crypto_tls_stream_server_context_create(const crypto_tls_stream_server_confi
       config->key_password, config->client_auth, config->alpn_protocols,
       config->alpn_protocol_count, config->security_profile, config->peer_policy,
       config->key_update_record_limit, config->peer_key_update_limit, config->ca_data, config->credentials,
-      config->minimum_version, config->maximum_version, config->verification_depth, &context);
+      config->minimum_version, config->maximum_version, config->verification_depth,
+      config->cipher_suites, config->cipher_suite_count, &context);
   if (status != CRYPTO_TLS_STREAM_OK) return status;
   *out_context = context;
   return CRYPTO_TLS_STREAM_OK;

@@ -282,6 +282,9 @@ typedef struct tls_case_options {
   const char *expected_version;
   crypto_tls_failure_reason expected_failure;
   uint32_t client_depth, server_depth;
+  const cnet_tls_cipher_suite *client_ciphers, *server_ciphers;
+  size_t client_cipher_count, server_cipher_count;
+  const char *expected_cipher;
 } tls_case_options;
 
 static int run_case(const tls_case_options *options) {
@@ -309,6 +312,14 @@ static int run_case(const tls_case_options *options) {
   const cnet_client_config server_cfg = config();
   const cnet_listener_config listener_cfg = {
       client_cfg.backend, "127.0.0.1", 0u, 2u};
+  cnet_tls_cipher_suite client_ciphers[CRYPTO_TLS_CIPHER_SUITE_MAX_COUNT] = {0};
+  cnet_tls_cipher_suite server_ciphers[CRYPTO_TLS_CIPHER_SUITE_MAX_COUNT] = {0};
+  if (options->client_cipher_count > CRYPTO_TLS_CIPHER_SUITE_MAX_COUNT ||
+      options->server_cipher_count > CRYPTO_TLS_CIPHER_SUITE_MAX_COUNT) return 2;
+  if (options->client_cipher_count) memcpy(client_ciphers, options->client_ciphers,
+      options->client_cipher_count * sizeof(*client_ciphers));
+  if (options->server_cipher_count) memcpy(server_ciphers, options->server_ciphers,
+      options->server_cipher_count * sizeof(*server_ciphers));
   const cnet_tls_server_config server_tls_cfg = {
       .size = sizeof(cnet_tls_server_config),
       .cert_file = options->server_cert_file != NULL
@@ -322,7 +333,9 @@ static int run_case(const tls_case_options *options) {
       .security_profile = options->security_profile,
       .peer_policy = options->server_peer_policy,
       .minimum_version = options->server_minimum, .maximum_version = options->server_maximum,
-      .verification_depth = options->server_depth};
+      .verification_depth = options->server_depth,
+      .cipher_suites = options->server_cipher_count ? server_ciphers : NULL,
+      .cipher_suite_count = options->server_cipher_count};
   const cnet_tls_client_config client_tls_cfg = {
       .size = sizeof(cnet_tls_client_config),
       .ca_file = options->ca_file,
@@ -332,7 +345,9 @@ static int run_case(const tls_case_options *options) {
       .security_profile = options->security_profile,
       .peer_policy = options->client_peer_policy,
       .minimum_version = options->client_minimum, .maximum_version = options->client_maximum,
-      .verification_depth = options->client_depth};
+      .verification_depth = options->client_depth,
+      .cipher_suites = options->client_cipher_count ? client_ciphers : NULL,
+      .cipher_suite_count = options->client_cipher_count};
   tls_probe client_probe = {0}, server_probe = {0};
   cnet_connect_options connect_options = {0};
   cnet_connection outbound = {0};
@@ -398,6 +413,10 @@ static int run_case(const tls_case_options *options) {
   } else {
     REQUIRE(tls_test_connect(&client, &connect_options, &outbound) == SALTS_OK);
   }
+  /* Context admission must consume both lists before progress; the server
+   * also creates its stream later, from this already admitted context. */
+  memset(client_ciphers, 0, sizeof(client_ciphers));
+  memset(server_ciphers, 0, sizeof(server_ciphers));
   if (options->release_peer_policy != NULL) {
     options->release_peer_policy->release(options->release_peer_policy->context);
     memset(options->release_peer_policy, 0, sizeof(*options->release_peer_policy));
@@ -474,6 +493,10 @@ static int run_case(const tls_case_options *options) {
     }
     REQUIRE(client_probe.tls_cipher_status == SALTS_OK);
     REQUIRE(strlen(client_probe.tls_cipher) != 0u);
+    if (options->expected_cipher) {
+      REQUIRE(strcmp(client_probe.tls_cipher, options->expected_cipher) == 0);
+      REQUIRE(strcmp(server_probe.tls_cipher, options->expected_cipher) == 0);
+    }
     REQUIRE(strcmp(client_probe.tls_version, "TLSv1.3") == 0 ||
             strcmp(client_probe.tls_version, "TLSv1.2") == 0);
     REQUIRE(cnet_tls_peer_certificate_sha256(&client, outbound,
@@ -864,6 +887,10 @@ static int run_python_ssl_server(const char *port_text,
   tls_probe probe = {0};
   cnet_connect_options connect_options = {0};
   cnet_client_config client_cfg = config();
+  const cnet_tls_cipher_suite peer_ciphers[] = {
+      tlcp ? CRYPTO_TLS_CIPHER_TLCP_ECC_SM4_GCM_SM3 : shangmi ? CRYPTO_TLS_CIPHER_SM4_GCM_SM3 :
+      strcmp(protocol, "tls12") == 0 ? CRYPTO_TLS_CIPHER_ECDHE_RSA_AES_128_GCM_SHA256 : CRYPTO_TLS_CIPHER_AES_128_GCM_SHA256,
+      CRYPTO_TLS_CIPHER_ECDHE_ECDSA_AES_128_GCM_SHA256};
   const cnet_tls_client_config tls_config = {
       .size = sizeof(cnet_tls_client_config),
       /* The existing external peer CLI uses "-" only for the independent
@@ -875,6 +902,8 @@ static int run_python_ssl_server(const char *port_text,
       .key_file = client_key,
       .security_profile = tlcp ? CNET_TLS_SECURITY_PROFILE_TLCP11 :
           shangmi ? CNET_TLS_SECURITY_PROFILE_SHANGMI_TLS13 : CNET_TLS_SECURITY_PROFILE_STANDARD,
+      .cipher_suites = peer_ciphers,
+      .cipher_suite_count = !tlcp && !shangmi && strcmp(protocol, "tls12") == 0 ? 2u : 1u,
       .peer_policy = owned_policy, .key_update_record_limit = rotation_limit,
       /* TLCP's two leaves do not consume issuer depth. Exercise the smallest
        * explicit bound with independent dual-certificate peers. */
@@ -1118,6 +1147,10 @@ static int run_python_ssl_client(const char *port_path,
   cnet_client_config client_cfg = config();
   const cnet_listener_config listener_cfg = {
       client_cfg.backend, "127.0.0.1", 0u, 2u};
+  const cnet_tls_cipher_suite peer_ciphers[] = {
+      tlcp ? CRYPTO_TLS_CIPHER_TLCP_ECC_SM4_GCM_SM3 : shangmi ? CRYPTO_TLS_CIPHER_SM4_GCM_SM3 :
+      strcmp(protocol, "12") == 0 ? CRYPTO_TLS_CIPHER_ECDHE_RSA_AES_128_GCM_SHA256 : CRYPTO_TLS_CIPHER_AES_128_GCM_SHA256,
+      CRYPTO_TLS_CIPHER_ECDHE_ECDSA_AES_128_GCM_SHA256};
   const cnet_tls_server_config tls_cfg = {
       .size = sizeof(cnet_tls_server_config),
       .cert_file = cert_file,
@@ -1126,6 +1159,8 @@ static int run_python_ssl_client(const char *port_path,
       .client_auth = server_auth_only ? CNET_TLS_CLIENT_AUTH_NONE : CNET_TLS_CLIENT_AUTH_REQUIRED,
       .security_profile = tlcp ? CNET_TLS_SECURITY_PROFILE_TLCP11 :
           shangmi ? CNET_TLS_SECURITY_PROFILE_SHANGMI_TLS13 : CNET_TLS_SECURITY_PROFILE_STANDARD,
+      .cipher_suites = peer_ciphers,
+      .cipher_suite_count = !tlcp && !shangmi && strcmp(protocol, "12") == 0 ? 2u : 1u,
       .key_update_record_limit = rotation_limit,
       .peer_key_update_limit = peer_limit && strcmp(outcome, "limit-off") != 0 ? 2u : 0u,
       .minimum_version = !tlcp && !shangmi ? (strcmp(protocol, "12") == 0 ? 12 : 13) : 0,
@@ -1451,6 +1486,7 @@ cleanup:
   return result;
 }
 
+#include "tls_cipher_policy_cases.h"
 #include "tls_peer_policy_cases.h"
 #include "tls_sm2_crl_policy_cases.h"
 
@@ -1544,6 +1580,8 @@ static int saltscore_original_entry_test_cnet_tls_ca_san_c(int argc, char **argv
     return run_case(&required_mtls);
   }
   if (argc != 1) return 2;
+  result = run_cipher_policy_cases();
+  if (result) return result;
   result = run_peer_policy_cases();
   if (result) return result;
   const tls_case_options trusted = {

@@ -65,11 +65,16 @@ static void establish_stream_pair(crypto_tls_stream_protocol_version protocol) {
   crypto_tls_stream_client_config client = {sizeof(client)};
   crypto_tls_stream_server_config server = {sizeof(server)};
   bool complete[2] = {false, false};
+  crypto_tls_cipher_suite suites[] = {CRYPTO_TLS_CIPHER_ECDHE_RSA_AES_128_GCM_SHA256,
+      CRYPTO_TLS_CIPHER_AES_128_GCM_SHA256};
+  client.cipher_suites = server.cipher_suites = suites;
+  client.cipher_suite_count = server.cipher_suite_count = 2u;
   client.ca_file = CRYPTO_CLOSE_TEST_CA;
   server.cert_file = CRYPTO_CLOSE_TEST_SERVER_CERT;
   server.key_file = CRYPTO_CLOSE_TEST_SERVER_KEY;
   check_equal(crypto_tls_stream_client_context_create(&client, &stream_context[0]), CRYPTO_TLS_STREAM_OK);
   check_equal(crypto_tls_stream_server_context_create(&server, &stream_context[1]), CRYPTO_TLS_STREAM_OK);
+  memset(suites, 0, sizeof(suites));
   for (unsigned i = 0u; i < 2u; ++i) {
     check_equal(crypto_tls_stream_create(stream_context[i], i != 0u,
                   i == 0u ? "localhost" : NULL, 32768u, &stream_pair[i]), CRYPTO_TLS_STREAM_OK);
@@ -94,6 +99,37 @@ spec("Opaque Crypto streams retain policy and bounded storage") {
       crypto_tls_stream_destroy(stream_pair[i]);
       crypto_tls_stream_context_release(stream_context[i]);
     }
+  }
+  it("TLS13 range server rejects a ClientHello offering only TLS12 suites before ServerHello") {
+    crypto_tls_stream_client_config client = {.size = sizeof(client), .ca_file = CRYPTO_CLOSE_TEST_CA};
+    crypto_tls_stream_server_config server = {.size = sizeof(server),
+        .cert_file = CRYPTO_CLOSE_TEST_SERVER_CERT, .key_file = CRYPTO_CLOSE_TEST_SERVER_KEY};
+    check_equal(crypto_tls_stream_client_context_create(&client, &stream_context[0]), CRYPTO_TLS_STREAM_OK);
+    check_equal(crypto_tls_stream_server_context_create(&server, &stream_context[1]), CRYPTO_TLS_STREAM_OK);
+    for (unsigned i = 0u; i < 2u; ++i)
+      check_equal(crypto_tls_stream_create(stream_context[i], i != 0u,
+          i ? NULL : "localhost", 32768u, &stream_pair[i]), CRYPTO_TLS_STREAM_OK);
+    bool complete = false;
+    unsigned char hello[32768]; size_t size = 0u;
+    check_equal(crypto_tls_stream_handshake(stream_pair[0], &complete), CRYPTO_TLS_STREAM_OK);
+    check_equal(crypto_tls_stream_take_cipher(stream_pair[0], hello, sizeof(hello), &size), CRYPTO_TLS_STREAM_OK);
+    check(size > 44u && hello[0] == 22u && hello[5] == 1u);
+    size_t offset = 44u + hello[43]; /* Record, handshake, legacy version/random, session ID. */
+    check(offset + 2u <= size);
+    size_t length = ((size_t)hello[offset] << 8u) | hello[offset + 1u]; offset += 2u;
+    check(length > 0u && length % 2u == 0u && offset + length <= size);
+    unsigned replaced = 0u;
+    for (size_t i = offset; i < offset + length; i += 2u) {
+      if (hello[i] == 0x13u && hello[i + 1u] == 1u) {
+        hello[i] = 0xc0u; hello[i + 1u] = 0x2fu; ++replaced;
+      }
+    }
+    check_equal(replaced, 1u);
+    check_equal(crypto_tls_stream_feed_cipher(stream_pair[1], hello, size), CRYPTO_TLS_STREAM_OK);
+    check_equal(crypto_tls_stream_handshake(stream_pair[1], &complete), CRYPTO_TLS_STREAM_ECONNABORTED);
+    check_false(complete);
+    check_equal(crypto_tls_stream_take_cipher(stream_pair[1], hello, sizeof(hello), &size), CRYPTO_TLS_STREAM_OK);
+    check(size >= 7u && hello[0] == 21u); /* Fatal alert, never a ServerHello. */
   }
   for (unsigned version = 12u; version <= 13u; ++version) {
     it("TLS %u peer alert does not invent a certificate verification result", version) {

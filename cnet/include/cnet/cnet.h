@@ -9,6 +9,7 @@
 #include <crypto/tls_diagnostic.h>
 #include <crypto/tls_sm2_crl_policy.h>
 #include <crypto/tls_credentials.h>
+#include <crypto/tls_cipher.h>
 
 #include <stddef.h>
 #include <stdint.h>
@@ -386,6 +387,7 @@ typedef enum cnet_tls_security_profile {
 typedef crypto_tls_stream_peer_policy cnet_tls_peer_policy;
 typedef crypto_tls_sm2_crl_config cnet_tls_sm2_crl_config;
 typedef crypto_tls_data cnet_tls_data;
+typedef crypto_tls_cipher_suite cnet_tls_cipher_suite;
 typedef crypto_tls_credentials cnet_tls_credentials;
 
 /** Creates a retained direct-issuer SM2 CRL policy inside CNet's Crypto owner.
@@ -453,6 +455,10 @@ typedef struct cnet_tls_client_config {
    * default 4; explicit 1..5 is immutable. Above 5: EINVAL. Nonzero with iOS
    * implicit system trust: ENOTSUP. Does not bypass other verification. */
   uint32_t verification_depth;
+  /** Copied immutable cipher allowlist; same admission/profile/version contract
+   * as crypto_tls_stream_client_config.cipher_suites. NULL/0 keeps defaults. */
+  const cnet_tls_cipher_suite *cipher_suites;
+  size_t cipher_suite_count;
 } cnet_tls_client_config;
 
 /** Configuration copied into a reusable server context during initialization. */
@@ -494,6 +500,10 @@ typedef struct cnet_tls_server_config {
   cnet_tls_protocol_version maximum_version;
   /** Same depth contract as client; nonzero requires REQUIRED client auth. */
   uint32_t verification_depth;
+  /** Copied immutable cipher allowlist; same admission/profile/version contract
+   * as crypto_tls_stream_client_config.cipher_suites. NULL/0 keeps defaults. */
+  const cnet_tls_cipher_suite *cipher_suites;
+  size_t cipher_suite_count;
 } cnet_tls_server_config;
 
 typedef struct cnet_connect_options {
