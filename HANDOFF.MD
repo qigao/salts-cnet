@@ -163,3 +163,18 @@
   wire HRR and padding lengths without modifying the independent TLS engine.
   The native formal suite forces HRR deterministically, independent of Python's
   platform-specific default groups, and checks valid and rejected mutations.
+
+## 2026-11-05 client certificate selection
+
+- TLS 1.2 must distinguish receipt of CertificateRequest from having a selected
+  signing identity. No match still sends the empty Certificate message and skips
+  CertificateVerify; a zero key index must never reach key lookup.
+- Independent Go TLS peers wait for the native client's close_notify before
+  closing TCP. Closing immediately after response data races native close/send
+  completion on Windows and does not test identity selection.
+- Distinct CA hints require distinct root subjects, not only distinct keys.
+  Keep generated CommonName values within the X.509 length bound (64 characters).
+- A TLS1.3-capable client negotiating TLS1.2 must add its retained ClientHello
+  to the raw CertificateVerify transcript. The range context also advertises
+  PSS for TLS1.3; TLS1.2's local signing selector must not label PKCS1 as PSS.
+  Keep independent range-to-TLS1.2 mTLS cases as regression coverage.

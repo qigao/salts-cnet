@@ -276,7 +276,7 @@ if(TARGET Salts::CNet)
   target_compile_features(saltscore_cnet_tls_ca_san_test PRIVATE c_std_11)
   set_target_properties(saltscore_cnet_tls_ca_san_test PROPERTIES
     C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
-  target_link_libraries(saltscore_cnet_tls_ca_san_test PRIVATE Salts::CNet Salts::TinyTest)
+  target_link_libraries(saltscore_cnet_tls_ca_san_test PRIVATE Salts::CNet Salts::Crypto Salts::TinyTest)
   target_include_directories(saltscore_cnet_tls_ca_san_test PRIVATE
     "${PROJECT_SOURCE_DIR}/cnet/src" "${PROJECT_SOURCE_DIR}/crypto/src")
   if(MSVC)
@@ -306,6 +306,12 @@ if(TARGET Salts::CNet)
   set_tests_properties(saltscore.cnet_tls_ca_san PROPERTIES TIMEOUT 65)
   if(NOT CMAKE_SYSTEM_NAME STREQUAL "Android")
     find_program(SALTS_CNET_TEST_GO go REQUIRED)
+    add_test(NAME saltscore.cnet_tls_client_identities
+      COMMAND "${SALTS_CNET_TEST_GO}" test -mod=readonly -count=1 -timeout=150s
+        -args -native "$<TARGET_FILE:saltscore_cnet_tls_ca_san_test>")
+    set_tests_properties(saltscore.cnet_tls_client_identities PROPERTIES
+      WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/independent/tls"
+      ENVIRONMENT "CGO_ENABLED=0;GOWORK=off" TIMEOUT 180)
     add_test(NAME saltscore.cnet_tlcp_independent
       COMMAND "${SALTS_CNET_TEST_GO}" test -mod=readonly -count=1 -timeout=150s
         -args -native "$<TARGET_FILE:saltscore_cnet_tls_ca_san_test>")

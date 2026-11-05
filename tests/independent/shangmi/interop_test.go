@@ -47,7 +47,7 @@ func credentials(t *testing.T, change func(*x509.Certificate)) fixture {
 		t.Fatal(err)
 	}
 	now := time.Now().UTC()
-	root := &x509.Certificate{SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: "ShangMi test CA"}, NotBefore: now.Add(-time.Hour), NotAfter: now.Add(24 * time.Hour),
+	root := &x509.Certificate{SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: fmt.Sprintf("ShangMi test CA %x", rootKey.PublicKey.X.Bytes()[:8])}, NotBefore: now.Add(-time.Hour), NotAfter: now.Add(24 * time.Hour),
 		IsCA: true, BasicConstraintsValid: true, MaxPathLenZero: true, KeyUsage: x509.KeyUsageCertSign | x509.KeyUsageCRLSign}
 	rootDER, err := peerx509.CreateCertificate(root, root, &rootKey.PublicKey, rootKey)
 	if err != nil {
@@ -89,7 +89,12 @@ func runNativeClient(t *testing.T, f fixture, identity string, accept bool, corr
 }
 
 func runNativeClientWithIdentity(t *testing.T, f fixture, client *fixture, identity string, accept bool, corrupt string) {
+	runNativeClientIdentities(t, f, client, client, identity, accept, corrupt)
+}
+
+func runNativeClientIdentities(t *testing.T, f fixture, offered, expected *fixture, identity string, accept bool, corrupt string) {
 	t.Helper()
+	client := expected
 	listener, err := net.ListenTCP("tcp4", &net.TCPAddr{IP: net.ParseIP("127.0.0.1")})
 	if err != nil {
 		t.Fatal(err)
@@ -206,7 +211,7 @@ func runNativeClientWithIdentity(t *testing.T, f fixture, client *fixture, ident
 	}
 	args := []string{"--external-ip-san", port, protocol, identity, f.caPath, expect}
 	if client != nil {
-		args = []string{"--shangmi-required-server", port, identity, f.caPath, client.certPath, client.keyPath, expect,
+		args = []string{"--shangmi-required-server", port, identity, f.caPath, offered.certPath, offered.keyPath, expect,
 			fmt.Sprintf("%x", sha256.Sum256(f.leaf.Raw))}
 	}
 	out, runErr := exec.CommandContext(ctx, *native, args...).CombinedOutput()

@@ -149,6 +149,21 @@ func (p *recordPeer) mutualServer(server, client fixture, scenario string) error
 	}
 	// Initial CertificateRequest: empty context, signature_algorithms = SM2.
 	request := []byte{0, 0, 8, 0, 13, 0, 4, 0, 2, 7, 8}
+	if scenario == "client_ca" || scenario == "malformed_ca" || scenario == "malformed_ca_no_signature_match" {
+		name := client.root.RawSubject
+		// certificate_authorities: vector<DistinguishedName<1..2^16-1>>.
+		names := append([]byte{byte(len(name) >> 8), byte(len(name))}, name...)
+		if scenario != "client_ca" {
+			names = append(names, 0, 1, 0)
+		}
+		if scenario == "malformed_ca_no_signature_match" {
+			request[9], request[10] = 8, 4
+		}
+		data := append([]byte{byte(len(names) >> 8), byte(len(names))}, names...)
+		ext := append([]byte{0, 47, byte(len(data) >> 8), byte(len(data))}, data...)
+		request = append(request, ext...)
+		request[1], request[2] = byte((len(request)-3)>>8), byte(len(request)-3)
+	}
 	switch scenario {
 	case "request_context":
 		request = append([]byte{1, 1}, request[1:]...)
@@ -157,7 +172,7 @@ func (p *recordPeer) mutualServer(server, client fixture, scenario string) error
 	case "duplicate_signature":
 		request = append([]byte{0, 0, 16}, append(bytes.Clone(request[3:]), request[3:]...)...)
 	}
-	if err = send(append([]byte{13, 0, 0, byte(len(request))}, request...)); err != nil {
+	if err = send(append([]byte{13, byte(len(request) >> 16), byte(len(request) >> 8), byte(len(request))}, request...)); err != nil {
 		return err
 	}
 	if scenario == "request_context" || scenario == "missing_signature" || scenario == "duplicate_signature" {

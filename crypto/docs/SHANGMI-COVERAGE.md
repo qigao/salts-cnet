@@ -1063,3 +1063,40 @@ DTLS. See https://www.rfc-editor.org/rfc/rfc8998.html#section-4 .
 
 All tests belong to the root formal CTest graph. Use the versioned user presets
 for the full build and tests; no extra consumer or smoke CMake projects.
+
+## Immutable client identity selection
+
+`crypto_tls_stream_client_config` and `cnet_tls_client_config` accept an ordered
+`identities`/`identity_count` set of up to four file or memory credentials. It
+excludes the top-level identity fields; NULL/0 preserves those fields. Descriptor
+validation precedes file I/O. Every identity must load before the context is
+published; late failure releases the entire unpublished context. Inputs can be
+erased immediately after creation / `cnet_connect`. Encoded chains share the
+provider's 8192-byte aggregate capacity, including three bytes per chain.
+
+TLS 1.2, TLS 1.3 and ShangMi TLS 1.3 select the first configured identity compatible
+with the peer's CertificateRequest, local signature policy and chain signatures.
+CA hints can name root or intermediate issuers; an empty/absent hint does not
+restrict issuers. Selection and signing-key index belong to the connection,
+never to the shared immutable context. No request sends no identity; no match
+sends an empty Certificate and omits CertificateVerify, as required by
+[RFC 5246 section 7.4.6](https://www.rfc-editor.org/rfc/rfc5246.html#section-7.4.6)
+and [RFC 8446 section 4.4.2.3](https://www.rfc-editor.org/rfc/rfc8446.html#section-4.4.2.3).
+The remote server decides whether to accept missing client authentication. This
+does not weaken the native client's mandatory server authentication.
+
+The shared GmSSL #29 provider completes TLS 1.2 selection across all configured
+chains and preserves the matching private-key index; TLS 1.3 uses its existing
+selector with explicit empty-selection state. No production dependency is added.
+TLCP client authentication remains ENOTSUP. No handshake callback, file reads,
+hot reload, post-handshake authentication or established-connection mutation.
+
+Formal CTest `saltscore.cnet_tls_client_identities` uses Go's independent standard
+TLS engine to check exact peer certificates, CA selection, local order, empty
+hints, incompatible first keys, no-match/no-request non-disclosure and range
+negotiation. File/PEM/DER tests erase input storage before native progress.
+`saltscore.cnet_shangmi_mtls_native_client` adds independent SM2 CA selection for
+both positions and all input formats, plus malformed CA hints with and without
+compatible signature schemes. Native API cases reject malformed lists before
+I/O and verify four identities, late load failure and unsupported TLCP.
+Cross-platform/sanitizer qualification is the PR's normal LLVM CI gate.

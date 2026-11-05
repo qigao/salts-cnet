@@ -142,6 +142,19 @@ typedef struct crypto_tls_stream_client_config {
    * work normally. Trust, identity, purpose and revocation remain mandatory. */
   const crypto_tls_signature_scheme *signature_algorithms;
   size_t signature_algorithm_count;
+  /** Immutable, ordered client identities (1..CLIENT_IDENTITY_MAX_COUNT).
+   * Excludes top-level cert_file/key_file/key_password/credentials. NULL/0
+   * preserves the single-identity configuration. All inputs are copied during
+   * context creation; all identities must load successfully before publication.
+   * At most 8192 encoded chain bytes in aggregate, including 3 bytes per chain.
+   * TLS1.2/1.3 (including ShangMi) select the first identity compatible with
+   * CertificateRequest CA hints, certificate type and signature constraints.
+   * Empty CA hints impose no issuer restriction. No match sends an empty
+   * Certificate; the peer may reject it. No request sends no client identity.
+   * Trust and signature policy apply to the whole set; no handshake callbacks,
+   * file reads or shared-context mutation. TLCP client identities: ENOTSUP. */
+  const crypto_tls_client_identity *identities;
+  size_t identity_count;
 } crypto_tls_stream_client_config;
 
 /** Configuration copied into a reusable server context during initialization. */

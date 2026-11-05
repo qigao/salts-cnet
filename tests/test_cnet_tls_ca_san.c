@@ -903,10 +903,16 @@ static int run_python_ssl_server(const char *port_text,
   tls_probe probe = {0};
   cnet_connect_options connect_options = {0};
   cnet_client_config client_cfg = config();
+  const bool version_range = getenv("SALTS_TEST_TLS_CLIENT_RANGE") != NULL;
+  const cnet_tls_cipher_suite range_ciphers[] = {CRYPTO_TLS_CIPHER_AES_128_GCM_SHA256,
+      CRYPTO_TLS_CIPHER_ECDHE_RSA_AES_128_GCM_SHA256, CRYPTO_TLS_CIPHER_ECDHE_ECDSA_AES_128_GCM_SHA256};
   const cnet_tls_cipher_suite peer_ciphers[] = {
       tlcp ? CRYPTO_TLS_CIPHER_TLCP_ECC_SM4_GCM_SM3 : shangmi ? CRYPTO_TLS_CIPHER_SM4_GCM_SM3 :
       strcmp(protocol, "tls12") == 0 ? CRYPTO_TLS_CIPHER_ECDHE_RSA_AES_128_GCM_SHA256 : CRYPTO_TLS_CIPHER_AES_128_GCM_SHA256,
       CRYPTO_TLS_CIPHER_ECDHE_ECDSA_AES_128_GCM_SHA256};
+  const cnet_tls_signature_scheme rsa_signatures[] = {
+      CRYPTO_TLS_SIGNATURE_RSA_PKCS1_SHA256, CRYPTO_TLS_SIGNATURE_RSA_PSS_RSAE_SHA256};
+  const bool rsa_only = getenv("SALTS_TEST_TLS_CLIENT_RSA_ONLY") != NULL;
   const cnet_tls_signature_scheme sm2_signature = CRYPTO_TLS_SIGNATURE_SM2_SM3;
   const cnet_tls_client_config tls_config = {
       .size = sizeof(cnet_tls_client_config),
@@ -919,17 +925,17 @@ static int run_python_ssl_server(const char *port_text,
       .key_file = client_key,
       .security_profile = tlcp ? CNET_TLS_SECURITY_PROFILE_TLCP11 :
           shangmi ? CNET_TLS_SECURITY_PROFILE_SHANGMI_TLS13 : CNET_TLS_SECURITY_PROFILE_STANDARD,
-      .signature_algorithms = tlcp || shangmi ? &sm2_signature : NULL,
-      .signature_algorithm_count = tlcp || shangmi ? 1u : 0u,
-      .cipher_suites = peer_ciphers,
-      .cipher_suite_count = !tlcp && !shangmi && strcmp(protocol, "tls12") == 0 ? 2u : 1u,
+      .signature_algorithms = tlcp || shangmi ? &sm2_signature : rsa_only ? rsa_signatures : NULL,
+      .signature_algorithm_count = tlcp || shangmi ? 1u : rsa_only ? (strcmp(protocol, "tls12") == 0 ? 1u : 2u) : 0u,
+      .cipher_suites = version_range ? range_ciphers : peer_ciphers,
+      .cipher_suite_count = version_range ? 3u : !tlcp && !shangmi && strcmp(protocol, "tls12") == 0 ? 2u : 1u,
       .peer_policy = owned_policy, .key_update_record_limit = rotation_limit,
       /* TLCP's two leaves do not consume issuer depth. Exercise the smallest
        * explicit bound with independent dual-certificate peers. */
       .verification_depth = tlcp ? 1u : 0u,
       .peer_key_update_limit = peer_limit && strcmp(protocol, "shangmi13-limit-off") != 0 ? 2u : 0u,
-      .minimum_version = !tlcp && !shangmi ? (strcmp(protocol, "tls12") == 0 ? 12 : 13) : 0,
-      .maximum_version = !tlcp && !shangmi ? (strcmp(protocol, "tls12") == 0 ? 12 : 13) : 0};
+      .minimum_version = !version_range && !tlcp && !shangmi ? (strcmp(protocol, "tls12") == 0 ? 12 : 13) : 0,
+      .maximum_version = !version_range && !tlcp && !shangmi ? (strcmp(protocol, "tls12") == 0 ? 12 : 13) : 0};
   char uri[96] = {0};
   bool initialized = false;
   mem_buffer_t *outgoing = NULL;
@@ -1521,6 +1527,11 @@ cleanup:
 #include "tls_sm2_crl_policy_cases.h"
 
 static int saltscore_original_entry_test_cnet_tls_ca_san_c(int argc, char **argv) {
+  if (argc == 10 && strcmp(argv[1], "--tls-client-identities") == 0) {
+    if (strcmp(argv[8], "accept") != 0 && strcmp(argv[8], "reject") != 0) return 2;
+    return run_python_ssl_server(argv[2], argv[3], argv[4], argv[5],
+        strcmp(argv[8], "accept") == 0, argv[6], argv[7], argv[9], NULL);
+  }
   if (argc == 9 && strcmp(argv[1], "--tlcp-crl-policy") == 0)
     return run_cnet_tlcp_crl_policy_case(argv);
   if (argc == 14 && strcmp(argv[1], "--shangmi-crl-policy") == 0)
@@ -1631,6 +1642,8 @@ static int saltscore_original_entry_test_cnet_tls_ca_san_c(int argc, char **argv
     return run_case(&required_mtls);
   }
   if (argc != 1) return 2;
+  result = run_client_identity_cases();
+  if (result != 0) return result;
   result = run_server_identity_cases();
   if (result) return result;
   result = run_signature_policy_cases();
