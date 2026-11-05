@@ -4,6 +4,7 @@
 #include <crypto/x509_der.h>
 #include <crypto/asn1_crypto.h>
 #include "crypto_internal.h"
+#include "crypto_x509_policy.h"
 #include <string.h>
 
 _Static_assert(SALTS_CRYPTO_SM2_X509_MAX_CERT_SIZE == CRYPTO_X509_DER_MAX_CERT_BYTES,
@@ -37,17 +38,11 @@ int salts_crypto_sm2_x509_matches_private_key(const void *cert, size_t n, const 
   salts_crypto_secure_zero(actual, sizeof(actual));
   return status;
 }
-static int signature_algorithm(const crypto_x509_der_view *view) {
+static int signature_algorithm(const salts_asn1_tlv *alg) {
   static const uint8_t sm2_sm3_oid[] = {0x2a,0x81,0x1c,0xcf,0x55,1,0x83,0x75};
-  salts_asn1_reader r, fields; salts_asn1_tlv alg, value;
-  /* The inspector established these spans and exact inner/outer equality.
-   * The next sibling of TBSCertificate is signatureAlgorithm. Check its
-   * parameters, not only the OID returned as generic structural metadata. */
-  const uint8_t *start = view->tbs_der + view->tbs_size;
-  size_t remaining = view->certificate_size - (size_t)(start - view->certificate_der);
-  if (salts_asn1_reader_init(&r, start, remaining, SALTS_ASN1_DER) != SALTS_ASN1_OK ||
-      salts_asn1_reader_next(&r, &alg) != SALTS_ASN1_OK ||
-      salts_asn1_reader_open_children(&r, &alg, &fields) != SALTS_ASN1_OK ||
+  salts_asn1_reader fields; salts_asn1_tlv value;
+  if (alg->tag_class || !alg->constructed || alg->tag_number != 16u ||
+      salts_asn1_reader_init(&fields, alg->content, alg->content_size, SALTS_ASN1_DER) != SALTS_ASN1_OK ||
       salts_asn1_reader_next(&fields, &value) != SALTS_ASN1_OK ||
       value.tag_class || value.constructed || value.tag_number != 6u ||
       value.content_size != sizeof(sm2_sm3_oid) || memcmp(value.content, sm2_sm3_oid, sizeof(sm2_sm3_oid))) return 0;
@@ -57,16 +52,27 @@ static int signature_algorithm(const crypto_x509_der_view *view) {
       value.tag_number == 5u && value.content_size == 0u &&
       salts_asn1_reader_next(&fields, &value) == SALTS_ASN1_DONE;
 }
-int salts_crypto_sm2_x509_verify_signature(const void *cert, size_t n,
+int salts_crypto_sm2_signed_der(const salts_asn1_tlv *algorithm,
+    const void *tbs, size_t tbs_size, const void *signature, size_t signature_size,
     const uint8_t issuer[65], const void *id, size_t idn) {
-  crypto_x509_der_view view; const uint8_t *r, *s; size_t rn, sn;
-  uint8_t raw[64] = {0};
-  if (!valid_input(cert, n) || !issuer || !id || !idn || idn > 8191u) return SALTS_CRYPTO_EINVAL;
-  if (inspect(cert, n, &view) != SALTS_CRYPTO_OK || !signature_algorithm(&view) ||
-      view.signature_size > 72u ||
-      crypto_asn1_ecdsa_signature_decode(view.signature, view.signature_size, &r, &rn, &s, &sn) != SALTS_ASN1_OK ||
+  const uint8_t *r, *s; size_t rn, sn; uint8_t raw[64] = {0};
+  if (!signature_algorithm(algorithm) || signature_size > 72u ||
+      crypto_asn1_ecdsa_signature_decode(signature, signature_size, &r, &rn, &s, &sn) != SALTS_ASN1_OK ||
       rn > 32u || sn > 32u) return SALTS_CRYPTO_EVERIFY;
   memcpy(raw+32u-rn, r, rn); memcpy(raw+64u-sn, s, sn);
-  int status = salts_crypto_sm2_verify(issuer, id, idn, view.tbs_der, view.tbs_size, raw);
+  int status = salts_crypto_sm2_verify(issuer, id, idn, tbs, tbs_size, raw);
   return status == SALTS_CRYPTO_EINVAL ? SALTS_CRYPTO_EVERIFY : status;
+}
+int salts_crypto_sm2_x509_verify_signature(const void *cert, size_t n,
+    const uint8_t issuer[65], const void *id, size_t idn) {
+  crypto_x509_der_view view; salts_asn1_reader reader; salts_asn1_tlv algorithm;
+  if (!valid_input(cert, n) || !issuer || !id || !idn || idn > 8191u) return SALTS_CRYPTO_EINVAL;
+  if (inspect(cert, n, &view) != SALTS_CRYPTO_OK) return SALTS_CRYPTO_EVERIFY;
+  /* Inspector established exact inner/outer AlgorithmIdentifier equality. */
+  const uint8_t *start = view.tbs_der + view.tbs_size;
+  size_t remaining = view.certificate_size - (size_t)(start - view.certificate_der);
+  if (salts_asn1_reader_init(&reader, start, remaining, SALTS_ASN1_DER) != SALTS_ASN1_OK ||
+      salts_asn1_reader_next(&reader, &algorithm) != SALTS_ASN1_OK) return SALTS_CRYPTO_EVERIFY;
+  return salts_crypto_sm2_signed_der(&algorithm, view.tbs_der, view.tbs_size,
+      view.signature, view.signature_size, issuer, id, idn);
 }

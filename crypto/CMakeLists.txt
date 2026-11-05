@@ -50,6 +50,8 @@ add_library(salts_crypto STATIC
   src/crypto_sm2_keys.c
   src/crypto_sm2_x509.c
   src/crypto_sm2_trust.c
+  src/crypto_sm2_crl.c
+  src/crypto_x509_policy.c
   src/crypto_sm3.c
   src/crypto_sm4.c
   src/crypto_sm9.c

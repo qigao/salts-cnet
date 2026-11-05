@@ -20,6 +20,7 @@ source or falls back to plaintext.
 | SM2 key containers | Canonical SPKI and PKCS#8 import/export; PBES2 PBKDF2-HMAC-SM3 / SM4-CBC password protection | Public API negatives, RNG failure, GmSSL key-file interop and independent Python bidirectional interop; cross-platform CI required |
 | SM2 certificate primitives | SM2 public-key extraction, local private-key binding and explicit-issuer signature verification | Native and independent gmsm certificates; ID/issuer/DER/algorithm/tamper negatives; these operations do not validate certificate trust |
 | SM2 pinned-peer trust | Explicit bounded chain/anchor, leaf-key identity, validation time, signing purpose and revocation policy | Independently signed paths, CA/pathLen/KU/EKU/time/constraint negatives, callback gating and failure erasure; cross-platform CI required |
+| SM2 complete direct CRL | Explicit issuer/SM2 signing ID, full-CRL scope, time/age/number policy and serial checking | Independent gmsm CRLs, real pinned-trust callback, revoked/stale/rollback/scope/DER negatives; cross-platform CI required |
 | CMS / SM2 certificate workflows | CMS enabled in provider; public workflow qualification pending | Generic ASN1 parsing and existing X509 inspection alone do not qualify signing or trust |
 | TLS 1.3 ShangMi / TLCP | Existing explicit stream profiles; complete independent handshake/authentication matrix remains separate | Existing provider settings/KATs do not replace protocol interoperation |
 | DTLS | Issue #188 resumed; implementation and CNet/SCTP qualification pending | Existing TLS tests do not qualify DTLS |
@@ -203,8 +204,9 @@ certificates and unrestricted PKIX policy processing remain separate work.
 External revocation mode invokes the caller's synchronous callback only after
 all other checks pass, once per non-anchor certificate in leaf-first order.
 Only OK admits a certificate; revoked, unknown, stale or unavailable status
-must fail. The callback owns freshness and CRL/OCSP authenticity validation.
-Core does not fetch or parse revocation data for it. NOT_CHECKED requires NULL
+must fail. The callback owns freshness and CRL/OCSP authenticity validation;
+it can call the explicit CRL API below. The chain validator does not fetch or
+parse revocation data itself. NOT_CHECKED requires NULL
 callback/context and provides no revocation assurance. There is no fallback
 from unavailable status to acceptance.
 
@@ -224,6 +226,78 @@ callback ordering/rejection and failure erasure. The checks implement this
 documented restricted profile using [RFC 5280](https://www.rfc-editor.org/rfc/rfc5280.html)
 certificate fields; they do not claim a general WebPKI validator or completion
 of all certificate/CMS/TLS qualification in #219.
+
+### Complete direct SM2 CRLs
+
+`crypto/sm2_crl.h` supplies `salts_crypto_sm2_check_crl` for the pinned-chain
+policy's external revocation callback. It checks an already authenticated path
+certificate against an explicitly supplied, complete direct-issuer SM2/SM3 CRL.
+This operation does not establish issuer trust or replace certificate signature,
+path or identity validation. The pinned-chain validator completes those checks
+before calling the revocation callback and withholds the leaf key until every
+callback succeeds.
+
+The issuer needs a valid v3 CA certificate, critical CA basicConstraints,
+cRLSign and a nonempty subject key identifier. The CRL's issuer Name must match
+the certificate issuer and CA subject exactly; its keyIdentifier-only AKI must
+match the CA SKI. The SM2 signature uses the explicit CRL signing identity,
+which may differ from certificate-signing identities. No identity retry occurs.
+
+The caller supplies validation time, nonzero maximum CRL age, and a minimum
+acceptable CRL number. Acceptance requires `thisUpdate <= time < nextUpdate`,
+age within the limit, and number at or above the floor. The floor belongs to
+authenticated, persistent application state; a stale floor can still admit an
+older CRL within its validity window. This synchronous API reads no clock,
+fetches no URL, retains no data and updates no cache or rollback state.
+
+The profile is bounded to 65536 CRL bytes, 256 entries, 64 extensions per list,
+positive certificate serials of at most 20 DER bytes, and uint64 CRL numbers.
+It requires canonical v2 DER with nextUpdate, AKI and CRL number. Duplicate
+serials/extensions, invalid dates, future revocations, malformed or unsupported
+entries, and unknown critical CRL extensions reject. Every listed serial,
+including certificateHold, rejects the certificate. removeFromCRL is not a
+way to restore a certificate in this full-CRL profile.
+
+Delta/freshest CRLs, issuingDistributionPoint and indirect certificateIssuer
+extensions are rejected even when noncritical. Certificates with CRL
+distribution/freshest points are also outside this profile. Entry extensions
+support reasonCode only (0..6, 9, 10); invalidityDate and other entry semantics
+are not silently accepted. The implementation follows the relevant fields of
+[RFC 5280 section 5](https://www.rfc-editor.org/rfc/rfc5280.html#section-5), with
+these explicit restrictions; it is not a general CRL/OCSP distribution service.
+
+A caller can select a CRL policy for each already authenticated issuer:
+
+```c
+struct revocation_snapshot {
+  salts_crypto_sm2_crl_policy by_depth[SALTS_CRYPTO_SM2_TRUST_MAX_CHAIN];
+  size_t count;
+};
+
+static int check_revocation(void *context, size_t depth,
+    const salts_crypto_sm2_cert_span *certificate,
+    const salts_crypto_sm2_cert_span *issuer, int64_t now) {
+  const struct revocation_snapshot *snapshot = context;
+  if (depth >= snapshot->count) return SALTS_CRYPTO_EVERIFY;
+  return salts_crypto_sm2_check_crl(certificate, issuer, now,
+      &snapshot->by_depth[depth]);
+}
+```
+
+Set the trust policy to `SALTS_CRYPTO_SM2_REVOCATION_EXTERNAL` with this callback
+and a complete immutable snapshot, including its borrowed DER and identity
+bytes, alive until validation returns. Missing, expired or invalid CRLs must
+remain failures; refreshing the snapshot is application work. Each direct
+check returns OK only for a valid CRL with the serial absent. An application
+using this operation outside the pinned-chain callback must first authenticate
+the certificate path and issuer itself.
+
+Formal `crypto.x509.sm2_crl_independent` uses the existing pinned test-only
+gmsm module to generate and verify independent CRLs, then exercises both the
+public check and its actual pinned-trust callback. It covers freshness/number
+boundaries, custom binary/maximal SM2 identities, supported revocation reasons,
+malformed/scope/signature/issuer negatives, entry/extension limits and withheld
+or erased key output. No production provider or test dependency was added.
 
 ### SM2 confirmed agreement
 
