@@ -135,6 +135,9 @@ typedef enum crypto_tls_stream_variant {
   CRYPTO_TLS_STREAM_VARIANT_COUNT = 5
 } crypto_tls_stream_variant;
 
+static int crypto_tls_stream_select_variant(crypto_tls_stream_protocol_version minimum,
+    crypto_tls_stream_protocol_version maximum, crypto_tls_stream_variant *out_variant);
+
 struct crypto_tls_stream_context {
   TLS_CTX tls[CRYPTO_TLS_STREAM_VARIANT_COUNT];
   bool tls_ready[CRYPTO_TLS_STREAM_VARIANT_COUNT];
@@ -147,6 +150,8 @@ struct crypto_tls_stream_context {
   bool native_system_trust;
   crypto_tls_stream_security_profile security_profile;
   crypto_tls_stream_peer_policy peer_policy;
+  crypto_tls_stream_protocol_version minimum_version, maximum_version;
+  crypto_tls_stream_variant initial_variant;
 };
 
 typedef struct crypto_tls_stream_gmssl_state {
@@ -845,6 +850,7 @@ static int crypto_tls_stream_context_create_common(
     uint32_t key_update_record_limit,
     uint32_t peer_key_update_limit,
     const crypto_tls_data *ca_data, const crypto_tls_credentials *credentials,
+    crypto_tls_stream_protocol_version minimum, crypto_tls_stream_protocol_version maximum,
     crypto_tls_stream_context **out_context) {
   crypto_tls_stream_context *context;
   size_t index;
@@ -852,6 +858,22 @@ static int crypto_tls_stream_context_create_common(
 
   if (out_context == NULL) return CRYPTO_TLS_STREAM_EINVAL;
   *out_context = NULL;
+
+  crypto_tls_stream_variant initial_variant;
+  status = crypto_tls_stream_select_variant(minimum, maximum, &initial_variant);
+  if (status != CRYPTO_TLS_STREAM_OK) return status;
+  if (security_profile == CRYPTO_TLS_STREAM_SECURITY_PROFILE_TLCP11) {
+    if (minimum != CRYPTO_TLS_STREAM_PROTOCOL_VERSION_DEFAULT || maximum != CRYPTO_TLS_STREAM_PROTOCOL_VERSION_DEFAULT)
+      return CRYPTO_TLS_STREAM_ENOTSUP;
+    initial_variant = CRYPTO_TLS_STREAM_VARIANT_TLCP11;
+  } else if (security_profile == CRYPTO_TLS_STREAM_SECURITY_PROFILE_SHANGMI_TLS13) {
+    if (minimum == CRYPTO_TLS_STREAM_PROTOCOL_VERSION_1_2 || maximum == CRYPTO_TLS_STREAM_PROTOCOL_VERSION_1_2)
+      return CRYPTO_TLS_STREAM_ENOTSUP;
+    minimum = maximum = CRYPTO_TLS_STREAM_PROTOCOL_VERSION_1_3;
+    initial_variant = CRYPTO_TLS_STREAM_VARIANT_SHANGMI_TLS13;
+  }
+  if (minimum == CRYPTO_TLS_STREAM_PROTOCOL_VERSION_DEFAULT) minimum = CRYPTO_TLS_STREAM_PROTOCOL_VERSION_1_2;
+  if (maximum == CRYPTO_TLS_STREAM_PROTOCOL_VERSION_DEFAULT) maximum = CRYPTO_TLS_STREAM_PROTOCOL_VERSION_1_3;
 
   if ((ca_data != NULL && (ca_file != NULL || ca_path != NULL)) ||
       (credentials != NULL && (cert_file != NULL || key_file != NULL || key_password != NULL)))
@@ -891,6 +913,8 @@ static int crypto_tls_stream_context_create_common(
   context->server = server;
   context->verify_peer = verify_peer;
   context->security_profile = security_profile;
+  context->minimum_version = minimum; context->maximum_version = maximum;
+  context->initial_variant = initial_variant;
 #if defined(__APPLE__) && !TARGET_OS_OSX
   context->native_system_trust =
       !server && verify_peer && ca_file == NULL && ca_path == NULL && ca_data == NULL;
@@ -906,6 +930,8 @@ static int crypto_tls_stream_context_create_common(
   }
 
   for (index = 0u; index < CRYPTO_TLS_STREAM_VARIANT_COUNT; ++index) {
+    if (security_profile == CRYPTO_TLS_STREAM_SECURITY_PROFILE_STANDARD &&
+        initial_variant != CRYPTO_TLS_STREAM_VARIANT_RANGE && index != (size_t)initial_variant) continue;
     if (security_profile == CRYPTO_TLS_STREAM_SECURITY_PROFILE_SHANGMI_TLS13 &&
         index != CRYPTO_TLS_STREAM_VARIANT_SHANGMI_TLS13) continue;
     if (security_profile == CRYPTO_TLS_STREAM_SECURITY_PROFILE_STANDARD &&
@@ -964,7 +990,8 @@ int crypto_tls_stream_client_context_create(const crypto_tls_stream_client_confi
       config->key_file, config->key_password, CRYPTO_TLS_STREAM_CLIENT_AUTH_NONE,
       config->alpn_protocols, config->alpn_protocol_count,
       config->security_profile, config->peer_policy, config->key_update_record_limit,
-      config->peer_key_update_limit, config->ca_data, config->credentials, &context);
+      config->peer_key_update_limit, config->ca_data, config->credentials,
+      config->minimum_version, config->maximum_version, &context);
   if (status != CRYPTO_TLS_STREAM_OK) return status;
   if (config->server_name != NULL)
     crypto_tls_stream_copy(CRYPTO_TLS_TEST_COPY_METADATA, context->client_server_name, config->server_name,
@@ -1008,7 +1035,8 @@ int crypto_tls_stream_server_context_create(const crypto_tls_stream_server_confi
       config->ca_file, config->ca_path, config->cert_file, config->key_file,
       config->key_password, config->client_auth, config->alpn_protocols,
       config->alpn_protocol_count, config->security_profile, config->peer_policy,
-      config->key_update_record_limit, config->peer_key_update_limit, config->ca_data, config->credentials, &context);
+      config->key_update_record_limit, config->peer_key_update_limit, config->ca_data, config->credentials,
+      config->minimum_version, config->maximum_version, &context);
   if (status != CRYPTO_TLS_STREAM_OK) return status;
   *out_context = context;
   return CRYPTO_TLS_STREAM_OK;
@@ -1334,11 +1362,7 @@ static int crypto_tls_stream_init(crypto_tls_stream *state, crypto_tls_stream_co
   state->server = server;
 
   status = crypto_tls_stream_engine_init_connection(
-      state, context->security_profile == CRYPTO_TLS_STREAM_SECURITY_PROFILE_SHANGMI_TLS13
-                 ? CRYPTO_TLS_STREAM_VARIANT_SHANGMI_TLS13
-             : context->security_profile == CRYPTO_TLS_STREAM_SECURITY_PROFILE_TLCP11
-                 ? CRYPTO_TLS_STREAM_VARIANT_TLCP11
-                 : CRYPTO_TLS_STREAM_VARIANT_RANGE);
+      state, context->initial_variant);
   if (status != CRYPTO_TLS_STREAM_OK) {
     state->context = NULL;
     state->engine = NULL;
@@ -1623,9 +1647,9 @@ int crypto_tls_stream_set_protocol_range(crypto_tls_stream *state,
     return CRYPTO_TLS_STREAM_EINVAL;
   if (state->context->security_profile == CRYPTO_TLS_STREAM_SECURITY_PROFILE_SHANGMI_TLS13) {
     /* A configured SM-only TLS 1.3 connection can never switch to range/TLS1.2. */
-    return ((minimum == CRYPTO_TLS_STREAM_PROTOCOL_VERSION_DEFAULT &&
-             maximum == CRYPTO_TLS_STREAM_PROTOCOL_VERSION_DEFAULT) ||
-            (minimum == CRYPTO_TLS_STREAM_PROTOCOL_VERSION_1_3 &&
+    return ((minimum == CRYPTO_TLS_STREAM_PROTOCOL_VERSION_DEFAULT ||
+             minimum == CRYPTO_TLS_STREAM_PROTOCOL_VERSION_1_3) &&
+            (maximum == CRYPTO_TLS_STREAM_PROTOCOL_VERSION_DEFAULT ||
              maximum == CRYPTO_TLS_STREAM_PROTOCOL_VERSION_1_3))
                ? CRYPTO_TLS_STREAM_OK : CRYPTO_TLS_STREAM_EINVAL;
   }
@@ -1635,7 +1659,12 @@ int crypto_tls_stream_set_protocol_range(crypto_tls_stream *state,
                    maximum == CRYPTO_TLS_STREAM_PROTOCOL_VERSION_DEFAULT
                ? CRYPTO_TLS_STREAM_OK : CRYPTO_TLS_STREAM_EINVAL;
   }
+  if (minimum == CRYPTO_TLS_STREAM_PROTOCOL_VERSION_DEFAULT) minimum = state->context->minimum_version;
+  if (maximum == CRYPTO_TLS_STREAM_PROTOCOL_VERSION_DEFAULT) maximum = state->context->maximum_version;
   status = crypto_tls_stream_select_variant(minimum, maximum, &variant);
+  if (status == CRYPTO_TLS_STREAM_OK &&
+      (minimum < state->context->minimum_version || maximum > state->context->maximum_version))
+    return CRYPTO_TLS_STREAM_ENOTSUP;
   if (status != CRYPTO_TLS_STREAM_OK) return status;
   if (CRYPTO_TLS_STREAM_ENGINE(state)->variant == variant) return CRYPTO_TLS_STREAM_OK;
   state->negotiated_alpn_size = 0u;

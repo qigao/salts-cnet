@@ -275,6 +275,9 @@ typedef struct tls_case_options {
   cnet_tls_peer_policy *release_peer_policy;
   bool stream_transfer;
   bool pool_reuse;
+  cnet_tls_protocol_version client_minimum, client_maximum;
+  cnet_tls_protocol_version server_minimum, server_maximum;
+  const char *expected_version;
 } tls_case_options;
 
 static int run_case(const tls_case_options *options) {
@@ -313,7 +316,8 @@ static int run_case(const tls_case_options *options) {
                          ? CNET_TLS_CLIENT_AUTH_REQUIRED
                          : CNET_TLS_CLIENT_AUTH_NONE,
       .security_profile = options->security_profile,
-      .peer_policy = options->server_peer_policy};
+      .peer_policy = options->server_peer_policy,
+      .minimum_version = options->server_minimum, .maximum_version = options->server_maximum};
   const cnet_tls_client_config client_tls_cfg = {
       .size = sizeof(cnet_tls_client_config),
       .ca_file = options->ca_file,
@@ -321,7 +325,8 @@ static int run_case(const tls_case_options *options) {
       .key_file = options->client_key_file,
       .server_name = options->verified_hostname,
       .security_profile = options->security_profile,
-      .peer_policy = options->client_peer_policy};
+      .peer_policy = options->client_peer_policy,
+      .minimum_version = options->client_minimum, .maximum_version = options->client_maximum};
   tls_probe client_probe = {0}, server_probe = {0};
   cnet_connect_options connect_options = {0};
   cnet_connection outbound = {0};
@@ -448,6 +453,10 @@ static int run_case(const tls_case_options *options) {
     REQUIRE(client_probe.failed == 0u && server_probe.failed == 0u);
     REQUIRE(client_probe.tls_version_status == SALTS_OK);
     REQUIRE(server_probe.tls_version_status == SALTS_OK);
+    if (options->expected_version) {
+      REQUIRE(strcmp(client_probe.tls_version, options->expected_version) == 0);
+      REQUIRE(strcmp(server_probe.tls_version, options->expected_version) == 0);
+    }
     REQUIRE(client_probe.tls_cipher_status == SALTS_OK);
     REQUIRE(strlen(client_probe.tls_cipher) != 0u);
     REQUIRE(strcmp(client_probe.tls_version, "TLSv1.3") == 0 ||
@@ -852,7 +861,9 @@ static int run_python_ssl_server(const char *port_text,
       .security_profile = tlcp ? CNET_TLS_SECURITY_PROFILE_TLCP11 :
           shangmi ? CNET_TLS_SECURITY_PROFILE_SHANGMI_TLS13 : CNET_TLS_SECURITY_PROFILE_STANDARD,
       .peer_policy = owned_policy, .key_update_record_limit = rotation_limit,
-      .peer_key_update_limit = peer_limit && strcmp(protocol, "shangmi13-limit-off") != 0 ? 2u : 0u};
+      .peer_key_update_limit = peer_limit && strcmp(protocol, "shangmi13-limit-off") != 0 ? 2u : 0u,
+      .minimum_version = !tlcp && !shangmi ? (strcmp(protocol, "tls12") == 0 ? 12 : 13) : 0,
+      .maximum_version = !tlcp && !shangmi ? (strcmp(protocol, "tls12") == 0 ? 12 : 13) : 0};
   char uri[96] = {0};
   bool initialized = false;
   mem_buffer_t *outgoing = NULL;
@@ -1098,7 +1109,9 @@ static int run_python_ssl_client(const char *port_path,
       .security_profile = tlcp ? CNET_TLS_SECURITY_PROFILE_TLCP11 :
           shangmi ? CNET_TLS_SECURITY_PROFILE_SHANGMI_TLS13 : CNET_TLS_SECURITY_PROFILE_STANDARD,
       .key_update_record_limit = rotation_limit,
-      .peer_key_update_limit = peer_limit && strcmp(outcome, "limit-off") != 0 ? 2u : 0u};
+      .peer_key_update_limit = peer_limit && strcmp(outcome, "limit-off") != 0 ? 2u : 0u,
+      .minimum_version = !tlcp && !shangmi ? (strcmp(protocol, "12") == 0 ? 12 : 13) : 0,
+      .maximum_version = !tlcp && !shangmi ? (strcmp(protocol, "12") == 0 ? 12 : 13) : 0};
   bool tls_live = false, server_live = false, listener_live = false;
   bool accepted = false, armed = false, response_sent = false;
   bool local_close_started = false;
@@ -1506,6 +1519,21 @@ static int saltscore_original_entry_test_cnet_tls_ca_san_c(int argc, char **argv
       .expect_success = true};
   result = run_case(&trusted);
   if (result) return result;
+  for (unsigned client_mode = 0u; client_mode < 3u; ++client_mode) {
+    for (unsigned server_mode = 0u; server_mode < 3u; ++server_mode) {
+      const bool mismatch = client_mode && server_mode && client_mode != server_mode;
+      tls_case_options versions = trusted;
+      versions.label = "configured TLS protocol intersection";
+      versions.client_minimum = client_mode == 2u ? 13 : 0;
+      versions.client_maximum = client_mode == 1u ? 12 : 0;
+      versions.server_minimum = server_mode == 2u ? 13 : 0;
+      versions.server_maximum = server_mode == 1u ? 12 : 0;
+      versions.expect_success = !mismatch;
+      versions.expected_version = client_mode == 1u || server_mode == 1u ? "TLSv1.2" : "TLSv1.3";
+      result = run_case(&versions);
+      if (result) return result;
+    }
+  }
   const tls_case_options wrong_ca = {
       .label = "wrong trusted root",
       .ca_file = CORE_TLS_TEST_P384_WRONG_CA,

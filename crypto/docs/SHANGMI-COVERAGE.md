@@ -87,6 +87,33 @@ Encrypted memory PKCS#8, PKCS#12/PFX, retained credential/key objects and
 hardware-backed keys are not supplied by this slice. They must not be inferred
 from existing encrypted file input or standalone SM2 key-container APIs.
 
+### Context protocol-version policy
+
+Crypto/CNet client and server configurations expose `minimum_version` and
+`maximum_version`. STANDARD defaults to TLS 1.2 through TLS 1.3; setting only
+the minimum to 1.3 or only the maximum to 1.2 restricts every connection using
+that context. SHANGMI_TLS13 permits only default/1.3 bounds. TLCP11 requires
+default bounds because TLCP is a separate profile, not a TLS version. Unknown
+or reversed ranges fail with EINVAL; a known incompatible profile/version
+request fails with ENOTSUP before allocation or trust loading.
+
+The selected context initializes only permitted provider variants. The lower
+Crypto per-stream range selector can narrow before handshake progress; it
+cannot widen the context policy. A DEFAULT bound in that selector resolves to
+the corresponding context bound. Failed widening leaves the original stream
+state intact. Protocol negotiation never retries another security profile.
+
+Formal CNet coverage includes all nine intersections of default/1.2-only/
+1.3-only client and server contexts, exact version assertions and handshake
+rejection for both disjoint pairs. Ten configuration negatives use absent
+credential paths to verify early rejection. Memory-source Crypto cases verify
+failed widening and default selection preserve both TLS 1.2 and TLS 1.3
+connections. Independent Python peers exercise explicit bounds in both native
+directions; ShangMi and TLCP formal suites retain their profile checks.
+
+This does not add configurable cipher/signature/group lists, verification
+time/depth/purpose or session restoration.
+
 ### TLCP stream qualification
 
 Select `CNET_TLS_SECURITY_PROFILE_TLCP11` on the existing CNet TLS configuration.

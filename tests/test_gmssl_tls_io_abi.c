@@ -98,17 +98,19 @@ spec("Opaque Crypto streams retain policy and bounded storage") {
   for (unsigned encoding = 1u; encoding <= 2u; ++encoding) {
     for (unsigned bad = 1u; bad <= 19u; ++bad) {
       it("memory credentials encoding %u reject invalid input %u without a context", encoding, bad) {
-        tls_memory_contexts(encoding, bad);
+        tls_memory_contexts(encoding, bad, 0u);
       }
     }
     for (unsigned version = 12u; version <= 13u; ++version) {
       it("memory credentials encoding %u survive source erasure for TLS %u", encoding, version) {
-        tls_memory_contexts(encoding, 0u);
+        tls_memory_contexts(encoding, 0u, version);
         bool complete[2] = {false, false};
         for (unsigned i = 0u; i < 2u; ++i) {
           check_equal(crypto_tls_stream_create(stream_context[i], i != 0u,
               i ? NULL : "localhost", 32768u, &stream_pair[i]), CRYPTO_TLS_STREAM_OK);
           crypto_tls_stream_context_release(stream_context[i]); stream_context[i] = NULL;
+          check_equal(crypto_tls_stream_set_protocol_range(stream_pair[i], 12, 13), CRYPTO_TLS_STREAM_ENOTSUP);
+          check_equal(crypto_tls_stream_set_protocol_range(stream_pair[i], 0, 0), CRYPTO_TLS_STREAM_OK);
           check_equal(crypto_tls_stream_set_protocol_range(stream_pair[i], version, version), CRYPTO_TLS_STREAM_OK);
         }
         for (unsigned step = 0u; step < 128u && !(complete[0] && complete[1]); ++step) {

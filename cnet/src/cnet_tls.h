@@ -25,12 +25,6 @@ typedef struct cnet_tls_peer_certificate_chain {
 
 typedef struct cnet_tls_context cnet_tls_context;
 
-typedef enum cnet_tls_protocol_version {
-  CNET_TLS_PROTOCOL_VERSION_DEFAULT = 0,
-  CNET_TLS_PROTOCOL_VERSION_1_2 = 12,
-  CNET_TLS_PROTOCOL_VERSION_1_3 = 13
-} cnet_tls_protocol_version;
-
 typedef struct cnet_tls_state {
   cnet_tls_context *context;
   void *engine;

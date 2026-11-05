@@ -351,6 +351,12 @@ enum {
   CNET_TLS_KEY_UPDATE_RECORD_LIMIT_MAX = 1u << 20
 };
 
+typedef enum cnet_tls_protocol_version {
+  CNET_TLS_PROTOCOL_VERSION_DEFAULT = 0,
+  CNET_TLS_PROTOCOL_VERSION_1_2 = 12,
+  CNET_TLS_PROTOCOL_VERSION_1_3 = 13
+} cnet_tls_protocol_version;
+
 typedef enum cnet_tls_client_auth {
   CNET_TLS_CLIENT_AUTH_NONE = 0,
   CNET_TLS_CLIENT_AUTH_REQUIRED = 1
@@ -432,6 +438,11 @@ typedef struct cnet_tls_client_config {
   const cnet_tls_data *ca_data;
   /** Memory identity, excluding cert_file/key_file/key_password. */
   const cnet_tls_credentials *credentials;
+  /** STANDARD defaults to TLS1.2..1.3; SHANGMI permits only TLS1.3;
+   * TLCP requires DEFAULT. Immutable for all connections using the context.
+   * Unknown/reversed bounds: EINVAL; profile conflict: ENOTSUP. */
+  cnet_tls_protocol_version minimum_version;
+  cnet_tls_protocol_version maximum_version;
 } cnet_tls_client_config;
 
 /** Configuration copied into a reusable server context during initialization. */
@@ -466,6 +477,11 @@ typedef struct cnet_tls_server_config {
   /** Same memory-input contract as the client; CA required for REQUIRED auth. */
   const cnet_tls_data *ca_data;
   const cnet_tls_credentials *credentials;
+  /** STANDARD defaults to TLS1.2..1.3; SHANGMI permits only TLS1.3;
+   * TLCP requires DEFAULT. Immutable for all connections using the context.
+   * Unknown/reversed bounds: EINVAL; profile conflict: ENOTSUP. */
+  cnet_tls_protocol_version minimum_version;
+  cnet_tls_protocol_version maximum_version;
 } cnet_tls_server_config;
 
 typedef struct cnet_connect_options {
