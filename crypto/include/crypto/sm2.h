@@ -14,7 +14,9 @@ extern "C" {
 #define SALTS_CRYPTO_SM2_PLAINTEXT_MAX_SIZE 255u
 #define SALTS_CRYPTO_SM2_DEFAULT_ID "1234567812345678"
 
-/* Raw private scalar: 32 big-endian bytes, range [1,n-2]. Public key:
+/* Raw private scalar: 32 big-endian bytes. Keygen/sign/decrypt use [1,n-2];
+ * public_key also admits n-1 for key exchange (it is not a signing key).
+ * Public key:
  * uncompressed 04 || X || Y on curveSM2, 65 bytes. Caller owns and must
  * securely erase private keys. No native provider types or heap handles.
  * Output buffers must be disjoint from inputs and other outputs. */
