@@ -83,6 +83,10 @@ func credentials(t *testing.T, change func(*x509.Certificate)) fixture {
 }
 
 func runNativeClient(t *testing.T, f fixture, identity string, accept bool, corrupt string) {
+	runNativeClientWithIdentity(t, f, nil, identity, accept, corrupt)
+}
+
+func runNativeClientWithIdentity(t *testing.T, f fixture, client *fixture, identity string, accept bool, corrupt string) {
 	t.Helper()
 	listener, err := net.ListenTCP("tcp4", &net.TCPAddr{IP: net.ParseIP("127.0.0.1")})
 	if err != nil {
@@ -102,7 +106,15 @@ func runNativeClient(t *testing.T, f fixture, identity string, accept bool, corr
 		defer raw.Close()
 		_ = raw.SetDeadline(time.Now().Add(15 * time.Second))
 		p := &recordPeer{Conn: raw}
-		result = p.server(tls13gm.ServerConfig{DCID: []byte("formal TCP peer"), Certificate: f.leaf, PrivateKey: f.key}, corrupt)
+		if client == nil {
+			result = p.server(tls13gm.ServerConfig{DCID: []byte("formal TCP peer"), Certificate: f.leaf, PrivateKey: f.key}, corrupt)
+		} else {
+			result = p.mutualServer(f, *client, corrupt)
+			if !accept && !p.authFlightSent {
+				result = fmt.Errorf("server authentication flight did not execute: %w", result)
+				return
+			}
+		}
 		if !accept {
 			// CNet's IP-SAN check can reject after provider Finished, before
 			// publishing CONNECTED. No application bytes may escape that gate.
@@ -141,7 +153,12 @@ func runNativeClient(t *testing.T, f fixture, identity string, accept bool, corr
 	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
 	defer cancel()
 	port := fmt.Sprint(listener.Addr().(*net.TCPAddr).Port)
-	out, runErr := exec.CommandContext(ctx, *native, "--external-ip-san", port, "shangmi13", identity, f.caPath, expect).CombinedOutput()
+	args := []string{"--external-ip-san", port, "shangmi13", identity, f.caPath, expect}
+	if client != nil {
+		args = []string{"--shangmi-required-server", port, identity, f.caPath, client.certPath, client.keyPath, expect,
+			fmt.Sprintf("%x", sha256.Sum256(f.leaf.Raw))}
+	}
+	out, runErr := exec.CommandContext(ctx, *native, args...).CombinedOutput()
 	listener.Close()
 	peerErr := <-finished
 	if runErr != nil || peerErr != nil {

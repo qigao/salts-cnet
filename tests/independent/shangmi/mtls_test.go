@@ -130,3 +130,40 @@ func TestShangMiMutualIndependent(t *testing.T) {
 		})
 	}
 }
+
+func TestShangMiMutualNativeClient(t *testing.T) {
+	if *native == "" {
+		t.Fatal("missing native peer")
+	}
+	server, client := credentials(t, nil), clientCredentials(t, nil)
+	run := func(t *testing.T, f fixture, accept bool, scenario string) {
+		t.Helper()
+		runNativeClientWithIdentity(t, f, &client, "localhost", accept, scenario)
+	}
+	t.Run("verified_mutual_client", func(t *testing.T) { run(t, server, true, "") })
+	t.Run("verified_ip_identity", func(t *testing.T) { runNativeClientWithIdentity(t, server, &client, "127.0.0.1", true, "") })
+	for _, identity := range []string{"wrong.example", "127.0.0.2"} {
+		t.Run("reject_identity_"+identity, func(t *testing.T) { runNativeClientWithIdentity(t, server, &client, identity, false, "") })
+	}
+	t.Run("fragmented_server_flight", func(t *testing.T) { run(t, server, true, "fragmented") })
+	for _, scenario := range []string{"request_context", "missing_signature", "duplicate_signature", "client_context", "certificate_id", "certificate_verify", "tlcp_signature", "finished"} {
+		t.Run("reject_"+scenario, func(t *testing.T) { run(t, server, false, scenario) })
+	}
+	t.Run("reject_server_unknown_ca", func(t *testing.T) {
+		bad := server
+		bad.caPath = credentials(t, nil).caPath
+		run(t, bad, false, "")
+	})
+	for name, change := range map[string]func(*x509.Certificate){
+		"expired": func(c *x509.Certificate) {
+			c.NotBefore = time.Now().Add(-48 * time.Hour)
+			c.NotAfter = time.Now().Add(-24 * time.Hour)
+		},
+		"future":          func(c *x509.Certificate) { c.NotBefore = time.Now().Add(time.Hour) },
+		"key_usage":       func(c *x509.Certificate) { c.KeyUsage = x509.KeyUsageKeyEncipherment },
+		"client_only_eku": func(c *x509.Certificate) { c.ExtKeyUsage = []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth} },
+	} {
+		t.Run("reject_server_"+name, func(t *testing.T) { run(t, credentials(t, change), false, "") })
+	}
+	t.Run("reject_server_certificate_signature", func(t *testing.T) { run(t, corruptCertificate(t, credentials(t, nil)), false, "") })
+}
