@@ -454,6 +454,16 @@ bool cnet_tls_state_handshake_complete(const cnet_tls_state *state)
     return state != NULL && state->handshake_complete;
 }
 
+int cnet_tls_get_diagnostic(const cnet_tls_state *state, crypto_tls_diagnostic *out)
+{
+    if (out == NULL) return SALTS_EINVAL;
+    *out = (crypto_tls_diagnostic){0};
+    if (get_engine(state) == NULL) return SALTS_EINVAL;
+    /* This test-only legacy session facade has no verification-result API.
+     * Do not invent production stream diagnostics or inspect provider state. */
+    return SALTS_ENOTSUP;
+}
+
 int cnet_tls_state_set_protocol_range(cnet_tls_state *state,
                                       cnet_tls_protocol_version min,
                                       cnet_tls_protocol_version max)

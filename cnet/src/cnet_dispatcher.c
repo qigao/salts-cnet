@@ -140,7 +140,7 @@ static int cnet_dispatcher_release_lease(void *context, const cnet_dispatch_view
   impl = entry->dispatcher;
   if (impl == NULL) return SALTS_EINVAL;
   event = (cnet_event_view){view->kind, view->session, view->state,    view->status, view->stage,
-                            view->data, view->size,    view->argument, token, view->backing};
+                            view->data, view->size,    view->argument, token, view->backing, view->tls};
   terminal_event = view->kind == CNET_EVENT_STATE && cnet_dispatcher_terminal_state(view->state);
   status = cnet_shards_release_event(impl->shards, entry->connection.shard, &event);
   if (status != SALTS_OK || !terminal_event) {
@@ -177,7 +177,7 @@ static int cnet_dispatcher_prepare(cnet_dispatcher_impl *impl, uint32_t shard,
                                    .context = entry->observer_context,
                                    .event = {event->kind, event->session, event->state, event->status,
                                              event->stage, event->data, event->size, event->argument,
-                                             event->backing},
+                                             event->backing, event->tls},
                                    .release = release,
                                    .release_context = entry,
                                    .release_token = release_token};
@@ -192,7 +192,7 @@ static int cnet_dispatcher_prepare(cnet_dispatcher_impl *impl, uint32_t shard,
 static int cnet_dispatcher_invoke(cnet_dispatcher_impl *impl, const cnet_dispatch_job *job) {
   const cnet_dispatch_view view = {job->event.kind,   job->event.session, job->event.state,
                                    job->event.status, job->event.stage,   job->event.data,
-                                   job->event.size,   job->event.argument, job->event.backing};
+                                   job->event.size,   job->event.argument, job->event.backing, job->event.tls};
   int status = SALTS_OK;
 #if defined(CNET_INTERNAL_PROFILING)
   const uint64_t invoke_started = cnet_dispatcher_profile_start(impl);
@@ -325,7 +325,7 @@ int cnet_dispatcher_drive(cnet_dispatcher *dispatcher, uint32_t shard) {
   if (status == SALTS_OK) {
     const cnet_event event = {lane->event.kind,   lane->event.session, lane->event.state,
                               lane->event.status, lane->event.stage,   lane->event.data,
-                              lane->event.size,   lane->event.argument, lane->event.backing};
+                              lane->event.size,   lane->event.argument, lane->event.backing, lane->event.tls};
     status = cnet_dispatcher_prepare(impl, shard, &event, cnet_dispatcher_release_lease,
                                      lane->event._sequence, &job);
   }

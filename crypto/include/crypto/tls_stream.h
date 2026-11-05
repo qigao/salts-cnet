@@ -5,6 +5,7 @@
 #define CRYPTO_TLS_STREAM_H
 #include <crypto/tls_peer_policy.h>
 #include <crypto/tls_credentials.h>
+#include <crypto/tls_diagnostic.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -152,6 +153,12 @@ typedef struct crypto_tls_stream_context crypto_tls_stream_context;
 
 
 typedef struct crypto_tls_stream crypto_tls_stream;
+
+/* Exclusive progress owner, including after failed handshake. Copies the first
+ * failure until destroy. ENOENT with a zero value means no recorded failure;
+ * it is not proof of successful authentication. Invalid pointers: EINVAL. */
+int crypto_tls_stream_get_diagnostic(const crypto_tls_stream *stream,
+    crypto_tls_diagnostic *out_diagnostic);
 
 /* Immutable reusable contexts: create consumes config synchronously, including
  * certificates, trust roots and ALPN. Context retain/release is thread-safe;

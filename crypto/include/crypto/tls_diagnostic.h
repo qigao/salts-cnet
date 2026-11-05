@@ -1,0 +1,36 @@
+#ifndef CRYPTO_TLS_DIAGNOSTIC_H
+#define CRYPTO_TLS_DIAGNOSTIC_H
+#include <stddef.h>
+#include <stdint.h>
+
+/* Stable, provider-neutral categories. CERTIFICATE includes parsing, validity
+ * and usage failures when the verifier does not distinguish them. HANDSHAKE
+ * means no more specific local verification result is available; it must not
+ * be interpreted as a certificate failure or a peer's verification result. */
+typedef enum crypto_tls_failure_reason {
+  CRYPTO_TLS_FAILURE_NONE = 0,
+  CRYPTO_TLS_FAILURE_HANDSHAKE,
+  CRYPTO_TLS_FAILURE_CERTIFICATE,
+  CRYPTO_TLS_FAILURE_CHAIN_SIGNATURE,
+  CRYPTO_TLS_FAILURE_TRUST_ANCHOR,
+  CRYPTO_TLS_FAILURE_DEPTH,
+  CRYPTO_TLS_FAILURE_CRL,
+  CRYPTO_TLS_FAILURE_OCSP,
+  CRYPTO_TLS_FAILURE_CONSTRAINTS,
+  CRYPTO_TLS_FAILURE_CERTIFICATE_EXTENSIONS,
+  CRYPTO_TLS_FAILURE_IDENTITY,
+  CRYPTO_TLS_FAILURE_MISSING_CERTIFICATE,
+  CRYPTO_TLS_FAILURE_PEER_POLICY,
+  CRYPTO_TLS_FAILURE_PROFILE,
+  CRYPTO_TLS_FAILURE_PLATFORM_TRUST
+} crypto_tls_failure_reason;
+
+/* Owned value with no certificate, key, hostname or provider pointers.
+ * Index is zero-based in the peer's presented chain; SIZE_MAX means unknown.
+ * Ignore index when reason is NONE. This records local handshake failure only,
+ * not transport failures, post-handshake errors or context-init failures. */
+typedef struct crypto_tls_diagnostic {
+  crypto_tls_failure_reason reason;
+  size_t certificate_index;
+} crypto_tls_diagnostic;
+#endif

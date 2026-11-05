@@ -54,6 +54,7 @@ int cnet_tls_state_init(cnet_tls_state *state, cnet_tls_context *context, bool s
 void cnet_tls_state_destroy(cnet_tls_state *state);
 
 int cnet_tls_handshake(cnet_tls_state *state, bool *out_complete);
+int cnet_tls_get_diagnostic(const cnet_tls_state *state, crypto_tls_diagnostic *out);
 bool cnet_tls_state_handshake_complete(const cnet_tls_state *state);
 int cnet_tls_state_set_protocol_range(cnet_tls_state *state,
                                       cnet_tls_protocol_version minimum,

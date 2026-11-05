@@ -119,6 +119,7 @@ struct crypto_tls_stream {
   bool handshake_started;
   bool handshake_complete;
   int handshake_error;
+  crypto_tls_diagnostic diagnostic;
   int terminal_error;
   bool peer_close_notify;
   bool shutdown_started;
@@ -1500,6 +1501,37 @@ static int crypto_tls_stream_peer_leaf(const TLS_CONNECT *connection,
   return x509_certs_get_cert_by_index(chain, chain_size, 0, certificate, size);
 }
 
+static int crypto_tls_stream_fail_handshake(crypto_tls_stream *state, int status,
+    crypto_tls_failure_reason reason, size_t index) {
+  if (state->diagnostic.reason == CRYPTO_TLS_FAILURE_NONE)
+    state->diagnostic = (crypto_tls_diagnostic){reason, index};
+  return status;
+}
+
+static crypto_tls_failure_reason crypto_tls_stream_verify_reason(int result) {
+  switch (result) {
+    case X509_verify_err_certificate: return CRYPTO_TLS_FAILURE_CERTIFICATE;
+    case X509_verify_err_cert_chain: return CRYPTO_TLS_FAILURE_CHAIN_SIGNATURE;
+    case X509_verify_err_trust_anchor: return CRYPTO_TLS_FAILURE_TRUST_ANCHOR;
+    case X509_verify_err_depth: return CRYPTO_TLS_FAILURE_DEPTH;
+    case X509_verify_err_crl: return CRYPTO_TLS_FAILURE_CRL;
+    case X509_verify_err_ocsp: return CRYPTO_TLS_FAILURE_OCSP;
+    case X509_verify_err_constraints: return CRYPTO_TLS_FAILURE_CONSTRAINTS;
+    case X509_verify_err_tls_extensions: return CRYPTO_TLS_FAILURE_CERTIFICATE_EXTENSIONS;
+    case X509_verify_err_hostname: return CRYPTO_TLS_FAILURE_IDENTITY;
+    default: return CRYPTO_TLS_FAILURE_HANDSHAKE;
+  }
+}
+
+int crypto_tls_stream_get_diagnostic(const crypto_tls_stream *state,
+    crypto_tls_diagnostic *out_diagnostic) {
+  if (!out_diagnostic) return CRYPTO_TLS_STREAM_EINVAL;
+  *out_diagnostic = (crypto_tls_diagnostic){0};
+  if (!state) return CRYPTO_TLS_STREAM_EINVAL;
+  *out_diagnostic = state->diagnostic;
+  return state->diagnostic.reason == CRYPTO_TLS_FAILURE_NONE ? CRYPTO_TLS_STREAM_ENOENT : CRYPTO_TLS_STREAM_OK;
+}
+
 static int crypto_tls_stream_finish_handshake(crypto_tls_stream *state,
                                      bool *out_complete) {
   crypto_tls_stream_gmssl_state *engine = CRYPTO_TLS_STREAM_ENGINE(state);
@@ -1515,11 +1547,11 @@ static int crypto_tls_stream_finish_handshake(crypto_tls_stream *state,
   if (state->context->security_profile == CRYPTO_TLS_STREAM_SECURITY_PROFILE_SHANGMI_TLS13 &&
       (engine->connection.protocol != TLS_protocol_tls13 ||
        engine->connection.cipher_suite != TLS_cipher_sm4_gcm_sm3))
-    return CRYPTO_TLS_STREAM_EPROTO;
+    return crypto_tls_stream_fail_handshake(state, CRYPTO_TLS_STREAM_EPROTO, CRYPTO_TLS_FAILURE_PROFILE, SIZE_MAX);
   if (state->context->security_profile == CRYPTO_TLS_STREAM_SECURITY_PROFILE_TLCP11 &&
       (engine->connection.protocol != TLS_protocol_tlcp ||
        engine->connection.cipher_suite != TLS_cipher_ecc_sm4_gcm_sm3))
-    return CRYPTO_TLS_STREAM_EPROTO;
+    return crypto_tls_stream_fail_handshake(state, CRYPTO_TLS_STREAM_EPROTO, CRYPTO_TLS_FAILURE_PROFILE, SIZE_MAX);
 
   if (state->context->verify_peer) {
     result = tls_get_verify_result(&engine->connection, &verify_result);
@@ -1534,17 +1566,20 @@ static int crypto_tls_stream_finish_handshake(crypto_tls_stream *state,
       result = crypto_tls_stream_peer_leaf(
           &engine->connection, &peer_cert, &peer_cert_size);
       if (result != 1 || peer_cert == NULL || peer_cert_size == 0u)
-        return CRYPTO_TLS_STREAM_ECONNABORTED;
+        return crypto_tls_stream_fail_handshake(state, CRYPTO_TLS_STREAM_ECONNABORTED,
+            CRYPTO_TLS_FAILURE_MISSING_CERTIFICATE, SIZE_MAX);
     }
     if (!state->server && crypto_tls_stream_ip_literal(engine->server_name)) {
       result = crypto_tls_stream_verify_ip_subject_alt_name(
           &engine->connection, engine->server_name);
-      if (result != CRYPTO_TLS_STREAM_OK) return result;
+      if (result != CRYPTO_TLS_STREAM_OK)
+        return crypto_tls_stream_fail_handshake(state, result, CRYPTO_TLS_FAILURE_IDENTITY, 0u);
     }
 #if defined(__APPLE__) && !TARGET_OS_OSX
     if (state->context->native_system_trust) {
       result = crypto_tls_stream_verify_apple_system_trust(engine);
-      if (result != CRYPTO_TLS_STREAM_OK) return result;
+      if (result != CRYPTO_TLS_STREAM_OK)
+        return crypto_tls_stream_fail_handshake(state, result, CRYPTO_TLS_FAILURE_PLATFORM_TRUST, SIZE_MAX);
     }
 #endif
   }
@@ -1564,10 +1599,13 @@ static int crypto_tls_stream_finish_handshake(crypto_tls_stream *state,
     crypto_tls_stream_peer_certificate_chain chain;
     if (crypto_tls_stream_peer_chain(&engine->connection, &der, &size) != 1 ||
         crypto_tls_stream_peer_certificate_chain_parse(der, size, &chain) != CRYPTO_TLS_STREAM_OK ||
-        chain.count == 0u ||
-        state->context->peer_policy.check(state->context->peer_policy.context,
-            &chain, !state->server, state->context->security_profile) != CRYPTO_TLS_STREAM_OK)
-      return CRYPTO_TLS_STREAM_ECONNABORTED;
+        chain.count == 0u)
+      return crypto_tls_stream_fail_handshake(state, CRYPTO_TLS_STREAM_ECONNABORTED,
+          CRYPTO_TLS_FAILURE_CERTIFICATE, SIZE_MAX);
+    if (state->context->peer_policy.check(state->context->peer_policy.context,
+        &chain, !state->server, state->context->security_profile) != CRYPTO_TLS_STREAM_OK)
+      return crypto_tls_stream_fail_handshake(state, CRYPTO_TLS_STREAM_ECONNABORTED,
+          CRYPTO_TLS_FAILURE_PEER_POLICY, SIZE_MAX);
   }
 
   state->handshake_complete = true;
@@ -1593,10 +1631,16 @@ int crypto_tls_stream_handshake(crypto_tls_stream *state, bool *out_complete) {
   result = tls_do_handshake(&engine->connection);
   if (result != 1 && !crypto_tls_stream_retryable(result)) {
     state->handshake_error = CRYPTO_TLS_STREAM_ECONNABORTED;
-    return state->handshake_error;
-  }
-  status = crypto_tls_stream_finish_handshake(state, out_complete);
+    status = state->handshake_error;
+  } else status = crypto_tls_stream_finish_handshake(state, out_complete);
   if (status != CRYPTO_TLS_STREAM_OK) state->handshake_error = status;
+  if (status != CRYPTO_TLS_STREAM_OK) {
+    /* The provider's public getter only works after success. Its connection
+     * result is also set on failed verification and remains internal here. */
+    crypto_tls_failure_reason reason = crypto_tls_stream_verify_reason(engine->connection.verify_result);
+    crypto_tls_stream_fail_handshake(state, status, reason,
+        reason == CRYPTO_TLS_FAILURE_IDENTITY ? 0u : SIZE_MAX);
+  }
   return status;
 }
 

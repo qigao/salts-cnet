@@ -122,6 +122,8 @@ static int run_peer_policy_cases(void) {
         .ca_file = scenario == 3u ? CORE_TLS_TEST_P384_WRONG_CA : CORE_TLS_TEST_P384_CA,
         .verified_hostname = scenario == 4u ? "wrong.example" : "localhost",
         .expect_success = scenario == 0u,
+        .expected_failure = scenario == 0u ? CRYPTO_TLS_FAILURE_NONE : scenario < 3u ? CRYPTO_TLS_FAILURE_PEER_POLICY :
+            scenario == 3u ? CRYPTO_TLS_FAILURE_TRUST_ANCHOR : CRYPTO_TLS_FAILURE_NONE,
         .client_peer_policy = &policy, .release_tls_context_early = true};
     REQUIRE(run_case(&options) == 0);
     REQUIRE(peer_policy_finished(&p, scenario < 3u ? 1u : 0u));
@@ -152,6 +154,7 @@ static int run_mutual_peer_policy_case(const tls_case_options *original,
   options.client_peer_policy = &cp;
   options.server_peer_policy = &sp;
   options.release_tls_context_early = true;
+  if (reject_client || reject_server) options.expected_failure = CRYPTO_TLS_FAILURE_PEER_POLICY;
   int result = 0;
   REQUIRE(run_case(&options) == 0);
   REQUIRE(peer_policy_finished(&client, 1u));

@@ -22,6 +22,7 @@ typedef struct cnet_event_entry {
   size_t argument;
   mem_buffer_t *payload;
   bool canonical_backing;
+  crypto_tls_diagnostic tls;
 } cnet_event_entry;
 
 typedef struct cnet_event_queue_impl {
@@ -309,6 +310,7 @@ int cnet_event_queue_publish(cnet_event_queue *queue, const cnet_event *event) {
   entry->stage = event->stage;
   entry->size = event->size;
   entry->argument = event->argument;
+  entry->tls = event->tls;
   entry->payload = payload;
   entry->canonical_backing = data_event && event->backing != NULL;
   atomic_fetch_add_explicit(&impl->live_events, 1u, memory_order_release);
@@ -330,6 +332,7 @@ static int cnet_event_queue_take_claimed(cnet_event_queue_impl *impl,
   out_view->data = entry->size != 0u ? mem_buffer_const_data(entry->payload) : NULL;
   out_view->size = entry->size;
   out_view->argument = entry->argument;
+  out_view->tls = entry->tls;
   out_view->_sequence = cursor->sequence;
   out_view->backing = entry->canonical_backing ? entry->payload : NULL;
   atomic_store_explicit(

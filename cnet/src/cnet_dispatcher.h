@@ -23,6 +23,7 @@ typedef struct cnet_dispatch_view {
   size_t size;
   size_t argument;
   mem_buffer_t *backing;
+  crypto_tls_diagnostic tls;
 } cnet_dispatch_view;
 
 typedef void (*cnet_dispatch_fn)(void *context, const cnet_dispatch_view *view);

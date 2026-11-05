@@ -2136,6 +2136,46 @@ static void cnet_owner_test_init_cleanup_after_backend(
 #endif
 }
 
+spec("CNet terminal diagnostic values") {
+  static cnet_event_queue queue;
+  static cnet_event_view view;
+  static bool borrowed;
+  before_each() {
+    memset(&queue, 0, sizeof(queue)); memset(&view, 0, sizeof(view)); borrowed = false;
+  }
+  after_each() {
+    if (queue.impl) {
+      check_equal(cnet_event_queue_close(&queue), SALTS_OK);
+      if (borrowed) check_equal(cnet_event_queue_release(&queue, &view), SALTS_OK);
+      while (cnet_event_queue_take(&queue, &view) == SALTS_OK)
+        check_equal(cnet_event_queue_release(&queue, &view), SALTS_OK);
+      check_equal(cnet_event_queue_destroy(&queue), SALTS_OK);
+    }
+  }
+  it("copies failed TLS diagnostics across queue pressure and clears reused slots") {
+    const cnet_event_queue_config config = {.capacity = 2u, .data_capacity = 1u, .max_payload_bytes = 64u};
+    check_equal(cnet_event_queue_init(&queue, &config), SALTS_OK);
+    cnet_event event = {.kind = CNET_EVENT_STATE, .session = {1u, 1u},
+        .state = CNET_EVENT_STATE_FAILED, .status = SALTS_ECONNABORTED,
+        .stage = CNET_SESSION_STAGE_HANDSHAKE,
+        .tls = {CRYPTO_TLS_FAILURE_TRUST_ANCHOR, SIZE_MAX}};
+    check_equal(cnet_event_queue_publish(&queue, &event), SALTS_OK);
+    event.tls = (crypto_tls_diagnostic){0};
+    check_equal(cnet_event_queue_publish(&queue, &event), SALTS_OK);
+    check_equal(cnet_event_queue_publish(&queue, &event), SALTS_ENOBUFS);
+    check_equal(cnet_event_queue_take(&queue, &view), SALTS_OK); borrowed = true;
+    check_equal(view.tls.reason, CRYPTO_TLS_FAILURE_TRUST_ANCHOR);
+    check_equal(view.tls.certificate_index, SIZE_MAX);
+    check_equal(cnet_event_queue_release(&queue, &view), SALTS_OK); borrowed = false;
+    check_equal(cnet_event_queue_publish(&queue, &event), SALTS_OK);
+    for (unsigned i = 0u; i < 2u; ++i) {
+      check_equal(cnet_event_queue_take(&queue, &view), SALTS_OK); borrowed = true;
+      check_equal(view.tls.reason, CRYPTO_TLS_FAILURE_NONE);
+      check_equal(cnet_event_queue_release(&queue, &view), SALTS_OK); borrowed = false;
+    }
+  }
+}
+
 spec("CNet owner shard") {
 #if defined(CNET_INTERNAL_TESTING)
   it("transfers pending TLS I/O deadlines after the handshake exactly once") {
