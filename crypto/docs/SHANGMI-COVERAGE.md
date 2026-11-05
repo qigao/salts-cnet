@@ -17,7 +17,8 @@ source or falls back to plaintext.
 | SM9 signature/encryption/KEM | Public identity-based signing, XOR encryption and KEM; fixed canonical key points and DER messages | Published signature/KEM/encryption vectors, scripted nonce/failure paths, finite prime-order subgroup admission, DER/tamper/identity negatives and output erasure; cross-platform CI required |
 | SM9 key exchange | First-party bounded exchange over existing GmSSL primitives, with mandatory mutual key confirmation and distinct exchange keys | Published session-key and both confirmation vectors; identity/master/purpose binding, wrong phase, forged/replayed confirmations, RNG failure, cancellation and erasure; cross-platform CI required |
 | SM2 full authenticated key exchange | GB/T 32918.3 curveSM2 agreement with explicit static peer trust, Z bindings and mandatory mutual confirmation | GB/T 32918.5 Annex B shares/key/confirmation vectors; independent gmsm key vector; identity/static-key mismatch, invalid points, infinity sum, zero combined scalar, RNG/phase/replay/erasure; cross-platform CI required |
-| CMS / SM2 certificate and protected key workflows | CMS enabled in provider; public workflow qualification pending | Generic ASN1 parsing and existing X509 inspection alone do not qualify signing/trust/key protection |
+| SM2 key containers | Canonical SPKI and PKCS#8 import/export; PBES2 PBKDF2-HMAC-SM3 / SM4-CBC password protection | Public API negatives, RNG failure, GmSSL key-file interop and independent Python bidirectional interop; cross-platform CI required |
+| CMS / SM2 certificate workflows | CMS enabled in provider; public workflow qualification pending | Generic ASN1 parsing and existing X509 inspection alone do not qualify signing or trust |
 | TLS 1.3 ShangMi / TLCP | Existing explicit stream profiles; complete independent handshake/authentication matrix remains separate | Existing provider settings/KATs do not replace protocol interoperation |
 | DTLS | Issue #188 resumed; implementation and CNet/SCTP qualification pending | Existing TLS tests do not qualify DTLS |
 | SDF / SKF hardware | Requires selected vendor runtime/device and its integration tests | No software fallback for non-exportable keys |
@@ -70,6 +71,48 @@ recipient, zero-nonce retry/exhaustion and failure erasure. These functional
 tests do not establish constant-time execution of the underlying pairing and
 scalar arithmetic; side-channel qualification remains a production gate for
 deployments exposing private-key operations to local or timing attackers.
+
+### SM2 key containers
+
+`crypto/sm2_keys.h` imports/exports SPKI and PKCS#8 through the canonical
+Salts::ASN1 owner. The bounded profile uses id-ecPublicKey with curveSM2,
+PrivateKeyInfo version 0 and ECPrivateKey version 1. Outer curve is mandatory;
+optional inner curve/public key must match the derived key. No attributes,
+unknown fields, compressed points, other curves or noncanonical encodings are
+accepted. Public-key import is structural/curve validation, not identity trust.
+Private scalars through N-1 are admitted for exchange; signing excludes N-1.
+
+EncryptedPrivateKeyInfo uses PBES2 with explicit PBKDF2-HMAC-SM3 and SM4-CBC.
+Export draws a fresh 16-byte salt and IV. Passwords are explicit opaque bytes
+(1..1024), so embedded NUL is preserved. The caller selects iterations within
+10000..16777215; import additionally requires an explicit maximum work factor
+and rejects higher document values before running the KDF. This ceiling is
+not a recommendation to perform maximum-cost derivation on a network worker.
+Callers schedule this synchronous operation outside latency-sensitive I/O.
+
+Output is caller-owned (SPKI 91, private PKCS#8 150, encrypted PKCS#8 320-byte
+capacity). No heap, file, PEM parser or retained input exists. Admission errors
+preserve outputs. Admitted malformed/key/password failures erase outputs;
+decrypted DER, password-derived keys and secret staging buffers are erased on
+all completion paths. No plaintext is returned before padding, canonical DER,
+scalar and embedded public-key checks finish.
+
+The CBC key-file profile provides password-based confidentiality, not a MAC,
+provenance or authenticated storage. Applications must separately protect stored
+files and bind the imported public key to a trusted identity. A successful
+import is not certificate validation. Do not expose this variable-time file
+operation as a remote password/decryption service. SM2 side-channel and
+certificate/CMS qualification remain separate gates.
+
+The format follows [RFC 5958](https://www.rfc-editor.org/rfc/rfc5958),
+[RFC 5915](https://www.rfc-editor.org/rfc/rfc5915) and
+[RFC 8018](https://www.rfc-editor.org/rfc/rfc8018) composition, with GmSSL's
+HMAC-SM3 and SM4-CBC identifiers. Missing PBKDF2 PRF means HMAC-SHA1 under
+RFC 8018 and is rejected, never silently interpreted as HMAC-SM3. Formal tests
+cover native GmSSL interoperation and independent Python hashlib/cryptography
+encryption/decryption, including optional inner fields, PRF NULL/absent
+parameters and omitted keyLength. Test-only Python providers introduce no
+explicit native OpenSSL/BoringSSL dependency.
 
 ### SM2 confirmed agreement
 
