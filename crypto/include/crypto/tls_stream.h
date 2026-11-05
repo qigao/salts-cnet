@@ -115,6 +115,13 @@ typedef struct crypto_tls_stream_client_config {
    * Larger values: EINVAL. iOS implicit system trust: ENOTSUP for nonzero.
    * Authentication and other path/size/constraint limits remain mandatory. */
   uint32_t verification_depth;
+  /** Optional certificate-validity Unix time, copied synchronously at init.
+   * NULL uses the system clock; explicit 0..253402300799 includes the epoch.
+   * Applies to peer leaves, intermediate CAs and local anchors. Does not change
+   * identity, usage, signature checks or peer-policy/revocation clocks.
+   * Out of range: EINVAL; not representable by the provider clock: ERANGE.
+   * iOS implicit system trust: ENOTSUP. The input may be erased after init. */
+  const int64_t *verification_time;
   /** Optional ordered cipher allowlist, copied synchronously. NULL/0 keeps
    * profile defaults. Nonempty lists contain at most MAX_COUNT unique suites.
    * STANDARD admits AES-128-GCM: TLS1.3, or TLS1.2 ECDHE-RSA/ECDHE-ECDSA.
@@ -206,6 +213,8 @@ typedef struct crypto_tls_stream_server_config {
   crypto_tls_stream_protocol_version maximum_version;
   /** Same depth contract as client. Nonzero requires REQUIRED client auth. */
   uint32_t verification_depth;
+  /** Same certificate-time contract as client; requires REQUIRED client auth. */
+  const int64_t *verification_time;
   /** Same immutable cipher allowlist contract as the client configuration. */
   const crypto_tls_cipher_suite *cipher_suites;
   size_t cipher_suite_count;

@@ -105,6 +105,7 @@ int cnet_tls_client_context_create(const cnet_tls_client_config *config, cnet_tl
     policy.minimum_version = (crypto_tls_stream_protocol_version)config->minimum_version;
     policy.maximum_version = (crypto_tls_stream_protocol_version)config->maximum_version;
     policy.verification_depth = config->verification_depth;
+    policy.verification_time = config->verification_time;
     policy.cipher_suites = config->cipher_suites;
     policy.cipher_suite_count = config->cipher_suite_count;
     policy.signature_algorithms = config->signature_algorithms;
@@ -175,6 +176,7 @@ int cnet_tls_server_init(cnet_tls_server *server, const cnet_tls_server_config *
   policy.minimum_version = (crypto_tls_stream_protocol_version)config->minimum_version;
   policy.maximum_version = (crypto_tls_stream_protocol_version)config->maximum_version;
   policy.verification_depth = config->verification_depth;
+  policy.verification_time = config->verification_time;
   policy.cipher_suites = config->cipher_suites;
   policy.cipher_suite_count = config->cipher_suite_count;
   policy.signature_algorithms = config->signature_algorithms;

@@ -192,7 +192,7 @@ jobs:
         id: vcpkg
         # GmSSL #28 fixes HRR padding changes and pre-key rejection alerts.
         # Includes native Windows pkg-config; avoid MSYS2 for pkg-config.
-        uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-curl-cache@2ba65948c8893dd8ead10fd90dbd03c56c36b5da
+        uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-curl-cache@db8ffe5040dae27292eb979b70b1ce2d3c06294f
         with:
           mode: read
           triplet: ${{ matrix.triplet }}

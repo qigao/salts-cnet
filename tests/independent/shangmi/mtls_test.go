@@ -64,6 +64,7 @@ func TestShangMiMutual(t *testing.T) {
 	t.Run("verification_depth", testVerificationDepth)
 	t.Run("signature_policy", testSignaturePolicy)
 	server, client := credentials(t, nil), clientCredentials(t, nil)
+
 	memoryFixtures(t, server.caPath, server.certPath, server.keyPath, client.caPath, client.certPath, client.keyPath)
 	encryptedMemoryFixture(t, server.keyPath)
 	encryptedMemoryFixture(t, client.keyPath)
@@ -174,6 +175,7 @@ func TestShangMiMutualIndependent(t *testing.T) {
 		t.Fatal("missing native peer")
 	}
 	server, client := credentials(t, nil), clientCredentials(t, nil)
+	testCertificateTime(t, server, client, true)
 	t.Run("verified_client", func(t *testing.T) { runNativeServerWithClient(t, server, &client, "close") })
 	t.Run("certificate_signature_policy", func(t *testing.T) {
 		t.Setenv("SALTS_TEST_TLS_SM2_CERT_POLICY", "1")
@@ -221,6 +223,7 @@ func TestShangMiMutualNativeClient(t *testing.T) {
 		t.Fatal("missing native peer")
 	}
 	server, client := credentials(t, nil), clientCredentials(t, nil)
+	testCertificateTime(t, server, client, false)
 	run := func(t *testing.T, f fixture, accept bool, scenario string) {
 		t.Helper()
 		runNativeClientWithIdentity(t, f, &client, "localhost", accept, scenario)
@@ -304,6 +307,50 @@ func memoryFixtures(t *testing.T, paths ...string) {
 		}
 		if err := os.WriteFile(path+".der", der, 0600); err != nil {
 			t.Fatal(err)
+		}
+	}
+}
+
+func testCertificateTime(t *testing.T, server, client fixture, nativeServer bool) {
+	t.Helper()
+	for _, reason := range []string{"expired", "future"} {
+		now := time.Now()
+		fixed := now.Add(-30 * time.Minute)
+		change := func(c *x509.Certificate) {
+			c.NotBefore, c.NotAfter = now.Add(-45*time.Minute), now.Add(-15*time.Minute)
+			if reason == "future" {
+				c.NotBefore, c.NotAfter = now.Add(15*time.Minute), now.Add(45*time.Minute)
+			}
+		}
+		if reason == "future" {
+			fixed = now.Add(30 * time.Minute)
+		}
+		bad := credentials(t, change)
+		if nativeServer {
+			bad = clientCredentials(t, change)
+		}
+		memoryFixtures(t, server.caPath, server.certPath, server.keyPath, client.caPath, client.certPath, client.keyPath, bad.caPath, bad.certPath, bad.keyPath)
+		for _, mode := range []string{"file", "pem", "der"} {
+			for _, explicit := range []bool{false, true} {
+				t.Run(fmt.Sprintf("certificate_time/%s/%s/fixed_%t", reason, mode, explicit), func(t *testing.T) {
+					if mode != "file" {
+						t.Setenv("SALTS_TEST_TLS_MEMORY", mode)
+					}
+					outcome := "reject"
+					if explicit {
+						outcome = "close"
+						t.Setenv("SALTS_TEST_TLS_VERIFICATION_TIME", fmt.Sprint(fixed.Unix()))
+					} else {
+						t.Setenv("SALTS_TEST_TLS_VALIDITY_DIAGNOSTIC", reason)
+						t.Setenv("SALTS_TEST_TLS_VALIDITY_INDEX", "0")
+					}
+					if nativeServer {
+						runNativeServerWithClient(t, server, &bad, outcome)
+					} else {
+						runNativeClientWithIdentity(t, bad, &client, "localhost", explicit, "")
+					}
+				})
+			}
 		}
 	}
 }

@@ -149,6 +149,8 @@ struct crypto_tls_stream_context {
   bool server;
   bool verify_peer;
   uint32_t verification_depth;
+  bool verification_time_set;
+  time_t verification_time;
   bool native_system_trust;
   crypto_tls_stream_security_profile security_profile;
   crypto_tls_stream_peer_policy peer_policy;
@@ -897,6 +899,8 @@ static int crypto_tls_stream_configure_variant(crypto_tls_stream_context *contex
                  : crypto_tls_stream_load_system_trust(tls);
     if (status != CRYPTO_TLS_STREAM_OK) return status;
     tls->verify_depth = (int)context->verification_depth;
+    tls->certificate_time_set = context->verification_time_set;
+    tls->certificate_time = context->verification_time;
   }
 
   if (credentials != NULL) {
@@ -961,7 +965,7 @@ static int crypto_tls_stream_context_create_common(
     uint32_t peer_key_update_limit,
     const crypto_tls_data *ca_data, const crypto_tls_credentials *credentials,
     crypto_tls_stream_protocol_version minimum, crypto_tls_stream_protocol_version maximum,
-    uint32_t verification_depth,
+    uint32_t verification_depth, const int64_t *verification_time,
     const crypto_tls_cipher_suite *cipher_suites, size_t cipher_suite_count,
     const crypto_tls_signature_scheme *signature_algorithms, size_t signature_algorithm_count,
     const crypto_tls_signature_scheme *certificate_signatures, size_t certificate_signature_count,
@@ -972,6 +976,18 @@ static int crypto_tls_stream_context_create_common(
 
   if (out_context == NULL) return CRYPTO_TLS_STREAM_EINVAL;
   *out_context = NULL;
+
+  const int64_t certificate_time = verification_time ? *verification_time : 0;
+  if (verification_time != NULL) {
+    if (!verify_peer || certificate_time < 0 || certificate_time > INT64_C(253402300799))
+      return CRYPTO_TLS_STREAM_EINVAL;
+    if ((int64_t)(time_t)certificate_time != certificate_time)
+      return CRYPTO_TLS_STREAM_ERANGE;
+#if defined(__APPLE__) && !TARGET_OS_OSX
+    if (ca_file == NULL && ca_path == NULL && ca_data == NULL)
+      return CRYPTO_TLS_STREAM_ENOTSUP;
+#endif
+  }
 
   if (verification_depth > CRYPTO_TLS_STREAM_VERIFICATION_DEPTH_MAX ||
       (verification_depth != 0u && !verify_peer)) return CRYPTO_TLS_STREAM_EINVAL;
@@ -1063,6 +1079,8 @@ static int crypto_tls_stream_context_create_common(
   context->server = server;
   context->verify_peer = verify_peer;
   context->verification_depth = verification_depth ? verification_depth : CRYPTO_TLS_STREAM_VERIFICATION_DEPTH_DEFAULT;
+  context->verification_time_set = verification_time != NULL;
+  context->verification_time = (time_t)certificate_time;
   context->security_profile = security_profile;
   context->minimum_version = minimum; context->maximum_version = maximum;
   context->initial_variant = initial_variant;
@@ -1206,6 +1224,7 @@ int crypto_tls_stream_client_context_create(const crypto_tls_stream_client_confi
       config->security_profile, config->peer_policy, config->key_update_record_limit,
       config->peer_key_update_limit, config->ca_data, config->credentials,
       config->minimum_version, config->maximum_version, config->verification_depth,
+      config->verification_time,
       config->cipher_suites, config->cipher_suite_count,
       config->signature_algorithms, config->signature_algorithm_count,
       config->certificate_signature_algorithms, config->certificate_signature_algorithm_count, &context);
@@ -1277,6 +1296,7 @@ int crypto_tls_stream_server_context_create(const crypto_tls_stream_server_confi
       config->alpn_protocol_count, config->security_profile, config->peer_policy,
       config->key_update_record_limit, config->peer_key_update_limit, config->ca_data, config->credentials,
       config->minimum_version, config->maximum_version, config->verification_depth,
+      config->verification_time,
       config->cipher_suites, config->cipher_suite_count,
       config->signature_algorithms, config->signature_algorithm_count,
       config->certificate_signature_algorithms, config->certificate_signature_algorithm_count, &context);

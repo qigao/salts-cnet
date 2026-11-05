@@ -12,6 +12,7 @@
 #include <cmeta_buffer.h>
 
 #include <stdbool.h>
+#include <errno.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -291,7 +292,13 @@ typedef struct tls_case_options {
   size_t client_certificate_signature_count, server_certificate_signature_count;
 } tls_case_options;
 
+static bool tls_test_verification_time(const char *variable, int64_t *value);
+static bool tls_probe_expected_validity(const tls_probe *probe);
+
 static int run_case(const tls_case_options *options) {
+  int64_t client_time, server_time;
+  if (!tls_test_verification_time("SALTS_TEST_TLS_CLIENT_VERIFICATION_TIME", &client_time) ||
+      !tls_test_verification_time("SALTS_TEST_TLS_SERVER_VERIFICATION_TIME", &server_time)) return 2;
   const char *label = options->label;
   const bool should_verify = options->expect_success;
   cnet_client client = {0};
@@ -354,6 +361,7 @@ static int run_case(const tls_case_options *options) {
       .peer_policy = options->server_peer_policy,
       .minimum_version = options->server_minimum, .maximum_version = options->server_maximum,
       .verification_depth = options->server_depth,
+      .verification_time = server_time >= 0 ? &server_time : NULL,
       .cipher_suites = options->server_cipher_count ? server_ciphers : NULL,
       .cipher_suite_count = options->server_cipher_count,
       .signature_algorithms = options->server_signature_count ? server_signatures : NULL,
@@ -370,6 +378,7 @@ static int run_case(const tls_case_options *options) {
       .peer_policy = options->client_peer_policy,
       .minimum_version = options->client_minimum, .maximum_version = options->client_maximum,
       .verification_depth = options->client_depth,
+      .verification_time = client_time >= 0 ? &client_time : NULL,
       .cipher_suites = options->client_cipher_count ? client_ciphers : NULL,
       .cipher_suite_count = options->client_cipher_count,
       .signature_algorithms = options->client_signature_count ? client_signatures : NULL,
@@ -444,6 +453,7 @@ static int run_case(const tls_case_options *options) {
   /* Context admission must consume both lists before progress; the server
    * also creates its stream later, from this already admitted context. */
   memset(client_ciphers, 0, sizeof(client_ciphers));
+  client_time = server_time = -1;
   memset(server_ciphers, 0, sizeof(server_ciphers));
   memset(client_certificate_signatures, 0, sizeof(client_certificate_signatures));
   memset(server_certificate_signatures, 0, sizeof(server_certificate_signatures));
@@ -485,6 +495,7 @@ static int run_case(const tls_case_options *options) {
   REQUIRE(accepted);
   if (!should_verify) {
     const tls_probe *rejected = options->expect_server_rejection ? &server_probe : &client_probe;
+    REQUIRE(tls_probe_expected_validity(rejected));
     if (options->expected_failure != CRYPTO_TLS_FAILURE_NONE) {
       if (rejected->tls_diagnostic.reason != options->expected_failure)
         fprintf(stderr, "TLS diagnostic: actual=%d expected=%d status=%d\n",
@@ -889,6 +900,19 @@ cleanup:
  * leaf for both SAN-positive and SAN-negative controls. This mode never
  * imports the alternate test-only CNet TLS facade or its Provider.
  */
+static bool tls_test_verification_time(const char *variable, int64_t *value) {
+  const char *text = getenv(variable);
+  *value = -1;
+  if (!text) return true;
+  if (*text < '0' || *text > '9') return false;
+  char *end = NULL;
+  errno = 0;
+  long long parsed = strtoll(text, &end, 10);
+  if (errno || end == text || *end || parsed < 0 || parsed > INT64_C(253402300799)) return false;
+  *value = (int64_t)parsed;
+  return true;
+}
+
 static bool tls_probe_expected_validity(const tls_probe *probe) {
   const char *expected = getenv("SALTS_TEST_TLS_VALIDITY_DIAGNOSTIC");
   if (!expected) return true;
@@ -954,6 +978,8 @@ static int run_python_ssl_server(const char *port_text,
       CRYPTO_TLS_SIGNATURE_RSA_PKCS1_SHA256, CRYPTO_TLS_SIGNATURE_RSA_PSS_RSAE_SHA256};
   const bool separate_cert = getenv("SALTS_TEST_TLS_SEPARATE_CERT_SIGNATURES") != NULL;
   const bool rsa_only = getenv("SALTS_TEST_TLS_CLIENT_RSA_ONLY") != NULL;
+  int64_t verification_time;
+  if (!tls_test_verification_time("SALTS_TEST_TLS_VERIFICATION_TIME", &verification_time)) return 2;
   const cnet_tls_signature_scheme sm2_signature = CRYPTO_TLS_SIGNATURE_SM2_SM3;
   const cnet_tls_client_config tls_config = {
       .size = sizeof(cnet_tls_client_config),
@@ -976,6 +1002,7 @@ static int run_python_ssl_server(const char *port_text,
       /* TLCP's two leaves do not consume issuer depth. Exercise the smallest
        * explicit bound with independent dual-certificate peers. */
       .verification_depth = tlcp ? 1u : 0u,
+      .verification_time = verification_time >= 0 ? &verification_time : NULL,
       .peer_key_update_limit = peer_limit && strcmp(protocol, "shangmi13-limit-off") != 0 ? 2u : 0u,
       .minimum_version = !version_range && !tlcp && !shangmi ? (strcmp(protocol, "tls12") == 0 ? 12 : 13) : 0,
       .maximum_version = !version_range && !tlcp && !shangmi ? (strcmp(protocol, "tls12") == 0 ? 12 : 13) : 0};
@@ -1008,6 +1035,7 @@ static int run_python_ssl_server(const char *port_text,
       .observer = {state_callback, receive_callback, &probe, send_callback},
       .tls = &tls_config};
   REQUIRE(tls_test_connect(&client, &connect_options, &outbound) == SALTS_OK);
+  verification_time = -1; /* The context must own its copied value before progress. */
 
   if (owned_policy != NULL) {
     owned_policy->release(owned_policy->context);
@@ -1225,12 +1253,15 @@ static int run_python_ssl_client(const char *port_path,
   const cnet_tls_signature_scheme sm2_signature = CRYPTO_TLS_SIGNATURE_SM2_SM3;
   const cnet_tls_signature_scheme rsa_signatures[] = {CRYPTO_TLS_SIGNATURE_RSA_PKCS1_SHA256,
       CRYPTO_TLS_SIGNATURE_RSA_PSS_RSAE_SHA256};
+  int64_t verification_time;
+  if (!tls_test_verification_time("SALTS_TEST_TLS_VERIFICATION_TIME", &verification_time)) return 2;
   const cnet_tls_server_config tls_cfg = {
       .size = sizeof(cnet_tls_server_config),
       .cert_file = cert_file,
       .key_file = key_file,
       .ca_file = server_auth_only ? NULL : ca_file,
       .client_auth = server_auth_only ? CNET_TLS_CLIENT_AUTH_NONE : CNET_TLS_CLIENT_AUTH_REQUIRED,
+      .verification_time = verification_time >= 0 ? &verification_time : NULL,
       .security_profile = tlcp ? CNET_TLS_SECURITY_PROFILE_TLCP11 :
           shangmi ? CNET_TLS_SECURITY_PROFILE_SHANGMI_TLS13 : CNET_TLS_SECURITY_PROFILE_STANDARD,
       .signature_algorithms = tlcp || shangmi ? &sm2_signature : rsa_signatures,
@@ -1264,6 +1295,7 @@ static int run_python_ssl_client(const char *port_path,
   probe.receive_limit = rounds;
   if (expect_incomplete_send) client_cfg.max_send_bytes = response_size;
   REQUIRE(tls_test_server_init(&tls_server, &tls_cfg) == SALTS_OK);
+  verification_time = -1;
   tls_live = true;
   if (expect_eof_race) {
     const native_io_backend_config backend_cfg = {
