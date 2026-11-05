@@ -46,6 +46,11 @@ static crypto_tls_stream *cnet_tls_stream(const cnet_tls_state *state) {
   return state != NULL ? (crypto_tls_stream *)state->engine : NULL;
 }
 
+int cnet_tls_sm2_crl_peer_policy_create(const cnet_tls_sm2_crl_config *config,
+    cnet_tls_peer_policy *out_policy) {
+  return cnet_tls_status(crypto_tls_sm2_crl_peer_policy_create(config, out_policy));
+}
+
 static int cnet_tls_wrap_context(crypto_tls_stream_context *provider, bool server,
                                   cnet_tls_context **out) {
   cnet_tls_context *context = calloc(1u, sizeof(*context));

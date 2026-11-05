@@ -142,23 +142,23 @@ static int entries(const salts_asn1_tlv *seq, span target, int64_t issued, unsig
   }
   return 1;
 }
-int salts_crypto_sm2_check_crl(const salts_crypto_sm2_cert_span *certificate,
+static int check_crl(const salts_crypto_sm2_cert_span *certificate,
     const salts_crypto_sm2_cert_span *issuer, int64_t now, const salts_crypto_sm2_crl_policy *policy) {
-  crypto_x509_der_view cert, ca; uint8_t key[65]; span ski = {0};
+  crypto_x509_der_view cert = {0}, ca; uint8_t key[65]; span ski = {0};
   salts_asn1_reader outer, body; salts_asn1_tlv seq, tbs, algorithm, signature, version, inner, name, first, last, value;
   int64_t issued, expires; unsigned revoked = 0;
-  if (!certificate || !issuer || !policy || !certificate->der || !certificate->size || certificate->size > 4096 ||
+  if (!issuer || !policy || (certificate && (!certificate->der || !certificate->size || certificate->size > 4096)) ||
       !issuer->der || !issuer->size || issuer->size > 4096 || !policy->der || !policy->size ||
       policy->size > SALTS_CRYPTO_SM2_CRL_MAX_BYTES || !policy->issuer_identity || !policy->issuer_identity_size ||
       policy->issuer_identity_size > 8191 || !policy->maximum_age_seconds || now < 0 || now > INT64_C(253402300799)) return SALTS_CRYPTO_EINVAL;
-  if (crypto_x509_der_inspect(certificate->der, certificate->size, &cert) != SALTS_ASN1_OK ||
-      crypto_x509_der_inspect(issuer->der, issuer->size, &ca) != SALTS_ASN1_OK ||
-      !serial((span){cert.serial_number, cert.serial_number_size}) ||
+  if (crypto_x509_der_inspect(issuer->der, issuer->size, &ca) != SALTS_ASN1_OK ||
       !salts_crypto_x509_valid_name(ca.subject_der, ca.subject_size) ||
-      !same((span){cert.issuer_der, cert.issuer_size}, (span){ca.subject_der, ca.subject_size}) ||
-      !salts_crypto_x509_valid_time(&cert, now) || !salts_crypto_x509_valid_time(&ca, now) ||
-      !certificate_profile(&cert, 0, &ski) || !certificate_profile(&ca, 1, &ski) ||
+      !salts_crypto_x509_valid_time(&ca, now) || !certificate_profile(&ca, 1, &ski) ||
       salts_crypto_sm2_x509_public_key(issuer->der, issuer->size, key) != SALTS_CRYPTO_OK) return SALTS_CRYPTO_EVERIFY;
+  if (certificate && (crypto_x509_der_inspect(certificate->der, certificate->size, &cert) != SALTS_ASN1_OK ||
+      !serial((span){cert.serial_number, cert.serial_number_size}) ||
+      !same((span){cert.issuer_der, cert.issuer_size}, (span){ca.subject_der, ca.subject_size}) ||
+      !salts_crypto_x509_valid_time(&cert, now) || !certificate_profile(&cert, 0, &ski))) return SALTS_CRYPTO_EVERIFY;
   if (!only((span){policy->der, policy->size}, &seq, 16, 1) || !children(&outer, &seq) ||
       !next(&outer, &tbs, 16, 1) || !next(&outer, &algorithm, 16, 1) ||
       !next(&outer, &signature, 3, 0) || !end(&outer) || signature.content_size < 2 || signature.content[0] ||
@@ -179,4 +179,15 @@ int salts_crypto_sm2_check_crl(const salts_crypto_sm2_cert_span *certificate,
       signature.content+1, signature.content_size-1, key, policy->issuer_identity, policy->issuer_identity_size) != SALTS_CRYPTO_OK)
     return SALTS_CRYPTO_EVERIFY;
   return revoked ? SALTS_CRYPTO_EVERIFY : SALTS_CRYPTO_OK;
+}
+
+int salts_crypto_sm2_check_crl(const salts_crypto_sm2_cert_span *certificate,
+    const salts_crypto_sm2_cert_span *issuer, int64_t now, const salts_crypto_sm2_crl_policy *policy) {
+  if (!certificate) return SALTS_CRYPTO_EINVAL;
+  return check_crl(certificate, issuer, now, policy);
+}
+
+int salts_crypto_sm2_validate_crl(const salts_crypto_sm2_cert_span *issuer,
+    int64_t now, const salts_crypto_sm2_crl_policy *policy) {
+  return check_crl(NULL, issuer, now, policy);
 }

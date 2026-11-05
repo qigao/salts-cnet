@@ -8,6 +8,10 @@ spec("SM2 full CRL admission") {
     salts_crypto_sm2_cert_span cert = {der, sizeof(der)}, issuer = cert;
     salts_crypto_sm2_crl_policy p = {der, sizeof(der), "id", 2, 0, 60};
     check_equal(salts_crypto_sm2_check_crl(&cert, &issuer, 0, &p), SALTS_CRYPTO_EVERIFY);
+    check_equal(salts_crypto_sm2_validate_crl(&issuer, 0, &p), SALTS_CRYPTO_EVERIFY);
+    check_equal(salts_crypto_sm2_validate_crl(NULL, 0, &p), SALTS_CRYPTO_EINVAL);
+    check_equal(salts_crypto_sm2_validate_crl(&issuer, -1, &p), SALTS_CRYPTO_EINVAL);
+    check_equal(salts_crypto_sm2_validate_crl(&issuer, 0, NULL), SALTS_CRYPTO_EINVAL);
     check_equal(salts_crypto_sm2_check_crl(NULL, &issuer, 0, &p), SALTS_CRYPTO_EINVAL);
     check_equal(salts_crypto_sm2_check_crl(&cert, NULL, 0, &p), SALTS_CRYPTO_EINVAL);
     check_equal(salts_crypto_sm2_check_crl(&cert, &issuer, 0, NULL), SALTS_CRYPTO_EINVAL);

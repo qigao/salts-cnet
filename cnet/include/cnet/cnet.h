@@ -6,6 +6,7 @@
 #include <cnet/resources.h>
 #include <cmeta_buffer.h>
 #include <crypto/tls_peer_policy.h>
+#include <crypto/tls_sm2_crl_policy.h>
 
 #include <stddef.h>
 #include <stdint.h>
@@ -368,6 +369,14 @@ typedef enum cnet_tls_security_profile {
  * Runs before CONNECTED; cannot bypass built-in TLS verification. See the
  * retain/release and concurrency contract in crypto/tls_peer_policy.h. */
 typedef crypto_tls_stream_peer_policy cnet_tls_peer_policy;
+typedef crypto_tls_sm2_crl_config cnet_tls_sm2_crl_config;
+
+/** Creates a retained direct-issuer SM2 CRL policy inside CNet's Crypto owner.
+ * Uses the snapshot contract in crypto/tls_sm2_crl_policy.h; returns SALTS status.
+ * Attach to client/server peer_policy, then release the caller's reference via
+ * policy.release(policy.context). Consumers link only Salts::CNet. */
+int cnet_tls_sm2_crl_peer_policy_create(const cnet_tls_sm2_crl_config *config,
+    cnet_tls_peer_policy *out_policy);
 
 /**
  * Per-connection client policy. The configuration is consumed synchronously

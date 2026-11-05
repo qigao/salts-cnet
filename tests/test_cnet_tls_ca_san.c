@@ -270,6 +270,7 @@ typedef struct tls_case_options {
   const cnet_tls_peer_policy *client_peer_policy;
   const cnet_tls_peer_policy *server_peer_policy;
   bool release_tls_context_early;
+  cnet_tls_peer_policy *release_peer_policy;
   bool stream_transfer;
   bool pool_reuse;
 } tls_case_options;
@@ -383,6 +384,10 @@ static int run_case(const tls_case_options *options) {
     REQUIRE(cnet_manager_connect(&manager, managed, &connect_options, &outbound) == SALTS_OK);
   } else {
     REQUIRE(cnet_connect(&client, &connect_options, &outbound) == SALTS_OK);
+  }
+  if (options->release_peer_policy != NULL) {
+    options->release_peer_policy->release(options->release_peer_policy->context);
+    memset(options->release_peer_policy, 0, sizeof(*options->release_peer_policy));
   }
   if (options->stream_transfer) {
     outgoing = mem_get_buffer(mem_global(), TLS_STREAM_CONTROL_BYTES);
@@ -1378,8 +1383,11 @@ cleanup:
 }
 
 #include "tls_peer_policy_cases.h"
+#include "tls_sm2_crl_policy_cases.h"
 
 static int saltscore_original_entry_test_cnet_tls_ca_san_c(int argc, char **argv) {
+  if (argc == 14 && strcmp(argv[1], "--shangmi-crl-policy") == 0)
+    return run_cnet_crl_policy_case(argv);
   if (argc == 9 && strcmp(argv[1], "--shangmi-required-server") == 0) {
     if (strcmp(argv[7], "accept") != 0 && strcmp(argv[7], "reject") != 0) return 2;
     return run_python_ssl_server(argv[2], "shangmi13", argv[3], argv[4],

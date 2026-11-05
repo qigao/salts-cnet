@@ -51,6 +51,13 @@ int salts_crypto_sm2_check_crl(const salts_crypto_sm2_cert_span *certificate,
     const salts_crypto_sm2_cert_span *issuer, int64_t validation_time,
     const salts_crypto_sm2_crl_policy *policy);
 
+/* Authenticate a complete CRL snapshot without checking a target serial.
+ * Same issuer/profile/freshness/number/entry limits as check_crl. The issuer
+ * must be authenticated by the caller. OK does not mean any peer is unrevoked;
+ * call check_crl for that peer at admission time, using the current time. */
+int salts_crypto_sm2_validate_crl(const salts_crypto_sm2_cert_span *issuer,
+    int64_t validation_time, const salts_crypto_sm2_crl_policy *policy);
+
 #ifdef __cplusplus
 }
 #endif
