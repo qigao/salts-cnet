@@ -98,34 +98,43 @@ spec("Opaque Crypto streams retain policy and bounded storage") {
   for (unsigned encoding = 1u; encoding <= 2u; ++encoding) {
     for (unsigned bad = 1u; bad <= 19u; ++bad) {
       it("memory credentials encoding %u reject invalid input %u without a context", encoding, bad) {
-        tls_memory_contexts(encoding, bad, 0u);
+        tls_memory_contexts(encoding, bad, 0u, 0u);
       }
     }
-    for (unsigned version = 12u; version <= 13u; ++version) {
-      it("memory credentials encoding %u survive source erasure for TLS %u", encoding, version) {
-        tls_memory_contexts(encoding, 0u, version);
-        bool complete[2] = {false, false};
-        for (unsigned i = 0u; i < 2u; ++i) {
-          check_equal(crypto_tls_stream_create(stream_context[i], i != 0u,
-              i ? NULL : "localhost", 32768u, &stream_pair[i]), CRYPTO_TLS_STREAM_OK);
-          crypto_tls_stream_context_release(stream_context[i]); stream_context[i] = NULL;
-          check_equal(crypto_tls_stream_set_protocol_range(stream_pair[i], 12, 13), CRYPTO_TLS_STREAM_ENOTSUP);
-          check_equal(crypto_tls_stream_set_protocol_range(stream_pair[i], 0, 0), CRYPTO_TLS_STREAM_OK);
-          check_equal(crypto_tls_stream_set_protocol_range(stream_pair[i], version, version), CRYPTO_TLS_STREAM_OK);
-        }
-        for (unsigned step = 0u; step < 128u && !(complete[0] && complete[1]); ++step) {
+    for (unsigned encrypted = 2u; encrypted <= 18u; ++encrypted) {
+      if (encrypted == 17u) continue; /* Empty-password positive below. */
+      it("encrypted memory credentials encoding %u reject invalid input %u", encoding, encrypted) {
+        tls_memory_contexts(encoding, 0u, 0u, encrypted);
+      }
+    }
+    for (unsigned password_case = 0u; password_case <= 2u; ++password_case) {
+      unsigned encrypted = password_case == 2u ? 17u : password_case;
+      for (unsigned version = 12u; version <= 13u; ++version) {
+        it("memory credentials encoding %u encrypted %u survive source erasure for TLS %u", encoding, encrypted, version) {
+          tls_memory_contexts(encoding, 0u, version, encrypted);
+          bool complete[2] = {false, false};
           for (unsigned i = 0u; i < 2u; ++i) {
-            check_equal(crypto_tls_stream_handshake(stream_pair[i], &complete[i]), CRYPTO_TLS_STREAM_OK);
-            transfer_stream_cipher(i, 1u - i);
+            check_equal(crypto_tls_stream_create(stream_context[i], i != 0u,
+                i ? NULL : "localhost", 32768u, &stream_pair[i]), CRYPTO_TLS_STREAM_OK);
+            crypto_tls_stream_context_release(stream_context[i]); stream_context[i] = NULL;
+            check_equal(crypto_tls_stream_set_protocol_range(stream_pair[i], 12, 13), CRYPTO_TLS_STREAM_ENOTSUP);
+            check_equal(crypto_tls_stream_set_protocol_range(stream_pair[i], 0, 0), CRYPTO_TLS_STREAM_OK);
+            check_equal(crypto_tls_stream_set_protocol_range(stream_pair[i], version, version), CRYPTO_TLS_STREAM_OK);
           }
+          for (unsigned step = 0u; step < 128u && !(complete[0] && complete[1]); ++step) {
+            for (unsigned i = 0u; i < 2u; ++i) {
+              check_equal(crypto_tls_stream_handshake(stream_pair[i], &complete[i]), CRYPTO_TLS_STREAM_OK);
+              transfer_stream_cipher(i, 1u - i);
+            }
+          }
+          check(complete[0] && complete[1]);
+          bool written = false, closed = false;
+          char byte = 0; size_t size = 0u;
+          check_equal(crypto_tls_stream_write(stream_pair[0], "M", 1u, &written), CRYPTO_TLS_STREAM_OK);
+          check_true(written); transfer_stream_cipher(0u, 1u);
+          check_equal(crypto_tls_stream_read(stream_pair[1], &byte, 1u, &size, &closed), CRYPTO_TLS_STREAM_OK);
+          check_equal(size, (size_t)1u); check_equal(byte, 'M'); check_false(closed);
         }
-        check(complete[0] && complete[1]);
-        bool written = false, closed = false;
-        char byte = 0; size_t size = 0u;
-        check_equal(crypto_tls_stream_write(stream_pair[0], "M", 1u, &written), CRYPTO_TLS_STREAM_OK);
-        check_true(written); transfer_stream_cipher(0u, 1u);
-        check_equal(crypto_tls_stream_read(stream_pair[1], &byte, 1u, &size, &closed), CRYPTO_TLS_STREAM_OK);
-        check_equal(size, (size_t)1u); check_equal(byte, 'M'); check_false(closed);
       }
     }
   }
