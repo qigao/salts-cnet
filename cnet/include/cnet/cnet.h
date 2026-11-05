@@ -5,6 +5,7 @@
 #include <native_io.h>
 #include <cnet/resources.h>
 #include <cmeta_buffer.h>
+#include <crypto/tls_peer_policy.h>
 
 #include <stddef.h>
 #include <stdint.h>
@@ -363,6 +364,11 @@ typedef enum cnet_tls_security_profile {
   CNET_TLS_SECURITY_PROFILE_TLCP11 = 2
 } cnet_tls_security_profile;
 
+/** Crypto-owned authenticated-peer policy and callback-scoped certificate views.
+ * Runs before CONNECTED; cannot bypass built-in TLS verification. See the
+ * retain/release and concurrency contract in crypto/tls_peer_policy.h. */
+typedef crypto_tls_stream_peer_policy cnet_tls_peer_policy;
+
 /**
  * Per-connection client policy. The configuration is consumed synchronously
  * by `cnet_connect()` and is not retained. Peer and hostname verification are
@@ -385,6 +391,8 @@ typedef struct cnet_tls_client_config {
   size_t alpn_protocol_count;
   /** Explicit security profile; zero retains verified STANDARD TLS. */
   cnet_tls_security_profile security_profile;
+  /** Optional extra admission; descriptor copied, context retained until quiescence. */
+  const cnet_tls_peer_policy *peer_policy;
 } cnet_tls_client_config;
 
 /** Configuration copied into a reusable server context during initialization. */
@@ -410,6 +418,8 @@ typedef struct cnet_tls_server_config {
   size_t alpn_protocol_count;
   /** Explicit security profile; zero retains verified STANDARD TLS. */
   cnet_tls_security_profile security_profile;
+  /** Optional extra admission; requires REQUIRED client authentication. */
+  const cnet_tls_peer_policy *peer_policy;
 } cnet_tls_server_config;
 
 typedef struct cnet_connect_options {

@@ -61,6 +61,8 @@ func TestShangMiMutual(t *testing.T) {
 	}
 	server, client := credentials(t, nil), clientCredentials(t, nil)
 	t.Run("verified_distinct_trust_roots", func(t *testing.T) { mutual(t, server, client, "accept") })
+	t.Run("reject_client_peer_policy", func(t *testing.T) { mutual(t, server, client, "reject-policy-client") })
+	t.Run("reject_server_peer_policy", func(t *testing.T) { mutual(t, server, client, "reject-policy-server") })
 	t.Run("reject_missing_client", func(t *testing.T) {
 		missing := client
 		missing.certPath, missing.keyPath, missing.leaf = "", "", nil

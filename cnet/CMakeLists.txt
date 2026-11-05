@@ -113,6 +113,7 @@ endif()
 target_include_directories(saltscore_cnet
   PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+    $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/crypto/include>
     $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
   PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/src"

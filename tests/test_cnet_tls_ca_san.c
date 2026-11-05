@@ -267,6 +267,9 @@ typedef struct tls_case_options {
   const char *expected_server_fingerprint;
   const char *expected_client_fingerprint;
   const char *expected_server_binding;
+  const cnet_tls_peer_policy *client_peer_policy;
+  const cnet_tls_peer_policy *server_peer_policy;
+  bool release_tls_context_early;
   bool stream_transfer;
   bool pool_reuse;
 } tls_case_options;
@@ -306,14 +309,16 @@ static int run_case(const tls_case_options *options) {
       .client_auth = options->server_ca_file != NULL
                          ? CNET_TLS_CLIENT_AUTH_REQUIRED
                          : CNET_TLS_CLIENT_AUTH_NONE,
-      .security_profile = options->security_profile};
+      .security_profile = options->security_profile,
+      .peer_policy = options->server_peer_policy};
   const cnet_tls_client_config client_tls_cfg = {
       .size = sizeof(cnet_tls_client_config),
       .ca_file = options->ca_file,
       .cert_file = options->client_cert_file,
       .key_file = options->client_key_file,
       .server_name = options->verified_hostname,
-      .security_profile = options->security_profile};
+      .security_profile = options->security_profile,
+      .peer_policy = options->client_peer_policy};
   tls_probe client_probe = {0}, server_probe = {0};
   cnet_connect_options connect_options = {0};
   cnet_connection outbound = {0};
@@ -402,6 +407,10 @@ static int run_case(const tls_case_options *options) {
     } else if (client_probe.terminal_count) break;
     REQUIRE(drive(&client, &server, &listener, &tls_server,
                   &server_probe, &accepted) == SALTS_OK);
+    if (accepted && tls_live && options->release_tls_context_early) {
+      REQUIRE(cnet_tls_server_destroy(&tls_server) == SALTS_OK);
+      tls_live = false;
+    }
   }
 
   REQUIRE(accepted);
@@ -1368,6 +1377,8 @@ cleanup:
   return result;
 }
 
+#include "tls_peer_policy_cases.h"
+
 static int saltscore_original_entry_test_cnet_tls_ca_san_c(int argc, char **argv) {
   if (argc == 9 && strcmp(argv[1], "--shangmi-required-server") == 0) {
     if (strcmp(argv[7], "accept") != 0 && strcmp(argv[7], "reject") != 0) return 2;
@@ -1378,8 +1389,10 @@ static int saltscore_original_entry_test_cnet_tls_ca_san_c(int argc, char **argv
     return run_python_ssl_client(argv[2], argv[3], argv[4], argv[5], "shangmi13-mtls", argv[6], argv[7]);
   if (argc == 12 && strcmp(argv[1], "--shangmi-mtls") == 0) {
     const bool success = strcmp(argv[8], "accept") == 0;
-    const bool server_rejection = strcmp(argv[8], "reject-server") == 0;
-    if ((!success && !server_rejection && strcmp(argv[8], "reject-client") != 0) ||
+    const bool policy_client = strcmp(argv[8], "reject-policy-client") == 0;
+    const bool policy_server = strcmp(argv[8], "reject-policy-server") == 0;
+    const bool server_rejection = strcmp(argv[8], "reject-server") == 0 || policy_server;
+    if ((!success && !server_rejection && !policy_client && strcmp(argv[8], "reject-client") != 0) ||
         ((strcmp(argv[6], "-") == 0) != (strcmp(argv[7], "-") == 0))) return 2;
     const tls_case_options mtls = {
         .label = "production CNet ShangMi REQUIRED-mTLS",
@@ -1392,7 +1405,8 @@ static int saltscore_original_entry_test_cnet_tls_ca_san_c(int argc, char **argv
         .security_profile = CNET_TLS_SECURITY_PROFILE_SHANGMI_TLS13,
         .expected_server_fingerprint = argv[9], .expected_client_fingerprint = argv[10],
         .expected_server_binding = argv[11]};
-    return run_case(&mtls);
+    return success || policy_client || policy_server
+        ? run_mutual_peer_policy_case(&mtls, policy_client, policy_server) : run_case(&mtls);
   }
   if (argc == 6 && strcmp(argv[1], "--shangmi-client") == 0)
     return run_python_ssl_client(argv[2], "-", argv[3], argv[4], "shangmi13", argv[5], "-");
@@ -1435,6 +1449,8 @@ static int saltscore_original_entry_test_cnet_tls_ca_san_c(int argc, char **argv
     return run_case(&required_mtls);
   }
   if (argc != 1) return 2;
+  result = run_peer_policy_cases();
+  if (result) return result;
   const tls_case_options trusted = {
       .label = "trusted CA + correct DNS",
       .ca_file = CORE_TLS_TEST_P384_CA,

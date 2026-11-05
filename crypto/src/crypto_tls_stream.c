@@ -117,6 +117,7 @@ struct crypto_tls_stream {
   bool server;
   bool handshake_started;
   bool handshake_complete;
+  int handshake_error;
   bool peer_close_notify;
   bool shutdown_started;
   bool close_notify_started;
@@ -143,6 +144,7 @@ struct crypto_tls_stream_context {
   bool verify_peer;
   bool native_system_trust;
   crypto_tls_stream_security_profile security_profile;
+  crypto_tls_stream_peer_policy peer_policy;
 };
 
 typedef struct crypto_tls_stream_gmssl_state {
@@ -798,6 +800,8 @@ static void crypto_tls_stream_context_dispose(crypto_tls_stream_context *context
     if (context->tls_ready[index]) tls_ctx_cleanup(&context->tls[index]);
   }
   crypto_tls_stream_alpn_dispose(context);
+  if (context->peer_policy.release != NULL)
+    context->peer_policy.release(context->peer_policy.context);
   crypto_tls_stream_free(context);
 }
 
@@ -819,6 +823,7 @@ static int crypto_tls_stream_context_create_common(
     const char *cert_file, const char *key_file, const char *key_password,
     crypto_tls_stream_client_auth client_auth, const char *const *alpn_protocols,
     size_t alpn_protocol_count, crypto_tls_stream_security_profile security_profile,
+    const crypto_tls_stream_peer_policy *peer_policy,
     crypto_tls_stream_context **out_context) {
   crypto_tls_stream_context *context;
   size_t index;
@@ -826,6 +831,11 @@ static int crypto_tls_stream_context_create_common(
 
   if (out_context == NULL) return CRYPTO_TLS_STREAM_EINVAL;
   *out_context = NULL;
+
+  if (peer_policy != NULL &&
+      (!verify_peer || peer_policy->check == NULL ||
+       peer_policy->retain == NULL || peer_policy->release == NULL))
+    return CRYPTO_TLS_STREAM_EINVAL;
 
   context = (crypto_tls_stream_context *)crypto_tls_stream_calloc(1u, sizeof(*context));
   if (context == NULL) return CRYPTO_TLS_STREAM_ENOMEM;
@@ -863,6 +873,10 @@ static int crypto_tls_stream_context_create_common(
     }
   }
 
+  if (peer_policy != NULL) {
+    context->peer_policy = *peer_policy;
+    context->peer_policy.retain(context->peer_policy.context);
+  }
   *out_context = context;
   return CRYPTO_TLS_STREAM_OK;
 }
@@ -900,7 +914,7 @@ int crypto_tls_stream_client_context_create(const crypto_tls_stream_client_confi
       false, true, config->ca_file, config->ca_path, config->cert_file,
       config->key_file, config->key_password, CRYPTO_TLS_STREAM_CLIENT_AUTH_NONE,
       config->alpn_protocols, config->alpn_protocol_count,
-      config->security_profile, &context);
+      config->security_profile, config->peer_policy, &context);
   if (status != CRYPTO_TLS_STREAM_OK) return status;
   if (config->server_name != NULL)
     crypto_tls_stream_copy(CRYPTO_TLS_TEST_COPY_METADATA, context->client_server_name, config->server_name,
@@ -943,7 +957,7 @@ int crypto_tls_stream_server_context_create(const crypto_tls_stream_server_confi
       true, config->client_auth == CRYPTO_TLS_STREAM_CLIENT_AUTH_REQUIRED,
       config->ca_file, config->ca_path, config->cert_file, config->key_file,
       config->key_password, config->client_auth, config->alpn_protocols,
-      config->alpn_protocol_count, config->security_profile, &context);
+      config->alpn_protocol_count, config->security_profile, config->peer_policy, &context);
   if (status != CRYPTO_TLS_STREAM_OK) return status;
   *out_context = context;
   return CRYPTO_TLS_STREAM_OK;
@@ -1469,6 +1483,18 @@ static int crypto_tls_stream_finish_handshake(crypto_tls_stream *state,
     state->negotiated_alpn_size = alpn_size;
   }
 
+  if (state->context->peer_policy.check != NULL) {
+    const uint8_t *der = NULL;
+    size_t size = 0u;
+    crypto_tls_stream_peer_certificate_chain chain;
+    if (crypto_tls_stream_peer_chain(&engine->connection, &der, &size) != 1 ||
+        crypto_tls_stream_peer_certificate_chain_parse(der, size, &chain) != CRYPTO_TLS_STREAM_OK ||
+        chain.count == 0u ||
+        state->context->peer_policy.check(state->context->peer_policy.context,
+            &chain, !state->server, state->context->security_profile) != CRYPTO_TLS_STREAM_OK)
+      return CRYPTO_TLS_STREAM_ECONNABORTED;
+  }
+
   state->handshake_complete = true;
   *out_complete = true;
   return CRYPTO_TLS_STREAM_OK;
@@ -1484,12 +1510,16 @@ int crypto_tls_stream_handshake(crypto_tls_stream *state, bool *out_complete) {
     return CRYPTO_TLS_STREAM_EINVAL;
   *out_complete = state->handshake_complete;
   if (state->handshake_complete) return CRYPTO_TLS_STREAM_OK;
+  if (state->handshake_error != CRYPTO_TLS_STREAM_OK) return state->handshake_error;
 
   state->handshake_started = true;
   result = tls_do_handshake(&engine->connection);
-  if (result != 1 && !crypto_tls_stream_retryable(result))
-    return CRYPTO_TLS_STREAM_ECONNABORTED;
+  if (result != 1 && !crypto_tls_stream_retryable(result)) {
+    state->handshake_error = CRYPTO_TLS_STREAM_ECONNABORTED;
+    return state->handshake_error;
+  }
   status = crypto_tls_stream_finish_handshake(state, out_complete);
+  if (status != CRYPTO_TLS_STREAM_OK) state->handshake_error = status;
   return status;
 }
 

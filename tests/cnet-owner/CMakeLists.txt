@@ -35,6 +35,7 @@ set_target_properties(saltscore_cnet_original_test_owner PROPERTIES
   C_STANDARD_REQUIRED ON C_EXTENSIONS OFF
   POSITION_INDEPENDENT_CODE ON C_VISIBILITY_PRESET hidden)
 target_include_directories(saltscore_cnet_original_test_owner
+  PUBLIC "${PROJECT_SOURCE_DIR}/crypto/include"
   PRIVATE
     "${PROJECT_SOURCE_DIR}/core/include"
     "${PROJECT_SOURCE_DIR}/platform/include"
