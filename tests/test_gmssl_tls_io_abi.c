@@ -50,6 +50,7 @@ static crypto_tls_stream_context *stream_context[2];
 static crypto_tls_stream *stream_pair[2];
 
 #include "tls_memory_credentials_cases.h"
+#include "tls_hrr_padding_cases.h"
 
 static void transfer_stream_cipher(unsigned from, unsigned to) {
   uint8_t wire[32768];
@@ -103,6 +104,11 @@ spec("Opaque Crypto streams retain policy and bounded storage") {
     for (unsigned i = 0; i < 2u; ++i) {
       crypto_tls_stream_destroy(stream_pair[i]);
       crypto_tls_stream_context_release(stream_context[i]);
+    }
+  }
+  for (unsigned scenario = 0u; scenario < 15u; ++scenario) {
+    it("TLS13 HRR admits only permitted ClientHello2 padding changes, case %u", scenario) {
+      tls_test_hrr_padding(scenario);
     }
   }
   it("TLS13 range server rejects a ClientHello offering only TLS12 suites before ServerHello") {
