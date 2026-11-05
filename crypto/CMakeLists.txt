@@ -48,6 +48,7 @@ add_library(salts_crypto STATIC
   src/crypto_sm2.c
   src/crypto_sm3.c
   src/crypto_sm4.c
+  src/crypto_sm9.c
   src/crypto_zuc.c
   src/crypto_random.c
   src/asn1/crypto.c

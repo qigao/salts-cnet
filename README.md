@@ -70,7 +70,7 @@ See [architecture](docs/ARCHITECTURE.md) for ownership and migration gates.
 The default graph builds the whole CNet transport source tree, including the
 original IPC FIFO, peer index and native-path changes. Production CNet links
 the first-party static `Salts::Crypto` facade and the **separately installed**
-vcpkg `GmSSL::GmSSL` static library (GmSSL 3.2.0#18). No local native GmSSL
+vcpkg `GmSSL::GmSSL` static library (GmSSL 3.2.0#20). No local native GmSSL
 source mirror is compiled into `Salts::Crypto`; Ed448 remains first-party
 under `crypto/vendor/libecc/`. CNet is the single production DSO owner of the
 linked native TLS implementation; two independently loaded plugins must import
@@ -118,13 +118,13 @@ production-only consumers may explicitly disable the TinyTest library.
 
 The checked-in vcpkg manifest declares GmSSL and CNet dependencies directly.
 Compiler/host-data Actions use published `qigao/vcpkg-cache@v0.1.0`.
-The dependency setup Action is pinned to `a561c4c3179331e2f2cf3c68c6116cfb9e3db00b`,
+The dependency setup Action is pinned to `0d99dc18f4d9652c0c9f8b0768ec3ce28b6e2001`,
 which supplies native Windows pkg-config and preserves `PKG_CONFIG` in vcpkg's
 port environment. The manifest requests `pkgconf` only on non-Windows targets;
 Windows uses that native host tool without acquiring pkg-config from MSYS2.
-The custom registry selects `reference: fix/gmssl-tls12-negotiation` and
-pins baseline `a561c4c3179331e2f2cf3c68c6116cfb9e3db00b`. GmSSL 3.2.0#18
-adds TLS 1.2 range negotiation and RSA-PSS verification; its complete port
+The custom registry selects `reference: 0d99dc18f4d9652c0c9f8b0768ec3ce28b6e2001` and
+pins baseline `0d99dc18f4d9652c0c9f8b0768ec3ce28b6e2001`. GmSSL 3.2.0#20
+includes TLS 1.2 negotiation, RSA-PSS, enabled ShangMi algorithms and SM9 retry/secret cleanup; its complete port
 tree is pinned in the Crypto source lock. The pinned vcpkg-make helper also
 excludes MSYS pkgconf from its Windows autotools bundle and requires the
 configured native PKG_CONFIG. These dependency updates are under review.
