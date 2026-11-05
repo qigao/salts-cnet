@@ -31,3 +31,13 @@ add_executable(salts_crypto_sm9_exchange_test sm9_exchange_test.c)
 target_link_libraries(salts_crypto_sm9_exchange_test PRIVATE Salts::Crypto Salts::TinyTest)
 add_test(NAME crypto.algorithms.sm9_exchange COMMAND salts_crypto_sm9_exchange_test)
 set_tests_properties(crypto.algorithms.sm9_exchange PROPERTIES TIMEOUT 120)
+
+add_executable(salts_crypto_sm2_exchange_test sm2_exchange_test.c)
+target_link_libraries(salts_crypto_sm2_exchange_test PRIVATE Salts::Crypto Salts::TinyTest)
+add_test(NAME crypto.algorithms.sm2_exchange COMMAND salts_crypto_sm2_exchange_test)
+set_tests_properties(crypto.algorithms.sm2_exchange PROPERTIES TIMEOUT 120)
+
+add_executable(salts_crypto_sm2_exchange_vectors sm2_exchange_vectors.c)
+target_link_libraries(salts_crypto_sm2_exchange_vectors PRIVATE Salts::Crypto Salts::TinyTest GmSSL::GmSSL)
+add_test(NAME crypto.algorithms.sm2_exchange_vectors COMMAND salts_crypto_sm2_exchange_vectors)
+set_tests_properties(crypto.algorithms.sm2_exchange_vectors PROPERTIES TIMEOUT 120)

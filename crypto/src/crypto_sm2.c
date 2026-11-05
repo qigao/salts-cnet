@@ -20,9 +20,14 @@ static int import_public(SM2_KEY *key, const uint8_t raw[65]) {
 int salts_crypto_sm2_public_key(const uint8_t raw[32], uint8_t pub[65]) {
   SM2_KEY key = {0};
   if (!raw || !pub || salts_crypto_overlap(raw, 32u, pub, 65u)) return SALTS_CRYPTO_EINVAL;
-  int status = import_private(&key, raw);
-  if (status == SALTS_CRYPTO_OK && sm2_z256_point_to_uncompressed_octets(&key.public_key, pub) != 1)
-    status = SALTS_CRYPTO_ECRYPTO;
+  /* Public derivation admits the full group range, including exchange-only
+   * scalar N-1. Signing still excludes it because (1+d)^-1 is undefined. */
+  sm2_z256_from_bytes(key.private_key, raw);
+  int status = SALTS_CRYPTO_EINVAL;
+  if (!sm2_z256_is_zero(key.private_key) && sm2_z256_cmp(key.private_key, sm2_z256_order()) < 0) {
+    sm2_z256_point_mul_generator(&key.public_key, key.private_key);
+    status = sm2_z256_point_to_uncompressed_octets(&key.public_key, pub) == 1 ? SALTS_CRYPTO_OK : SALTS_CRYPTO_ECRYPTO;
+  }
   salts_crypto_secure_zero(&key, sizeof(key));
   if (status != SALTS_CRYPTO_OK) salts_crypto_secure_zero(pub, 65u);
   return status;

@@ -16,7 +16,7 @@ source or falls back to plaintext.
 | ZUC | ZUC128/256 whole-message encryption and bit-length MAC/verification | Known keystream/MAC answers, all tag sizes, ignored unused final bits, corrupt tag, key/length rejection |
 | SM9 signature/encryption/KEM | Public identity-based signing, XOR encryption and KEM; fixed canonical key points and DER messages | Published signature/KEM/encryption vectors, scripted nonce/failure paths, finite prime-order subgroup admission, DER/tamper/identity negatives and output erasure; cross-platform CI required |
 | SM9 key exchange | First-party bounded exchange over existing GmSSL primitives, with mandatory mutual key confirmation and distinct exchange keys | Published session-key and both confirmation vectors; identity/master/purpose binding, wrong phase, forged/replayed confirmations, RNG failure, cancellation and erasure; cross-platform CI required |
-| SM2 full authenticated key exchange | Pending; ordinary ECDH must not be advertised as this protocol | No production claim |
+| SM2 full authenticated key exchange | GB/T 32918.3 curveSM2 agreement with explicit static peer trust, Z bindings and mandatory mutual confirmation | GB/T 32918.5 Annex B shares/key/confirmation vectors; independent gmsm key vector; identity/static-key mismatch, invalid points, infinity sum, zero combined scalar, RNG/phase/replay/erasure; cross-platform CI required |
 | CMS / SM2 certificate and protected key workflows | CMS enabled in provider; public workflow qualification pending | Generic ASN1 parsing and existing X509 inspection alone do not qualify signing/trust/key protection |
 | TLS 1.3 ShangMi / TLCP | Existing explicit stream profiles; complete independent handshake/authentication matrix remains separate | Existing provider settings/KATs do not replace protocol interoperation |
 | DTLS | Issue #188 resumed; implementation and CNet/SCTP qualification pending | Existing TLS tests do not qualify DTLS |
@@ -70,6 +70,37 @@ recipient, zero-nonce retry/exhaustion and failure erasure. These functional
 tests do not establish constant-time execution of the underlying pairing and
 scalar arithmetic; side-channel qualification remains a production gate for
 deployments exposing private-key operations to local or timing attackers.
+
+### SM2 confirmed agreement
+
+`crypto/sm2_exchange.h` implements full curveSM2 key agreement, including
+`t=d+xbar*r mod n`, the peer's static/ephemeral point combination, Z(identity,
+static-key) binding, SM3 KDF and both confirmation values. It requires the
+caller's authenticated peer static public key and explicit identities; it does
+not establish trust through certificate inspection or by receiving a key.
+Only the fixed curveSM2 domain (cofactor 1) is admitted. Public derivation and
+exchange admit private scalars through N-1; signing continues to reject N-1.
+
+The start/respond/finish sequence follows the SM9 confirmed exchange lifecycle
+below, with a caller-owned 1536-byte context, identities of 1..8191 bytes and
+session keys of 1..1024 bytes. Identities are consumed into Z hashes during
+admission; no identity/private-key buffer is borrowed. Only the combined scalar
+and transcript needed for the next step are retained. A responder retains its
+pending derived key until initiator confirmation. Both finishes erase context,
+including on admitted peer/state failure; clear cancels a pending exchange.
+Parameter/overlap errors preserve live state. Zero nonces/combined scalars have
+bounded retries; infinity combinations and all-zero derived keys fail.
+
+`crypto.algorithms.sm2_exchange_vectors` verifies shares, the session key and
+both confirmation values from [GB/T 32918.5 Annex B](https://www.gmbz.org.cn/upload/2018-07-24/1532401863206085511.pdf),
+plus an independent non-default-identity key vector from
+[gmsm v0.41.1](https://github.com/emmansun/gmsm/blob/v0.41.1/sm2/sm2_keyexchange_test.go).
+Its RNG override exists only in that formal test executable. Production uses
+the provider CSPRNG; no duplicate curve/arithmetic implementation is built.
+`crypto.algorithms.sm2_exchange` covers identity/static-key authentication
+negatives, phase/replay, input ownership, capacity, cancellation and erasure.
+These tests establish functional correctness; private-key arithmetic still
+needs the separate side-channel qualification gate, as does SM9.
 
 ### SM9 confirmed exchange
 
