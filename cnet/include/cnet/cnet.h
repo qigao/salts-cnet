@@ -10,6 +10,7 @@
 #include <crypto/tls_sm2_crl_policy.h>
 #include <crypto/tls_credentials.h>
 #include <crypto/tls_cipher.h>
+#include <crypto/tls_signature.h>
 
 #include <stddef.h>
 #include <stdint.h>
@@ -388,6 +389,7 @@ typedef crypto_tls_stream_peer_policy cnet_tls_peer_policy;
 typedef crypto_tls_sm2_crl_config cnet_tls_sm2_crl_config;
 typedef crypto_tls_data cnet_tls_data;
 typedef crypto_tls_cipher_suite cnet_tls_cipher_suite;
+typedef crypto_tls_signature_scheme cnet_tls_signature_scheme;
 typedef crypto_tls_credentials cnet_tls_credentials;
 
 /** Creates a retained direct-issuer SM2 CRL policy inside CNet's Crypto owner.
@@ -459,6 +461,9 @@ typedef struct cnet_tls_client_config {
    * as crypto_tls_stream_client_config.cipher_suites. NULL/0 keeps defaults. */
   const cnet_tls_cipher_suite *cipher_suites;
   size_t cipher_suite_count;
+  /** Same copied signature-list contract as Crypto TLS stream configuration. */
+  const cnet_tls_signature_scheme *signature_algorithms;
+  size_t signature_algorithm_count;
 } cnet_tls_client_config;
 
 /** Configuration copied into a reusable server context during initialization. */
@@ -504,6 +509,9 @@ typedef struct cnet_tls_server_config {
    * as crypto_tls_stream_client_config.cipher_suites. NULL/0 keeps defaults. */
   const cnet_tls_cipher_suite *cipher_suites;
   size_t cipher_suite_count;
+  /** Same copied signature-list contract as Crypto TLS stream configuration. */
+  const cnet_tls_signature_scheme *signature_algorithms;
+  size_t signature_algorithm_count;
 } cnet_tls_server_config;
 
 typedef struct cnet_connect_options {

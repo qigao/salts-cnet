@@ -184,8 +184,7 @@ STANDARD permits TLS_AES_128_GCM_SHA256 for TLS 1.3, and
 TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256 / TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256 for
 TLS 1.2. SHANGMI_TLS13 permits TLS_SM4_GCM_SM3; TLCP11 permits its distinct
 ECC_SM4_GCM_SM3 identifier. These are restrictions of the qualified profile,
-not a pass-through to every suite the provider recognizes. Signature/group
-selection remains the existing profile policy.
+not a pass-through to every suite the provider recognizes. Signature selection has its own list below; group selection retains profile defaults.
 
 Each enabled protocol version must have a permitted suite, and every supplied
 suite must apply to the context's profile and version bounds. For TLS 1.3 only,
@@ -207,6 +206,49 @@ caller-list erasure and direct stream narrowing. A TLS 1.3 ClientHello offering
 only TLS 1.2 suites must receive a fatal alert before any ServerHello. Independent
 Python TLS 1.2/1.3 and Go ShangMi/TLCP peers exercise explicit lists in both roles,
 including authenticated data/close and existing authentication negatives.
+
+### Signature policy
+
+Crypto/CNet contexts accept `signature_algorithms` / `signature_algorithm_count`.
+NULL/0 keeps defaults; an explicit list contains 1..4 unique public
+`crypto_tls_signature_scheme` identifiers. Initialization copies the list into
+every enabled provider variant. Source arrays can be overwritten immediately,
+and stream-level version narrowing cannot restore excluded schemes.
+
+STANDARD admits RSA-PKCS1-SHA256, RSA-PSS-RSAE-SHA256, ECDSA-P256-SHA256 and
+ECDSA-P384-SHA384. TLS 1.2 excludes RSA-PSS in this qualified implementation;
+TLS 1.3 admits PKCS1 for certificate signatures only, and needs another scheme
+for CertificateVerify. ECDSA-P384 supports verification of the existing P384
+certificate profile; this does not add P384 private-key loading. SHANGMI/TLCP
+admit only SM2/SM3. Unknown schemes/profile/version conflicts and lists with
+no handshake-capable scheme for an enabled version fail with ENOTSUP before
+allocation/trust loading. Pointer/count mismatches, duplicates and excess count
+fail with EINVAL. A valid list still requires compatible keys, certificates,
+peer offers, trust and identity; it does not bypass authentication checks.
+
+The list constrains handshake signatures and certificate-chain signatures.
+There is no independently configurable certificate-signature list. GmSSL #26
+preserves the certificate list while filtering PKCS1 out of TLS 1.3 handshake
+selection, so PKCS1-before-PSS order cannot select an invalid CertificateVerify.
+Without `signature_algorithms_cert`, signature_algorithms also supplies the
+certificate policy, as required by
+[RFC 8446 §4.2.3](https://www.rfc-editor.org/rfc/rfc8446.html#section-4.2.3).
+The top presented certificate is checked with its authenticated locally trusted
+issuer even when that issuer was not sent. The trust anchor's own signature is
+exempt. This applies to both server and REQUIRED-client authentication.
+
+Explicit signature lists with iOS implicit system trust return ENOTSUP because
+the provider cannot obtain the native trust bridge's terminal issuer key;
+explicit anchors retain the normal contract. No iOS device qualification is
+claimed. Separate certificate-signature lists and general path building remain
+open work.
+
+Formal tests cover 26 fail-fast configurations, nine endpoint/version successes
+and three P384-issuer rejections, caller-array erasure, RSA range narrowing with
+PKCS1 first, and independent Python RSA mTLS / Go SM2 TLS/TLCP peers. Independently
+signed Go fixtures add 51 mTLS scenarios across file/PEM/DER inputs, including
+both endpoint policies, no common RSA/ECDSA scheme, and server-side rejection of
+P384-signed client certificates whose issuer is only loaded locally.
 
 ### Context protocol-version policy
 
@@ -232,7 +274,7 @@ failed widening and default selection preserve both TLS 1.2 and TLS 1.3
 connections. Independent Python peers exercise explicit bounds in both native
 directions; ShangMi and TLCP formal suites retain their profile checks.
 
-This does not add configurable signature/group lists, verification
+This does not add configurable group lists, verification
 time/depth/purpose or session restoration.
 
 ### TLCP stream qualification

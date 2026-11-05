@@ -107,6 +107,8 @@ int cnet_tls_client_context_create(const cnet_tls_client_config *config, cnet_tl
     policy.verification_depth = config->verification_depth;
     policy.cipher_suites = config->cipher_suites;
     policy.cipher_suite_count = config->cipher_suite_count;
+    policy.signature_algorithms = config->signature_algorithms;
+    policy.signature_algorithm_count = config->signature_algorithm_count;
   }
   status = cnet_tls_status(crypto_tls_stream_client_context_create(&policy, &provider));
   return status == SALTS_OK ? cnet_tls_wrap_context(provider, false, out_context) : status;
@@ -171,6 +173,8 @@ int cnet_tls_server_init(cnet_tls_server *server, const cnet_tls_server_config *
   policy.verification_depth = config->verification_depth;
   policy.cipher_suites = config->cipher_suites;
   policy.cipher_suite_count = config->cipher_suite_count;
+  policy.signature_algorithms = config->signature_algorithms;
+  policy.signature_algorithm_count = config->signature_algorithm_count;
   status = cnet_tls_status(crypto_tls_stream_server_context_create(&policy, &provider));
   if (status != SALTS_OK) return status;
   status = cnet_tls_wrap_context(provider, true, &context);

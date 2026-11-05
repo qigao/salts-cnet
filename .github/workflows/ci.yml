@@ -196,7 +196,7 @@ jobs:
         id: vcpkg
         # Keep the overlay source aligned with vcpkg-configuration.json (GmSSL #24).
         # Includes native Windows pkg-config; avoid MSYS2 for pkg-config.
-        uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-curl-cache@e96d56113a72bc8000f29c3ebf19626477f6fc41
+        uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-curl-cache@84fb64a3ef9221ae838ab0ac70296f4afee0bd03
         with:
           mode: read
           triplet: ${{ matrix.triplet }}
