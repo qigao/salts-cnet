@@ -23,7 +23,7 @@ source or falls back to plaintext.
 | SM2 complete direct CRL | Explicit issuer/SM2 signing ID, full-CRL scope, time/age/number policy and serial checking | Independent gmsm CRLs, real pinned-trust callback, revoked/stale/rollback/scope/DER negatives; cross-platform CI required |
 | CMS / SM2 certificate workflows | CMS enabled in provider; public workflow qualification pending | Generic ASN1 parsing and existing X509 inspection alone do not qualify signing or trust |
 | TLCP 1.1 ECC_SM4_GCM_SM3 | Explicit CNet client/server profile with dual SM2 server certificates | Independent GoTLCP bidirectional handshake/data/close, CA/DNS/IP/time/signature/KU negatives, local dual-identity admission and signature-extension/cipher rejection; cross-platform CI required |
-| TLS 1.3 ShangMi | Explicit CNet client/server RFC 8998 SM4-GCM profile with SM2 server authentication | Independent bidirectional handshake/data/close, certificate/CertificateVerify/Finished negatives, exact profile rejection, handshake fragmentation and abnormal EOF; cross-platform CI required |
+| TLS 1.3 ShangMi | Explicit CNet client/server RFC 8998 SM4-GCM profile with SM2 server authentication and REQUIRED-mTLS | Independent server-authenticated handshake/data/close, certificate/CertificateVerify/Finished negatives, exact profile rejection, fragmentation and abnormal EOF; native/native mTLS with independent certificates and digests; cross-platform CI required |
 | DTLS | Issue #188 resumed; implementation and CNet/SCTP qualification pending | Existing TLS tests do not qualify DTLS |
 | SDF / SKF hardware | Requires selected vendor runtime/device and its integration tests | No software fallback for non-exportable keys |
 
@@ -93,9 +93,25 @@ Finished processing while the CNet connection remains in handshake admission.
 
 The formal peer requires Go 1.26; CI selects it from this test module and
 caches all independent-peer modules together. The production dependency stays
-GmSSL 3.2.0#21. These cases qualify server authentication; ShangMi mutual
-authentication, revocation integration, resumption/key-update qualification,
-DTLS and hardware-backed keys remain separate gates.
+GmSSL 3.2.0#21. These independent protocol cases qualify server authentication.
+
+For mutual authentication, configure the client's SM2 certificate/key and set
+the server's `client_auth` to `CNET_TLS_CLIENT_AUTH_REQUIRED` with an explicit
+client CA. `saltscore.cnet_shangmi_required_mtls` runs ten cases with production
+CNet/NativeIO/GmSSL at both ends and independently generated SM2 identities.
+Distinct server and client roots are supported. Success checks the exact
+TLS 1.3 suite, both peer SHA-256 fingerprints, the server certificate's SM3
+`tls-server-end-point` binding, bidirectional application data and reciprocal
+close. Rejection cases cover missing client certificates, either untrusted
+issuer, expired/future client certificates, client KU/EKU and both certificate
+signatures. Authentication rejection must occur at handshake admission without
+plaintext delivery and must not be a timeout. Every case checks one terminal
+event per connection and successful stop/destroy of its transport owners.
+
+The mTLS case uses two instances of the same protocol implementation; independent
+mTLS protocol interoperation remains an open gate. Revocation integration,
+resumption/key-update qualification, DTLS and hardware-backed keys also remain
+separate gates.
 
 ## API use and boundaries
 
