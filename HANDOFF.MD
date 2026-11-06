@@ -263,6 +263,18 @@
 - Full native-release-user graph and ten selected formal CTests passed, covering
   248 purpose/control handshake scenarios and five provider extension cases.
 
+## 2026-11-06 Windows ARM64 startup observation (#260)
+
+- CI #370 failed the one-owner SG TLS-isolation case at sharded runtime creation,
+  before TLS setup; the original assertion discarded the constructor status.
+  Preserve owner count, backend kind and the returned status at this test boundary.
+  Keep the failing assertion and cleanup unchanged; do not retry construction.
+- The same job passed its purpose suites and later 2/4-owner cases; the other
+  nine matrix jobs passed. The root cause remains unknown under #260. Local x64
+  formal loopback repetition (`ctest --preset native-release-user -R
+  "^saltscore.cnet_tcp_loopback$" --repeat until-fail:64 --output-on-failure`)
+  passed all 64 runs. This does not qualify ARM64 or close the issue.
+
 ## 2026-11-06 TSan audio runtime package indexes
 
 - The private PulseAudio runtime is installed before the Linux capture SDK
