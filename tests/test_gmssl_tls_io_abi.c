@@ -1291,8 +1291,8 @@ spec("GmSSL established TLS 1.3 independent receive and send storage") {
   }
 }
 
-static size_t post_handshake_seal(TLS_CONNECT *sender, key_update_wire *wire,
-    uint8_t kind, const uint8_t *message, size_t size) {
+static size_t post_handshake_seal_padded(TLS_CONNECT *sender, key_update_wire *wire,
+    uint8_t kind, const uint8_t *message, size_t size, size_t padding) {
   uint8_t plain[TLS_MAX_RECORD_SIZE], encrypted[TLS_MAX_RECORD_SIZE];
   size_t encrypted_size = 0u;
   check(size <= TLS_MAX_PLAINTEXT_SIZE);
@@ -1303,12 +1303,17 @@ static size_t post_handshake_seal(TLS_CONNECT *sender, key_update_wire *wire,
   check_equal(tls13_record_encrypt(sender->cipher_suite,
       sender->is_client ? &sender->client_write_key : &sender->server_write_key,
       sender->is_client ? sender->client_write_iv : sender->server_write_iv, seq,
-      plain, 5u + size, 0u, encrypted, &encrypted_size), 1);
+      plain, 5u + size, padding, encrypted, &encrypted_size), 1);
   check(encrypted_size <= sizeof(wire->bytes) - wire->size);
   memcpy(wire->bytes + wire->size, encrypted, encrypted_size);
   wire->size += encrypted_size;
   tls_seq_num_incr(seq);
   return encrypted_size;
+}
+
+static size_t post_handshake_seal(TLS_CONNECT *sender, key_update_wire *wire,
+    uint8_t kind, const uint8_t *message, size_t size) {
+  return post_handshake_seal_padded(sender, wire, kind, message, size, 0u);
 }
 
 static void post_handshake_update_sender(TLS_CONNECT *sender) {
@@ -1536,6 +1541,255 @@ spec("GmSSL bounded ticket assembly and serialization") {
         check_equal(byte, valid ? payload : (uint8_t)0x5a);
         check_equal(conn[1].new_session_ticket, mode == 6u ? INT_MAX : !valid ? 0 : mode == 2u ? 2 : 1);
         if (valid) check_equal(conn[1].key_update, mode == 3u || mode == 4u ? 1 : 0);
+      }
+    }
+  }
+}
+
+typedef struct peer_spacing_fixture {
+  TLS_CTX ctx[2];
+  TLS_CONNECT conn[2];
+  tls_duplex_wire wire;
+  key_update_clock clock;
+} peer_spacing_fixture;
+
+static int peer_spacing_foreign_clock(void *user, uint64_t *now) {
+  (void)user;
+  *now = 100000u;
+  return 1;
+}
+
+static void peer_spacing_prepare(peer_spacing_fixture *f, unsigned role, unsigned suite_index,
+    uint32_t milliseconds, uint32_t bytes, uint32_t burst, uint32_t local_age) {
+  key_update_wire unused;
+  memset(f, 0, sizeof(*f));
+  f->clock.now = 100u;
+  timed_key_prepare(&f->ctx[0], &f->conn[0], &f->wire.incoming, &f->clock, !role, suite_index, 0u);
+  timed_key_prepare(&f->ctx[1], &f->conn[1], &unused, &f->clock, role, suite_index, local_age);
+  check_equal(tls13_ctx_set_peer_key_update_spacing(&f->ctx[1], milliseconds, bytes,
+      key_update_clock_sample, &f->clock), 1);
+  check_equal(tls13_ctx_set_peer_key_update_limit(&f->ctx[1], burst), 1);
+  TLS_IO io = {.user = &f->wire, .send = duplex_send, .recv = duplex_receive};
+  check_equal(tls_set_io(&f->conn[1], &io), 1);
+}
+
+static void peer_spacing_update(peer_spacing_fixture *f, uint8_t request, int expected) {
+  TLS_CONNECT *receiver = &f->conn[1];
+  const uint8_t update[] = {24, 0, 0, 1, request};
+  const size_t first = post_handshake_seal(&f->conn[0], &f->wire.incoming, 22u, update, 3u);
+  post_handshake_seal(&f->conn[0], &f->wire.incoming, 22u, update + 3u, 2u);
+  post_handshake_update_sender(&f->conn[0]);
+  uint8_t before[32], byte = 0x5a;
+  uint8_t *secret = receiver->is_client ? receiver->server_application_traffic_secret : receiver->client_application_traffic_secret;
+  memcpy(before, secret, sizeof(before));
+  uint32_t credit = receiver->peer_key_update_byte_credit;
+  uint64_t last = receiver->peer_key_update_last_ms;
+  int seen = receiver->peer_key_update_seen, pending = receiver->key_update;
+  size_t burst = receiver->consecutive_peer_key_updates, received = 99u;
+  unsigned calls = f->clock.calls;
+  f->wire.incoming.read_budget = first;
+  check_equal(tls13_recv(receiver, &byte, 1u, &received), TLS_ERROR_RECV_AGAIN);
+  check_equal(received, (size_t)0u);
+  check_equal(f->clock.calls, calls); /* A partial authenticated message earns no admission. */
+  check_equal(secret, before, sizeof(before));
+  check_equal(receiver->peer_key_update_byte_credit, credit);
+  check_equal(receiver->peer_key_update_last_ms, last);
+  f->wire.incoming.read_budget = f->wire.incoming.size;
+  check_equal(tls13_recv(receiver, &byte, 1u, &received), expected);
+  check_equal(received, (size_t)0u);
+  check_equal(byte, (uint8_t)0x5a);
+  if (expected == -1) {
+    check_equal(secret, before, sizeof(before));
+    check_equal(receiver->peer_key_update_byte_credit, credit);
+    check_equal(receiver->peer_key_update_last_ms, last);
+    check_equal(receiver->peer_key_update_seen, seen);
+    check_equal(receiver->consecutive_peer_key_updates, burst);
+    check_equal(receiver->key_update, pending);
+  } else {
+    check_equal(secret, f->conn[0].is_client ? f->conn[0].client_application_traffic_secret :
+        f->conn[0].server_application_traffic_secret, sizeof(before));
+    check_equal(receiver->peer_key_update_byte_credit, 0u);
+    check_equal(receiver->peer_key_update_seen, f->ctx[1].peer_key_update_min_interval_ms || f->ctx[1].peer_key_update_min_bytes ? 1 : 0);
+    check_equal(receiver->key_update, request ? 1 : pending);
+  }
+}
+
+static void peer_spacing_data(peer_spacing_fixture *f, size_t size) {
+  uint8_t payload[8], output[8] = {0};
+  check(size <= sizeof(payload));
+  memset(payload, 0x46, sizeof(payload));
+  post_handshake_seal(&f->conn[0], &f->wire.incoming, 23u, payload, size);
+  f->wire.incoming.read_budget = f->wire.incoming.size;
+  size_t received = 99u;
+  check_equal(tls13_recv(&f->conn[1], output, sizeof(output), &received), size ? 1 : TLS_ERROR_RECV_AGAIN);
+  check_equal(received, size);
+  if (size) check_equal(output, payload, size);
+}
+
+spec("GmSSL peer KeyUpdate minimum time and byte spacing") {
+  it("rejects missing clocks and preserves rejected configuration") {
+    TLS_CTX ctx = {0};
+    key_update_clock clock = {0};
+    check_equal(tls13_ctx_set_peer_key_update_spacing(NULL, 1u, 0u, key_update_clock_sample, &clock), -1);
+    check_equal(tls13_ctx_set_peer_key_update_spacing(&ctx, 0u, 1u, NULL, NULL), -1);
+    ctx.protocol = TLS_protocol_tls13;
+    check_equal(tls13_ctx_set_peer_key_update_spacing(&ctx, UINT32_MAX, UINT32_MAX, key_update_clock_sample, &clock), 1);
+    check_equal(tls13_ctx_set_peer_key_update_spacing(&ctx, 1u, 0u, NULL, NULL), -1);
+    check_equal(ctx.peer_key_update_min_interval_ms, UINT32_MAX);
+    check_equal(ctx.peer_key_update_min_bytes, UINT32_MAX);
+    check_equal(ctx.key_update_clock_user, (void *)&clock);
+    check_equal(clock.calls, 0u);
+    check_equal(tls13_ctx_set_peer_key_update_spacing(&ctx, 0u, 1u, NULL, &clock), 1);
+    check(ctx.key_update_clock_ms == NULL && ctx.key_update_clock_user == NULL);
+    check_equal(ctx.peer_key_update_min_bytes, 1u);
+    check_equal(ctx.key_update, 0);
+  }
+  for (unsigned order = 0u; order < 2u; ++order) {
+    it("clock sharing order %u retains the remaining timer and rejects a conflicting owner", order) {
+      TLS_CTX ctx = {.protocol = TLS_protocol_tls13};
+      key_update_clock first = {0}, conflicting = {0};
+      if (order) check_equal(tls13_ctx_set_peer_key_update_spacing(&ctx, 10u, 4u, key_update_clock_sample, &first), 1);
+      else check_equal(tls13_ctx_set_key_update_interval(&ctx, 10u, key_update_clock_sample, &first), 1);
+      if (order) check_equal(tls13_ctx_set_key_update_interval(&ctx, 10u, key_update_clock_sample, &conflicting), -1);
+      else check_equal(tls13_ctx_set_peer_key_update_spacing(&ctx, 10u, 4u, key_update_clock_sample, &conflicting), -1);
+      if (order) check_equal(tls13_ctx_set_key_update_interval(&ctx, 10u, peer_spacing_foreign_clock, &first), -1);
+      else check_equal(tls13_ctx_set_peer_key_update_spacing(&ctx, 10u, 4u, peer_spacing_foreign_clock, &first), -1);
+      check_equal(ctx.key_update_clock_user, (void *)&first);
+      if (order) check_equal(tls13_ctx_set_key_update_interval(&ctx, 10u, key_update_clock_sample, &first), 1);
+      else check_equal(tls13_ctx_set_peer_key_update_spacing(&ctx, 10u, 4u, key_update_clock_sample, &first), 1);
+      if (order) check_equal(tls13_ctx_set_peer_key_update_spacing(&ctx, 0u, 0u, NULL, NULL), 1);
+      else check_equal(tls13_ctx_set_key_update_interval(&ctx, 0u, NULL, NULL), 1);
+      check_equal(ctx.key_update_clock_user, (void *)&first);
+      if (order) check_equal(tls13_ctx_set_key_update_interval(&ctx, 0u, NULL, NULL), 1);
+      else check_equal(tls13_ctx_set_peer_key_update_spacing(&ctx, 0u, 0u, NULL, NULL), 1);
+      check(ctx.key_update_clock_ms == NULL && ctx.key_update_clock_user == NULL);
+    }
+  }
+  for (unsigned role = 0u; role < 2u; ++role) {
+    for (unsigned suite_index = 0u; suite_index < 2u; ++suite_index) {
+      for (unsigned mode = 0u; mode < 16u; ++mode) {
+        static const char *names[] = {"time exact", "time early", "bytes exact", "bytes short",
+          "both exact", "both time short", "both bytes short", "no credit bank", "maximum time",
+          "maximum byte credit", "corrupt credit", "clock regression", "clock failure", "burst precedence",
+          "disabled", "not-requested time early"};
+        it("role %u suite %u %s admits once or fails before peer derivation", role, suite_index, names[mode]) {
+          peer_spacing_fixture f;
+          bool time_limit = mode < 2u || (mode >= 4u && mode <= 8u) || (mode >= 11u && mode <= 13u) || mode == 15u;
+          bool byte_limit = (mode >= 2u && mode <= 7u) || mode == 9u || mode == 10u;
+          uint32_t milliseconds = mode == 8u ? UINT32_MAX : time_limit ? 10u : 0u;
+          uint32_t bytes = mode == 9u ? UINT32_MAX : byte_limit ? 4u : 0u;
+          peer_spacing_prepare(&f, role, suite_index, milliseconds, bytes, mode == 13u ? 1u : 0u, mode == 13u ? 1000u : 0u);
+          uint64_t origin = mode == 8u ? UINT64_MAX - UINT32_MAX : UINT64_C(100);
+          f.clock.now = origin;
+          check_equal(tls_do_handshake(&f.conn[1]), 1);
+          uint8_t request = mode == 15u ? 0u : (uint8_t)(mode % 2u);
+          if (mode == 11u || mode == 12u) {
+            if (mode == 11u) f.clock.now = origin - 1u;
+            else f.clock.fail_call = f.clock.calls + 1u;
+            peer_spacing_update(&f, request, -1); /* First-free never bypasses a broken clock. */
+          } else {
+            peer_spacing_data(&f, 8u); /* Cannot bank bytes from before the first update. */
+            check_equal(f.conn[1].peer_key_update_byte_credit, 0u);
+            peer_spacing_update(&f, request, TLS_ERROR_RECV_AGAIN);
+            if (mode == 9u) f.conn[1].peer_key_update_byte_credit = UINT32_MAX - 1u;
+            size_t data_size = mode == 3u || mode == 6u || mode == 9u ? 3u : mode == 7u ? 8u : byte_limit ? 4u : 0u;
+            peer_spacing_data(&f, data_size);
+            peer_spacing_data(&f, 0u); /* Empty authenticated records earn nothing. */
+            uint32_t credit = f.conn[1].peer_key_update_byte_credit;
+            uint64_t last = f.conn[1].peer_key_update_last_ms;
+            if (mode == 9u) check_equal(credit, UINT32_MAX);
+            else check_equal(credit, byte_limit ? (data_size > 4u ? 4u : (uint32_t)data_size) : 0u);
+            f.clock.now = origin + 1u;
+            f.wire.outgoing.budget = sizeof(f.wire.outgoing.bytes);
+            check_equal(role ? tls13_send_client_key_update(&f.conn[1], 0) : tls13_send_server_key_update(&f.conn[1], 0), 1);
+            check_equal(f.conn[1].peer_key_update_byte_credit, credit);
+            check_equal(f.conn[1].peer_key_update_last_ms, last);
+            if (mode == 10u) f.conn[1].peer_key_update_byte_credit = 5u;
+            f.clock.now = mode == 8u ? UINT64_MAX : origin + (mode == 1u || mode == 5u || mode == 15u ? 9u : 10u);
+            bool accepted = mode == 0u || mode == 2u || mode == 4u || mode == 7u || mode == 8u || mode == 9u || mode == 14u;
+            peer_spacing_update(&f, 0u, accepted ? TLS_ERROR_RECV_AGAIN : -1);
+            if (mode == 7u) {
+              f.clock.now += 10u;
+              peer_spacing_update(&f, 1u, -1); /* Surplus eight-byte record did not fund two updates. */
+            }
+            if (mode == 14u) check_equal(f.clock.calls, 0u);
+          }
+        }
+      }
+      it("role %u suite %u credits a decrypted record once across partial application reads", role, suite_index) {
+        peer_spacing_fixture f;
+        peer_spacing_prepare(&f, role, suite_index, 0u, 4u, 0u, 0u);
+        check_equal(tls_do_handshake(&f.conn[1]), 1);
+        peer_spacing_update(&f, 0u, TLS_ERROR_RECV_AGAIN);
+        const uint8_t payload[] = {0x46, 0x47, 0x48};
+        post_handshake_seal(&f.conn[0], &f.wire.incoming, 23u, payload, sizeof(payload));
+        f.wire.incoming.read_budget = f.wire.incoming.size;
+        for (size_t i = 0u; i < sizeof(payload); ++i) {
+          uint8_t byte = 0u;
+          size_t received = 99u;
+          check_equal(tls13_recv(&f.conn[1], &byte, 1u, &received), 1);
+          check_equal(received, (size_t)1u);
+          check_equal(byte, payload[i]);
+          check_equal(f.conn[1].peer_key_update_byte_credit, 3u);
+        }
+        peer_spacing_data(&f, 1u);
+        check_equal(f.conn[1].peer_key_update_byte_credit, 4u);
+        peer_spacing_update(&f, 1u, TLS_ERROR_RECV_AGAIN);
+      }
+      it("role %u suite %u initializes a peer-only clock before readiness", role, suite_index) {
+        peer_spacing_fixture f;
+        peer_spacing_prepare(&f, role, suite_index, 1u, 0u, 0u, 0u);
+        f.clock.fail_call = 1u;
+        check_equal(tls_do_handshake(&f.conn[1]), -1);
+        check_equal(f.conn[1].key_update_timer_started, 0);
+        check_equal(f.conn[1].peer_key_update_seen, 0);
+      }
+      it("role %u suite %u treats epoch zero as an admitted update rather than an unused timestamp", role, suite_index) {
+        peer_spacing_fixture f;
+        peer_spacing_prepare(&f, role, suite_index, 10u, 0u, 0u, 0u);
+        f.clock.now = 0u;
+        check_equal(tls_do_handshake(&f.conn[1]), 1);
+        peer_spacing_update(&f, 0u, TLS_ERROR_RECV_AGAIN);
+        check_equal(f.conn[1].peer_key_update_seen, 1);
+        check_equal(f.conn[1].peer_key_update_last_ms, UINT64_C(0));
+        f.clock.now = 9u;
+        peer_spacing_update(&f, 1u, -1);
+      }
+      it("role %u suite %u preserves spacing credit when receiving-key derivation fails", role, suite_index) {
+        peer_spacing_fixture f;
+        peer_spacing_prepare(&f, role, suite_index, 10u, 4u, 0u, 0u);
+        check_equal(tls_do_handshake(&f.conn[1]), 1);
+        peer_spacing_update(&f, 0u, TLS_ERROR_RECV_AGAIN);
+        peer_spacing_data(&f, 4u);
+        f.clock.now = 110u;
+        f.conn[1].digest = NULL; /* AEAD is valid; the traffic-secret derivation must reject. */
+        peer_spacing_update(&f, 1u, -1);
+        check_equal(f.conn[1].peer_key_update_byte_credit, 4u);
+        check_equal(f.conn[1].peer_key_update_last_ms, UINT64_C(100));
+        check_equal(f.wire.incoming.read_offset, f.wire.incoming.size);
+      }
+      it("role %u suite %u excludes padding and unauthenticated ciphertext from byte credit", role, suite_index) {
+        peer_spacing_fixture f;
+        peer_spacing_prepare(&f, role, suite_index, 0u, 4u, 0u, 0u);
+        check_equal(tls_do_handshake(&f.conn[1]), 1);
+        peer_spacing_update(&f, 0u, TLS_ERROR_RECV_AGAIN);
+        const uint8_t payload = 0x46;
+        post_handshake_seal_padded(&f.conn[0], &f.wire.incoming, 23u, &payload, 1u, 16u);
+        f.wire.incoming.read_budget = f.wire.incoming.size;
+        uint8_t byte = 0u;
+        size_t received = 99u;
+        check_equal(tls13_recv(&f.conn[1], &byte, 1u, &received), 1);
+        check_equal(received, (size_t)1u);
+        check_equal(byte, payload);
+        check_equal(f.conn[1].peer_key_update_byte_credit, 1u);
+        post_handshake_seal(&f.conn[0], &f.wire.incoming, 23u, &payload, 1u);
+        f.wire.incoming.bytes[f.wire.incoming.size - 1u] ^= 1u;
+        f.wire.incoming.read_budget = f.wire.incoming.size;
+        byte = 0x5a;
+        check_equal(tls13_recv(&f.conn[1], &byte, 1u, &received), -1);
+        check_equal(received, (size_t)0u);
+        check_equal(byte, (uint8_t)0x5a);
+        check_equal(f.conn[1].peer_key_update_byte_credit, 1u);
       }
     }
   }

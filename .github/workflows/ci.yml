@@ -190,9 +190,9 @@ jobs:
 
       - name: Set up shared dependency contract
         id: vcpkg
-        # GmSSL #39 bounds post-handshake framing and ticket serialization.
+        # GmSSL #40 enforces peer KeyUpdate time/byte spacing.
         # Includes native Windows pkg-config; avoid MSYS2 for pkg-config.
-        uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-curl-cache@754d25821874cbd5b9de176a496962becaf875d7
+        uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-curl-cache@23457d6350b920865148cecde5549213a98a9843
         with:
           mode: read
           triplet: ${{ matrix.triplet }}

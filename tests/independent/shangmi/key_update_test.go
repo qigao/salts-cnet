@@ -193,7 +193,88 @@ func (p *recordPeer) timedLocalRotation(nativeServer bool) error {
 	return nil
 }
 
+func (p *recordPeer) peerUpdateSpacing(nativeServer bool, scenario string, waitSent func() error) error {
+	failure := strings.Contains(scenario, "fail")
+	timed := scenario == "limit-space-time" || scenario == "limit-space-both" || scenario == "limit-space-both-bytes-fail"
+	for round := 0; round < 2; round++ {
+		if !nativeServer {
+			if round != 0 {
+				if err := p.receiveKeyUpdate(); err != nil {
+					return err
+				}
+			}
+			if err := p.expect(23, []byte{'F'}); err != nil {
+				return err
+			}
+		}
+		// The previous echoed record is a wire barrier after the first update.
+		// The time minimum is 250ms; large failure minima use UINT32_MAX instead
+		// of relying on a CI scheduler completing an "early" exchange quickly.
+		if round != 0 && timed {
+			time.Sleep(400 * time.Millisecond)
+		}
+		if round != 0 && strings.Contains(scenario, "empty") {
+			for i := 0; i < 4; i++ {
+				if err := p.send(23, nil); err != nil {
+					return err
+				}
+			}
+		}
+		request := byte(1)
+		if !nativeServer && round != 0 {
+			request = 0
+		}
+		if err := p.sendKeyUpdate(request); err != nil {
+			return err
+		}
+		if failure && round != 0 {
+			kind, _, err := p.record()
+			var timeout net.Error
+			if errors.As(err, &timeout) && timeout.Timeout() {
+				return err
+			}
+			if err == nil && kind != 21 {
+				return errors.New("peer spacing violation delivered data instead of failing")
+			}
+			return nil // Native separately requires retained FAILED/EPROTO/read.
+		}
+		if nativeServer {
+			if err := p.send(23, []byte{'F'}); err != nil {
+				return err
+			}
+			if err := p.receiveKeyUpdate(); err != nil {
+				return err
+			}
+			if err := p.expect(23, []byte{'G'}); err != nil {
+				return err
+			}
+			if failure && round == 0 && waitSent != nil {
+				if err := waitSent(); err != nil {
+					return err
+				}
+			}
+		} else if err := p.send(23, []byte("ok")); err != nil {
+			return err
+		}
+	}
+	if nativeServer {
+		if err := p.send(21, []byte{1, 0}); err != nil {
+			return err
+		}
+	}
+	if err := p.expect(21, []byte{1, 0}); err != nil {
+		return err
+	}
+	if !nativeServer {
+		return p.send(21, []byte{1, 0})
+	}
+	return nil
+}
+
 func (p *recordPeer) peerUpdateLimit(nativeServer bool, scenario string, waitSent func() error) error {
+	if strings.HasPrefix(scenario, "limit-space-") {
+		return p.peerUpdateSpacing(nativeServer, scenario, waitSent)
+	}
 	failure := strings.Contains(scenario, "fail")
 	for round := 0; round < 2; round++ {
 		if !nativeServer {
@@ -339,7 +420,7 @@ func TestShangMiKeyUpdate(t *testing.T) {
 	}
 	f := credentials(t, nil)
 	client := clientCredentials(t, nil)
-	for _, scenario := range []string{"limit", "limit-off", "limit-fail", "limit-empty-fail"} {
+	for _, scenario := range []string{"limit", "limit-off", "limit-fail", "limit-empty-fail", "limit-space-off", "limit-space-bytes", "limit-space-time", "limit-space-both", "limit-space-bytes-fail", "limit-space-time-fail", "limit-space-both-time-fail", "limit-space-both-bytes-fail", "limit-space-empty-fail", "limit-space-max-fail"} {
 		t.Run("native_server_"+scenario, func(t *testing.T) { runNativeServer(t, f, scenario, scenario) })
 		t.Run("native_client_"+scenario, func(t *testing.T) { runNativeClient(t, f, "localhost", true, scenario) })
 		t.Run("native_mtls_server_"+scenario, func(t *testing.T) { runNativeServerWithClient(t, f, &client, scenario, scenario) })

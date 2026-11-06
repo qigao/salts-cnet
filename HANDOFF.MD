@@ -460,3 +460,41 @@
   completion, preserving their exact admission/key assertions.
   The final pinned full graph and all three affected CTests passed (24.78s),
   including all 376 provider cases with zero skipped.
+
+## Peer KeyUpdate time/byte spacing (2026-11-06)
+
+- The existing consecutive-update limit resets on any nonempty authenticated
+  application record. Add immutable SHANGMI_TLS13 client/server minimum time and
+  byte intervals rather than changing that existing burst contract. Zero disables
+  each minimum; the first valid update is free, later updates must satisfy all
+  enabled minima. Count both request kinds, including replies. A violation is a
+  permanently latched EPROTO before another receiving-key derivation.
+- One owner holds a seen flag, peer timestamp and capped uint32 byte credit.
+  Credit is explicitly bounded at the minimum, not a cumulative counter. Charge
+  authenticated plaintext once per decrypted record, never padding, empty/control
+  records, repeated reads or outgoing data. Discard surplus on update commit;
+  pre-first-update data cannot be banked. Local responses cannot refill peer credit.
+  No array/allocation/queue/thread is added. Quiescent destruction stays unchanged.
+- Share the existing monotonic clock for peer spacing/local age. Initialize once
+  at Finished if either policy needs time. Reject different callback/user clock
+  domains before configuration mutation; disabling one policy retains the other's
+  borrowed clock. Byte-only spacing retains no unused callback. Clock failure or
+  regression is fatal; compare before subtraction, never add a deadline.
+- This is strict minimum spacing, with one initial allowance, not a configurable
+  token bucket/window burst. It can reject spec-conforming crossed/requested
+  updates. Applications must choose compatible send/receive policies and accept
+  disconnect on violation. Admission still preserves mandatory replies. No
+  request_update=0 exemption, automatic recovery or retry is introduced.
+- Formal provider coverage adds 87 cases (463 total): exact/max/short bounds,
+  fragment completion, shared-clock lifetimes/conflicts, burst precedence,
+  nonbanked credit, partial reads, epoch zero, failed clock/peer derivation and
+  exclusion of padding/unauthenticated data. Existing TestShangMiKeyUpdate adds
+  30 independent native-client/server/mTLS-server cases, including immutable
+  input erasure, real-clock spacing and retained terminal errors. Time failures
+  use UINT32_MAX, not a scheduler-dependent short "early" exchange; success and
+  byte-only combined failures use an intentional 400ms wait for a 250ms minimum.
+  Server failure injection still waits for the native SEND completion marker.
+- Twelve unsupported-profile endpoint configurations fail before absent trust
+  files or policy references/callbacks. The pinned native-release-user full graph
+  and nine related formal CTests passed (90.23s); the affected provider test passed
+  again after final security-boundary additions (463 cases, no skips).

@@ -120,6 +120,20 @@ typedef struct crypto_tls_stream_client_config {
    * Exceeding the limit permanently fails the stream with EPROTO. This is
    * a burst bound, not a time/byte rate limit. Nonzero STANDARD/TLCP: ENOTSUP. */
   uint32_t peer_key_update_limit;
+  /** SHANGMI_TLS13 minimum spacing between admitted peer KeyUpdates, copied
+   * at init. Each zero disables its minimum; every nonzero uint32 is accepted.
+   * The first valid peer update is free. Later updates must satisfy BOTH enabled
+   * minima: monotonic elapsed milliseconds, and newly authenticated received
+   * application bytes since the last admitted update. Bytes are credited once
+   * per decrypted record and cap at the minimum; surplus cannot be banked.
+   * Empty/control/padding/outgoing bytes earn no credit. Both request kinds,
+   * including replies, count. Local key changes never reset peer spacing.
+   * Violation: fatal EPROTO before peer key derivation; clock failure/regression
+   * is fatal. Nonzero STANDARD/TLCP: ENOTSUP before trust I/O or policy retain.
+   * Independent of peer_key_update_limit. Can reject valid crossed/requested
+   * bursts; configure compatible local rotation. No idle timer or worker. */
+  uint32_t peer_key_update_min_interval_ms;
+  uint32_t peer_key_update_min_bytes;
   /** Explicit memory anchors; mutually exclusive with ca_file/ca_path.
    * Concatenated DER or CERTIFICATE PEM, bounded by TRUST_INPUT_MAX_BYTES.
    * Invalid/empty explicit input never falls back to system trust. */
@@ -229,6 +243,9 @@ typedef struct crypto_tls_stream_server_config {
   uint32_t key_update_interval_ms;
   /** Same consecutive peer-update contract as the client configuration. */
   uint32_t peer_key_update_limit;
+  /** Same immutable peer-spacing contract as the client configuration. */
+  uint32_t peer_key_update_min_interval_ms;
+  uint32_t peer_key_update_min_bytes;
   /** Same memory-input contract as the client; CA required for REQUIRED auth. */
   const crypto_tls_data *ca_data;
   const crypto_tls_credentials *credentials;
