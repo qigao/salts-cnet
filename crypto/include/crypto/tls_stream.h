@@ -52,6 +52,8 @@ typedef enum crypto_tls_stream_protocol_version {
   CRYPTO_TLS_STREAM_PROTOCOL_VERSION_1_3 = 13
 } crypto_tls_stream_protocol_version;
 
+#define CRYPTO_TLS_STREAM_KEY_UPDATE_BYTE_LIMIT_MAX (UINT64_C(1) << 34)
+
 typedef enum crypto_tls_stream_client_auth {
   CRYPTO_TLS_STREAM_CLIENT_AUTH_NONE = 0,
   CRYPTO_TLS_STREAM_CLIENT_AUTH_REQUIRED = 1
@@ -82,7 +84,8 @@ typedef struct crypto_tls_stream_client_config {
   /** Optional additional admission; copied and retained by context creation. */
   const crypto_tls_stream_peer_policy *peer_policy;
   /** SHANGMI_TLS13 local sending-key rotation threshold, 1..2^20 records.
-   * Zero disables automatic local rotation, not mandatory peer responses.
+   * Zero disables this record-count trigger, not the independent byte budget
+   * or mandatory peer responses.
    * Before the next application record at the threshold, send KeyUpdate and
    * request reciprocal rotation unless answering a pending peer request.
    * Counts records under the current application
@@ -91,6 +94,16 @@ typedef struct crypto_tls_stream_client_config {
    * Immutable per context; no background timer. Peer-update admission uses
    * the separate peer_key_update_limit field. */
   uint32_t key_update_record_limit;
+  /** SHANGMI_TLS13 application-plaintext budget per local sending key.
+   * Zero disables it; 1..2^34 bytes is copied at init. Above MAX: EINVAL;
+   * nonzero STANDARD/TLCP: ENOTSUP, before trust I/O or policy retention.
+   * Records split at the remaining budget; exhaustion sends KeyUpdate before
+   * more application data. Successful encryption charges a record once,
+   * including while its ciphertext is pending. Control/alert bytes are excluded.
+   * Local sending-key updates reset the budget; receiving-key updates do not.
+   * Either this budget or key_update_record_limit can trigger rotation.
+   * Mandatory peer responses remain enabled; no timer/background I/O. */
+  uint64_t key_update_byte_limit;
   /** SHANGMI_TLS13 consecutive authenticated peer KeyUpdate limit; zero is
    * unlimited. Counts both request kinds across progress calls. Nonempty
    * authenticated application data resets the count; empty records do not.
@@ -200,6 +213,8 @@ typedef struct crypto_tls_stream_server_config {
   const crypto_tls_stream_peer_policy *peer_policy;
   /** Same local sending-key rotation contract as the client configuration. */
   uint32_t key_update_record_limit;
+  /** Same local plaintext-byte budget as the client configuration. */
+  uint64_t key_update_byte_limit;
   /** Same consecutive peer-update contract as the client configuration. */
   uint32_t peer_key_update_limit;
   /** Same memory-input contract as the client; CA required for REQUIRED auth. */

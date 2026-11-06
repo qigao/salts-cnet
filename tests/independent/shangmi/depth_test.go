@@ -111,9 +111,14 @@ func depthFixture(t *testing.T, shangmi, client bool, intermediates int, sendRoo
 
 func depthCase(t *testing.T, server, client fixture, profile, version, clientDepth, serverDepth int, outcome string) {
 	t.Helper()
+	configuredMutualCase(t, "--depth-mtls", server, client, profile, version, clientDepth, serverDepth, outcome)
+}
+
+func configuredMutualCase(t *testing.T, command string, server, client fixture, profile, version, clientDepth, serverDepth int, outcome string) {
+	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
 	defer cancel()
-	args := []string{"--depth-mtls", server.caPath, client.caPath, server.certPath, server.keyPath,
+	args := []string{command, server.caPath, client.caPath, server.certPath, server.keyPath,
 		client.certPath, client.keyPath, outcome, fmt.Sprintf("%x", sha256.Sum256(server.leaf.Raw)),
 		fmt.Sprintf("%x", sha256.Sum256(client.leaf.Raw)), fmt.Sprintf("%x", sm3.Sum(server.leaf.Raw)),
 		fmt.Sprint(profile), fmt.Sprint(version), fmt.Sprint(clientDepth), fmt.Sprint(serverDepth)}

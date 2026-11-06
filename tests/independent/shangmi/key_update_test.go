@@ -1,12 +1,79 @@
 package shangmiinterop
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"net"
 	"strings"
 	"testing"
 )
+
+func (p *recordPeer) localRotationScenario(nativeServer bool, scenario string) error {
+	var byteLimit, recordLimit uint64
+	switch scenario {
+	case "rotatebyte1":
+		byteLimit = 1
+	case "rotatebyte2":
+		byteLimit = 2
+	case "rotatebytemax":
+		byteLimit = 1 << 34
+	case "rotateboth-byte":
+		byteLimit, recordLimit = 2, 3
+	case "rotateboth-record":
+		byteLimit, recordLimit = 7, 1
+	default:
+		return p.localRotation(nativeServer, localRotationLimit(scenario))
+	}
+	var used, records uint64
+	for round := 0; round < 5; round++ {
+		if nativeServer {
+			if err := p.send(23, []byte{'F'}); err != nil {
+				return err
+			}
+		}
+		for remaining := uint64(3); remaining != 0; {
+			if used == byteLimit || (recordLimit != 0 && records == recordLimit) {
+				if err := p.receiveKeyUpdateRequest(1); err != nil {
+					return fmt.Errorf("byte rotation round %d remaining %d: %w", round, remaining, err)
+				}
+				if err := p.sendKeyUpdate(0); err != nil {
+					return err
+				}
+				used, records = 0, 0
+			}
+			n := remaining
+			if n > byteLimit-used {
+				n = byteLimit - used
+			}
+			value := byte('F')
+			if nativeServer {
+				value = 'G'
+			}
+			if err := p.expect(23, bytes.Repeat([]byte{value}, int(n))); err != nil {
+				return fmt.Errorf("byte record round %d offset %d: %w", round, 3-remaining, err)
+			}
+			used, records, remaining = used+n, records+1, remaining-n
+		}
+		if !nativeServer {
+			if err := p.send(23, []byte("ok")); err != nil {
+				return err
+			}
+		}
+	}
+	if nativeServer {
+		if err := p.send(21, []byte{1, 0}); err != nil {
+			return err
+		}
+	}
+	if err := p.expect(21, []byte{1, 0}); err != nil {
+		return err
+	}
+	if !nativeServer {
+		return p.send(21, []byte{1, 0})
+	}
+	return nil
+}
 
 func (p *recordPeer) peerUpdateLimit(nativeServer bool, scenario string, waitSent func() error) error {
 	failure := strings.Contains(scenario, "fail")
@@ -159,7 +226,7 @@ func TestShangMiKeyUpdate(t *testing.T) {
 		t.Run("native_client_"+scenario, func(t *testing.T) { runNativeClient(t, f, "localhost", true, scenario) })
 		t.Run("native_mtls_server_"+scenario, func(t *testing.T) { runNativeServerWithClient(t, f, &client, scenario, scenario) })
 	}
-	for _, scenario := range []string{"rotateoff", "rotate1", "rotate2", "rotatemax"} {
+	for _, scenario := range []string{"rotateoff", "rotate1", "rotate2", "rotatemax", "rotatebyte1", "rotatebyte2", "rotatebytemax", "rotateboth-byte", "rotateboth-record"} {
 		t.Run("native_server_"+scenario, func(t *testing.T) { runNativeServer(t, f, scenario, scenario) })
 		t.Run("native_client_"+scenario, func(t *testing.T) { runNativeClient(t, f, "localhost", true, scenario) })
 		t.Run("native_mtls_server_"+scenario, func(t *testing.T) { runNativeServerWithClient(t, f, &client, scenario, scenario) })
