@@ -193,11 +193,11 @@ func (p *recordPeer) mutualServer(server, client fixture, scenario string) error
 		// reject this request itself, rather than fail on EOF or a later input.
 		kind, data, readErr := p.record()
 		if readErr != nil {
-			var transport *net.OpError
+			transport, abrupt := readErr.(*net.OpError)
 			// A clean abrupt close is permitted. A received record's bad MAC,
 			// malformed framing or truncation is never evidence of a valid alert.
-			p.earlyRejectionObserved = errors.Is(readErr, io.EOF) ||
-				(errors.As(readErr, &transport) && transport.Op == "read" && !transport.Timeout())
+			p.earlyRejectionObserved = readErr == io.EOF ||
+				(abrupt && transport.Op == "read" && !transport.Timeout())
 			return readErr
 		}
 		p.earlyRejectionObserved = kind == 21 && bytes.Equal(data, []byte{2, 50})

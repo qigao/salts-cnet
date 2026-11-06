@@ -154,7 +154,10 @@ func (p *recordPeer) send(kind byte, payload []byte) error {
 func (p *recordPeer) record() (byte, []byte, error) {
 	for skipped := 0; skipped < 4; skipped++ {
 		var header [5]byte
-		if _, err := io.ReadFull(p.Conn, header[:]); err != nil {
+		if n, err := io.ReadFull(p.Conn, header[:]); err != nil {
+			if n != 0 {
+				return 0, nil, fmt.Errorf("partial TLS record header: %w", err)
+			}
 			return 0, nil, err
 		}
 		n := int(binary.BigEndian.Uint16(header[3:]))
@@ -163,7 +166,7 @@ func (p *recordPeer) record() (byte, []byte, error) {
 		}
 		data := make([]byte, n)
 		if _, err := io.ReadFull(p.Conn, data); err != nil {
-			return 0, nil, err
+			return 0, nil, fmt.Errorf("partial TLS record payload: %w", err)
 		}
 		kind := header[0]
 		if kind == 20 && bytes.Equal(data, []byte{1}) {
