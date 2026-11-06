@@ -190,9 +190,9 @@ jobs:
 
       - name: Set up shared dependency contract
         id: vcpkg
-        # GmSSL #28 fixes HRR padding changes and pre-key rejection alerts.
+        # GmSSL #36 retains actual certificate-signature failure positions.
         # Includes native Windows pkg-config; avoid MSYS2 for pkg-config.
-        uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-curl-cache@46908a376d91ebee629dfd85d0b075a5e7c82069
+        uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-curl-cache@7766055dfc3acef92f8697eb6bbf234751a14beb
         with:
           mode: read
           triplet: ${{ matrix.triplet }}
