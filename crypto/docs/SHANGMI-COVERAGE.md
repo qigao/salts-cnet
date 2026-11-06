@@ -1224,7 +1224,9 @@ queues, timers, background work or unbounded storage are introduced.
 
 The provider rejects an impossible counter greater than the configured budget
 before subtraction. Encryption failure preserves normal fatal error propagation;
-Crypto's first-failure latch prevents continuing that stream. Budgeting is a
+KeyUpdate secret/key derivation errors also terminate before control output or
+budget reset; an incomplete transition is not resumed. Crypto's first-failure
+latch prevents continuing that stream. Budgeting is a
 finite upper bound, so no saturating arithmetic is used. See
 [RFC 8446 section 4.6.3](https://www.rfc-editor.org/rfc/rfc8446.html#section-4.6.3)
 for key-update ordering and mandatory peer responses.

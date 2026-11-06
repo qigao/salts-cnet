@@ -372,3 +372,13 @@
   Three affected adjacent parser CTests also passed (56.03s); ten distinct
   relevant formal CTests pass across the initial/affected runs. Final full CI
   qualifies the delivered API, provider package and test-entrypoint correction.
+- Send-side KeyUpdate previously ignored secret/key derivation returns. Four
+  formal absent-digest cases (both roles and AEAD suites) reproduced SEND_AGAIN
+  instead of the fatal error. Check both derivation results before budget reset
+  or transport output; reject the failed transition with zero consumed bytes,
+  no emitted control ciphertext and the old budget unchanged. Crypto latches
+  the fatal stream error; no recovery/rollback to application traffic is allowed.
+  With the same formal failure fixture, GmSSL IO, required-mTLS and KeyUpdate
+  CTests passed after the fix (17.98s). Counter-invariant tests use valid AEAD
+  keys and an available transport, so a missing guard cannot pass merely because
+  unrelated cipher setup or backpressure also rejects the operation.

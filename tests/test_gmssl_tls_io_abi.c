@@ -792,20 +792,37 @@ spec("GmSSL TLS 1.3 KeyUpdate under bounded external writes") {
   it("rejects corrupted budget state before subtraction or ciphertext generation") {
     TLS_CTX ctx = {0};
     TLS_CONNECT conn = {0};
+    key_update_wire wire = {0};
+    TLS_IO io = {.user = &wire, .send = key_update_capture, .recv = key_update_no_receive};
     const uint8_t payload = 0x46;
+    uint8_t key[16];
     size_t sent = 99u;
     ctx.protocol = TLS_protocol_tls13;
     check_equal(tls13_ctx_set_key_update_byte_limit(&ctx, 1u), 1);
     conn.ctx = &ctx;
+    conn.protocol = TLS_protocol_tls13;
+    conn.cipher_suite = TLS_cipher_sm4_gcm_sm3;
+    tls_record_set_protocol(conn.plain_record, TLS_protocol_tls12);
+    tls_record_set_protocol(conn.record, TLS_protocol_tls12);
+    check_equal(tls_cipher_suite_get(conn.cipher_suite, &conn.cipher, &conn.digest), 1);
+    check_equal(tls13_hkdf_expand_label(conn.digest, conn.server_application_traffic_secret,
+        "key", NULL, 0u, sizeof(key), key), 1);
+    check_equal(tls13_hkdf_expand_label(conn.digest, conn.server_application_traffic_secret,
+        "iv", NULL, 0u, sizeof(conn.server_write_iv), conn.server_write_iv), 1);
+    check_equal(block_cipher_set_encrypt_key(&conn.server_write_key, conn.cipher, key), 1);
+    conn.server_seq_num[7] = 1u;
+    check_equal(tls_set_io(&conn, &io), 1);
+    wire.budget = sizeof(wire.bytes);
     conn.local_key_plaintext_bytes = 2u;
     check_equal(tls13_send(&conn, &payload, 1u, &sent), -1);
     check_equal(sent, (size_t)0u);
     check_equal(conn.recordlen, (size_t)0u);
+    check_equal(wire.size, (size_t)0u);
     check_equal(conn.local_key_plaintext_bytes, UINT64_C(2));
   }
   for (unsigned role = 0u; role < 2u; ++role) {
     for (unsigned suite_index = 0u; suite_index < 2u; ++suite_index) {
-      for (unsigned automatic = 0u; automatic < 5u; ++automatic) {
+      for (unsigned automatic = 0u; automatic < 6u; ++automatic) {
       it("role %u suite %u automatic %u retries control ciphertext without application completion", role, suite_index, automatic) {
         TLS_CTX ctx = {0};
         TLS_CONNECT conn = {0};
@@ -855,6 +872,17 @@ spec("GmSSL TLS 1.3 KeyUpdate under bounded external writes") {
           (role ? conn.client_seq_num : conn.server_seq_num)[7] = old_seq[7] = 1u;
         }
         if (automatic == 0u || automatic == 4u) conn.key_update = 1;
+        if (automatic == 5u) {
+          /* Encryption uses the prepared AEAD key; derivation must reject the
+           * absent digest before any control ciphertext reaches the transport. */
+          conn.digest = NULL;
+          wire.budget = 1u;
+          sent = 99u;
+          check_equal(tls13_send(&conn, payload, sizeof(payload), &sent), -1);
+          check_equal(sent, (size_t)0u);
+          check_equal(wire.size, (size_t)0u);
+          check_equal(conn.local_key_plaintext_bytes, UINT64_C(2));
+        } else {
         conn.sentlen = 7u; /* stale prior application count must never escape */
         for (unsigned step = 0u; step < sizeof(wire.bytes) && result != 1; ++step) {
           wire.budget = 1u;
@@ -883,6 +911,7 @@ spec("GmSSL TLS 1.3 KeyUpdate under bounded external writes") {
         check_equal(plain_size, 5u + expected_sent);
         check_equal(plain[0], (uint8_t)23);
         check_equal(plain + 5u, payload, expected_sent);
+        }
       }
       }
     }

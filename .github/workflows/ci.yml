@@ -192,7 +192,7 @@ jobs:
         id: vcpkg
         # GmSSL #37 enforces local sending-key plaintext-byte budgets.
         # Includes native Windows pkg-config; avoid MSYS2 for pkg-config.
-        uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-curl-cache@4aa1af5e93dc70e158d30d1ee9ed30c9d4733dc6
+        uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-curl-cache@8ac7e955fcd1fea7f00df76fd7d243ed9914e995
         with:
           mode: read
           triplet: ${{ matrix.triplet }}
