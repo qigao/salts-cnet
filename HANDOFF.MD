@@ -282,6 +282,21 @@
   output ownership. Local native-release-user full graph and NativeIO/coroutine/
   concurrency/CNet-loopback CTests passed; ARM64 reproduction remains required.
 
+- Confirmed diagnostic gap: an accepted bootstrap had no cancellation callback,
+  so executor cancellation left bootstrap_done false and create returned generic
+  EIO. Record the original cancellation status and done flag before the executor
+  terminal is joined; leave backend_initialized false for a cancelled bootstrap.
+  Existing first-shard error selection and owner-local cleanup remain unchanged.
+- Temporary branch `verify/bootstrap-cancel-260` injected executor ENOMEM on
+  shard 1 and changed only the existing NativeIO formal test. Full user-preset
+  graph built; `ctest --preset native-release-user -R "^saltscore.native_io$"
+  --output-on-failure` failed before the fix (two EIO results instead of ENOMEM),
+  then passed all four cases with the same injection: 2/4-owner partial startup,
+  earlier backend EINVAL, and normal single-owner creation after cleanup.
+  Temporary injection/worktree/branch were removed. Main full graph and five
+  related formal CTests passed. This proves cancellation propagation, not that
+  cancellation caused the original Windows ARM64 observation; #260 stays open.
+
 ## 2026-11-06 TSan audio runtime package indexes
 
 - The private PulseAudio runtime is installed before the Linux capture SDK
