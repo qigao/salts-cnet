@@ -297,6 +297,18 @@
   related formal CTests passed. This proves cancellation propagation, not that
   cancellation caused the original Windows ARM64 observation; #260 stays open.
 
+- CI #374 reproduced the startup failure in the new formal NativeIO lifecycle
+  test: Windows ARM64, generation 112 with two IOCP owners, create returned
+  SALTS_ENOMEM (-4030). One/four-owner cases and CNet loopback passed in the same
+  job. Executor startup reserves singleton broadcast consumer slots using
+  Disruptor try-register; its one-shot weak CAS may reject a vacant slot.
+  Use strong CAS for that bounded slot attempt, retaining memory orders and
+  full-capacity rejection. Formal Disruptor tests exercise 4096 registrations
+  each with one/four slots, last-slot reuse, full rejection and publication.
+  Local full native-release-user graph and six related formal CTests passed.
+  Temporary passive ARM64 diagnostics are still required to tie this candidate
+  to the observed executor startup failure; passing x64 does not establish it.
+
 ## 2026-11-06 TSan audio runtime package indexes
 
 - The private PulseAudio runtime is installed before the Linux capture SDK
