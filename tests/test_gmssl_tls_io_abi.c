@@ -7,6 +7,8 @@
 #include <crypto/tls_stream.h>
 #include <gmssl/tls.h>
 #include <gmssl/pem.h>
+#include <gmssl/x509_ext.h>
+#include <gmssl/x509_cer.h>
 #include <stdint.h>
 #include <stddef.h>
 #include <stdio.h>
@@ -51,6 +53,40 @@ static crypto_tls_stream *stream_pair[2];
 
 #include "tls_memory_credentials_cases.h"
 #include "tls_hrr_padding_cases.h"
+
+spec("GmSSL purpose diagnostics preserve parsing and prior results") {
+  it("missing extensions and other constraints keep their original categories") {
+    uint8_t extensions[128];
+    size_t size = 0u;
+    int result = X509_verify_err_expired;
+    check_equal(x509_exts_check_ex(NULL, 0u, X509_cert_server_auth, &result), 1);
+    check_equal(result, X509_verify_err_expired);
+    check_equal(x509_exts_add_basic_constraints(extensions, &size, sizeof(extensions), 1, 1, -1), 1);
+    check_equal(x509_exts_check_ex(extensions, size, X509_cert_server_auth, &result), -1);
+    check_equal(result, X509_verify_err_expired);
+  }
+  for (unsigned eku = 0u; eku < 2u; ++eku) {
+    for (unsigned invalid = 0u; invalid < 2u; ++invalid) {
+      it("decoded %s role %u preserves the original verifier result contract", eku ? "EKU" : "KU", invalid) {
+        uint8_t extensions[128];
+        size_t size = 0u;
+        int result = X509_verify_err_expired;
+        const int purpose = invalid ? OID_kp_client_auth : OID_kp_server_auth;
+        if (eku)
+          check_equal(x509_exts_add_ext_key_usage(extensions, &size, sizeof(extensions), 0, &purpose, 1u), 1);
+        else
+          check_equal(x509_exts_add_key_usage(extensions, &size, sizeof(extensions), 1,
+              invalid ? X509_KU_KEY_ENCIPHERMENT : X509_KU_DIGITAL_SIGNATURE), 1);
+        check_equal(x509_exts_check_ex(extensions, size, X509_cert_server_auth, &result), invalid ? -1 : 1);
+        check_equal(result, invalid ? X509_verify_err_purpose : X509_verify_err_expired);
+        check_equal(x509_exts_check(extensions, size, X509_cert_server_auth), invalid ? -1 : 1);
+        result = X509_verify_err_expired;
+        check_equal(x509_exts_check_ex(extensions, size - 1u, X509_cert_server_auth, &result), -1);
+        check_equal(result, X509_verify_err_expired);
+      }
+    }
+  }
+}
 
 static void transfer_stream_cipher(unsigned from, unsigned to) {
   uint8_t wire[32768];

@@ -3394,7 +3394,11 @@ static int saltscore_native_entry_test_cnet_sg_tls_failure(size_t owner_count) {
     owners[i].peers[0] = owners[i].peers[1] = TEST_INVALID_SOCKET;
     owners[i].sg_socket = owners[i].sg_peer = TEST_INVALID_SOCKET;
   }
-  VERIFY(native_io_sharded_create(&config, &runtime) == SALTS_OK);
+  const int create_status = native_io_sharded_create(&config, &runtime);
+  if (create_status != SALTS_OK)
+    fprintf(stderr, "SG TLS-isolation startup owners=%zu backend=%d status=%d\n",
+        owner_count, (int)config.backend.kind, create_status);
+  VERIFY(create_status == SALTS_OK);
   VERIFY(sg_case_run_all(runtime, owners, owner_count, SG_CASE_START) == SALTS_OK);
   for (size_t i = 0u; i < owner_count; ++i)
     for (size_t j = 0u; j < i; ++j)

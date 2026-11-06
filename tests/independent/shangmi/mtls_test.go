@@ -210,10 +210,23 @@ func TestShangMiMutualIndependent(t *testing.T) {
 				t.Setenv("SALTS_TEST_TLS_VALIDITY_INDEX", "0")
 			}
 			if name == "key_usage" || name == "server_only_eku" {
-				t.Setenv("SALTS_TEST_TLS_VALIDITY_DIAGNOSTIC", "certificate")
+				t.Setenv("SALTS_TEST_TLS_VALIDITY_DIAGNOSTIC", "purpose")
+				t.Setenv("SALTS_TEST_TLS_VALIDITY_INDEX", "0")
 			}
 			bad := clientCredentials(t, change)
-			runNativeServerWithClient(t, server, &bad, "reject")
+			if name == "key_usage" || name == "server_only_eku" {
+				memoryFixtures(t, server.certPath, server.keyPath, bad.caPath)
+				for _, mode := range []string{"file", "pem", "der"} {
+					t.Run(mode, func(t *testing.T) {
+						if mode != "file" {
+							t.Setenv("SALTS_TEST_TLS_MEMORY", mode)
+						}
+						runNativeServerWithClient(t, server, &bad, "reject")
+					})
+				}
+			} else {
+				runNativeServerWithClient(t, server, &bad, "reject")
+			}
 		})
 	}
 }
@@ -279,9 +292,23 @@ func TestShangMiMutualNativeClient(t *testing.T) {
 				t.Setenv("SALTS_TEST_TLS_VALIDITY_INDEX", "0")
 			}
 			if name == "key_usage" || name == "client_only_eku" {
-				t.Setenv("SALTS_TEST_TLS_VALIDITY_DIAGNOSTIC", "certificate")
+				t.Setenv("SALTS_TEST_TLS_VALIDITY_DIAGNOSTIC", "purpose")
+				t.Setenv("SALTS_TEST_TLS_VALIDITY_INDEX", "0")
 			}
-			run(t, credentials(t, change), false, "")
+			bad := credentials(t, change)
+			if name == "key_usage" || name == "client_only_eku" {
+				memoryFixtures(t, bad.caPath)
+				for _, mode := range []string{"file", "pem", "der"} {
+					t.Run(mode, func(t *testing.T) {
+						if mode != "file" {
+							t.Setenv("SALTS_TEST_TLS_MEMORY", mode)
+						}
+						run(t, bad, false, "")
+					})
+				}
+			} else {
+				run(t, bad, false, "")
+			}
 		})
 	}
 	t.Run("reject_server_certificate_signature", func(t *testing.T) { run(t, corruptCertificate(t, credentials(t, nil)), false, "") })
