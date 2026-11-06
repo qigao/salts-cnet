@@ -5,6 +5,7 @@
 #include <stdatomic.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdio.h>
 
 #ifdef _WIN32
   #include <intrin.h>
@@ -536,9 +537,13 @@ int disruptor_consumer_try_register(disruptor_t *disruptor, disruptor_consumer_t
     vacant = DISRUPTOR_VACANT;
     start_sequence =
         atomic_load_explicit(&disruptor->slowest_consumer.sequence, memory_order_acquire);
-    if (atomic_compare_exchange_weak_explicit(&disruptor->consumer_cursors[i].sequence, &vacant,
+    const int registered = atomic_compare_exchange_weak_explicit(&disruptor->consumer_cursors[i].sequence, &vacant,
                                               start_sequence, memory_order_release,
-                                              memory_order_relaxed)) {
+                                              memory_order_relaxed);
+    if (!registered && vacant == DISRUPTOR_VACANT)
+      fprintf(stderr, "VERIFY260 spurious consumer registration slot=%u capacity=%u expected-still-vacant\n",
+          i, disruptor->consumer_capacity);
+    if (registered) {
       consumer->slot = i;
       if (next_sequence != NULL) {
         *next_sequence = start_sequence + 1U;

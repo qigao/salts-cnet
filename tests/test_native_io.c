@@ -57,7 +57,7 @@ spec("NativeIO backend lifecycle") {
 
   for (size_t shards = 1u; shards <= 4u; shards *= 2u) {
     it("preserves startup, fixed owner and teardown across repeated %zu-shard generations", shards) {
-      const unsigned generations = shards == 1u ? 512u : 128u;
+      const unsigned generations = shards == 1u ? 8192u : 2048u;
       const native_io_sharded_config config = {shards, 8u, {native_backend(), 4u, 8u, 8u}};
       for (unsigned generation = 0u; generation < generations; ++generation) {
         memset(startup_probes, 0, sizeof(startup_probes));

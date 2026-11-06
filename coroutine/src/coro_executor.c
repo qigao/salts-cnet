@@ -5,6 +5,7 @@
 #include <stdatomic.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdio.h>
 #include <disruptor.h>
 #include <clock.h>
 #include <error_codes.h>
@@ -409,6 +410,7 @@ static int coro_executor_shard_should_exit(coro_executor_shard_t *shard) {
 
 static void coro_executor_report_startup(coro_executor_shard_t *shard, int failed) {
   coro_executor_t *executor = shard->executor;
+  if (failed) fprintf(stderr, "VERIFY260 executor worker startup failed shard=%zu\n", shard->index);
   cmeta_mutex_lock(&executor->startup_mutex);
   if (failed) executor->startup_failed = 1;
   executor->startup_count++;
