@@ -1172,4 +1172,25 @@ Formal tests use independently signed RSA/P256 certificates for TLS1.2/1.3,
 file/PEM/DER anchors, expired/future leaf and local anchor, and malformed validity
 intervals. Independent SM2 peers verify both mTLS roles and generic usage
 failures; TLCP peers cover signing and encryption leaf validity separately.
+
+## Retained certificate signature failure positions
+
+`CRYPTO_TLS_FAILURE_CHAIN_SIGNATURE` now retains the zero-based presented-chain
+index recorded at the actual failed certificate-signature check. It identifies
+the certificate being verified, rather than its issuer: standard TLS/ShangMi
+leaf 0 and subsequent intermediates, or TLCP signing leaf 0 and encryption leaf 1.
+Crypto copies this owned diagnostic into the existing first-failure value; CNet
+retains it in `cnet_error.tls` across transport/TLS destruction.
+
+This does not change verification order, trust selection, time/purpose checks or
+error categories. If a top certificate cannot be matched to a verifying local
+anchor, the existing TRUST_ANCHOR result and unknown index remain. Local-only
+anchors and remote alerts do not supply a presented-certificate position. No
+chain rescan or position inference runs after failure.
+
+Formal independent peers corrupt only certificate signature bytes while keeping
+keys, authenticated handshake signatures and chain structure intact. Tests cover
+RSA/P256 TLS1.2/1.3, both native mTLS endpoint roles, two intermediate levels,
+ShangMi mTLS, TLCP dual leaves, and file/PEM/DER trust/identity inputs. Undamaged
+controls and top-certificate root-selection failures keep their prior behavior.
 The CNet probe checks the retained value again after owner destruction.

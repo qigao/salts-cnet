@@ -321,3 +321,22 @@
   step refreshes apt metadata. A hosted image's stale package lists can name
   removed libsoup builds and fail with HTTP 404 before configure. Refresh the
   index at the audio install boundary; retain fail-fast package installation.
+
+## 2026-11-06 certificate signature failure positions
+
+- GmSSL's existing cert_chain result lost the checked certificate's position.
+  Capture it only where the actual presented-certificate signature check fails:
+  standard chain cursor minus one; TLCP signing leaf zero, encryption leaf one,
+  then the current intermediate. Retain original check order and error category.
+- Failed root discovery still returns TRUST_ANCHOR with unknown position. A
+  signature failure does not justify rescanning a chain or guessing leaf zero.
+  Crypto copies the provider index into its existing first-failure diagnostic;
+  CNet keeps the owned value through TLS/owner teardown.
+- GmSSL 3.2.0#36 is pinned in manifest registry, CI cache action and source lock.
+  The existing formal standard-TLS CTest failed against #35 with CHAIN_SIGNATURE
+  and SIZE_MAX instead of the checked index, then passed with #36. Full local
+  native-release-user graph and eight related formal CTests passed (67.55s).
+- Independent fixtures exercise 160 signature/control handshake scenarios:
+  RSA/P256 TLS1.2/1.3, both native mTLS roles, two intermediate levels, ShangMi,
+  TLCP signing/encryption leaves, file/PEM/DER and unknown root-selection errors.
+  No new test project, feature switch, verification rescan or retry is needed.

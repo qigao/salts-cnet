@@ -577,12 +577,29 @@ func TestTLCP(t *testing.T) {
 			})
 			runNativeClient(t, bad, "localhost", false, []uint16{tlcp.ECC_SM4_GCM_SM3})
 		})
-		t.Run(fmt.Sprintf("reject_signature_role_%d", role), func(t *testing.T) {
+		for _, presentIssuer := range []bool{false, true} {
 			bad := credentials(t, nil)
 			der := bad.certificates[role-1].Certificate[0]
 			der[len(der)-1] ^= 1
-			runNativeClient(t, bad, "localhost", false, []uint16{tlcp.ECC_SM4_GCM_SM3})
-		})
+			if presentIssuer {
+				bad.certificates[0].Certificate = append(bad.certificates[0].Certificate, bad.root.Raw)
+			}
+			memoryFixtures(t, bad.caPath)
+			for _, mode := range []string{"file", "pem", "der"} {
+				t.Run(fmt.Sprintf("reject_signature/role_%d/issuer_%t/%s", role, presentIssuer, mode), func(t *testing.T) {
+					if mode != "file" {
+						t.Setenv("SALTS_TEST_TLS_MEMORY", mode)
+					}
+					if role == 1 && !presentIssuer {
+						t.Setenv("SALTS_TEST_TLS_VALIDITY_DIAGNOSTIC", "anchor")
+					} else {
+						t.Setenv("SALTS_TEST_TLS_VALIDITY_DIAGNOSTIC", "signature")
+						t.Setenv("SALTS_TEST_TLS_VALIDITY_INDEX", fmt.Sprint(role-1))
+					}
+					runNativeClient(t, bad, "localhost", false, []uint16{tlcp.ECC_SM4_GCM_SM3})
+				})
+			}
+		}
 		t.Run(fmt.Sprintf("reject_expired_role_%d", role), func(t *testing.T) {
 			t.Setenv("SALTS_TEST_TLS_VALIDITY_DIAGNOSTIC", "expired")
 			t.Setenv("SALTS_TEST_TLS_VALIDITY_INDEX", fmt.Sprint(role-1))
