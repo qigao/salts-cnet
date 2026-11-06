@@ -43,6 +43,10 @@ static native_io_backend_kind native_backend(void) {
 }
 
 spec("NativeIO backend lifecycle") {
+  before_each() {
+    check(startup_runtime == NULL, "the previous runtime must be quiescent before a new case");
+  }
+
   after_each() {
     if (startup_runtime != NULL) {
       const int status = native_io_sharded_destroy(startup_runtime);
