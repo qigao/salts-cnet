@@ -23,6 +23,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -119,6 +120,18 @@ func TestClientIdentities(t *testing.T) {
 			extra[fmt.Sprintf("encrypted_%s%d", password, bits)] = pair
 		}
 	}
+	for _, hash := range []string{"sha384", "sha512"} {
+		for _, bits := range []int{128, 192, 256} {
+			for _, password := range []string{"binary", "empty"} {
+				pair := [2]identity{first, second}
+				for i, source := range []identity{first, second} {
+					pair[i].keyFile = filepath.Join(t.TempDir(), "key.pem")
+					writeAESFixtureFrom(t, source, pair[i], password, hash+"_valid", bits)
+				}
+				extra[fmt.Sprintf("encrypted_%s%d_%s", password, bits, hash)] = pair
+			}
+		}
+	}
 	// ECDSA leaf under an RSA issuer: only the leaf scheme excludes this identity.
 	ec := makeIdentity(t, "ec", true, &first)
 	for _, version := range []uint16{tls.VersionTLS12, tls.VersionTLS13} {
@@ -129,6 +142,13 @@ func TestClientIdentities(t *testing.T) {
 			}
 			if mode != "file" {
 				scenarios = append(scenarios, "encrypted_binary", "encrypted_empty", "encrypted_binary128", "encrypted_empty128", "encrypted_binary192", "encrypted_empty192")
+				for _, hash := range []string{"sha384", "sha512"} {
+					for _, bits := range []int{128, 192, 256} {
+						for _, password := range []string{"binary", "empty"} {
+							scenarios = append(scenarios, fmt.Sprintf("encrypted_%s%d_%s", password, bits, hash))
+						}
+					}
+				}
 			}
 			for _, scenario := range scenarios {
 				t.Run(fmt.Sprintf("tls%d/%s/%s", version, mode, scenario), func(t *testing.T) {
@@ -136,13 +156,15 @@ func TestClientIdentities(t *testing.T) {
 					want := first.leaf
 					hints := x509.NewCertPool()
 					auth := tls.RequireAndVerifyClientCert
-					switch scenario {
-					case "encrypted_binary", "encrypted_empty", "encrypted_binary128", "encrypted_empty128", "encrypted_binary192", "encrypted_empty192":
+					switch {
+					case strings.HasPrefix(scenario, "encrypted_"):
 						t.Setenv("SALTS_TEST_TLS_ENCRYPTED", "1")
 						if pair, ok := extra[scenario]; ok {
 							a, b = pair[0], pair[1]
+						} else if scenario != "encrypted_binary" && scenario != "encrypted_empty" {
+							t.Fatalf("missing encrypted fixture for %s", scenario)
 						}
-						if scenario == "encrypted_empty" || scenario == "encrypted_empty128" || scenario == "encrypted_empty192" {
+						if strings.HasPrefix(scenario, "encrypted_empty") {
 							if scenario == "encrypted_empty" {
 								a, b = emptyFirst, emptySecond
 							}
@@ -150,31 +172,31 @@ func TestClientIdentities(t *testing.T) {
 						}
 						hints.AddCert(second.root)
 						want = second.leaf
-					case "separate_certificate":
+					case scenario == "separate_certificate":
 						t.Setenv("SALTS_TEST_TLS_SEPARATE_CERT_SIGNATURES", "1")
 						hints.AddCert(first.root)
-					case "first_ca":
+					case scenario == "first_ca":
 						hints.AddCert(first.root)
-					case "range_second_ca":
+					case scenario == "range_second_ca":
 						t.Setenv("SALTS_TEST_TLS_CLIENT_RANGE", "1")
 						fallthrough
-					case "second_ca":
+					case scenario == "second_ca":
 						hints.AddCert(second.root)
 						want = second.leaf
-					case "ordered":
+					case scenario == "ordered":
 						hints.AddCert(second.root)
 						hints.AddCert(first.root)
-					case "empty_ca":
+					case scenario == "empty_ca":
 						auth = tls.RequestClientCert
-					case "signature":
+					case scenario == "signature":
 						a, b = ec, first
 						hints.AddCert(first.root)
 						t.Setenv("SALTS_TEST_TLS_CLIENT_RSA_ONLY", "1")
-					case "no_match":
+					case scenario == "no_match":
 						hints.AddCert(server.root)
 						auth = tls.RequestClientCert
 						want = nil
-					case "no_request":
+					case scenario == "no_request":
 						auth = tls.NoClientCert
 						want = nil
 					}

@@ -190,9 +190,9 @@ jobs:
 
       - name: Set up shared dependency contract
         id: vcpkg
-        # GmSSL #40 enforces peer spacing and local-direction TLS1.3 alerts.
+        # GmSSL #41 decodes explicit PBKDF2 HMAC-SHA384/SHA512 credential PRFs.
         # Includes native Windows pkg-config; avoid MSYS2 for pkg-config.
-        uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-curl-cache@f856a0a1a468a80b6376528618cda926a666f479
+        uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-curl-cache@99156c278e9f10fe72376573a2fc8b5340a40183
         with:
           mode: read
           triplet: ${{ matrix.triplet }}

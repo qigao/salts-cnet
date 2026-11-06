@@ -72,6 +72,10 @@ func TestShangMiMutual(t *testing.T) {
 	for _, bits := range []int{128, 192, 256} {
 		encryptedMemoryFixture(t, server.keyPath, bits)
 		encryptedMemoryFixture(t, client.keyPath, bits)
+		for _, prf := range []int{384, 512} {
+			encryptedMemoryFixture(t, server.keyPath, bits, prf)
+			encryptedMemoryFixture(t, client.keyPath, bits, prf)
+		}
 	}
 	for _, mode := range []string{"pem", "der"} {
 		t.Run("memory_"+mode, func(t *testing.T) {
@@ -80,14 +84,23 @@ func TestShangMiMutual(t *testing.T) {
 			runNativeServerWithClient(t, server, &client, "close")
 			runNativeClientWithIdentity(t, server, &client, "localhost", true, "")
 		})
-		for _, encryption := range []string{"aes128", "aes192", "aes"} {
-			t.Run(encryption+"_encrypted_memory_"+mode, func(t *testing.T) {
-				t.Setenv("SALTS_TEST_TLS_MEMORY", mode)
-				t.Setenv("SALTS_TEST_TLS_ENCRYPTED", encryption)
-				mutual(t, server, client, "accept")
-				runNativeServerWithClient(t, server, &client, "close")
-				runNativeClientWithIdentity(t, server, &client, "localhost", true, "")
-			})
+		for _, hash := range []string{"", "sha384", "sha512"} {
+			for _, encryption := range []string{"aes128", "aes192", "aes"} {
+				name := encryption + "_encrypted_memory_" + mode
+				if hash != "" {
+					name = hash + "_" + name
+				}
+				t.Run(name, func(t *testing.T) {
+					t.Setenv("SALTS_TEST_TLS_MEMORY", mode)
+					t.Setenv("SALTS_TEST_TLS_ENCRYPTED", encryption)
+					if hash != "" {
+						t.Setenv("SALTS_TEST_TLS_PBKDF2", hash)
+					}
+					mutual(t, server, client, "accept")
+					runNativeServerWithClient(t, server, &client, "close")
+					runNativeClientWithIdentity(t, server, &client, "localhost", true, "")
+				})
+			}
 		}
 		t.Run("encrypted_memory_"+mode, func(t *testing.T) {
 			t.Setenv("SALTS_TEST_TLS_MEMORY", mode)
@@ -157,7 +170,20 @@ func encryptedMemoryFixture(t *testing.T, path string, aesBits ...int) {
 			suffix = ".aes192"
 			algorithm = pkcs.AES192CBC
 		}
-		encrypter = pkcs.NewPBESEncrypter(algorithm, pkcs.NewPBKDF2Opts(pkcs.SHA256, 16, 10000))
+		prf := pkcs.SHA256
+		if len(aesBits) > 1 {
+			switch aesBits[1] {
+			case 384:
+				prf = pkcs.SHA384
+				suffix += ".sha384"
+			case 512:
+				prf = pkcs.SHA512
+				suffix += ".sha512"
+			default:
+				t.Fatal("unsupported fixture PRF")
+			}
+		}
+		encrypter = pkcs.NewPBESEncrypter(algorithm, pkcs.NewPBKDF2Opts(prf, 16, 10000))
 	}
 	der, err := pkcs8.MarshalPrivateKey(key, []byte("memory\x00sign"), encrypter)
 	if err != nil {
