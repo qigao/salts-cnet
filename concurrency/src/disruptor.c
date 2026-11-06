@@ -536,7 +536,8 @@ int disruptor_consumer_try_register(disruptor_t *disruptor, disruptor_consumer_t
     vacant = DISRUPTOR_VACANT;
     start_sequence =
         atomic_load_explicit(&disruptor->slowest_consumer.sequence, memory_order_acquire);
-    if (atomic_compare_exchange_weak_explicit(&disruptor->consumer_cursors[i].sequence, &vacant,
+    /* Each slot is attempted once: a vacant slot must not be skipped spuriously. */
+    if (atomic_compare_exchange_strong_explicit(&disruptor->consumer_cursors[i].sequence, &vacant,
                                               start_sequence, memory_order_release,
                                               memory_order_relaxed)) {
       consumer->slot = i;

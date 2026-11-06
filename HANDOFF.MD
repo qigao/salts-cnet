@@ -275,6 +275,46 @@
   "^saltscore.cnet_tcp_loopback$" --repeat until-fail:64 --output-on-failure`)
   passed all 64 runs. This does not qualify ARM64 or close the issue.
 
+- Follow-up formal NativeIO coverage uses 768 same-process runtime generations
+  (512 single-shard, 128 each for two/four shards), checking owner-local execution,
+  exact command settlement, closed admission and quiescent destruction. Four
+  invalid backend configurations exercise bootstrap error propagation and cleared
+  output ownership. Local native-release-user full graph and NativeIO/coroutine/
+  concurrency/CNet-loopback CTests passed; ARM64 reproduction remains required.
+
+- Confirmed diagnostic gap: an accepted bootstrap had no cancellation callback,
+  so executor cancellation left bootstrap_done false and create returned generic
+  EIO. Record the original cancellation status and done flag before the executor
+  terminal is joined; leave backend_initialized false for a cancelled bootstrap.
+  Existing first-shard error selection and owner-local cleanup remain unchanged.
+- Temporary branch `verify/bootstrap-cancel-260` injected executor ENOMEM on
+  shard 1 and changed only the existing NativeIO formal test. Full user-preset
+  graph built; `ctest --preset native-release-user -R "^saltscore.native_io$"
+  --output-on-failure` failed before the fix (two EIO results instead of ENOMEM),
+  then passed all four cases with the same injection: 2/4-owner partial startup,
+  earlier backend EINVAL, and normal single-owner creation after cleanup.
+  Temporary injection/worktree/branch were removed. Main full graph and five
+  related formal CTests passed. This proves cancellation propagation, not that
+  cancellation caused the original Windows ARM64 observation; #260 stays open.
+
+- CI #374 reproduced the startup failure in the new formal NativeIO lifecycle
+  test: Windows ARM64, generation 112 with two IOCP owners, create returned
+  SALTS_ENOMEM (-4030). One/four-owner cases and CNet loopback passed in the same
+  job. Executor startup reserves singleton broadcast consumer slots using
+  Disruptor try-register; its one-shot weak CAS may reject a vacant slot.
+  Use strong CAS for that bounded slot attempt, retaining memory orders and
+  full-capacity rejection. Formal Disruptor tests exercise 4096 registrations
+  each with one/four slots, last-slot reuse, full rejection and publication.
+  Local full native-release-user graph and six related formal CTests passed.
+  Temporary diagnostic PR #262 / CI #375 confirmed the owning failure path on
+  Windows ARM64: the singleton weak CAS returned false with expected still
+  VACANT, immediately followed by executor startup failure and NativeIO ENOMEM.
+  It failed at generations 1125/29/1 for 1/2/4 owners respectively. The other nine
+  matrix jobs passed. Keep the same amplified formal suite for the strong-CAS
+  comparison, then remove the temporary diagnostics, worktree and branch.
+  The historical #370 assertion discarded its status; its exact cause remains
+  an inference from the now-reproduced startup failure, not a captured fact.
+
 ## 2026-11-06 TSan audio runtime package indexes
 
 - The private PulseAudio runtime is installed before the Linux capture SDK

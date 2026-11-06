@@ -222,7 +222,9 @@ typedef struct native_io_sharded_stats {
  * @param config Copied fixed topology/backend configuration.
  * @param out_runtime Cleared on entry and receives ownership on success.
  * @return SALTS_OK, SALTS_EINVAL, SALTS_ERANGE, SALTS_ENOTSUP, SALTS_ENOMEM,
- *         or the first NativeIO backend initialization error.
+ *         or the first NativeIO backend initialization/bootstrap cancellation
+ *         error in shard order. Failed creation leaves out_runtime NULL and joins all accepted
+ *         bootstrap tasks before reclaiming their borrowed shard storage.
  */
 int native_io_sharded_create(const native_io_sharded_config *config,
                              native_io_sharded **out_runtime);

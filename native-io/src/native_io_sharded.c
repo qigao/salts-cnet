@@ -468,6 +468,14 @@ static void native_io_sharded_bootstrap(coro_t *coroutine, void *arg) {
   atomic_store(&shard->bootstrap_done, 1);
 }
 
+static void native_io_sharded_bootstrap_cancel(void *arg, int status) {
+  native_io_sharded_shard *shard = (native_io_sharded_shard *)arg;
+  /* An accepted bootstrap either runs or is cancelled before backend creation.
+   * Publish its original terminal status before create() joins and reads it. */
+  atomic_store(&shard->init_status, status);
+  atomic_store(&shard->bootstrap_done, 1);
+}
+
 static void native_io_sharded_shutdown_probe(coro_t *coroutine, void *arg) {
   native_io_sharded_shard *shard = (native_io_sharded_shard *)arg;
   native_io_backend_stats stats = {0};
@@ -722,7 +730,8 @@ int native_io_sharded_create(const native_io_sharded_config *config,
 
   for (size_t shard_index = 0u; shard_index < runtime->shard_count; ++shard_index) {
     const coro_executor_task_t task = {
-        native_io_sharded_bootstrap, NULL, NULL, &runtime->shards[shard_index]};
+        native_io_sharded_bootstrap, native_io_sharded_bootstrap_cancel, NULL,
+        &runtime->shards[shard_index]};
     status = coro_executor_submit_to(runtime->executor, shard_index, &task);
     if (status != SALTS_OK) break;
   }

@@ -85,6 +85,53 @@ static void disruptor_test_handoff_barrier(unsigned int phase) {
 }
 
 spec("Disruptor Tests") {
+  group("bounded consumer registration") {
+    static disruptor_t *ring;
+    before_each() { check_null(ring); }
+    after_each() {
+      disruptor_destroy(ring);
+      ring = NULL;
+    }
+    for (uint32_t slots = 1u; slots <= 4u; slots *= 4u) {
+      it("claims the last vacant slot once and rejects a full %u-slot registry", slots) {
+        enum { REGISTRATION_ROUNDS = 4096 };
+        const disruptor_config_t config = {
+            .entry_size = sizeof(uint64_t), .capacity = CAPACITY, .consumer_capacity = slots};
+        disruptor_consumer_t held[4] = {{0}};
+        disruptor_consumer_t extra = {0};
+        uint64_t next_sequence = 0u;
+        ring = disruptor_create(&config);
+        check_not_null(ring);
+        for (uint32_t slot = 0u; slot + 1u < slots; ++slot) {
+          check_equal(disruptor_consumer_try_register(ring, &held[slot], &next_sequence), 1);
+          check_equal(held[slot].slot, slot);
+          check_equal(next_sequence, UINT64_C(1));
+        }
+        for (unsigned round = 0u; round < REGISTRATION_ROUNDS; ++round) {
+          const int registered =
+              disruptor_consumer_try_register(ring, &held[slots - 1u], &next_sequence);
+          check(registered == 1, "slots=%u round=%u vacant registration=%d", slots, round, registered);
+          check_equal(held[slots - 1u].slot, slots - 1u);
+          check_equal(next_sequence, UINT64_C(1));
+          check_equal(disruptor_consumer_try_register(ring, &extra, NULL), 0);
+          if (round + 1u < REGISTRATION_ROUNDS)
+            disruptor_consumer_unregister(ring, &held[slots - 1u]);
+        }
+        disruptor_cursor_t published = {0};
+        disruptor_cursor_t read = {.sequence = next_sequence};
+        check_equal(disruptor_publisher_try_claim(ring, &published), 1);
+        check_equal(published.sequence, next_sequence);
+        *(uint64_t *)disruptor_acquire_entry(ring, &published) = UINT64_C(42);
+        check_equal(disruptor_publisher_publish(ring, &published), 1);
+        check_equal(disruptor_consumer_wait_for_nonblocking_for(ring, &held[slots - 1u], &read), 1);
+        check_equal(*(const uint64_t *)disruptor_show_entry(ring, &read), UINT64_C(42));
+        for (uint32_t slot = 0u; slot < slots; ++slot) {
+          disruptor_consumer_release_entry(ring, &held[slot], &read);
+          disruptor_consumer_unregister(ring, &held[slot]);
+        }
+      }
+    }
+  }
   group("concurrent publication and completion cursor handoff") {
     before_each() {
       memset(&handoff, 0, sizeof(handoff));
