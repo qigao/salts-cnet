@@ -728,6 +728,7 @@ spec("GmSSL authenticated peer update budget across fragmented reads") {
         ctx[endpoint].protocol = TLS_protocol_tls13;
         conn[endpoint].ctx = &ctx[endpoint];
         conn[endpoint].protocol = TLS_protocol_tls13;
+        conn[endpoint].handshake_state = TLS_state_handshake_over;
         conn[endpoint].is_client = (scenario % 2u) != endpoint;
         conn[endpoint].cipher_suite = scenario < 2u ? TLS_cipher_sm4_gcm_sm3 : TLS_cipher_aes_128_gcm_sha256;
         tls_record_set_protocol(conn[endpoint].plain_record, TLS_protocol_tls12);
@@ -1397,7 +1398,7 @@ static size_t post_handshake_ticket(uint8_t *message, size_t ticket_size) {
 spec("GmSSL post-handshake interruption and key boundaries") {
   for (unsigned role = 0u; role < 2u; ++role) {
     for (unsigned suite_index = 0u; suite_index < 2u; ++suite_index) {
-      for (unsigned mode = 0u; mode < 14u; ++mode) {
+      for (unsigned mode = 0u; mode < 15u; ++mode) {
         it("role %u suite %u malformed post-handshake %u cannot release data or change keys", role, suite_index, mode) {
           TLS_CTX ctx[2];
           TLS_CONNECT conn[2];
@@ -1428,6 +1429,10 @@ spec("GmSSL post-handshake interruption and key boundaries") {
           } else if (mode == 11u) {
             update[0] = 13u; /* unsupported post-handshake authentication */
             post_handshake_seal(&conn[0], &wire.incoming, 22u, update, 1u);
+          } else if (mode == 14u) {
+            conn[1].handshake_state = TLS_state_handshake_init;
+            memset(conn[1].handshake_fragment, 0x6a, sizeof(conn[1].handshake_fragment));
+            post_handshake_seal(&conn[0], &wire.incoming, 22u, update, 5u);
           } else {
             post_handshake_seal(&conn[0], &wire.incoming, 22u, update, 3u);
             post_handshake_update_sender(&conn[0]); /* Illegal key change mid-message. */
@@ -1442,6 +1447,11 @@ spec("GmSSL post-handshake interruption and key boundaries") {
           check_equal(byte, (uint8_t)0x5a);
           check_equal(conn[1].close_notify_received, 0);
           check_equal(conn[1].key_update, 0);
+          if (mode == 14u) {
+            uint8_t original[32];
+            memset(original, 0x6a, sizeof(original));
+            check_equal(conn[1].handshake_fragment, original, sizeof(original));
+          }
           check_equal(before, role ? conn[1].server_application_traffic_secret : conn[1].client_application_traffic_secret, sizeof(before));
         }
       }

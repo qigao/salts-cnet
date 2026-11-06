@@ -1321,7 +1321,9 @@ The exclusive receive owner reassembles supported KeyUpdate/NewSessionTicket
 messages across authenticated TLS1.3 records, and processes multiple messages
 within a record. It reuses the initial-handshake fragment array after Finished
 has consumed that array at a record boundary; one new length scalar owns the
-post-handshake assembly. Initial-handshake parsing no longer uses that array.
+post-handshake assembly. The parser requires the completed-Finished state before
+reusing it, so pre-Finished input cannot overwrite initial handshake storage.
+Initial-handshake parsing no longer uses that array.
 The input record remains in the independent receive buffer and received
 application plaintext retains its existing databuf lifetime. No allocation,
 queue, thread, second reader or public configuration/API is introduced.

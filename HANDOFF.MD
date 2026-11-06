@@ -439,7 +439,7 @@
   session material on every admitted exit. The empty-ticket check incorrectly
   tested its length pointer rather than the value; reject zero-length tickets.
   This reception work does not qualify session restore/cache or 0-RTT.
-- Formal provider coverage adds 114 cases, including partial assembly across
+- Formal provider coverage adds 118 cases, including partial assembly across
   independent writes, malformed/interrupted frames, ticket/update coalescing,
   maximum/excess ticket sizes, empty values, count overflow, expansion failure
   and failing file output. Test wrong ticket roles with correctly matched peer
@@ -452,4 +452,11 @@
   Go Test function. Native checks preserve FAILED/EPROTO/read for interruptions.
 - Pinned native-release-user configure/full graph passed. Nine related CTests
   passed (87.26s); after the final empty-ticket/type corrections the two affected
-  CTests passed again (10.57s). The provider test now executes 372 internal cases.
+  CTests passed again (10.57s). The provider test now executes 376 internal cases.
+
+- Enforce the Finished phase before reusing initial handshake storage. Four
+  negative role/AEAD cases retain the original buffer on pre-Finished input.
+  Existing synthetic established-peer fixtures now explicitly mark handshake
+  completion, preserving their exact admission/key assertions.
+  The final pinned full graph and all three affected CTests passed (24.78s),
+  including all 376 provider cases with zero skipped.

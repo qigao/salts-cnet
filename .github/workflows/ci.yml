@@ -192,7 +192,7 @@ jobs:
         id: vcpkg
         # GmSSL #39 bounds post-handshake framing and ticket serialization.
         # Includes native Windows pkg-config; avoid MSYS2 for pkg-config.
-        uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-curl-cache@131b474ffeb2085dc1219f1f35902e2d142f8fee
+        uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-curl-cache@754d25821874cbd5b9de176a496962becaf875d7
         with:
           mode: read
           triplet: ${{ matrix.triplet }}
