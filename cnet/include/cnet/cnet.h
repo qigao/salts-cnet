@@ -463,6 +463,10 @@ typedef struct cnet_tls_client_config {
    * default 4; explicit 1..5 is immutable. Above 5: EINVAL. Nonzero with iOS
    * implicit system trust: ENOTSUP. Does not bypass other verification. */
   uint32_t verification_depth;
+  /** Optional copied certificate-validity Unix time; NULL uses system time.
+   * Same range, lifetime and applicability as Crypto verification_time.
+   * Peer-policy/revocation clocks and other authentication checks are unchanged. */
+  const int64_t *verification_time;
   /** Copied immutable cipher allowlist; same admission/profile/version contract
    * as crypto_tls_stream_client_config.cipher_suites. NULL/0 keeps defaults. */
   const cnet_tls_cipher_suite *cipher_suites;
@@ -527,6 +531,8 @@ typedef struct cnet_tls_server_config {
   cnet_tls_protocol_version maximum_version;
   /** Same depth contract as client; nonzero requires REQUIRED client auth. */
   uint32_t verification_depth;
+  /** Same certificate-time contract as client; requires REQUIRED client auth. */
+  const int64_t *verification_time;
   /** Copied immutable cipher allowlist; same admission/profile/version contract
    * as crypto_tls_stream_client_config.cipher_suites. NULL/0 keeps defaults. */
   const cnet_tls_cipher_suite *cipher_suites;

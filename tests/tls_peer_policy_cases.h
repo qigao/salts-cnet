@@ -69,6 +69,20 @@ static int run_peer_policy_cases(void) {
   }
   policy = peer_policy_descriptor(&p);
   cfg.ca_file = "this-test-trust-file-does-not-exist.pem";
+  for (unsigned invalid = 0u; invalid < 5u; ++invalid) {
+    int64_t value = invalid == 0u ? -1 : invalid == 1u ? INT64_MIN :
+        invalid == 2u ? INT64_MAX : invalid == 3u ? INT64_C(253402300800) : 0;
+    cnet_tls_client_config bad_client = {.size = sizeof(bad_client),
+        .ca_file = cfg.ca_file, .verification_time = &value};
+    cnet_tls_server_config bad_server = {.size = sizeof(bad_server),
+        .cert_file = "absent-time-cert.pem", .key_file = "absent-time-key.pem",
+        .ca_file = cfg.ca_file, .verification_time = &value,
+        .client_auth = invalid < 4u ? CNET_TLS_CLIENT_AUTH_REQUIRED : CNET_TLS_CLIENT_AUTH_NONE};
+    if (invalid < 4u) REQUIRE(cnet_tls_client_init(&client, &bad_client) == SALTS_EINVAL);
+    REQUIRE(cnet_tls_server_init(&server, &bad_server) == SALTS_EINVAL);
+    REQUIRE(client.impl == NULL && server.impl == NULL);
+    REQUIRE(atomic_load(&p.retains) == 0u && atomic_load(&p.calls) == 0u);
+  }
   for (unsigned invalid = 0u; invalid < 3u; ++invalid) {
     uint32_t depth = invalid == 0u ? 6u : invalid == 1u ? UINT32_MAX : 1u;
     cnet_tls_client_config bad_client = {.size = sizeof(bad_client),

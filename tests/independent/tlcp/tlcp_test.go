@@ -531,6 +531,42 @@ func TestTLCP(t *testing.T) {
 		runNativeClient(t, untrusted, "localhost", false, []uint16{tlcp.ECC_SM4_GCM_SM3})
 	})
 	for _, role := range []int{1, 2} {
+		for _, reason := range []string{"expired", "future"} {
+			now := time.Now()
+			fixed := now.Add(-30 * time.Minute)
+			if reason == "future" {
+				fixed = now.Add(30 * time.Minute)
+			}
+			bad := credentials(t, func(i int, c *x509.Certificate) {
+				if i != role {
+					return
+				}
+				c.NotBefore, c.NotAfter = now.Add(-45*time.Minute), now.Add(-15*time.Minute)
+				if reason == "future" {
+					c.NotBefore, c.NotAfter = now.Add(15*time.Minute), now.Add(45*time.Minute)
+				}
+			})
+			memoryFixtures(t, bad.caPath)
+			for _, mode := range []string{"file", "pem", "der"} {
+				for _, explicit := range []bool{false, true} {
+					t.Run(fmt.Sprintf("certificate_time/role%d/%s/%s/fixed_%t", role, reason, mode, explicit), func(t *testing.T) {
+						if mode != "file" {
+							t.Setenv("SALTS_TEST_TLS_MEMORY", mode)
+						}
+						if explicit {
+							t.Setenv("SALTS_TEST_TLS_VERIFICATION_TIME", fmt.Sprint(fixed.Unix()))
+						} else {
+							t.Setenv("SALTS_TEST_TLS_VALIDITY_DIAGNOSTIC", reason)
+							t.Setenv("SALTS_TEST_TLS_VALIDITY_INDEX", fmt.Sprint(role-1))
+						}
+						runNativeClient(t, bad, "localhost", explicit, []uint16{tlcp.ECC_SM4_GCM_SM3})
+					})
+				}
+			}
+		}
+	}
+
+	for _, role := range []int{1, 2} {
 		t.Run(fmt.Sprintf("reject_future_role_%d", role), func(t *testing.T) {
 			t.Setenv("SALTS_TEST_TLS_VALIDITY_DIAGNOSTIC", "future")
 			t.Setenv("SALTS_TEST_TLS_VALIDITY_INDEX", fmt.Sprint(role-1))

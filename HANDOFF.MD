@@ -233,6 +233,22 @@
   SM2 mTLS covers both endpoints; TLCP distinguishes signing/encryption leaves.
   The native runner checks the owned diagnostic again after owner teardown.
 
+## 2026-11-06 immutable certificate verification time
+
+- Copy the optional Unix-second value once, before allocation, callbacks or
+  trust-file access. NULL selects the system clock; zero is a valid explicit
+  epoch, not a sentinel. Reject invalid values, unavailable provider ranges
+  and unsupported platform-trust enforcement at context admission.
+- GmSSL #34 routes context-owned time to all five protocol verifier calls and
+  leaf/CA/anchor checks. Do not override the process clock or scan certificate
+  dates after verification. Peer-policy/revocation clocks remain independent.
+- Independent fixtures must keep unaffected certificates valid at the chosen
+  time. For exact leaf validity endpoints, give its local issuer a wider window
+  to avoid an unrelated anchor failure caused by fixture creation timestamps.
+- Full native-release-user graph and ten selected formal CTests passed across
+  the initial and affected follow-up runs. New scenarios cover 252 handshakes;
+  the registry-pinned configure/build also succeeds without an overlay.
+
 ## 2026-11-06 TSan audio runtime package indexes
 
 - The private PulseAudio runtime is installed before the Linux capture SDK

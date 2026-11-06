@@ -14,7 +14,7 @@ CMake targets, C11 source and C++17-usable C headers.
 
 Use the repository's user presets for the ASN1/Crypto/CNet build and formal
 CTest suite. The native GmSSL implementation is installed from the immutable
-`gmssl 3.2.0#33` vcpkg port, whose extension sources are pinned from
+`gmssl 3.2.0#34` vcpkg port, whose extension sources are pinned from
 `gmssl-extensions/`. `Salts::Crypto` links the imported `GmSSL::GmSSL` static
 library; it never compiles a duplicate GmSSL implementation.
 Private Ed448 libecc objects live under `vendor/libecc/` in this module.
@@ -99,3 +99,21 @@ position of the certificate actually checked in the peer's presented chain.
 This includes intermediate CAs and TLCP's encryption leaf. Local-only trust
 anchors and failures without a known position use `SIZE_MAX`; the diagnostic
 remains an owned value after stream teardown. See `<crypto/tls_diagnostic.h>`.
+
+Client and REQUIRED-auth server configurations accept `verification_time`, an
+optional pointer to Unix seconds in `0..253402300799`. Initialization copies the
+value; the caller can then erase it. NULL preserves the system clock, while an
+explicit zero selects the Unix epoch. The fixed value applies to certificate
+validity checks for every peer leaf, presented CA and local trust anchor in
+STANDARD TLS1.2/1.3, ShangMi TLS1.3 and TLCP server authentication. It does not
+change signature, usage or identity checks, nor the clocks/freshness rules of
+additional peer policies, CRLs or OCSP. Servers without client authentication
+reject the option with EINVAL; iOS implicit platform trust returns ENOTSUP.
+
+For example, configure a context with `.verification_time = &unix_seconds` where
+`unix_seconds` is an `int64_t`. A fixed context-owned value avoids process-global
+clock changes, callback lifetimes and mutable shared TLS contexts. No per-stream
+override is provided. Clear the pointer before creating a new context to restore
+system-time behavior; existing contexts retain their original value. Updating
+the pinned GmSSL headers and archive together is required for its changed context
+layout and extended verifier signatures.
