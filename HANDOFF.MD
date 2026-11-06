@@ -382,3 +382,39 @@
   CTests passed after the fix (17.98s). Counter-invariant tests use valid AEAD
   keys and an available transport, so a missing guard cannot pass merely because
   unrelated cipher setup or backpressure also rejects the operation.
+
+## TLS 1.3 key age and duplex record ownership (2026-11-06)
+
+- SHANGMI_TLS13 client/server `key_update_interval_ms` is immutable at admission.
+  Zero disables; uint32 milliseconds uses a stateless Crypto OS monotonic clock.
+  Start once at provider handshake completion; sample before new application
+  records. Any enabled time/record/byte budget can trigger one KeyUpdate.
+  Pending application/control ciphertext finishes unchanged. Successful local
+  key changes reset age; receiving peer keys must not reset the sending key.
+  Clock failure/regression, missing initialization and failed derivation remain
+  fatal. Compare before subtraction; no deadline-addition overflow or timer task.
+- Formal isolated-KeyUpdate/then-send regression exposed an existing HIGH issue:
+  tls13_recv waited for another header with shared recordlen=5. tls13_send treated
+  this as pending output, bypassed admission and returned success with sent=0.
+  Four role/AEAD cases reproduced the error. A coalesced application record hid
+  the defect by clearing the shared receive cursor; do not substitute that
+  fixture for the isolated-control regression.
+- GmSSL #38 isolates established TLS1.3 incoming ciphertext/cursors in one fixed
+  record buffer. Received plaintext reuses databuf, so outgoing plain_record
+  cannot overwrite retained input tails. All profiles share the TLS_CONNECT ABI
+  and its larger fixed allocation; there is no progress-time allocation or
+  growth. Existing ticket parsing follows the received-plaintext buffer without
+  claiming restoration/0-RTT qualification.
+- New formal provider cases cover exact expiry, combined budgets, startup and
+  later clock failures/regression, epoch zero, maximum interval/clock values,
+  mandatory response reset, peer-update non-reset, partial writes, derivation
+  failure, partial RX header/body versus TX, partial TX versus RX and retained
+  plaintext tails. Real-clock independent CNet cases run through the existing
+  TestShangMiKeyUpdate entry (both native roles and mTLS server), with exact
+  authenticated record/update order and final-key close. Configuration scalars
+  are erased after init. Four unsupported-profile endpoint configurations fail
+  before absent trust-file access or peer-policy retain/callback.
+- Registry-pinned native-release-user configure/full graph passed. Nine related
+  formal CTests passed after duplex correction (82.34s); the final affected
+  provider boundary CTest passed again after additions. No extra validation
+  project, alternate provider or CMake feature switch was added.

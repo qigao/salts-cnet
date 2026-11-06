@@ -457,6 +457,16 @@ typedef struct cnet_tls_client_config {
    * Either byte or record limit triggers rotation; peer responses remain
    * mandatory. No timer, background work or application-message boundaries. */
   uint64_t key_update_byte_limit;
+  /** SHANGMI_TLS13 local sending-key interval, copied at init. Zero disables;
+   * nonzero uint32 milliseconds uses a monotonic clock starting at handshake
+   * completion. Before each new application record, an expired interval sends
+   * KeyUpdate first. Pending ciphertext finishes unchanged. Successful local
+   * sending-key changes reset age; receiving-key changes do not. Any enabled
+   * time/record/byte limit can trigger one update; mandatory responses remain.
+   * Nonzero STANDARD/TLCP: SALTS_ENOTSUP, before trust I/O or policy retention.
+   * Clock failure/regression is fatal. No idle traffic/background timer;
+   * clock resolution and suspend accounting follow the OS monotonic clock. */
+  uint32_t key_update_interval_ms;
   /** SHANGMI_TLS13 consecutive authenticated peer KeyUpdate limit; zero is
    * unlimited. Both request kinds count across polls. Only nonempty authenticated
    * application data resets the count. Exceeding it fails with SALTS_EPROTO.
@@ -534,6 +544,8 @@ typedef struct cnet_tls_server_config {
   uint32_t key_update_record_limit;
   /** Same local plaintext-byte budget as the client configuration. */
   uint64_t key_update_byte_limit;
+  /** Same immutable sending-key interval contract as the client configuration. */
+  uint32_t key_update_interval_ms;
   /** Same consecutive peer-update contract as the client configuration. */
   uint32_t peer_key_update_limit;
   /** Same memory-input contract as the client; CA required for REQUIRED auth. */

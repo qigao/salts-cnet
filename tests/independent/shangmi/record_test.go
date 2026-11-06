@@ -86,8 +86,19 @@ func (p *recordPeer) receiveKeyUpdate() error {
 }
 
 func (p *recordPeer) receiveKeyUpdateRequest(request byte) error {
-	if err := p.expect(22, []byte{24, 0, 0, 1, request}); err != nil {
+	kind, data, err := p.record()
+	if err != nil {
 		return err
+	}
+	if kind != 22 {
+		return fmt.Errorf("expected KeyUpdate, got %d: %x", kind, data)
+	}
+	return p.consumeKeyUpdate(data, request)
+}
+
+func (p *recordPeer) consumeKeyUpdate(data []byte, request byte) error {
+	if !bytes.Equal(data, []byte{24, 0, 0, 1, request}) {
+		return fmt.Errorf("unexpected KeyUpdate payload: %x", data)
 	}
 	next, err := tls13gm.HKDFExpandLabel(p.readSecret, "traffic upd", nil, 32)
 	if err != nil {

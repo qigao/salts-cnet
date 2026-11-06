@@ -978,6 +978,8 @@ static int run_python_ssl_server(const char *port_text,
       strcmp(protocol, "shangmi13-rotatebyte2") == 0 ? 2u :
       strcmp(protocol, "shangmi13-rotatebytemax") == 0 ? CNET_TLS_KEY_UPDATE_BYTE_LIMIT_MAX :
       strcmp(protocol, "shangmi13-rotateboth-byte") == 0 ? 2u : byte_rotation ? 7u : 0u;
+  const uint32_t interval_ms = strcmp(protocol, "shangmi13-rotatetime") == 0 ? 250u :
+      strcmp(protocol, "shangmi13-rotatetimemax") == 0 ? UINT32_MAX : 0u;
   const unsigned rounds = local_rotation ? 5u : (key_update_exchange || peer_limit) ? 2u : 1u;
   const bool shangmi = strcmp(protocol, "shangmi13") == 0 || key_update_exchange || local_rotation || peer_limit;
   const bool approved_identity = expect_success;
@@ -1023,6 +1025,7 @@ static int run_python_ssl_server(const char *port_text,
       .cipher_suite_count = version_range ? 3u : !tlcp && !shangmi && strcmp(protocol, "tls12") == 0 ? 2u : 1u,
       .peer_policy = owned_policy, .key_update_record_limit = rotation_limit,
       .key_update_byte_limit = byte_limit,
+      .key_update_interval_ms = interval_ms,
       /* TLCP's two leaves do not consume issuer depth. Exercise the smallest
        * explicit bound with independent dual-certificate peers. */
       .verification_depth = tlcp ? 1u : 0u,
@@ -1061,6 +1064,7 @@ static int run_python_ssl_server(const char *port_text,
       .tls = &tls_config};
   REQUIRE(tls_test_connect(&client, &connect_options, &outbound) == SALTS_OK);
   tls_config.key_update_record_limit = 0u;
+  tls_config.key_update_interval_ms = 0u;
   tls_config.key_update_byte_limit = 0u; /* The admitted context owns its limits. */
   verification_time = -1; /* The context must own its copied value before progress. */
 
@@ -1256,6 +1260,8 @@ static int run_python_ssl_client(const char *port_path,
       strcmp(outcome, "rotatebyte2") == 0 ? 2u :
       strcmp(outcome, "rotatebytemax") == 0 ? CNET_TLS_KEY_UPDATE_BYTE_LIMIT_MAX :
       strcmp(outcome, "rotateboth-byte") == 0 ? 2u : byte_rotation ? 7u : 0u;
+  const uint32_t interval_ms = strcmp(outcome, "rotatetime") == 0 ? 250u :
+      strcmp(outcome, "rotatetimemax") == 0 ? UINT32_MAX : 0u;
   const unsigned rounds = local_rotation ? 5u : peer_limit && !peer_limit_failure ? 2u : 1u;
   const bool expect_orderly_close = strcmp(outcome, "close") == 0 || local_rotation || (peer_limit && !peer_limit_failure);
   const bool expect_local_peer_close = strcmp(outcome, "localclose") == 0;
@@ -1305,6 +1311,7 @@ static int run_python_ssl_client(const char *port_path,
       .cipher_suite_count = !tlcp && !shangmi && strcmp(protocol, "12") == 0 ? 2u : 1u,
       .key_update_record_limit = rotation_limit,
       .key_update_byte_limit = byte_limit,
+      .key_update_interval_ms = interval_ms,
       .peer_key_update_limit = peer_limit && strcmp(outcome, "limit-off") != 0 ? 2u : 0u,
       .minimum_version = !tlcp && !shangmi ? (strcmp(protocol, "12") == 0 ? 12 : 13) : 0,
       .maximum_version = !tlcp && !shangmi ? (strcmp(protocol, "12") == 0 ? 12 : 13) : 0};
@@ -1333,6 +1340,7 @@ static int run_python_ssl_client(const char *port_path,
   REQUIRE(tls_test_server_init(&tls_server, &tls_cfg) == SALTS_OK);
   probe.expected_send_size = byte_rotation ? 3u : 1u;
   tls_cfg.key_update_record_limit = 0u;
+  tls_cfg.key_update_interval_ms = 0u;
   tls_cfg.key_update_byte_limit = 0u;
   verification_time = -1;
   tls_live = true;

@@ -100,6 +100,7 @@ int cnet_tls_client_context_create(const cnet_tls_client_config *config, cnet_tl
     policy.peer_policy = config->peer_policy;
     policy.key_update_record_limit = config->key_update_record_limit;
     policy.key_update_byte_limit = config->key_update_byte_limit;
+    policy.key_update_interval_ms = config->key_update_interval_ms;
     policy.peer_key_update_limit = config->peer_key_update_limit;
     policy.ca_data = config->ca_data;
     policy.credentials = config->credentials;
@@ -172,6 +173,7 @@ int cnet_tls_server_init(cnet_tls_server *server, const cnet_tls_server_config *
   policy.peer_policy = config->peer_policy;
   policy.key_update_record_limit = config->key_update_record_limit;
   policy.key_update_byte_limit = config->key_update_byte_limit;
+  policy.key_update_interval_ms = config->key_update_interval_ms;
   policy.peer_key_update_limit = config->peer_key_update_limit;
   policy.ca_data = config->ca_data;
   policy.credentials = config->credentials;

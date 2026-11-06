@@ -918,6 +918,377 @@ spec("GmSSL TLS 1.3 KeyUpdate under bounded external writes") {
   }
 }
 
+typedef struct key_update_clock {
+  uint64_t now;
+  unsigned calls, fail_call;
+} key_update_clock;
+
+static int key_update_clock_sample(void *user, uint64_t *now) {
+  key_update_clock *clock = user;
+  ++clock->calls;
+  if (clock->calls == clock->fail_call) return -1;
+  *now = clock->now;
+  return 1;
+}
+
+static void timed_key_prepare(TLS_CTX *ctx, TLS_CONNECT *conn,
+    key_update_wire *wire, key_update_clock *clock, unsigned role, unsigned suite_index,
+    uint32_t interval) {
+  memset(ctx, 0, sizeof(*ctx));
+  memset(conn, 0, sizeof(*conn));
+  memset(wire, 0, sizeof(*wire));
+  ctx->protocol = TLS_protocol_tls13;
+  conn->ctx = ctx;
+  conn->is_client = (int)role;
+  conn->protocol = TLS_protocol_tls13;
+  conn->handshake_state = TLS_state_handshake_over;
+  conn->cipher_suite = suite_index ? TLS_cipher_aes_128_gcm_sha256 : TLS_cipher_sm4_gcm_sm3;
+  check_equal(tls_cipher_suite_get(conn->cipher_suite, &conn->cipher, &conn->digest), 1);
+  tls_record_set_protocol(conn->plain_record, TLS_protocol_tls12);
+  tls_record_set_protocol(conn->record, TLS_protocol_tls12);
+  memset(conn->client_application_traffic_secret, 0x35, 32u);
+  memset(conn->server_application_traffic_secret, 0x59, 32u);
+  for (unsigned key_role = 0u; key_role < 2u; ++key_role) {
+    uint8_t key[16];
+    const uint8_t *secret = key_role ? conn->client_application_traffic_secret : conn->server_application_traffic_secret;
+    uint8_t *iv = key_role ? conn->client_write_iv : conn->server_write_iv;
+    BLOCK_CIPHER_KEY *cipher = key_role ? &conn->client_write_key : &conn->server_write_key;
+    check_equal(tls13_hkdf_expand_label(conn->digest, secret, "key", NULL, 0u, sizeof(key), key), 1);
+    check_equal(tls13_hkdf_expand_label(conn->digest, secret, "iv", NULL, 0u, 12u, iv), 1);
+    check_equal(block_cipher_set_encrypt_key(cipher, conn->cipher, key), 1);
+  }
+  TLS_IO io = {.user = wire, .send = key_update_capture, .recv = key_update_no_receive};
+  check_equal(tls_set_io(conn, &io), 1);
+  check_equal(tls13_ctx_set_key_update_interval(ctx, interval, key_update_clock_sample, clock), 1);
+}
+
+static void timed_key_send(TLS_CONNECT *conn, key_update_wire *wire, uint8_t payload) {
+  int result = TLS_ERROR_SEND_AGAIN;
+  for (unsigned step = 0u; step < sizeof(wire->bytes) && result != 1; ++step) {
+    size_t sent = 99u;
+    wire->budget = 1u;
+    result = tls13_send(conn, &payload, 1u, &sent);
+    check(result == 1 || result == TLS_ERROR_SEND_AGAIN);
+    check_equal(sent, result == 1 ? (size_t)1u : (size_t)0u);
+  }
+  check_equal(result, 1);
+}
+
+static void timed_key_expect_update(TLS_CONNECT *conn, key_update_wire *wire,
+    const BLOCK_CIPHER_KEY *old_key, const uint8_t *old_iv, const uint8_t *old_seq,
+    uint8_t request, uint8_t payload) {
+  uint8_t plain[1024], zero_seq[8] = {0};
+  size_t plain_size = 0u;
+  check(wire->size >= 10u);
+  const size_t first = 5u + ((size_t)wire->bytes[3] << 8) + wire->bytes[4];
+  check(first + 5u < wire->size);
+  check_equal(tls13_record_decrypt(conn->cipher_suite, old_key, old_iv, old_seq,
+      wire->bytes, first, plain, &plain_size), 1);
+  const uint8_t expected[] = {24, 0, 0, 1, request};
+  check_equal(plain_size, (size_t)10u);
+  check_equal(plain[0], (uint8_t)22);
+  check_equal(plain + 5u, expected, sizeof(expected));
+  const size_t second = 5u + ((size_t)wire->bytes[first + 3u] << 8) + wire->bytes[first + 4u];
+  check_equal(first + second, wire->size);
+  check_equal(tls13_record_decrypt(conn->cipher_suite,
+      conn->is_client ? &conn->client_write_key : &conn->server_write_key,
+      conn->is_client ? conn->client_write_iv : conn->server_write_iv, zero_seq,
+      wire->bytes + first, second, plain, &plain_size), 1);
+  check_equal(plain_size, (size_t)6u);
+  check_equal(plain[0], (uint8_t)23);
+  check_equal(plain[5], payload);
+}
+
+spec("GmSSL local sending-key monotonic intervals") {
+  it("admits intervals without enabling record rotation or retaining a disabled clock") {
+    TLS_CTX ctx = {0};
+    key_update_clock clock = {0};
+    check_equal(tls13_ctx_set_key_update_interval(NULL, 1u, key_update_clock_sample, &clock), -1);
+    check_equal(tls13_ctx_set_key_update_interval(&ctx, 1u, key_update_clock_sample, &clock), -1);
+    ctx.protocol = TLS_protocol_tls13;
+    check_equal(tls13_ctx_set_key_update_interval(&ctx, 1u, key_update_clock_sample, &clock), 1);
+    check_equal(ctx.key_update_interval_ms, 1u);
+    check_equal(tls13_ctx_set_key_update_interval(&ctx, UINT32_MAX, key_update_clock_sample, &clock), 1);
+    check_equal(ctx.key_update_interval_ms, UINT32_MAX);
+    check_equal(ctx.key_update, 0);
+    check_equal(tls13_ctx_set_key_update_interval(&ctx, 1u, NULL, NULL), -1);
+    check_equal(ctx.key_update_interval_ms, UINT32_MAX);
+    check_equal(ctx.key_update_clock_user, (void *)&clock);
+    check_equal(clock.calls, 0u);
+    check_equal(tls13_ctx_set_key_update_interval(&ctx, 0u, key_update_clock_sample, &clock), 1);
+    check_equal(ctx.key_update_interval_ms, 0u);
+    check(ctx.key_update_clock_ms == NULL && ctx.key_update_clock_user == NULL);
+  }
+  for (unsigned role = 0u; role < 2u; ++role) {
+    for (unsigned suite_index = 0u; suite_index < 2u; ++suite_index) {
+      it("role %u suite %u starts once and expires exactly between new records", role, suite_index) {
+        TLS_CTX ctx;
+        TLS_CONNECT conn;
+        key_update_wire wire;
+        key_update_clock clock = {.now = 100u};
+        timed_key_prepare(&ctx, &conn, &wire, &clock, role, suite_index, 10u);
+        check_equal(tls13_ctx_enable_key_update(&ctx, 1), 1);
+        check_equal(tls13_ctx_set_key_update_seq_num_limit(&ctx, 1u), 1);
+        check_equal(tls13_ctx_set_key_update_byte_limit(&ctx, 1u), 1);
+        check_equal(tls_do_handshake(&conn), 1);
+        check_equal(conn.local_key_started_ms, UINT64_C(100));
+        check_equal(clock.calls, 1u);
+        clock.fail_call = 2u;
+        check_equal(tls_do_handshake(&conn), 1); /* An inspection cannot restart age. */
+        check_equal(clock.calls, 1u);
+        clock.fail_call = 0u;
+        clock.now = 109u;
+        const uint8_t payload = 0x46;
+        size_t sent = 99u;
+        wire.budget = 1u;
+        check_equal(tls13_send(&conn, &payload, 1u, &sent), TLS_ERROR_SEND_AGAIN);
+        check_equal(sent, (size_t)0u);
+        check_equal(clock.calls, 2u);
+        clock.now = 110u; /* Expiry must not replace pending application ciphertext. */
+        timed_key_send(&conn, &wire, payload);
+        check_equal(clock.calls, 2u);
+        check_equal(conn.local_key_started_ms, UINT64_C(100));
+        const size_t application = 5u + ((size_t)wire.bytes[3] << 8) + wire.bytes[4];
+        check_equal(application, wire.size);
+        wire.size = 0u;
+        BLOCK_CIPHER_KEY old_key = role ? conn.client_write_key : conn.server_write_key;
+        uint8_t old_iv[12], old_seq[8];
+        memcpy(old_iv, role ? conn.client_write_iv : conn.server_write_iv, sizeof(old_iv));
+        memcpy(old_seq, role ? conn.client_seq_num : conn.server_seq_num, sizeof(old_seq));
+        wire.budget = 1u;
+        check_equal(tls13_send(&conn, &payload, 1u, &sent), TLS_ERROR_SEND_AGAIN);
+        check_equal(conn.key_update_sending, 1);
+        check_equal(conn.local_key_started_ms, UINT64_C(110));
+        clock.now = 111u; /* Pending control writes cannot sample/reset age again. */
+        timed_key_send(&conn, &wire, payload);
+        timed_key_expect_update(&conn, &wire, &old_key, old_iv, old_seq, 1u, payload);
+        check_equal(conn.local_key_started_ms, UINT64_C(110));
+        check_equal(clock.calls, 5u); /* boundary, one update, next application */
+      }
+      it("role %u suite %u resets age on mandatory responses and preserves byte policy", role, suite_index) {
+        TLS_CTX ctx;
+        TLS_CONNECT conn;
+        key_update_wire wire;
+        key_update_clock clock = {.now = 0u};
+        timed_key_prepare(&ctx, &conn, &wire, &clock, role, suite_index, 10u);
+        check_equal(tls_do_handshake(&conn), 1);
+        check_equal(conn.key_update_timer_started, 1); /* Epoch zero is valid. */
+        check_equal(tls13_ctx_set_key_update_byte_limit(&ctx, 2u), 1);
+        conn.local_key_plaintext_bytes = 2u;
+        conn.key_update = 1;
+        clock.now = 5u;
+        BLOCK_CIPHER_KEY old_key = role ? conn.client_write_key : conn.server_write_key;
+        uint8_t old_iv[12], seq[8] = {0};
+        memcpy(old_iv, role ? conn.client_write_iv : conn.server_write_iv, sizeof(old_iv));
+        timed_key_send(&conn, &wire, 0x47);
+        timed_key_expect_update(&conn, &wire, &old_key, old_iv, seq, 0u, 0x47);
+        check_equal(conn.local_key_started_ms, UINT64_C(5));
+        check_equal(conn.local_key_plaintext_bytes, UINT64_C(1));
+        clock.now = 14u;
+        wire.size = 0u;
+        timed_key_send(&conn, &wire, 0x47);
+        check_equal(wire.size, 5u + ((size_t)wire.bytes[3] << 8) + wire.bytes[4]);
+        check_equal(conn.local_key_started_ms, UINT64_C(5));
+      }
+      it("role %u suite %u rejects the initial clock failure before timer publication", role, suite_index) {
+        TLS_CTX ctx;
+        TLS_CONNECT conn;
+        key_update_wire wire;
+        key_update_clock clock = {.now = 100u, .fail_call = 1u};
+        timed_key_prepare(&ctx, &conn, &wire, &clock, role, suite_index, 10u);
+        check_equal(tls_do_handshake(&conn), -1);
+        check_equal(conn.key_update_timer_started, 0);
+        check_equal(conn.local_key_started_ms, UINT64_C(0));
+        check_equal(wire.size, (size_t)0u);
+      }
+      for (unsigned coalesced = 0u; coalesced < 2u; ++coalesced) {
+      it("role %u suite %u peer update/coalesced %u preserves independent local age", role, suite_index, coalesced) {
+        TLS_CTX ctx[2];
+        TLS_CONNECT conn[2];
+        key_update_wire unused, wire;
+        key_update_clock clock = {.now = 100u};
+        timed_key_prepare(&ctx[0], &conn[0], &wire, &clock, !role, suite_index, 0u);
+        timed_key_prepare(&ctx[1], &conn[1], &unused, &clock, role, suite_index, 10u);
+        check_equal(tls_do_handshake(&conn[1]), 1);
+        TLS_IO io = {.user = &wire, .send = key_update_capture, .recv = key_update_fragmented_receive};
+        check_equal(tls_set_io(&conn[1], &io), 1);
+        wire.budget = sizeof(wire.bytes);
+        check_equal(role ? tls13_send_server_key_update(&conn[0], 0) :
+            tls13_send_client_key_update(&conn[0], 0), 1);
+        const uint8_t payload = 0x46;
+        size_t sent = 0u;
+        if (coalesced) {
+          check_equal(tls13_send(&conn[0], &payload, 1u, &sent), 1);
+          check_equal(sent, (size_t)1u);
+        }
+        uint8_t before[32];
+        memcpy(before, role ? conn[1].server_application_traffic_secret : conn[1].client_application_traffic_secret, sizeof(before));
+        clock.now = 105u;
+        wire.read_budget = wire.size;
+        uint8_t byte = 0x5a;
+        size_t received = 99u;
+        check_equal(tls13_recv(&conn[1], &byte, 1u, &received), coalesced ? 1 : TLS_ERROR_RECV_AGAIN);
+        check_equal(received, coalesced ? (size_t)1u : (size_t)0u);
+        check_equal(byte, coalesced ? payload : (uint8_t)0x5a);
+        check_equal(wire.read_offset, wire.size);
+        check_not_equal(before, role ? conn[1].server_application_traffic_secret : conn[1].client_application_traffic_secret, sizeof(before));
+        check_equal(conn[1].local_key_started_ms, UINT64_C(100));
+        check_equal(conn[1].key_update_last_clock_ms, UINT64_C(100));
+        check_equal(clock.calls, 1u);
+        clock.now = 110u;
+        wire.size = wire.read_offset = 0u;
+        BLOCK_CIPHER_KEY old_key = role ? conn[1].client_write_key : conn[1].server_write_key;
+        uint8_t old_iv[12], seq[8] = {0};
+        memcpy(old_iv, role ? conn[1].client_write_iv : conn[1].server_write_iv, sizeof(old_iv));
+        timed_key_send(&conn[1], &wire, 0x49);
+        timed_key_expect_update(&conn[1], &wire, &old_key, old_iv, seq, 1u, 0x49);
+      }
+      }
+      for (unsigned failure = 0u; failure < 6u; ++failure) {
+        it("role %u suite %u rejects clock failure %u before ciphertext or key change", role, suite_index, failure) {
+          TLS_CTX ctx;
+          TLS_CONNECT conn;
+          key_update_wire wire;
+          key_update_clock clock = {.now = 100u};
+          timed_key_prepare(&ctx, &conn, &wire, &clock, role, suite_index, 10u);
+          if (failure != 2u) check_equal(tls_do_handshake(&conn), 1);
+          if (failure == 0u) clock.fail_call = 2u;
+          if (failure == 1u) clock.now = 99u;
+          if (failure == 3u) { clock.now = 110u; clock.fail_call = 3u; }
+          if (failure == 4u) {
+            clock.now = 105u;
+            timed_key_send(&conn, &wire, 0x46);
+            wire.size = 0u;
+            clock.now = 104u; /* Still after origin, but before the last sample. */
+          }
+          if (failure == 5u) { clock.now = 110u; conn.digest = NULL; }
+          uint8_t before[32];
+          memcpy(before, role ? conn.client_application_traffic_secret : conn.server_application_traffic_secret, sizeof(before));
+          const uint8_t payload = 0x46;
+          size_t sent = 99u;
+          wire.budget = sizeof(wire.bytes);
+          check_equal(tls13_send(&conn, &payload, 1u, &sent), -1);
+          check_equal(sent, (size_t)0u);
+          check_equal(wire.size, (size_t)0u);
+          if (failure != 5u) check_equal(conn.recordlen, (size_t)0u);
+          check_equal(conn.local_key_started_ms, failure == 2u ? UINT64_C(0) : UINT64_C(100));
+          check_equal(before, role ? conn.client_application_traffic_secret : conn.server_application_traffic_secret, sizeof(before));
+        }
+      }
+      it("role %u suite %u uses subtraction at maximum interval and clock value", role, suite_index) {
+        TLS_CTX ctx;
+        TLS_CONNECT conn;
+        key_update_wire wire;
+        key_update_clock clock = {.now = UINT64_MAX - UINT32_MAX};
+        timed_key_prepare(&ctx, &conn, &wire, &clock, role, suite_index, UINT32_MAX);
+        check_equal(tls_do_handshake(&conn), 1);
+        clock.now = UINT64_MAX;
+        BLOCK_CIPHER_KEY old_key = role ? conn.client_write_key : conn.server_write_key;
+        uint8_t old_iv[12], seq[8] = {0};
+        memcpy(old_iv, role ? conn.client_write_iv : conn.server_write_iv, sizeof(old_iv));
+        timed_key_send(&conn, &wire, 0x48);
+        timed_key_expect_update(&conn, &wire, &old_key, old_iv, seq, 1u, 0x48);
+        check_equal(conn.local_key_started_ms, UINT64_MAX);
+      }
+    }
+  }
+}
+
+typedef struct tls_duplex_wire {
+  key_update_wire incoming, outgoing;
+} tls_duplex_wire;
+
+static tls_ret_t duplex_send(void *user, const void *data, size_t size, int flags) {
+  return key_update_capture(&((tls_duplex_wire *)user)->outgoing, data, size, flags);
+}
+static tls_ret_t duplex_receive(void *user, void *data, size_t size, int flags) {
+  return key_update_fragmented_receive(&((tls_duplex_wire *)user)->incoming, data, size, flags);
+}
+
+static void duplex_expect_application(TLS_CONNECT *conn, key_update_wire *wire,
+    const uint8_t *payload, size_t size) {
+  uint8_t plain[1024], seq[8] = {0};
+  size_t plain_size = 0u;
+  check(wire->size >= 5u);
+  check_equal(wire->size, 5u + ((size_t)wire->bytes[3] << 8) + wire->bytes[4]);
+  check_equal(tls13_record_decrypt(conn->cipher_suite,
+      conn->is_client ? &conn->client_write_key : &conn->server_write_key,
+      conn->is_client ? conn->client_write_iv : conn->server_write_iv, seq,
+      wire->bytes, wire->size, plain, &plain_size), 1);
+  check_equal(plain_size, 5u + size);
+  check_equal(plain[0], (uint8_t)23);
+  check_equal(plain + 5u, payload, size);
+}
+
+spec("GmSSL established TLS 1.3 independent receive and send storage") {
+  for (unsigned role = 0u; role < 2u; ++role) {
+    for (unsigned suite_index = 0u; suite_index < 2u; ++suite_index) {
+      for (unsigned mode = 0u; mode < 7u; ++mode) {
+        it("role %u suite %u duplex boundary %u retains exact authenticated bytes", role, suite_index, mode) {
+          TLS_CTX ctx[2];
+          TLS_CONNECT conn[2];
+          tls_duplex_wire wire = {0};
+          key_update_wire unused;
+          key_update_clock clock = {0};
+          timed_key_prepare(&ctx[0], &conn[0], &wire.incoming, &clock, !role, suite_index, 0u);
+          timed_key_prepare(&ctx[1], &conn[1], &unused, &clock, role, suite_index, 0u);
+          TLS_IO io = {.user = &wire, .send = duplex_send, .recv = duplex_receive};
+          check_equal(tls_set_io(&conn[1], &io), 1);
+          const uint8_t incoming[] = {0x46, 0x47, 0x48};
+          const uint8_t outgoing = 0x58;
+          size_t sent = 99u, received = 99u;
+          uint8_t plain[3] = {0};
+          wire.incoming.budget = sizeof(wire.incoming.bytes);
+          check_equal(tls13_send(&conn[0], incoming, sizeof(incoming), &sent), 1);
+          check_equal(sent, sizeof(incoming));
+          if (mode < 5u) {
+            const size_t prefixes[] = {1u, 4u, 5u, 6u, wire.incoming.size - 1u};
+            wire.incoming.read_budget = prefixes[mode];
+            check_equal(tls13_recv(&conn[1], plain, sizeof(plain), &received), TLS_ERROR_RECV_AGAIN);
+            check_equal(received, (size_t)0u);
+            check_equal(wire.incoming.read_offset, prefixes[mode]);
+            timed_key_send(&conn[1], &wire.outgoing, outgoing);
+            duplex_expect_application(&conn[1], &wire.outgoing, &outgoing, 1u);
+            wire.incoming.read_budget = wire.incoming.size;
+            check_equal(tls13_recv(&conn[1], plain, sizeof(plain), &received), 1);
+            check_equal(received, sizeof(incoming));
+            check_equal(plain, incoming, sizeof(incoming));
+            check_equal(wire.incoming.read_offset, wire.incoming.size);
+          } else if (mode == 5u) {
+            wire.outgoing.budget = 1u;
+            check_equal(tls13_send(&conn[1], &outgoing, 1u, &sent), TLS_ERROR_SEND_AGAIN);
+            check_equal(sent, (size_t)0u);
+            size_t remaining = conn[1].recordlen, offset = conn[1].record_offset;
+            uint8_t encrypted[TLS_MAX_RECORD_SIZE];
+            memcpy(encrypted, conn[1].record, remaining + offset);
+            wire.incoming.read_budget = wire.incoming.size;
+            check_equal(tls13_recv(&conn[1], plain, sizeof(plain), &received), 1);
+            check_equal(received, sizeof(incoming));
+            check_equal(plain, incoming, sizeof(incoming));
+            check_equal(conn[1].recordlen, remaining);
+            check_equal(conn[1].record_offset, offset);
+            check_equal(conn[1].record, encrypted, remaining + offset);
+            timed_key_send(&conn[1], &wire.outgoing, outgoing);
+            duplex_expect_application(&conn[1], &wire.outgoing, &outgoing, 1u);
+          } else {
+            wire.incoming.read_budget = wire.incoming.size;
+            check_equal(tls13_recv(&conn[1], plain, 1u, &received), 1);
+            check_equal(received, (size_t)1u);
+            check_equal(plain[0], incoming[0]);
+            check_equal(conn[1].datalen, (size_t)2u);
+            timed_key_send(&conn[1], &wire.outgoing, outgoing);
+            duplex_expect_application(&conn[1], &wire.outgoing, &outgoing, 1u);
+            check_equal(tls13_recv(&conn[1], plain, sizeof(plain), &received), 1);
+            check_equal(received, (size_t)2u);
+            check_equal(plain, incoming + 1u, 2u);
+            check_equal(wire.incoming.read_offset, wire.incoming.size);
+          }
+        }
+      }
+    }
+  }
+}
+
 spec("Crypto versioned peer close_notify facade") {
   it("rejects absent and malformed output without falsifying evidence") {
     uint32_t peer = UINT32_C(0xfeedbeef);

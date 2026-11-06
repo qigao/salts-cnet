@@ -138,6 +138,20 @@ static int run_peer_policy_cases(void) {
     REQUIRE(client.impl == NULL && server.impl == NULL);
     REQUIRE(atomic_load(&p.retains) == 0u && atomic_load(&p.calls) == 0u);
   }
+  for (unsigned unsupported = 0u; unsupported < 2u; ++unsupported) {
+    const cnet_tls_security_profile profile = unsupported ? CNET_TLS_SECURITY_PROFILE_TLCP11 : CNET_TLS_SECURITY_PROFILE_STANDARD;
+    cnet_tls_client_config bad_client = {.size = sizeof(bad_client),
+        .ca_file = "absent-interval-ca.pem", .peer_policy = &policy,
+        .security_profile = profile, .key_update_interval_ms = UINT32_MAX};
+    cnet_tls_server_config bad_server = {.size = sizeof(bad_server),
+        .cert_file = "absent-interval-cert.pem", .key_file = "absent-interval-key.pem",
+        .ca_file = "absent-interval-ca.pem", .client_auth = CNET_TLS_CLIENT_AUTH_REQUIRED,
+        .peer_policy = &policy, .security_profile = profile, .key_update_interval_ms = 1u};
+    REQUIRE(cnet_tls_client_init(&client, &bad_client) == SALTS_ENOTSUP);
+    REQUIRE(cnet_tls_server_init(&server, &bad_server) == SALTS_ENOTSUP);
+    REQUIRE(client.impl == NULL && server.impl == NULL);
+    REQUIRE(atomic_load(&p.retains) == 0u && atomic_load(&p.calls) == 0u);
+  }
   REQUIRE(cnet_tls_client_init(&client, &cfg) != SALTS_OK);
   REQUIRE(client.impl == NULL && atomic_load(&p.retains) == 0u && atomic_load(&p.releases) == 0u);
   cfg.ca_file = CORE_TLS_TEST_P384_CA;

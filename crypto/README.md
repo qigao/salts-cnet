@@ -14,7 +14,7 @@ CMake targets, C11 source and C++17-usable C headers.
 
 Use the repository's user presets for the ASN1/Crypto/CNet build and formal
 CTest suite. The native GmSSL implementation is installed from the immutable
-`gmssl 3.2.0#37` vcpkg port, whose extension sources are pinned from
+`gmssl 3.2.0#38` vcpkg port, whose extension sources are pinned from
 `gmssl-extensions/`. `Salts::Crypto` links the imported `GmSSL::GmSSL` static
 library; it never compiles a duplicate GmSSL implementation.
 Private Ed448 libecc objects live under `vendor/libecc/` in this module.
@@ -37,6 +37,12 @@ The public `<crypto/sm2.h>`, `<crypto/sm3.h>`, `<crypto/sm4.h>` and
 They use caller-owned buffers and private provider state, with explicit
 identity/nonce, capacity, overlap, authentication and secret-erasure contracts.
 Applications do not need native GmSSL headers.
+
+ShangMi TLS1.3 client/server contexts also accept immutable
+`key_update_interval_ms`: zero disables it, while a nonzero millisecond interval
+checks local sending-key age before new application records. It composes with
+record/byte budgets and preserves mandatory peer responses and pending writes.
+See [rotation interval and duplex ownership](docs/SHANGMI-COVERAGE.md#local-sending-key-rotation-interval).
 
 See [ShangMi coverage and production gates](docs/SHANGMI-COVERAGE.md) for the
 implemented operations, formal tests and remaining requirements. Algorithm
