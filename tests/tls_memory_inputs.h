@@ -30,6 +30,9 @@ static int tls_test_read(tls_test_memory *m, unsigned slot, const char *path,
     if (!getenv("SALTS_TEST_TLS_ENCRYPTED")) return SALTS_EINVAL;
     if (strcmp(prf, "sha384") == 0) prf_suffix = ".sha384";
     else if (strcmp(prf, "sha512") == 0) prf_suffix = ".sha512";
+    else if (strcmp(prf, "sha224") == 0) prf_suffix = ".sha224";
+    else if (strcmp(prf, "sha512_224") == 0) prf_suffix = ".sha512_224";
+    else if (strcmp(prf, "sha512_256") == 0) prf_suffix = ".sha512_256";
     else return SALTS_EINVAL;
   }
   char name[2048];

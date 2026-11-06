@@ -582,3 +582,32 @@
   configure/full build and six related CTests passed (84.39s), then the two
   affected CTests passed after final peer-constraint additions (22.62s).
   No new dependency, configuration switch, retry, test skip or versioned API.
+
+## Complete explicit SHA-2 PKCS8 memory-import PRFs (2026-11-07)
+
+- Add HMAC-SHA224, SHA512/224 and SHA512/256 to the bounded provider PRF decoder
+  and Crypto's AES-only digest dispatch. Together with SHA256/384/512, this
+  completes RFC 8018's six explicit SHA-2 PRFs for AES128/192/256-CBC memory
+  credentials. Reuse GmSSL primitives; do not truncate SHA512 output or alias
+  the truncated variants to SHA224/SHA256. AES256 with either 28-byte PRF needs
+  two PBKDF2 output blocks, covered by independent Go encryption.
+- Keep the synchronous initialization owner, existing input/work/output bounds,
+  failure-atomic context publication and private-key/certificate binding. Derived
+  keys, cipher state and decoded keys retain their erasure paths. No new public
+  field, dependency, allocation, thread, default PRF or trial decryption path.
+  SHA1, other KDF/cipher schemes, PKCS12 and standalone exports remain separate.
+- Reuse one hash/OID fixture table for standard TLS admission and identity
+  scenarios. Named selectors use a separator rather than prefix matching, so
+  SHA512/224 and SHA512/256 cannot accidentally select SHA512. Unknown names fail.
+  The new PRFs run all AES sizes and PEM/DER with empty/binary passwords, exact
+  label selection, malformed parameters, work bounds and mismatched identities.
+- Existing registered entries add 276 RSA/P256 admission scenarios checking
+  both context roles, 72 standard TLS1.2/1.3 client identity handshakes, 54
+  native/native and independent ShangMi mTLS paths, and 18 TLCP dual-key paths.
+  Before implementation all 144 newly valid admission cases failed. Existing
+  SHA256/384/512 and SM3/SM4 cases remain selected.
+- Pinned GmSSL #43 uses 5c4eb708fe29752f43da9b4464ed00e11bcb30c8 / port tree
+  af32f1b14ccce16861245d2452225745bdd48902. native-release-user configure/full
+  build and all five related CTests passed (107.31s); client-identities completed
+  in 73.04s under the unchanged formal timeout. No extra verification project,
+  CMake feature flag, test skip, retry or relaxed assertion.

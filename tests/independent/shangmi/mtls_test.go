@@ -73,7 +73,7 @@ func TestShangMiMutual(t *testing.T) {
 	for _, bits := range []int{128, 192, 256} {
 		encryptedMemoryFixture(t, server.keyPath, bits)
 		encryptedMemoryFixture(t, client.keyPath, bits)
-		for _, prf := range []int{384, 512} {
+		for _, prf := range []int{224, 384, 512, 512224, 512256} {
 			encryptedMemoryFixture(t, server.keyPath, bits, prf)
 			encryptedMemoryFixture(t, client.keyPath, bits, prf)
 		}
@@ -85,7 +85,7 @@ func TestShangMiMutual(t *testing.T) {
 			runNativeServerWithClient(t, server, &client, "close")
 			runNativeClientWithIdentity(t, server, &client, "localhost", true, "")
 		})
-		for _, hash := range []string{"", "sha384", "sha512"} {
+		for _, hash := range []string{"", "sha224", "sha384", "sha512", "sha512_224", "sha512_256"} {
 			for _, encryption := range []string{"aes128", "aes192", "aes"} {
 				name := encryption + "_encrypted_memory_" + mode
 				if hash != "" {
@@ -174,6 +174,15 @@ func encryptedMemoryFixture(t *testing.T, path string, aesBits ...int) {
 		prf := pkcs.SHA256
 		if len(aesBits) > 1 {
 			switch aesBits[1] {
+			case 224:
+				prf = pkcs.SHA224
+				suffix += ".sha224"
+			case 512224:
+				prf = pkcs.SHA512_224
+				suffix += ".sha512_224"
+			case 512256:
+				prf = pkcs.SHA512_256
+				suffix += ".sha512_256"
 			case 384:
 				prf = pkcs.SHA384
 				suffix += ".sha384"
