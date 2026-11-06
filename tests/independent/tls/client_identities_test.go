@@ -120,13 +120,14 @@ func TestClientIdentities(t *testing.T) {
 			extra[fmt.Sprintf("encrypted_%s%d", password, bits)] = pair
 		}
 	}
-	for _, hash := range []string{"sha384", "sha512"} {
+	for _, prf := range aesFixturePRFs {
+		hash := prf.name
 		for _, bits := range []int{128, 192, 256} {
 			for _, password := range []string{"binary", "empty"} {
 				pair := [2]identity{first, second}
 				for i, source := range []identity{first, second} {
 					pair[i].keyFile = filepath.Join(t.TempDir(), "key.pem")
-					writeAESFixtureFrom(t, source, pair[i], password, hash+"_valid", bits)
+					writeAESFixtureFrom(t, source, pair[i], password, hash+":valid", bits)
 				}
 				extra[fmt.Sprintf("encrypted_%s%d_%s", password, bits, hash)] = pair
 			}
@@ -140,7 +141,8 @@ func TestClientIdentities(t *testing.T) {
 			scenarios = append(scenarios, "separate_certificate", "range_separate_certificate")
 			if mode != "file" {
 				scenarios = append(scenarios, "encrypted_binary", "encrypted_empty", "encrypted_binary128", "encrypted_empty128", "encrypted_binary192", "encrypted_empty192")
-				for _, hash := range []string{"sha384", "sha512"} {
+				for _, prf := range aesFixturePRFs {
+					hash := prf.name
 					for _, bits := range []int{128, 192, 256} {
 						for _, password := range []string{"binary", "empty"} {
 							scenarios = append(scenarios, fmt.Sprintf("encrypted_%s%d_%s", password, bits, hash))

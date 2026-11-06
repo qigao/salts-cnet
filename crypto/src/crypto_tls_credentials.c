@@ -156,9 +156,12 @@ static int decode_key(const crypto_tls_data *input, const crypto_tls_password *p
   const bool sm4 = prf == OID_hmac_sm3 && cipher == OID_sm4_cbc;
   const DIGEST *aes_prf = NULL;
   switch (prf) {
+  case OID_hmac_sha224: aes_prf = DIGEST_sha224(); break;
   case OID_hmac_sha256: aes_prf = DIGEST_sha256(); break;
   case OID_hmac_sha384: aes_prf = DIGEST_sha384(); break;
   case OID_hmac_sha512: aes_prf = DIGEST_sha512(); break;
+  case OID_hmac_sha512_224: aes_prf = DIGEST_sha512_224(); break;
+  case OID_hmac_sha512_256: aes_prf = DIGEST_sha512_256(); break;
   }
   const bool aes = aes_prf &&
       (cipher == OID_aes128_cbc || cipher == OID_aes192_cbc || cipher == OID_aes256_cbc);

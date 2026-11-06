@@ -34,8 +34,8 @@ enum {
 /** Chain: concatenated DER certificates or CERTIFICATE PEM blocks, leaf first.
  * Key: one PKCS#8 PrivateKeyInfo, DER or PRIVATE KEY PEM. A non-NULL password
  * selects EncryptedPrivateKeyInfo / ENCRYPTED PRIVATE KEY PEM: PBES2 with
- * explicit PBKDF2-HMAC-SM3 / SM4-CBC or PBKDF2-HMAC-SHA256/384/512 with
- * AES-128/192/256-CBC.
+ * explicit PBKDF2-HMAC-SM3 / SM4-CBC or PBKDF2-HMAC-SHA2 with AES-128/192/256-CBC.
+ * SHA2 selects SHA224, SHA256, SHA384, SHA512, SHA512/224 or SHA512/256 by OID.
  * Salt is 8..64 bytes, IV is 16 bytes, optional key length is absent or the
  * cipher key size (16, 24 or 32 bytes); iterations use MIN..MAX_ITERATIONS above.
  * No implicit PRF or other PRF/cipher combinations. CBC does not authenticate

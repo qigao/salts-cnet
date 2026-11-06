@@ -12,6 +12,7 @@ import (
 	"encoding/asn1"
 	"encoding/pem"
 	"fmt"
+	"hash"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -24,6 +25,18 @@ var pbes2OID = asn1.ObjectIdentifier{1, 2, 840, 113549, 1, 5, 13}
 var pbkdf2OID = asn1.ObjectIdentifier{1, 2, 840, 113549, 1, 5, 12}
 var sha256PRFOID = asn1.ObjectIdentifier{1, 2, 840, 113549, 2, 9}
 var aes256CBCOID = asn1.ObjectIdentifier{2, 16, 840, 1, 101, 3, 4, 1, 42}
+
+var aesFixturePRFs = []struct {
+	name    string
+	oid     int
+	newHash func() hash.Hash
+}{
+	{"sha224", 8, sha256.New224},
+	{"sha384", 10, sha512.New384},
+	{"sha512", 11, sha512.New},
+	{"sha512_224", 12, sha512.New512_224},
+	{"sha512_256", 13, sha512.New512_256},
+}
 
 func marshalDER(t *testing.T, v any) []byte {
 	t.Helper()
@@ -40,14 +53,20 @@ func writeAESFixture(t *testing.T, f identity, password, scenario string) {
 func writeAESFixtureFrom(t *testing.T, source, target identity, password, scenario string, bits ...int) {
 	prfOID := append(asn1.ObjectIdentifier{}, sha256PRFOID...)
 	derive := sha256.New
-	if strings.HasPrefix(scenario, "sha384_") {
-		derive = sha512.New384
-		prfOID[len(prfOID)-1] = 10
-		scenario = strings.TrimPrefix(scenario, "sha384_")
-	} else if strings.HasPrefix(scenario, "sha512_") {
-		derive = sha512.New
-		prfOID[len(prfOID)-1] = 11
-		scenario = strings.TrimPrefix(scenario, "sha512_")
+	if name, base, named := strings.Cut(scenario, ":"); named {
+		found := false
+		for _, prf := range aesFixturePRFs {
+			if name == prf.name {
+				derive = prf.newHash
+				prfOID[len(prfOID)-1] = prf.oid
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("unknown fixture PRF %s", name)
+		}
+		scenario = base
 	}
 	keyBytes := 32
 	if len(bits) != 0 {
@@ -203,18 +222,21 @@ func TestEncryptedCredentials(t *testing.T) {
 				if bits == 256 {
 					scenarios = append(scenarios, "maximum_iterations")
 				}
-				for _, hash := range []string{"sha384", "sha512"} {
+				for _, prf := range aesFixturePRFs {
 					for _, scenario := range []string{"valid", "absent_length", "absent_prf_parameters", "empty_password", "wrong_password", "wrong_prf"} {
-						scenarios = append(scenarios, hash+"_"+scenario)
+						scenarios = append(scenarios, prf.name+":"+scenario)
 					}
 					if bits == 256 && !ec {
 						for _, scenario := range []string{"bad_prf_parameters", "absent_prf", "unsupported_prf", "mixed_sm4", "wrong_length", "padding", "mismatched_key", "high_iterations", "short_salt", "trailing"} {
-							scenarios = append(scenarios, hash+"_"+scenario)
+							scenarios = append(scenarios, prf.name+":"+scenario)
 						}
 					}
 				}
 				for _, scenario := range scenarios {
-					base := strings.TrimPrefix(strings.TrimPrefix(scenario, "sha384_"), "sha512_")
+					base := scenario
+					if _, value, named := strings.Cut(scenario, ":"); named {
+						base = value
+					}
 					name := "rsa/"
 					if ec {
 						name = "p256/"

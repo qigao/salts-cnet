@@ -90,7 +90,8 @@ significant. NULL/0 selects plaintext, while a non-NULL pointer with zero length
 selects an empty password. Password bytes are borrowed only during init.
 Encrypted inputs use DER `EncryptedPrivateKeyInfo` or `ENCRYPTED PRIVATE KEY`
 PEM: PBES2 with either explicit PBKDF2-HMAC-SM3 / SM4-CBC or explicit
-PBKDF2-HMAC-SHA256/384/512 with AES-128/192/256-CBC. Salt is 8..64 bytes, IV is 16 bytes, optional
+PBKDF2-HMAC-SHA2 with AES-128/192/256-CBC. The explicit SHA2 PRF may be SHA224,
+SHA256, SHA384, SHA512, SHA512/224 or SHA512/256. Salt is 8..64 bytes, IV is 16 bytes, optional
 key length is absent or the cipher key size (16, 24 or 32 bytes), and iterations are
 10000..1000000. PRF AlgorithmIdentifier parameters may be absent or NULL; an
 omitted PRF is rejected, including the implicit SHA1 default. Padded ciphertext is capped at
@@ -152,6 +153,35 @@ unchanged work bounds, malformed envelopes and failed key/certificate binding.
 Input/password erasure precedes handshake progress. Existing SHA256 and SM3/SM4
 tests remain in the same formal entries. File-password loaders, standalone SM2
 key export, PKCS12/PFX and additional PRFs are not qualified by this extension.
+
+GmSSL #43 completes the six explicit SHA-2 PRFs listed by
+[RFC 8018 Appendix B.1.2](https://www.rfc-editor.org/rfc/rfc8018.html#appendix-B.1.2)
+by decoding HMAC-SHA224, HMAC-SHA512/224 and HMAC-SHA512/256. Crypto dispatches
+each exact OID to its existing GmSSL digest. The SHA512 truncated variants have
+their own initialization and are neither SHA224/SHA256 aliases nor truncations
+of ordinary SHA512 output. AES-256 needs two PBKDF2 output blocks with the
+28-byte SHA224 and SHA512/224 PRFs; AES-128/192 stay within one block. Independent
+Go fixtures cover both paths. No new cryptographic implementation is introduced.
+
+The initialization owner and all input/work/output limits remain unchanged.
+Passwords and decoded keys retain their existing erasure paths; a context is
+published only after exact private-key parsing and certificate binding. Empty
+or wrong passwords, altered PRF labels, malformed parameters, excess work and
+incompatible SM4 combinations use the existing failure contract, without trial
+decryption or default-PRF selection. Public structs, dependencies, allocations
+and threads are unchanged. Rollback reverts the explicit dispatch and matching
+provider pin together; newly unsupported OIDs fail rather than selecting a
+different digest.
+
+The registered entries add 276 RSA/P256 PEM/DER admission scenarios (each checks
+both context roles), 72 standard TLS1.2/1.3 identity handshakes, 54 native/native
+and independent ShangMi mTLS paths, and 18 TLCP dual-key paths. The three new
+PRFs cover every AES key size, empty/binary passwords and input erasure before
+progress. Previously supported SHA256/384/512 and SM3/SM4 cases remain selected.
+The shared AES fixture table is the hash/OID fact source; named selectors use
+an explicit separator so SHA512/224 and SHA512/256 cannot match SHA512 by prefix.
+Implicit/explicit SHA1, other KDF/cipher schemes, PKCS12 and standalone key
+exports remain separate work.
 
 PKCS#12/PFX, other encrypted PKCS#8 algorithms and retained credential/key objects
 remain unimplemented. SDF/SKF hardware integration is deferred by user decision.

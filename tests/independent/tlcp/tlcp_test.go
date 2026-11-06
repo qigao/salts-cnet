@@ -484,9 +484,15 @@ func TestTLCP(t *testing.T) {
 				suffix = ".aes192"
 				algorithm = pkcs.AES192CBC
 			}
-			for _, hash := range []pkcs.Hash{pkcs.SHA256, pkcs.SHA384, pkcs.SHA512} {
+			for _, hash := range []pkcs.Hash{pkcs.SHA224, pkcs.SHA256, pkcs.SHA384, pkcs.SHA512, pkcs.SHA512_224, pkcs.SHA512_256} {
 				path := f.keyPath + part + suffix
 				switch hash {
+				case pkcs.SHA224:
+					path += ".sha224"
+				case pkcs.SHA512_224:
+					path += ".sha512_224"
+				case pkcs.SHA512_256:
+					path += ".sha512_256"
 				case pkcs.SHA384:
 					path += ".sha384"
 				case pkcs.SHA512:
@@ -513,7 +519,7 @@ func TestTLCP(t *testing.T) {
 			runNativeClient(t, f, "localhost", true, []uint16{tlcp.ECC_SM4_GCM_SM3})
 			runNativeServer(t, f, verifiedConfig(f), "close")
 		})
-		for _, hash := range []string{"", "sha384", "sha512"} {
+		for _, hash := range []string{"", "sha224", "sha384", "sha512", "sha512_224", "sha512_256"} {
 			for _, encryption := range []string{"aes128", "aes192", "aes"} {
 				name := encryption + "_encrypted_memory_" + mode
 				if hash != "" {
