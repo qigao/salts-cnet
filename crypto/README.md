@@ -14,7 +14,7 @@ CMake targets, C11 source and C++17-usable C headers.
 
 Use the repository's user presets for the ASN1/Crypto/CNet build and formal
 CTest suite. The native GmSSL implementation is installed from the immutable
-`gmssl 3.2.0#39` vcpkg port, whose extension sources are pinned from
+`gmssl 3.2.0#40` vcpkg port, whose extension sources are pinned from
 `gmssl-extensions/`. `Salts::Crypto` links the imported `GmSSL::GmSSL` static
 library; it never compiles a duplicate GmSSL implementation.
 Private Ed448 libecc objects live under `vendor/libecc/` in this module.
@@ -49,6 +49,17 @@ fragmentation/coalescing while preserving key-change boundaries and independent
 duplex storage. Ticket serialization checks its fixed capacity before writing.
 See [post-handshake framing](docs/SHANGMI-COVERAGE.md#bounded-tls-13-post-handshake-framing);
 session restoration and 0-RTT remain separate capabilities.
+
+ShangMi TLS1.3 client/server contexts can require minimum peer KeyUpdate time
+and authenticated application-byte spacing with `peer_key_update_min_interval_ms`
+and `peer_key_update_min_bytes`. Zero disables each minimum; after one initial
+update, all enabled minima must pass before another receiving-key derivation.
+These restrictive policies include replies and may reject legitimate bursts.
+See [peer spacing and its ownership](docs/SHANGMI-COVERAGE.md#peer-keyupdate-minimum-spacing).
+
+TLS1.3 encrypted fatal alerts use the local role's sending keys and sequence,
+including during handshake and partial transport output. See
+[alert direction and qualification](docs/SHANGMI-COVERAGE.md#tls-13-fatal-alert-direction).
 
 See [ShangMi coverage and production gates](docs/SHANGMI-COVERAGE.md) for the
 implemented operations, formal tests and remaining requirements. Algorithm

@@ -6,6 +6,9 @@ import (
 	"crypto/rand"
 	"errors"
 	"fmt"
+	"io"
+	"net"
+	"strings"
 
 	peersm2 "github.com/iuboy/pollux-go/sm2"
 	"github.com/iuboy/pollux-go/tls13gm"
@@ -15,6 +18,10 @@ import (
 // Reverse of the finite independent client: require and authenticate the
 // native client's certificate, possession signature and Finished before data.
 func (p *recordPeer) mutualServer(server, client fixture, scenario string) error {
+	waitAfterRequest := scenario == "malformed_ca_early_reject" || scenario == "malformed_ca_no_signature_match_early_reject"
+	if waitAfterRequest {
+		scenario = strings.TrimSuffix(scenario, "_early_reject")
+	}
 	transcript := tls13gm.NewTranscript()
 	receive := func(kind byte) ([]byte, error) {
 		msg, err := p.handshake()
@@ -175,8 +182,26 @@ func (p *recordPeer) mutualServer(server, client fixture, scenario string) error
 	if err = send(append([]byte{13, byte(len(request) >> 16), byte(len(request) >> 8), byte(len(request))}, request...)); err != nil {
 		return err
 	}
-	if scenario == "request_context" || scenario == "missing_signature" || scenario == "duplicate_signature" {
+	// The exact negative stimulus is the emitted CertificateRequest, not a
+	// later certificate/signature flight that the client need not wait for.
+	if scenario == "request_context" || scenario == "missing_signature" || scenario == "duplicate_signature" ||
+		scenario == "malformed_ca" || scenario == "malformed_ca_no_signature_match" {
 		p.authFlightSent = true
+	}
+	if waitAfterRequest {
+		// Send no certificate tail and keep TCP open: a correct client must
+		// reject this request itself, rather than fail on EOF or a later input.
+		kind, data, readErr := p.record()
+		if readErr != nil {
+			transport, abrupt := readErr.(*net.OpError)
+			// A clean abrupt close is permitted. A received record's bad MAC,
+			// malformed framing or truncation is never evidence of a valid alert.
+			p.earlyRejectionObserved = readErr == io.EOF ||
+				(abrupt && transport.Op == "read" && !transport.Timeout())
+			return readErr
+		}
+		p.earlyRejectionObserved = kind == 21 && bytes.Equal(data, []byte{2, 50})
+		return errors.New("native peer must reject malformed CA names with an authenticated decode_error alert")
 	}
 	msg, err = tls13gm.MarshalHandshakeMessage(&tls13gm.CertificateMsg{CertificateList: []tls13gm.CertificateEntry{{Certificate: server.leaf.Raw}}})
 	if err != nil {

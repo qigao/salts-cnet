@@ -747,6 +747,8 @@ static int crypto_tls_stream_configure_variant(crypto_tls_stream_context *contex
                                       uint64_t key_update_byte_limit,
                                       uint32_t key_update_interval_ms,
                                       uint32_t peer_key_update_limit,
+                                      uint32_t peer_key_update_min_interval_ms,
+                                      uint32_t peer_key_update_min_bytes,
                                       const crypto_tls_data *ca_data,
                                       const crypto_tls_credentials *credentials,
                                       const crypto_tls_cipher_suite *cipher_suites,
@@ -902,6 +904,10 @@ static int crypto_tls_stream_configure_variant(crypto_tls_stream_context *contex
       tls13_ctx_set_key_update_interval(tls, key_update_interval_ms,
           crypto_tls_stream_key_update_clock, NULL) != 1)
     return CRYPTO_TLS_STREAM_EIO;
+  if ((peer_key_update_min_interval_ms != 0u || peer_key_update_min_bytes != 0u) &&
+      tls13_ctx_set_peer_key_update_spacing(tls, peer_key_update_min_interval_ms,
+          peer_key_update_min_bytes, crypto_tls_stream_key_update_clock, NULL) != 1)
+    return CRYPTO_TLS_STREAM_EIO;
 
   /* RFC 5746 initial-handshake secure renegotiation is mandatory for
    * TLS1.2, including when the normal public context negotiates TLS12/13.
@@ -995,6 +1001,8 @@ static int crypto_tls_stream_context_create_common(
     uint64_t key_update_byte_limit,
     uint32_t key_update_interval_ms,
     uint32_t peer_key_update_limit,
+    uint32_t peer_key_update_min_interval_ms,
+    uint32_t peer_key_update_min_bytes,
     const crypto_tls_data *ca_data, const crypto_tls_credentials *credentials,
     crypto_tls_stream_protocol_version minimum, crypto_tls_stream_protocol_version maximum,
     uint32_t verification_depth, const int64_t *verification_time,
@@ -1083,7 +1091,8 @@ static int crypto_tls_stream_context_create_common(
   if (key_update_record_limit > CRYPTO_TLS_STREAM_KEY_UPDATE_RECORD_LIMIT_MAX ||
       key_update_byte_limit > CRYPTO_TLS_STREAM_KEY_UPDATE_BYTE_LIMIT_MAX)
     return CRYPTO_TLS_STREAM_EINVAL;
-  if ((key_update_record_limit != 0u || key_update_byte_limit != 0u || key_update_interval_ms != 0u || peer_key_update_limit != 0u) &&
+  if ((key_update_record_limit != 0u || key_update_byte_limit != 0u || key_update_interval_ms != 0u || peer_key_update_limit != 0u ||
+       peer_key_update_min_interval_ms != 0u || peer_key_update_min_bytes != 0u) &&
       security_profile != CRYPTO_TLS_STREAM_SECURITY_PROFILE_SHANGMI_TLS13)
     return CRYPTO_TLS_STREAM_ENOTSUP;
 
@@ -1143,7 +1152,7 @@ static int crypto_tls_stream_context_create_common(
         index != CRYPTO_TLS_STREAM_VARIANT_TLCP11) continue;
     status = crypto_tls_stream_configure_variant(
         context, (crypto_tls_stream_variant)index, ca_file, ca_path, cert_file, key_file,
-        key_password, client_auth, key_update_record_limit, key_update_byte_limit, key_update_interval_ms, peer_key_update_limit, ca_data, credentials,
+        key_password, client_auth, key_update_record_limit, key_update_byte_limit, key_update_interval_ms, peer_key_update_limit, peer_key_update_min_interval_ms, peer_key_update_min_bytes, ca_data, credentials,
         cipher_suites, cipher_suite_count, signature_algorithms, signature_algorithm_count, certificate_signatures, certificate_signature_count);
     if (status != CRYPTO_TLS_STREAM_OK) {
       crypto_tls_stream_context_dispose(context);
@@ -1255,7 +1264,7 @@ int crypto_tls_stream_client_context_create(const crypto_tls_stream_client_confi
       config->key_file, config->key_password, CRYPTO_TLS_STREAM_CLIENT_AUTH_NONE,
       config->alpn_protocols, config->alpn_protocol_count,
       config->security_profile, config->peer_policy, config->key_update_record_limit, config->key_update_byte_limit, config->key_update_interval_ms,
-      config->peer_key_update_limit, config->ca_data, config->credentials,
+      config->peer_key_update_limit, config->peer_key_update_min_interval_ms, config->peer_key_update_min_bytes, config->ca_data, config->credentials,
       config->minimum_version, config->maximum_version, config->verification_depth,
       config->verification_time,
       config->cipher_suites, config->cipher_suite_count,
@@ -1327,7 +1336,7 @@ int crypto_tls_stream_server_context_create(const crypto_tls_stream_server_confi
       config->ca_file, config->ca_path, config->cert_file, config->key_file,
       config->key_password, config->client_auth, config->alpn_protocols,
       config->alpn_protocol_count, config->security_profile, config->peer_policy,
-      config->key_update_record_limit, config->key_update_byte_limit, config->key_update_interval_ms, config->peer_key_update_limit, config->ca_data, config->credentials,
+      config->key_update_record_limit, config->key_update_byte_limit, config->key_update_interval_ms, config->peer_key_update_limit, config->peer_key_update_min_interval_ms, config->peer_key_update_min_bytes, config->ca_data, config->credentials,
       config->minimum_version, config->maximum_version, config->verification_depth,
       config->verification_time,
       config->cipher_suites, config->cipher_suite_count,

@@ -270,7 +270,7 @@ func TestShangMiMutualNativeClient(t *testing.T) {
 		t.Run("reject_identity_"+identity, func(t *testing.T) { runNativeClientWithIdentity(t, server, &client, identity, false, "") })
 	}
 	t.Run("fragmented_server_flight", func(t *testing.T) { run(t, server, true, "fragmented") })
-	for _, scenario := range []string{"malformed_ca", "malformed_ca_no_signature_match", "request_context", "missing_signature", "duplicate_signature", "client_context", "certificate_id", "certificate_verify", "tlcp_signature", "finished"} {
+	for _, scenario := range []string{"malformed_ca", "malformed_ca_no_signature_match", "malformed_ca_early_reject", "malformed_ca_no_signature_match_early_reject", "request_context", "missing_signature", "duplicate_signature", "client_context", "certificate_id", "certificate_verify", "tlcp_signature", "finished"} {
 		t.Run("reject_"+scenario, func(t *testing.T) { run(t, server, false, scenario) })
 	}
 	t.Run("reject_server_unknown_ca", func(t *testing.T) {

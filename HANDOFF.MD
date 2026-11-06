@@ -460,3 +460,66 @@
   completion, preserving their exact admission/key assertions.
   The final pinned full graph and all three affected CTests passed (24.78s),
   including all 376 provider cases with zero skipped.
+
+## Peer KeyUpdate time/byte spacing (2026-11-06)
+
+- The existing consecutive-update limit resets on any nonempty authenticated
+  application record. Add immutable SHANGMI_TLS13 client/server minimum time and
+  byte intervals rather than changing that existing burst contract. Zero disables
+  each minimum; the first valid update is free, later updates must satisfy all
+  enabled minima. Count both request kinds, including replies. A violation is a
+  permanently latched EPROTO before another receiving-key derivation.
+- One owner holds a seen flag, peer timestamp and capped uint32 byte credit.
+  Credit is explicitly bounded at the minimum, not a cumulative counter. Charge
+  authenticated plaintext once per decrypted record, never padding, empty/control
+  records, repeated reads or outgoing data. Discard surplus on update commit;
+  pre-first-update data cannot be banked. Local responses cannot refill peer credit.
+  No array/allocation/queue/thread is added. Quiescent destruction stays unchanged.
+- Share the existing monotonic clock for peer spacing/local age. Initialize once
+  at Finished if either policy needs time. Reject different callback/user clock
+  domains before configuration mutation; disabling one policy retains the other's
+  borrowed clock. Byte-only spacing retains no unused callback. Clock failure or
+  regression is fatal; compare before subtraction, never add a deadline.
+- This is strict minimum spacing, with one initial allowance, not a configurable
+  token bucket/window burst. It can reject spec-conforming crossed/requested
+  updates. Applications must choose compatible send/receive policies and accept
+  disconnect on violation. Admission still preserves mandatory replies. No
+  request_update=0 exemption, automatic recovery or retry is introduced.
+- Formal provider spacing coverage adds 87 cases: exact/max/short bounds,
+  fragment completion, shared-clock lifetimes/conflicts, burst precedence,
+  nonbanked credit, partial reads, epoch zero, failed clock/peer derivation and
+  exclusion of padding/unauthenticated data. Existing TestShangMiKeyUpdate adds
+  30 independent native-client/server/mTLS-server cases, including immutable
+  input erasure, real-clock spacing and retained terminal errors. Time failures
+  use UINT32_MAX, not a scheduler-dependent short "early" exchange; success and
+  byte-only combined failures use an intentional 400ms wait for a 250ms minimum.
+  Server failure injection still waits for the native SEND completion marker.
+- Twelve unsupported-profile endpoint configurations fail before absent trust
+  files or policy references/callbacks.
+- CI #391 exposed a pre-existing independent mTLS negative-fixture race:
+  reject_malformed_ca_no_signature_match legitimately rejected CertificateRequest
+  before the peer finished its later authentication messages. A broken pipe then
+  hit an incorrectly late authFlightSent gate. As for the other malformed request
+  cases, mark the exact rejection stimulus only after emitting that request.
+  Keep native handshake-failure/no-CONNECTED/no-application assertions intact.
+- Two formal early-reject scenarios withhold the certificate tail and keep TCP
+  open. A received alert must authenticate as fatal decode_error; clean abrupt
+  transport termination is also permitted by the existing failure contract.
+  Bad MAC, malformed/truncated record, unexpected data or timeout cannot satisfy
+  the gate. Native retained handshake-failure assertions stay intact.
+
+## TLS 1.3 fatal alert sending direction (2026-11-07)
+
+- HIGH: the early-reject probe exposed tls13_send_alert using server traffic
+  keys/IV/sequence for both roles. Client alerts failed independent AEAD
+  authentication and advanced the receiving sequence. Select the active local
+  sending direction by role; preserve pre-key plaintext alerts. Pending partial
+  output reuses the already encrypted record and advances its sequence only once.
+- Sixteen formal provider cases cover both roles, both ShangMi AEAD suites,
+  handshake/established encrypted alerts with one-byte writes, and all four
+  pre-key states. Before the fix, four client-direction cases failed receiving
+  sequence preservation and both independent early-reject cases failed MAC.
+- With provider f856a0a1a468a80b6376528618cda926a666f479 (port tree
+  5bfc4769b17a01f8063d067ef9417cfb6031a8b0), native-release-user configure/full
+  build and all nine related CTests passed (88.89s). The provider suite executes
+  479 cases with zero skipped; independent mTLS early-reject records authenticate.

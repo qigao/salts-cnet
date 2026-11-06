@@ -542,8 +542,8 @@ receiving traffic secret unchanged after two admitted updates. Public context
 tests reject unsupported profiles before loading absent files.
 
 This is a consecutive-update burst bound, not a time/byte rate limiter: a peer
-that sends nonempty application records can reset it. Time/byte peer-rate
-policies, session resumption, DTLS and hardware-backed keys remain separate work.
+that sends nonempty application records can reset it. Time/byte minimum spacing
+is described below; session resumption, DTLS and hardware-backed keys remain separate work.
 Supported post-handshake fragmentation is described below; additional peer
 admission follows here.
 
@@ -1356,3 +1356,71 @@ pin and corresponding provider source together. Formal tests cover split
 headers/bodies, coalesced tickets and ticket/update ordering, exact size/count
 bounds, wrong roles, interruption and key-boundary failures, partial transport
 I/O, peer-update limits and real independent authenticated data/close traffic.
+
+## Peer KeyUpdate minimum spacing
+
+Immutable SHANGMI_TLS13 client/server `peer_key_update_min_interval_ms` and
+`peer_key_update_min_bytes` add receive-side admission limits. Each uint32 scalar
+defaults to zero (disabled). Nonzero STANDARD/TLCP configurations fail with
+ENOTSUP before trust/identity loading or retained-policy callbacks. The first
+complete, valid peer update is admitted without spacing credit; every later
+one must satisfy every enabled minimum. Both request kinds count, including
+responses to local requests. Violations fail permanently with EPROTO before
+another receiving traffic-secret derivation, without delivering new plaintext.
+
+Time uses the existing stateless monotonic clock adapter. The provider initializes
+that clock once at Finished when either local age or peer spacing needs it.
+It samples only when preparing local timed records or admitting complete peer
+updates. A backward/failed clock is fatal. Compare `now >= last` before
+subtracting; no deadline addition, periodic timer or worker is required.
+The last admitted peer timestamp changes only after successful peer derivation.
+Local key changes, including mandatory replies, never reset receive-side spacing.
+
+Byte credit counts authenticated received application plaintext after the last
+admitted peer update, once per decrypted record rather than per read callback.
+It explicitly caps at the configured minimum; surplus cannot be banked for
+multiple updates. Data before the first update is discarded from this credit
+when that first update commits. Empty records, control messages, padding and
+outgoing application data earn no credit. Bounded remaining-credit subtraction
+prevents overflow; impossible credit greater than its limit is rejected.
+These are received/authenticated bytes, not application-consumption acknowledgments.
+
+One fixed progress owner owns the seen flag, last peer timestamp and capped
+uint32 credit. There is no new buffer, allocation, queue, lock or thread. The
+existing consecutive-update burst limit remains independent: nonempty received
+data can reset that burst count, but cannot bypass time or byte spacing. All
+admission checks precede derivation; failed admission preserves the peer budget.
+Existing pending record buffers remain valid until quiescent destruction.
+
+Minimum spacing is deliberately stricter than a token bucket with a configurable
+burst or a boundary-sensitive fixed window: it permits one initial update and
+requires a full gap thereafter, with constant state and no elapsed-window refill.
+It may reject otherwise valid TLS bursts, including crossed KeyUpdate responses
+or responses induced by very aggressive local rotation. Applications must choose
+compatible sending/receiving policies and accept disconnect on violation. Admitted
+requests still receive their mandatory response; request_update=0 has no exemption.
+See [RFC 8446 section 4.6.3](https://www.rfc-editor.org/rfc/rfc8446.html#section-4.6.3).
+
+For example, set `peer_key_update_min_interval_ms = 1000` and
+`peer_key_update_min_bytes = 4096` before context creation. This requires both a
+second and 4096 new authenticated application bytes between admitted peer updates.
+The two scalars are copied at initialization; the caller may then erase them.
+Zero restores previous behavior. Core/CNet configuration structs and the matching
+provider ABI require rebuilding together; rollback reverts the fields and port
+pin together. No hot mutation or parallel versioned API is introduced.
+
+## TLS 1.3 fatal alert direction
+
+Encrypted fatal alerts use the local role's active sending key, IV and sequence
+in both handshake and established phases. Client alerts must not use or advance
+the server receiving direction. Partial transport writes resume the same pending
+ciphertext and consume one sending sequence; pre-key states retain their existing
+plaintext-alert behavior. This fixes incorrect client alert authentication without
+changing the public configuration or allowing recovery after a fatal TLS error.
+
+Formal provider tests cover both roles and ShangMi AEAD suites, handshake and
+established keys, one-byte output, receiving-sequence preservation and pre-key
+states. Independent mTLS peers withhold the remaining authentication flight after
+a malformed CertificateRequest and authenticate any received fatal decode_error.
+An invalid MAC or malformed record cannot qualify early rejection. The matching
+pinned provider and Core tests must be updated together when reverting this fix.
