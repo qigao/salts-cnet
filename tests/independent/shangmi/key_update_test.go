@@ -7,11 +7,16 @@ import (
 	"net"
 	"strings"
 	"testing"
+	"time"
 )
 
 func (p *recordPeer) localRotationScenario(nativeServer bool, scenario string) error {
 	var byteLimit, recordLimit uint64
 	switch scenario {
+	case "rotatetime":
+		return p.timedLocalRotation(nativeServer)
+	case "rotatetimemax":
+		return p.localRotation(nativeServer, 0)
 	case "rotatebyte1":
 		byteLimit = 1
 	case "rotatebyte2":
@@ -56,6 +61,73 @@ func (p *recordPeer) localRotationScenario(nativeServer bool, scenario string) e
 			used, records, remaining = used+n, records+1, remaining-n
 		}
 		if !nativeServer {
+			if err := p.send(23, []byte("ok")); err != nil {
+				return err
+			}
+		}
+	}
+	if nativeServer {
+		if err := p.send(21, []byte{1, 0}); err != nil {
+			return err
+		}
+	}
+	if err := p.expect(21, []byte{1, 0}); err != nil {
+		return err
+	}
+	if !nativeServer {
+		return p.send(21, []byte{1, 0})
+	}
+	return nil
+}
+
+// Native uses 250ms. Delay the application trigger by 400ms, after the prior
+// record is received, so elapsed time is measured from a known wire barrier.
+// An initially slow handshake may also cause a legitimate first-record update.
+func (p *recordPeer) timedLocalRotation(nativeServer bool) error {
+	for round := 0; round < 5; round++ {
+		if nativeServer {
+			if round != 0 {
+				time.Sleep(400 * time.Millisecond)
+			}
+			if err := p.send(23, []byte{'F'}); err != nil {
+				return err
+			}
+		}
+		updates := 0
+		for {
+			kind, data, err := p.record()
+			if err != nil {
+				return err
+			}
+			if kind == 22 {
+				if updates == 8 {
+					return errors.New("too many consecutive timed updates")
+				}
+				if err := p.consumeKeyUpdate(data, 1); err != nil {
+					return err
+				}
+				if err := p.sendKeyUpdate(0); err != nil {
+					return err
+				}
+				updates++
+				continue
+			}
+			value := byte('F')
+			if nativeServer {
+				value = 'G'
+			}
+			if kind != 23 || !bytes.Equal(data, []byte{value}) {
+				return fmt.Errorf("timed rotation round %d: got %d/%x", round, kind, data)
+			}
+			if round != 0 && updates == 0 {
+				return fmt.Errorf("timed rotation missing before round %d", round)
+			}
+			break
+		}
+		if !nativeServer {
+			if round != 4 {
+				time.Sleep(400 * time.Millisecond)
+			}
 			if err := p.send(23, []byte("ok")); err != nil {
 				return err
 			}
@@ -226,7 +298,7 @@ func TestShangMiKeyUpdate(t *testing.T) {
 		t.Run("native_client_"+scenario, func(t *testing.T) { runNativeClient(t, f, "localhost", true, scenario) })
 		t.Run("native_mtls_server_"+scenario, func(t *testing.T) { runNativeServerWithClient(t, f, &client, scenario, scenario) })
 	}
-	for _, scenario := range []string{"rotateoff", "rotate1", "rotate2", "rotatemax", "rotatebyte1", "rotatebyte2", "rotatebytemax", "rotateboth-byte", "rotateboth-record"} {
+	for _, scenario := range []string{"rotateoff", "rotate1", "rotate2", "rotatemax", "rotatebyte1", "rotatebyte2", "rotatebytemax", "rotateboth-byte", "rotateboth-record", "rotatetime", "rotatetimemax"} {
 		t.Run("native_server_"+scenario, func(t *testing.T) { runNativeServer(t, f, scenario, scenario) })
 		t.Run("native_client_"+scenario, func(t *testing.T) { runNativeClient(t, f, "localhost", true, scenario) })
 		t.Run("native_mtls_server_"+scenario, func(t *testing.T) { runNativeServerWithClient(t, f, &client, scenario, scenario) })

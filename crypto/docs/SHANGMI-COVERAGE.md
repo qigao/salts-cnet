@@ -1196,6 +1196,49 @@ ShangMi mTLS, TLCP dual leaves, and file/PEM/DER trust/identity inputs. Undamage
 controls and top-certificate root-selection failures keep their prior behavior.
 The CNet probe checks the retained value again after owner destruction.
 
+## Local sending-key rotation interval
+
+`key_update_interval_ms` is copied into the immutable SHANGMI_TLS13 client/server
+context. Zero disables it; every nonzero uint32 value is an interval in
+milliseconds. STANDARD/TLCP reject nonzero values with ENOTSUP before trust I/O
+or retained-policy callbacks. This is a local age policy, independent of record
+and plaintext-byte budgets; any enabled trigger requests one KeyUpdate.
+
+The existing exclusive progress owner starts the interval when the provider
+handshake completes. Before preparing each new application record, it samples
+a monotonic clock and checks `now - origin >= interval`. Pending application
+ciphertext finishes unchanged even if the interval expires during backpressure.
+Pending KeyUpdate ciphertext also finishes before new-key application data.
+Successful local sending-key derivation starts the next interval, including a
+mandatory peer response. Receiving a peer's new key does not reset local age.
+Shutdown retains the existing authenticated-close behavior without an age-triggered
+update. No idle traffic, deadline scheduling or background thread is introduced.
+
+One fixed origin, last-observed sample and initialized flag belong to each
+connection. The provider stores an immutable clock callback and borrows its user
+context for the TLS context lifetime; Crypto supplies a stateless internal callback, never an application
+pointer. Windows uses GetTickCount64; Unix uses CLOCK_MONOTONIC. Clock resolution
+and system-suspend accounting follow the selected OS clock, rather than civil
+time or certificate verification_time. Clock failure, a backward sample or use
+before timer initialization is fatal before further application encryption.
+Comparing before subtraction avoids overflow; deadline addition is unnecessary.
+Failures preserve the existing first-fatal-error latch and quiescent cleanup.
+
+The design extends the existing provider control-record state machine rather
+than introducing a second Core-side age counter, which could miss mandatory
+responses. No new buffer, allocation, queue or worker is needed. A very short
+interval can cause frequent updates and reduce useful throughput; it is not an
+idle-update delivery guarantee or peer-flood limiter. Deterministic provider tests
+control the clock, while independent peers exercise the real clock through CNet.
+For example, set `key_update_interval_ms = 60000` before context creation to
+check for local rotation at the next application record after one minute.
+Applications migrate by setting this scalar on either context; zero restores
+the previous behavior. Downgrading the provider requires reverting the matching
+Core header/implementation and dependency pin together.
+
+See [RFC 8446 section 4.6.3](https://www.rfc-editor.org/rfc/rfc8446.html#section-4.6.3)
+and [GetTickCount64](https://learn.microsoft.com/en-us/windows/win32/api/sysinfoapi/nf-sysinfoapi-gettickcount64).
+
 ## Local sending-key plaintext byte limit
 
 The immutable client/server `key_update_byte_limit` adds a per-sending-key
@@ -1237,5 +1280,35 @@ and optionally `key_update_record_limit = 4096` before initializing a ShangMi
 client/server context. Existing zero-initialized configurations keep their prior
 behavior. Applications rebuild against the extended configuration structs; no
 parallel versioned interface or hot update is introduced. Returning the field to
-zero at configuration time restores the prior byte-policy behavior. Time-based
-rotation and general post-handshake fragmentation remain separate work.
+zero at configuration time restores the prior byte-policy behavior. The optional
+interval above composes with both budgets; general post-handshake fragmentation
+remains separate work.
+
+## Established TLS 1.3 duplex record ownership
+
+A formal isolated-KeyUpdate regression exposed shared provider record state:
+`tls13_recv` could consume the update and leave `recordlen = 5` while waiting for
+another header. A subsequent send interpreted that receive state as outgoing
+ciphertext, bypassed the new-record policy checks and returned zero-byte success.
+The same shared buffers could corrupt partial incoming/outgoing records and
+unconsumed plaintext when the exclusive owner interleaved read and write calls.
+Single-owner progress does not imply half-duplex application traffic.
+
+The established TLS 1.3 receive path now owns one fixed `TLS_MAX_RECORD_SIZE`
+ciphertext array plus receive offset/remaining/plaintext-length scalars, separate
+from the existing send/handshake record fields. Received plaintext uses the
+existing `databuf`, so retained `data/datalen` cannot alias outgoing plaintext.
+The receive state machine and record-ready gate keep their current authority.
+No record is copied to another queue, no capacity grows and no new allocation
+occurs during progress. All profiles share the TLS_CONNECT ABI, so their fixed
+connection allocation increases by one record array and its metadata/alignment, although only TLS1.3
+uses the new receive buffer. This correctness cost is preferable to
+serializing duplex traffic or overwriting an admitted pending operation.
+
+Handshake parsing retains its existing buffers. Existing NewSessionTicket
+processing reads the received plaintext buffer; this ownership fix does not
+qualify session restoration. Early-data reception uses the same receive owner;
+0-RTT remains unqualified. Fatal errors and destroy still follow the existing
+terminal latch/quiescence contract. Formal tests must cover isolated control
+records followed by sends, partial receive headers/bodies interleaved with writes,
+partial outgoing records interleaved with reads, and retained plaintext tails.

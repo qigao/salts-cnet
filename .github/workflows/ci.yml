@@ -190,9 +190,9 @@ jobs:
 
       - name: Set up shared dependency contract
         id: vcpkg
-        # GmSSL #37 enforces local sending-key plaintext-byte budgets.
+        # GmSSL #38 enforces owner-driven local sending-key intervals.
         # Includes native Windows pkg-config; avoid MSYS2 for pkg-config.
-        uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-curl-cache@8ac7e955fcd1fea7f00df76fd7d243ed9914e995
+        uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-curl-cache@ce752a3a63015f863a76b8ba37add83ca1cbe1d3
         with:
           mode: read
           triplet: ${{ matrix.triplet }}
