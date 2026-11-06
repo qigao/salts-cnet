@@ -10,6 +10,7 @@
 #include <gmssl/x509_ext.h>
 #include <gmssl/x509_cer.h>
 #include <stdint.h>
+#include <limits.h>
 #include <stddef.h>
 #include <stdio.h>
 #include <string.h>
@@ -1284,6 +1285,247 @@ spec("GmSSL established TLS 1.3 independent receive and send storage") {
             check_equal(wire.incoming.read_offset, wire.incoming.size);
           }
         }
+      }
+    }
+  }
+}
+
+static size_t post_handshake_seal(TLS_CONNECT *sender, key_update_wire *wire,
+    uint8_t kind, const uint8_t *message, size_t size) {
+  uint8_t plain[TLS_MAX_RECORD_SIZE], encrypted[TLS_MAX_RECORD_SIZE];
+  size_t encrypted_size = 0u;
+  check(size <= TLS_MAX_PLAINTEXT_SIZE);
+  plain[0] = kind; plain[1] = 3u; plain[2] = 3u;
+  plain[3] = (uint8_t)(size >> 8); plain[4] = (uint8_t)size;
+  memcpy(plain + 5u, message, size);
+  uint8_t *seq = sender->is_client ? sender->client_seq_num : sender->server_seq_num;
+  check_equal(tls13_record_encrypt(sender->cipher_suite,
+      sender->is_client ? &sender->client_write_key : &sender->server_write_key,
+      sender->is_client ? sender->client_write_iv : sender->server_write_iv, seq,
+      plain, 5u + size, 0u, encrypted, &encrypted_size), 1);
+  check(encrypted_size <= sizeof(wire->bytes) - wire->size);
+  memcpy(wire->bytes + wire->size, encrypted, encrypted_size);
+  wire->size += encrypted_size;
+  tls_seq_num_incr(seq);
+  return encrypted_size;
+}
+
+static void post_handshake_update_sender(TLS_CONNECT *sender) {
+  uint8_t next[32], key[16];
+  uint8_t *secret = sender->is_client ? sender->client_application_traffic_secret : sender->server_application_traffic_secret;
+  uint8_t *iv = sender->is_client ? sender->client_write_iv : sender->server_write_iv;
+  check_equal(tls13_hkdf_expand_label(sender->digest, secret, "traffic upd", NULL, 0u, sizeof(next), next), 1);
+  memcpy(secret, next, sizeof(next));
+  check_equal(tls13_hkdf_expand_label(sender->digest, secret, "key", NULL, 0u, sizeof(key), key), 1);
+  check_equal(tls13_hkdf_expand_label(sender->digest, secret, "iv", NULL, 0u, 12u, iv), 1);
+  check_equal(block_cipher_set_encrypt_key(sender->is_client ? &sender->client_write_key :
+      &sender->server_write_key, sender->cipher, key), 1);
+  tls_seq_num_reset(sender->is_client ? sender->client_seq_num : sender->server_seq_num);
+}
+
+spec("GmSSL bounded post-handshake fragmentation") {
+  for (unsigned role = 0u; role < 2u; ++role) {
+    for (unsigned suite_index = 0u; suite_index < 2u; ++suite_index) {
+      for (unsigned request = 0u; request < 2u; ++request) {
+        for (size_t split = 1u; split < 5u; ++split) {
+          it("role %u suite %u request %u split %zu derives once after the final fragment", role, suite_index, request, split) {
+            TLS_CTX ctx[2];
+            TLS_CONNECT conn[2];
+            tls_duplex_wire wire = {0};
+            key_update_wire unused;
+            key_update_clock clock = {0};
+            timed_key_prepare(&ctx[0], &conn[0], &wire.incoming, &clock, !role, suite_index, 0u);
+            timed_key_prepare(&ctx[1], &conn[1], &unused, &clock, role, suite_index, 0u);
+            check_equal(tls13_ctx_set_peer_key_update_limit(&ctx[1], 1u), 1);
+            TLS_IO io = {.user = &wire, .send = duplex_send, .recv = duplex_receive};
+            check_equal(tls_set_io(&conn[1], &io), 1);
+            uint8_t message[] = {24, 0, 0, 1, (uint8_t)request};
+            size_t first = post_handshake_seal(&conn[0], &wire.incoming, 22u, message, split);
+            post_handshake_seal(&conn[0], &wire.incoming, 22u, message + split, sizeof(message) - split);
+            post_handshake_update_sender(&conn[0]);
+            const uint8_t application = 0x46;
+            post_handshake_seal(&conn[0], &wire.incoming, 23u, &application, 1u);
+            uint8_t before[32];
+            memcpy(before, role ? conn[1].server_application_traffic_secret : conn[1].client_application_traffic_secret, sizeof(before));
+            conn[1].local_key_started_ms = 123u;
+            conn[1].local_key_plaintext_bytes = 7u;
+            wire.incoming.read_budget = first;
+            uint8_t byte = 0x5a;
+            size_t received = 99u;
+            check_equal(tls13_recv(&conn[1], &byte, 1u, &received), TLS_ERROR_RECV_AGAIN);
+            check_equal(received, (size_t)0u);
+            check_equal(byte, (uint8_t)0x5a);
+            check_equal(conn[1].consecutive_peer_key_updates, (size_t)0u);
+            check_equal(before, role ? conn[1].server_application_traffic_secret : conn[1].client_application_traffic_secret, sizeof(before));
+            const uint8_t outgoing = 0x58;
+            timed_key_send(&conn[1], &wire.outgoing, outgoing);
+            duplex_expect_application(&conn[1], &wire.outgoing, &outgoing, 1u);
+            wire.incoming.read_budget = wire.incoming.size;
+            check_equal(tls13_recv(&conn[1], &byte, 1u, &received), 1);
+            check_equal(received, (size_t)1u);
+            check_equal(byte, application);
+            check_equal(conn[1].key_update, (int)request);
+            check_equal(conn[1].local_key_started_ms, UINT64_C(123));
+            check_equal(conn[1].local_key_plaintext_bytes, UINT64_C(7));
+            check_equal(role ? conn[1].server_application_traffic_secret : conn[1].client_application_traffic_secret,
+                conn[0].is_client ? conn[0].client_application_traffic_secret : conn[0].server_application_traffic_secret, sizeof(before));
+            check_equal(wire.incoming.read_offset, wire.incoming.size);
+          }
+        }
+      }
+    }
+  }
+}
+
+static size_t post_handshake_ticket(uint8_t *message, size_t ticket_size) {
+  const size_t size = 18u + ticket_size;
+  check(size <= 2048u);
+  memset(message, 0, size);
+  message[0] = 4u;
+  message[1] = (uint8_t)((size - 4u) >> 16);
+  message[2] = (uint8_t)((size - 4u) >> 8);
+  message[3] = (uint8_t)(size - 4u);
+  message[6] = 0x0e; message[7] = 0x10; /* lifetime 3600 seconds */
+  message[11] = 0x42; /* age_add */
+  message[12] = 1u; message[13] = 0xa5; /* nonce */
+  message[14] = (uint8_t)(ticket_size >> 8);
+  message[15] = (uint8_t)ticket_size;
+  memset(message + 16u, 0x53, ticket_size);
+  return size;
+}
+
+spec("GmSSL post-handshake interruption and key boundaries") {
+  for (unsigned role = 0u; role < 2u; ++role) {
+    for (unsigned suite_index = 0u; suite_index < 2u; ++suite_index) {
+      for (unsigned mode = 0u; mode < 14u; ++mode) {
+        it("role %u suite %u malformed post-handshake %u cannot release data or change keys", role, suite_index, mode) {
+          TLS_CTX ctx[2];
+          TLS_CONNECT conn[2];
+          tls_duplex_wire wire = {0};
+          key_update_wire unused;
+          key_update_clock clock = {0};
+          timed_key_prepare(&ctx[0], &conn[0], &wire.incoming, &clock, !role, suite_index, 0u);
+          timed_key_prepare(&ctx[1], &conn[1], &unused, &clock, role, suite_index, 0u);
+          TLS_IO io = {.user = &wire, .send = duplex_send, .recv = duplex_receive};
+          check_equal(tls_set_io(&conn[1], &io), 1);
+          uint8_t update[10] = {24, 0, 0, 1, 1, 24, 0, 0, 1, 0};
+          if (mode < 2u) post_handshake_seal(&conn[0], &wire.incoming, 22u, update, mode ? 10u : 6u);
+          else if (mode < 5u) {
+            if (mode == 2u) update[3] = 0u;
+            if (mode == 3u) update[3] = 2u;
+            if (mode == 4u) update[4] = 2u;
+            post_handshake_seal(&conn[0], &wire.incoming, 22u, update, mode == 2u ? 4u : mode == 3u ? 6u : 5u);
+          } else if (mode == 5u) post_handshake_seal(&conn[0], &wire.incoming, 22u, update, 0u);
+          else if (mode < 10u || mode == 12u) {
+            post_handshake_seal(&conn[0], &wire.incoming, 22u, update, 3u);
+            uint8_t interrupt[] = {1u, 0u};
+            if (mode == 9u) interrupt[1] = 80u;
+            post_handshake_seal(&conn[0], &wire.incoming, mode == 12u ? 22u : mode < 8u ? 23u : 21u,
+                interrupt, mode == 7u || mode == 12u ? 0u : mode < 8u ? 1u : 2u);
+          } else if (mode == 10u) {
+            update[0] = 4u; update[1] = 1u; update[2] = update[3] = 0u;
+            post_handshake_seal(&conn[0], &wire.incoming, 22u, update, 4u);
+          } else if (mode == 11u) {
+            update[0] = 13u; /* unsupported post-handshake authentication */
+            post_handshake_seal(&conn[0], &wire.incoming, 22u, update, 1u);
+          } else {
+            post_handshake_seal(&conn[0], &wire.incoming, 22u, update, 3u);
+            post_handshake_update_sender(&conn[0]); /* Illegal key change mid-message. */
+            post_handshake_seal(&conn[0], &wire.incoming, 22u, update + 3u, 2u);
+          }
+          uint8_t before[32], byte = 0x5a;
+          memcpy(before, role ? conn[1].server_application_traffic_secret : conn[1].client_application_traffic_secret, sizeof(before));
+          wire.incoming.read_budget = wire.incoming.size;
+          size_t received = 99u;
+          check_equal(tls13_recv(&conn[1], &byte, 1u, &received), -1);
+          check_equal(received, (size_t)0u);
+          check_equal(byte, (uint8_t)0x5a);
+          check_equal(conn[1].close_notify_received, 0);
+          check_equal(conn[1].key_update, 0);
+          check_equal(before, role ? conn[1].server_application_traffic_secret : conn[1].client_application_traffic_secret, sizeof(before));
+        }
+      }
+      it("role %u suite %u counts fragmented updates once across the configured limit", role, suite_index) {
+        TLS_CTX ctx[2];
+        TLS_CONNECT conn[2];
+        tls_duplex_wire wire = {0};
+        key_update_wire unused;
+        key_update_clock clock = {0};
+        timed_key_prepare(&ctx[0], &conn[0], &wire.incoming, &clock, !role, suite_index, 0u);
+        timed_key_prepare(&ctx[1], &conn[1], &unused, &clock, role, suite_index, 0u);
+        check_equal(tls13_ctx_set_peer_key_update_limit(&ctx[1], 1u), 1);
+        TLS_IO io = {.user = &wire, .send = duplex_send, .recv = duplex_receive};
+        check_equal(tls_set_io(&conn[1], &io), 1);
+        const uint8_t update[] = {24, 0, 0, 1, 0};
+        size_t first = post_handshake_seal(&conn[0], &wire.incoming, 22u, update, sizeof(update));
+        post_handshake_update_sender(&conn[0]);
+        post_handshake_seal(&conn[0], &wire.incoming, 22u, update, 2u);
+        post_handshake_seal(&conn[0], &wire.incoming, 22u, update + 2u, 3u);
+        wire.incoming.read_budget = first;
+        uint8_t byte = 0x5a;
+        size_t received = 99u;
+        check_equal(tls13_recv(&conn[1], &byte, 1u, &received), TLS_ERROR_RECV_AGAIN);
+        check_equal(conn[1].consecutive_peer_key_updates, (size_t)1u);
+        uint8_t before[32];
+        memcpy(before, role ? conn[1].server_application_traffic_secret : conn[1].client_application_traffic_secret, sizeof(before));
+        wire.incoming.read_budget = wire.incoming.size;
+        check_equal(tls13_recv(&conn[1], &byte, 1u, &received), -1);
+        check_equal(received, (size_t)0u);
+        check_equal(conn[1].consecutive_peer_key_updates, (size_t)1u);
+        check_equal(before, role ? conn[1].server_application_traffic_secret : conn[1].client_application_traffic_secret, sizeof(before));
+      }
+    }
+  }
+}
+
+spec("GmSSL bounded ticket assembly and serialization") {
+  for (unsigned suite_index = 0u; suite_index < 2u; ++suite_index) {
+    for (unsigned mode = 0u; mode < 11u; ++mode) {
+      it("suite %u ticket boundary %u has checked assembly and encoding", suite_index, mode) {
+        TLS_CTX ctx[2];
+        TLS_CONNECT conn[2];
+        tls_duplex_wire wire = {0};
+        key_update_wire unused;
+        key_update_clock clock = {0};
+        timed_key_prepare(&ctx[0], &conn[0], &wire.incoming, &clock, mode == 9u ? 1u : 0u, suite_index, 0u);
+        timed_key_prepare(&ctx[1], &conn[1], &unused, &clock, mode == 9u ? 0u : 1u, suite_index, 0u);
+        check_equal(digest_init(&conn[1].dgst_ctx, conn[1].digest), 1);
+        check_equal(digest_update(&conn[1].dgst_ctx, (const uint8_t *)"transcript", 10u), 1);
+        TLS_IO io = {.user = &wire, .send = duplex_send, .recv = duplex_receive};
+        check_equal(tls_set_io(&conn[1], &io), 1);
+        uint8_t message[2048];
+        size_t size = post_handshake_ticket(message, mode == 10u ? 0u : mode == 0u ? 1u : mode == 5u ? 460u : 459u);
+        if (mode == 1u) {
+          const size_t cuts[] = {1u, 3u, 4u, 17u, size - 1u, size};
+          size_t previous = 0u;
+          for (size_t i = 0u; i < sizeof(cuts) / sizeof(cuts[0]); ++i) {
+            post_handshake_seal(&conn[0], &wire.incoming, 22u, message + previous, cuts[i] - previous);
+            previous = cuts[i];
+          }
+        } else if (mode == 2u) {
+          memcpy(message + size, message, size);
+          post_handshake_seal(&conn[0], &wire.incoming, 22u, message, 2u * size);
+        } else if (mode == 3u || mode == 4u) {
+          const uint8_t update[] = {24, 0, 0, 1, 1};
+          if (mode == 4u) post_handshake_seal(&conn[0], &wire.incoming, 22u, message, 3u);
+          memcpy(message + size, update, sizeof(update));
+          post_handshake_seal(&conn[0], &wire.incoming, 22u, message + (mode == 4u ? 3u : 0u), size + sizeof(update) - (mode == 4u ? 3u : 0u));
+          post_handshake_update_sender(&conn[0]);
+        } else post_handshake_seal(&conn[0], &wire.incoming, 22u, message, size);
+        if (mode == 6u) conn[1].new_session_ticket = INT_MAX;
+        if (mode == 7u) conn[1].digest = NULL; /* Expansion must fail, never serialize an invalid PSK. */
+        if (mode == 8u) conn[1].session_out = ""; /* Guaranteed failing open, no user file touched. */
+        const uint8_t payload = 0x46;
+        post_handshake_seal(&conn[0], &wire.incoming, 23u, &payload, 1u);
+        wire.incoming.read_budget = wire.incoming.size;
+        uint8_t byte = 0x5a;
+        size_t received = 99u;
+        const bool valid = mode < 5u;
+        check_equal(tls13_recv(&conn[1], &byte, 1u, &received), valid ? 1 : -1);
+        check_equal(received, valid ? (size_t)1u : (size_t)0u);
+        check_equal(byte, valid ? payload : (uint8_t)0x5a);
+        check_equal(conn[1].new_session_ticket, mode == 6u ? INT_MAX : !valid ? 0 : mode == 2u ? 2 : 1);
+        if (valid) check_equal(conn[1].key_update, mode == 3u || mode == 4u ? 1 : 0);
       }
     }
   }

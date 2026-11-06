@@ -542,9 +542,10 @@ receiving traffic secret unchanged after two admitted updates. Public context
 tests reject unsupported profiles before loading absent files.
 
 This is a consecutive-update burst bound, not a time/byte rate limiter: a peer
-that sends nonempty application records can reset it. Time/byte budgets,
-fragmented post-handshake messages, session resumption, DTLS and hardware-backed
-keys remain separate work. Additional peer admission is described below.
+that sends nonempty application records can reset it. Time/byte peer-rate
+policies, session resumption, DTLS and hardware-backed keys remain separate work.
+Supported post-handshake fragmentation is described below; additional peer
+admission follows here.
 
 ### Authenticated-peer admission and revocation composition
 
@@ -622,7 +623,8 @@ observed through application read or the close probe. Each checks three rounds
 of cross-API retries and retained-policy release. `saltscore.gmssl_tls_io_abi`
 adds eight equivalent AEAD failures for standard TLS 1.2/1.3 and both roles.
 The regression reproduced continued writes/reads before the fix. This does not
-qualify KeyUpdate flood limits or fragmented post-handshake message support.
+qualify KeyUpdate flood limits. Supported message fragmentation is qualified
+separately in the bounded post-handshake framing section below.
 
 ### Ready-to-configure CNet SM2 CRL snapshots
 
@@ -1281,8 +1283,8 @@ client/server context. Existing zero-initialized configurations keep their prior
 behavior. Applications rebuild against the extended configuration structs; no
 parallel versioned interface or hot update is introduced. Returning the field to
 zero at configuration time restores the prior byte-policy behavior. The optional
-interval above composes with both budgets; general post-handshake fragmentation
-remains separate work.
+interval above composes with both budgets. Supported KeyUpdate/ticket framing
+is described in the bounded post-handshake section below.
 
 ## Established TLS 1.3 duplex record ownership
 
@@ -1312,3 +1314,43 @@ qualify session restoration. Early-data reception uses the same receive owner;
 terminal latch/quiescence contract. Formal tests must cover isolated control
 records followed by sends, partial receive headers/bodies interleaved with writes,
 partial outgoing records interleaved with reads, and retained plaintext tails.
+
+## Bounded TLS 1.3 post-handshake framing
+
+The exclusive receive owner reassembles supported KeyUpdate/NewSessionTicket
+messages across authenticated TLS1.3 records, and processes multiple messages
+within a record. It reuses the initial-handshake fragment array after Finished
+has consumed that array at a record boundary; one new length scalar owns the
+post-handshake assembly. Initial-handshake parsing no longer uses that array.
+The input record remains in the independent receive buffer and received
+application plaintext retains its existing databuf lifetime. No allocation,
+queue, thread, second reader or public configuration/API is introduced.
+
+The four-byte handshake header declares a body bounded by
+TLS_MAX_HANDSHAKE_DATA_SIZE; larger declarations fail as soon as the header is
+complete. Unknown/unsupported handshake types and server-side receipt of tickets
+fail rather than buffering arbitrary messages. Empty handshake fragments,
+interleaved application/alert records and suffix bytes following KeyUpdate in
+the same record are fatal. In particular, a partial update cannot turn a
+close_notify into successful shutdown or reset a key/update budget. Peer update
+admission and traffic-secret derivation run once, only for a complete valid
+KeyUpdate ending exactly at the record boundary. Sending-key budgets remain
+independent. This follows
+[RFC 8446 section 5.1](https://www.rfc-editor.org/rfc/rfc8446.html#section-5.1).
+
+Ticket parsing rejects empty ticket values and keeps the provider's existing
+bounded session encoding. Before
+derivation or serialization, a length-only encoding must fit its 512-byte local
+buffer (53 bytes of fixed encoding plus at most 459 ticket bytes). This closes
+an unchecked network-length write into that buffer; oversized tickets fail
+instead of overflowing it. Secret derivation and file completion failures
+propagate, ticket-count overflow is rejected, and temporary derived material is
+cleared on all admitted exits. No session restore/cache API or 0-RTT capability
+is qualified by receiving these messages.
+
+Applications rebuild against the matching pinned provider ABI. No Core/CNet
+configuration changes are required. Rolling back requires reverting the port
+pin and corresponding provider source together. Formal tests cover split
+headers/bodies, coalesced tickets and ticket/update ordering, exact size/count
+bounds, wrong roles, interruption and key-boundary failures, partial transport
+I/O, peer-update limits and real independent authenticated data/close traffic.

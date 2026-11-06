@@ -418,3 +418,38 @@
   formal CTests passed after duplex correction (82.34s); the final affected
   provider boundary CTest passed again after additions. No extra validation
   project, alternate provider or CMake feature switch was added.
+
+## Bounded TLS 1.3 post-handshake framing (2026-11-06)
+
+- TLS1.3 records do not equal handshake messages. Thirty-two formal endpoint /
+  AEAD / request-kind / split-position cases reproduced premature fatal rejection
+  against GmSSL #38. GmSSL #39 assembles complete supported messages using the
+  consumed initial-handshake fragment array and one new length scalar. The
+  initial Finished boundary consumes that array before established I/O starts.
+  Sending and received plaintext remain independent; no progress allocation.
+- Reject empty handshake fragments, unknown types, tickets received by servers,
+  oversized headers, interleaved application/alert records and KeyUpdate suffix
+  bytes. Apply peer-update admission and derivation only once after a complete
+  update ending at the record boundary. A partial message cannot authenticate
+  close_notify or release application data. Retain the existing fatal latch.
+- Existing ticket serialization accepted network-sized tickets into a 512-byte
+  local array with no capacity preflight. Compute the exact encoded size before
+  derivation/output (53 fixed bytes + ticket, maximum 459 ticket bytes), reject
+  count overflow, check derivation/file completion and clear temporary key and
+  session material on every admitted exit. The empty-ticket check incorrectly
+  tested its length pointer rather than the value; reject zero-length tickets.
+  This reception work does not qualify session restore/cache or 0-RTT.
+- Formal provider coverage adds 114 cases, including partial assembly across
+  independent writes, malformed/interrupted frames, ticket/update coalescing,
+  maximum/excess ticket sizes, empty values, count overflow, expansion failure
+  and failing file output. Test wrong ticket roles with correctly matched peer
+  traffic keys; flipping only the receiver role would fail AEAD before testing
+  message admission. Test reuse stays in the existing ABI CTest.
+- Independent peers add 26 scenarios inside registered TestShangMiKeyUpdate:
+  five update-fragment layouts across native client/server/mTLS server, three
+  ticket/fragment/coalescing/native-client paths, and four malformed layouts
+  across server authentication and mTLS. Do not add an unselected standalone
+  Go Test function. Native checks preserve FAILED/EPROTO/read for interruptions.
+- Pinned native-release-user configure/full graph passed. Nine related CTests
+  passed (87.26s); after the final empty-ticket/type corrections the two affected
+  CTests passed again (10.57s). The provider test now executes 372 internal cases.

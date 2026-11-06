@@ -190,9 +190,9 @@ jobs:
 
       - name: Set up shared dependency contract
         id: vcpkg
-        # GmSSL #38 enforces owner-driven local sending-key intervals.
+        # GmSSL #39 bounds post-handshake framing and ticket serialization.
         # Includes native Windows pkg-config; avoid MSYS2 for pkg-config.
-        uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-curl-cache@ce752a3a63015f863a76b8ba37add83ca1cbe1d3
+        uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-curl-cache@131b474ffeb2085dc1219f1f35902e2d142f8fee
         with:
           mode: read
           triplet: ${{ matrix.triplet }}

@@ -67,6 +67,10 @@ func (p *recordPeer) sendKeyUpdate(request byte) error {
 	if err := p.send(22, []byte{24, 0, 0, 1, request}); err != nil {
 		return err
 	}
+	return p.advanceWriteKey()
+}
+
+func (p *recordPeer) advanceWriteKey() error {
 	next, err := tls13gm.HKDFExpandLabel(p.writeSecret, "traffic upd", nil, 32)
 	if err != nil {
 		return err
