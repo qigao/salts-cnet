@@ -594,14 +594,28 @@ func TestTLCP(t *testing.T) {
 			})
 			runNativeClient(t, bad, "localhost", false, []uint16{tlcp.ECC_SM4_GCM_SM3})
 		})
-		t.Run(fmt.Sprintf("reject_key_usage_role_%d", role), func(t *testing.T) {
+		for _, usage := range []string{"ku", "eku"} {
 			bad := credentials(t, func(i int, cert *x509.Certificate) {
 				if i == role {
-					cert.KeyUsage = x509.KeyUsageCertSign
+					if usage == "ku" {
+						cert.KeyUsage = x509.KeyUsageCertSign
+					} else {
+						cert.ExtKeyUsage = []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}
+					}
 				}
 			})
-			runNativeClient(t, bad, "localhost", false, []uint16{tlcp.ECC_SM4_GCM_SM3})
-		})
+			memoryFixtures(t, bad.caPath)
+			for _, mode := range []string{"file", "pem", "der"} {
+				t.Run(fmt.Sprintf("reject_purpose/role_%d/%s/%s", role, usage, mode), func(t *testing.T) {
+					if mode != "file" {
+						t.Setenv("SALTS_TEST_TLS_MEMORY", mode)
+					}
+					t.Setenv("SALTS_TEST_TLS_VALIDITY_DIAGNOSTIC", "purpose")
+					t.Setenv("SALTS_TEST_TLS_VALIDITY_INDEX", fmt.Sprint(role-1))
+					runNativeClient(t, bad, "localhost", false, []uint16{tlcp.ECC_SM4_GCM_SM3})
+				})
+			}
+		}
 	}
 	t.Run("client_reject_cbc_only", func(t *testing.T) {
 		runNativeClient(t, f, "localhost", false, []uint16{tlcp.ECC_SM4_CBC_SM3})

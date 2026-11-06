@@ -27,12 +27,15 @@ typedef enum crypto_tls_failure_reason {
    * Missing certificate position remains SIZE_MAX. Malformed validity keeps
    * the existing generic diagnosis; an unavailable clock remains CERTIFICATE. */
   CRYPTO_TLS_FAILURE_NOT_YET_VALID,
-  CRYPTO_TLS_FAILURE_EXPIRED
+  CRYPTO_TLS_FAILURE_EXPIRED,
+  /* Decoded KU/EKU incompatible with the required peer/issuer role. Missing
+   * or malformed extensions retain the verifier's existing behavior/category. */
+  CRYPTO_TLS_FAILURE_PURPOSE
 } crypto_tls_failure_reason;
 
 /* Owned value with no certificate, key, hostname or provider pointers.
  * Index is zero-based in the peer's presented chain; SIZE_MAX means unknown.
- * Validity failures identify the checked peer certificate, including intermediate
+ * Validity/purpose failures identify the checked peer certificate, including intermediate
  * CAs and the TLCP encryption leaf. Local-only trust anchors remain unknown.
  * Ignore index when reason is NONE. This records local handshake failure only,
  * not transport failures, post-handshake errors or context-init failures. */

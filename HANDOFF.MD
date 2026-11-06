@@ -249,6 +249,20 @@
   the initial and affected follow-up runs. New scenarios cover 252 handshakes;
   the registry-pinned configure/build also succeeds without an overlay.
 
+## 2026-11-06 certificate purpose diagnostics
+
+- KU/EKU checks already derive their required purpose from the handshake role.
+  Capture decoded role mismatches at those checks, including CA EKU restrictions;
+  do not infer purpose errors from every rejected extension or rescan a chain.
+- Record indices at the actual peer-chain cursor. Local-only anchors remain
+  unknown. Preserve generic malformed/other-constraint results, missing-extension
+  acceptance, CA anyExtendedKeyUsage behavior and the earlier validity failure.
+- Formal provider tests distinguish successful/wrapper calls, truncated KU/EKU
+  and unrelated BasicConstraints failures; native/independent fixtures check
+  leaf/issuer/anchor positions and retained diagnostics after owner teardown.
+- Full native-release-user graph and ten selected formal CTests passed, covering
+  248 purpose/control handshake scenarios and five provider extension cases.
+
 ## 2026-11-06 TSan audio runtime package indexes
 
 - The private PulseAudio runtime is installed before the Linux capture SDK

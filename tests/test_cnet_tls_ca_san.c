@@ -920,6 +920,7 @@ static bool tls_probe_expected_validity(const tls_probe *probe) {
   if (strcmp(expected, "expired") == 0) reason = CRYPTO_TLS_FAILURE_EXPIRED;
   else if (strcmp(expected, "future") == 0) reason = CRYPTO_TLS_FAILURE_NOT_YET_VALID;
   else if (strcmp(expected, "certificate") == 0) reason = CRYPTO_TLS_FAILURE_CERTIFICATE;
+  else if (strcmp(expected, "purpose") == 0) reason = CRYPTO_TLS_FAILURE_PURPOSE;
   else if (strcmp(expected, "handshake") == 0) reason = CRYPTO_TLS_FAILURE_HANDSHAKE;
   else return false;
   const char *index_text = getenv("SALTS_TEST_TLS_VALIDITY_INDEX");

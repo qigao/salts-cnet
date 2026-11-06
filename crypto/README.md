@@ -14,7 +14,7 @@ CMake targets, C11 source and C++17-usable C headers.
 
 Use the repository's user presets for the ASN1/Crypto/CNet build and formal
 CTest suite. The native GmSSL implementation is installed from the immutable
-`gmssl 3.2.0#34` vcpkg port, whose extension sources are pinned from
+`gmssl 3.2.0#35` vcpkg port, whose extension sources are pinned from
 `gmssl-extensions/`. `Salts::Crypto` links the imported `GmSSL::GmSSL` static
 library; it never compiles a duplicate GmSSL implementation.
 Private Ed448 libecc objects live under `vendor/libecc/` in this module.
@@ -117,3 +117,15 @@ override is provided. Clear the pointer before creating a new context to restore
 system-time behavior; existing contexts retain their original value. Updating
 the pinned GmSSL headers and archive together is required for its changed context
 layout and extended verifier signatures.
+
+The handshake role determines the required certificate purpose: server/client
+authentication for TLS signing leaves, the encryption role for TLCP's second
+server leaf, and CA signing plus applicable EKU restrictions for issuers.
+Decoded KU/EKU mismatches report `CRYPTO_TLS_FAILURE_PURPOSE`, with the actual
+presented-chain index when known. Local-only anchors keep `SIZE_MAX`. Missing
+extensions retain the provider's existing acceptance rules; malformed extensions
+and unrelated constraints retain their existing failure categories. Diagnostics
+come from the check that failed, without a second parse or verification pass.
+Validity checks still precede extension checks, so a certificate that is both
+expired and unsuitable retains its expiry diagnosis. This diagnostic addition
+does not add a purpose override or change trust/admission decisions.

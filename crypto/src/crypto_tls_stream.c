@@ -1780,6 +1780,7 @@ static crypto_tls_failure_reason crypto_tls_stream_verify_reason(int result) {
     case X509_verify_err_certificate: return CRYPTO_TLS_FAILURE_CERTIFICATE;
     case X509_verify_err_not_yet_valid: return CRYPTO_TLS_FAILURE_NOT_YET_VALID;
     case X509_verify_err_expired: return CRYPTO_TLS_FAILURE_EXPIRED;
+    case X509_verify_err_purpose: return CRYPTO_TLS_FAILURE_PURPOSE;
     case X509_verify_err_cert_chain: return CRYPTO_TLS_FAILURE_CHAIN_SIGNATURE;
     case X509_verify_err_trust_anchor: return CRYPTO_TLS_FAILURE_TRUST_ANCHOR;
     case X509_verify_err_depth: return CRYPTO_TLS_FAILURE_DEPTH;
@@ -1908,7 +1909,8 @@ int crypto_tls_stream_handshake(crypto_tls_stream *state, bool *out_complete) {
      * result is also set on failed verification and remains internal here. */
     crypto_tls_failure_reason reason = crypto_tls_stream_verify_reason(engine->connection.verify_result);
     size_t certificate_index = reason == CRYPTO_TLS_FAILURE_IDENTITY ? 0u : SIZE_MAX;
-    if (reason == CRYPTO_TLS_FAILURE_EXPIRED || reason == CRYPTO_TLS_FAILURE_NOT_YET_VALID)
+    if (reason == CRYPTO_TLS_FAILURE_EXPIRED || reason == CRYPTO_TLS_FAILURE_NOT_YET_VALID ||
+        reason == CRYPTO_TLS_FAILURE_PURPOSE)
       certificate_index = engine->connection.verify_certificate_index;
     crypto_tls_stream_fail_handshake(state, status, reason,
         certificate_index);
