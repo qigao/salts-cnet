@@ -166,9 +166,9 @@ func runNativeClientIdentities(t *testing.T, f fixture, offered, expected *fixtu
 			if corrupt == "key_update_one_way" {
 				request = 0
 			}
-			result = p.sendKeyUpdate(request)
+			result = p.sendPostHandshakeScenario(corrupt, request)
 			if result == nil && corrupt == "key_update_coalesced" {
-				result = p.sendKeyUpdate(request)
+				result = p.sendPostHandshakeScenario(corrupt, request)
 			}
 		}
 		if result == nil {
@@ -373,9 +373,9 @@ func runNativeServerIdentities(t *testing.T, f fixture, client, primary *fixture
 		if scenario == "key_update_one_way" {
 			request = 0
 		}
-		err = p.sendKeyUpdate(request)
+		err = p.sendPostHandshakeScenario(scenario, request)
 		if err == nil && scenario == "key_update_coalesced" {
-			err = p.sendKeyUpdate(request)
+			err = p.sendPostHandshakeScenario(scenario, request)
 		}
 	}
 	if err == nil {
@@ -417,6 +417,20 @@ func runNativeServerIdentities(t *testing.T, f fixture, client, primary *fixture
 			err = p.send(22, []byte{24, 0, 0, 1, 2})
 		case "key_update_bad_length":
 			err = p.send(22, []byte{24, 0, 0, 0})
+		case "key_update_bad_suffix":
+			err = p.send(22, []byte{24, 0, 0, 1, 1, 0})
+		case "key_update_bad_interleave", "key_update_bad_partial_close":
+			err = p.send(22, []byte{24, 0, 0})
+			if err == nil {
+				if scenario == "key_update_bad_partial_close" {
+					err = p.send(21, []byte{1, 0})
+				} else {
+					err = p.send(23, []byte{'X'})
+				}
+			}
+		case "key_update_bad_ticket_role":
+			// A client must never send NewSessionTicket to a server.
+			err = p.send(22, []byte{4})
 		case "key_update_bad_stale_key":
 			oldCipher, oldSeq := p.writeCipher, p.writeSeq
 			err = p.sendKeyUpdate(0)

@@ -2,6 +2,7 @@ package shangmiinterop
 
 import (
 	"bytes"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"net"
@@ -9,6 +10,51 @@ import (
 	"testing"
 	"time"
 )
+
+// Split authenticated handshake content across TLS records, rather than only
+// splitting TCP writes. Advance traffic keys exactly after the final fragment.
+func (p *recordPeer) sendPostHandshakeScenario(scenario string, request byte) error {
+	message := []byte{24, 0, 0, 1, request}
+	var cuts []int
+	switch scenario {
+	case "key_update_fragment1", "key_update_fragment2", "key_update_fragment3", "key_update_fragment4":
+		cuts = []int{int(scenario[len(scenario)-1] - '0')}
+	case "key_update_bytewise":
+		cuts = []int{1, 2, 3, 4}
+	case "key_update_ticket_fragment", "key_update_ticket_coalesced", "key_update_ticket_max":
+		ticketSize := 32
+		if scenario == "key_update_ticket_max" {
+			ticketSize = 459
+		}
+		ticket := make([]byte, 18+ticketSize)
+		ticket[0] = 4
+		body := len(ticket) - 4
+		ticket[1], ticket[2], ticket[3] = byte(body>>16), byte(body>>8), byte(body)
+		binary.BigEndian.PutUint32(ticket[4:], 3600)
+		binary.BigEndian.PutUint32(ticket[8:], 42)
+		ticket[12], ticket[13] = 1, 0xa5
+		binary.BigEndian.PutUint16(ticket[14:], uint16(ticketSize))
+		for i := 0; i < ticketSize; i++ {
+			ticket[16+i] = byte(i)
+		}
+		if scenario == "key_update_ticket_coalesced" {
+			message = append(append(bytes.Clone(ticket), ticket...), message...)
+		} else {
+			message = append(ticket, message...)
+			cuts = []int{1, 3, 4, 17, len(ticket) - 1}
+		}
+	default:
+		return p.sendKeyUpdate(request)
+	}
+	previous := 0
+	for _, end := range append(cuts, len(message)) {
+		if err := p.send(22, message[previous:end]); err != nil {
+			return err
+		}
+		previous = end
+	}
+	return p.advanceWriteKey()
+}
 
 func (p *recordPeer) localRotationScenario(nativeServer bool, scenario string) error {
 	var byteLimit, recordLimit uint64
@@ -303,12 +349,15 @@ func TestShangMiKeyUpdate(t *testing.T) {
 		t.Run("native_client_"+scenario, func(t *testing.T) { runNativeClient(t, f, "localhost", true, scenario) })
 		t.Run("native_mtls_server_"+scenario, func(t *testing.T) { runNativeServerWithClient(t, f, &client, scenario, scenario) })
 	}
-	for _, scenario := range []string{"key_update_one_way", "key_update_requested", "key_update_coalesced"} {
+	for _, scenario := range []string{"key_update_one_way", "key_update_requested", "key_update_coalesced", "key_update_fragment1", "key_update_fragment2", "key_update_fragment3", "key_update_fragment4", "key_update_bytewise"} {
 		t.Run("native_server_"+scenario, func(t *testing.T) { runNativeServer(t, f, "close", scenario) })
 		t.Run("native_client_"+scenario, func(t *testing.T) { runNativeClient(t, f, "localhost", true, scenario) })
 		t.Run("native_mtls_server_"+scenario, func(t *testing.T) { runNativeServerWithClient(t, f, &client, "close", scenario) })
 	}
-	for _, scenario := range []string{"key_update_bad_value", "key_update_bad_length", "key_update_bad_stale_key"} {
+	for _, scenario := range []string{"key_update_ticket_fragment", "key_update_ticket_coalesced", "key_update_ticket_max"} {
+		t.Run("native_client_"+scenario, func(t *testing.T) { runNativeClient(t, f, "localhost", true, scenario) })
+	}
+	for _, scenario := range []string{"key_update_bad_value", "key_update_bad_length", "key_update_bad_stale_key", "key_update_bad_suffix", "key_update_bad_interleave", "key_update_bad_partial_close", "key_update_bad_ticket_role"} {
 		t.Run(scenario, func(t *testing.T) { runNativeServer(t, f, "keyupdate-fail", scenario) })
 		t.Run("mtls_"+scenario, func(t *testing.T) { runNativeServerWithClient(t, f, &client, "keyupdate-fail", scenario) })
 	}
