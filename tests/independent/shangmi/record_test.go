@@ -16,7 +16,8 @@ import (
 // no production GmSSL or Core crypto entrypoint is used on this side.
 type recordPeer struct {
 	net.Conn
-	authFlightSent          bool
+	authFlightSent          bool // scenario-specific rejection stimulus fully emitted
+	earlyRejectionObserved  bool
 	readCipher, writeCipher *tls13gm.AEAD
 	readSeq, writeSeq       uint64
 	readSecret, writeSecret []byte

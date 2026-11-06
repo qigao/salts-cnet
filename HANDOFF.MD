@@ -498,3 +498,17 @@
   files or policy references/callbacks. The pinned native-release-user full graph
   and nine related formal CTests passed (90.23s); the affected provider test passed
   again after final security-boundary additions (463 cases, no skips).
+- CI #391 exposed a pre-existing independent mTLS negative-fixture race:
+  reject_malformed_ca_no_signature_match legitimately rejected CertificateRequest
+  before the peer finished its later authentication messages. A broken pipe then
+  hit an incorrectly late authFlightSent gate. As for the other malformed request
+  cases, mark the exact rejection stimulus only after emitting that request.
+  Keep native handshake-failure/no-CONNECTED/no-application assertions intact.
+- Two new formal early-reject scenarios first reproduced the missing gate. They
+  withhold the certificate tail and keep TCP open, then require the native peer
+  to terminate without a timeout; drain at most one bounded abort record. This
+  observes transport termination plus the native retained handshake error, not
+  authentication of optional abort-alert bytes. Unexpected traffic without a
+  terminal, excessive output or timeout cannot satisfy the early-reject gate.
+  The affected registered cnet_shangmi_mtls_native_client CTest passes (2.21s).
+  No retry, sleep, skipped test or relaxed native assertion repairs this race.

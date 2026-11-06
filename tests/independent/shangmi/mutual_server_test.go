@@ -6,6 +6,9 @@ import (
 	"crypto/rand"
 	"errors"
 	"fmt"
+	"io"
+	"net"
+	"strings"
 
 	peersm2 "github.com/iuboy/pollux-go/sm2"
 	"github.com/iuboy/pollux-go/tls13gm"
@@ -15,6 +18,10 @@ import (
 // Reverse of the finite independent client: require and authenticate the
 // native client's certificate, possession signature and Finished before data.
 func (p *recordPeer) mutualServer(server, client fixture, scenario string) error {
+	waitAfterRequest := scenario == "malformed_ca_early_reject" || scenario == "malformed_ca_no_signature_match_early_reject"
+	if waitAfterRequest {
+		scenario = strings.TrimSuffix(scenario, "_early_reject")
+	}
 	transcript := tls13gm.NewTranscript()
 	receive := func(kind byte) ([]byte, error) {
 		msg, err := p.handshake()
@@ -175,8 +182,36 @@ func (p *recordPeer) mutualServer(server, client fixture, scenario string) error
 	if err = send(append([]byte{13, byte(len(request) >> 16), byte(len(request) >> 8), byte(len(request))}, request...)); err != nil {
 		return err
 	}
-	if scenario == "request_context" || scenario == "missing_signature" || scenario == "duplicate_signature" {
+	// The exact negative stimulus is the emitted CertificateRequest, not a
+	// later certificate/signature flight that the client need not wait for.
+	if scenario == "request_context" || scenario == "missing_signature" || scenario == "duplicate_signature" ||
+		scenario == "malformed_ca" || scenario == "malformed_ca_no_signature_match" {
 		p.authFlightSent = true
+	}
+	if waitAfterRequest {
+		// Send no certificate tail and keep TCP open: a correct client must
+		// reject this request itself, rather than fail on EOF or a later input.
+		// Observe transport termination plus the native retained handshake
+		// failure, not authentication of an optional abort alert. Drain at most
+		// one bounded record; no peer close or timeout may supply the rejection.
+		const maxAbortBytes = 5 + 16640
+		var discarded [512]byte
+		for total := 0; total <= maxAbortBytes; {
+			n, readErr := p.Conn.Read(discarded[:])
+			if n > maxAbortBytes-total {
+				return errors.New("native abort exceeded one bounded record")
+			}
+			total += n
+			if readErr != nil {
+				var transport *net.OpError
+				p.earlyRejectionObserved = errors.Is(readErr, io.EOF) ||
+					(errors.As(readErr, &transport) && transport.Op == "read" && !transport.Timeout())
+				return readErr
+			}
+			if n == 0 {
+				return io.ErrNoProgress
+			}
+		}
 	}
 	msg, err = tls13gm.MarshalHandshakeMessage(&tls13gm.CertificateMsg{CertificateList: []tls13gm.CertificateEntry{{Certificate: server.leaf.Raw}}})
 	if err != nil {

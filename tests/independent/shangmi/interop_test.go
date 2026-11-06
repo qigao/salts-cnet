@@ -123,8 +123,12 @@ func runNativeClientIdentities(t *testing.T, f fixture, offered, expected *fixtu
 			result = p.server(tls13gm.ServerConfig{DCID: []byte("formal TCP peer"), Certificate: f.leaf, PrivateKey: f.key}, handshakeScenario)
 		} else {
 			result = p.mutualServer(f, *client, handshakeScenario)
+			if strings.HasSuffix(handshakeScenario, "_early_reject") && !p.earlyRejectionObserved {
+				result = fmt.Errorf("client did not reject the request before the certificate tail: %w", result)
+				return
+			}
 			if !accept && !p.authFlightSent {
-				result = fmt.Errorf("server authentication flight did not execute: %w", result)
+				result = fmt.Errorf("server rejection stimulus did not execute: %w", result)
 				return
 			}
 		}
