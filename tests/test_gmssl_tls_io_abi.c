@@ -1795,6 +1795,66 @@ spec("GmSSL peer KeyUpdate minimum time and byte spacing") {
   }
 }
 
+spec("GmSSL TLS 1.3 fatal alert direction and partial output") {
+  for (unsigned role = 0u; role < 2u; ++role) {
+    for (unsigned suite_index = 0u; suite_index < 2u; ++suite_index) {
+      for (unsigned established = 0u; established < 2u; ++established) {
+        it("role %u suite %u established %u uses only its sending key and sequence", role, suite_index, established) {
+          TLS_CTX ctx;
+          TLS_CONNECT conn;
+          key_update_wire wire;
+          key_update_clock clock = {0};
+          timed_key_prepare(&ctx, &conn, &wire, &clock, role, suite_index, 0u);
+          conn.handshake_state = established ? TLS_state_handshake_over : TLS_state_certificate_request;
+          conn.client_seq_num[7] = 3u;
+          conn.server_seq_num[7] = 11u;
+          BLOCK_CIPHER_KEY key = role ? conn.client_write_key : conn.server_write_key;
+          uint8_t iv[12], seq[8], receiving_seq[8], plain[128];
+          memcpy(iv, role ? conn.client_write_iv : conn.server_write_iv, sizeof(iv));
+          memcpy(seq, role ? conn.client_seq_num : conn.server_seq_num, sizeof(seq));
+          memcpy(receiving_seq, role ? conn.server_seq_num : conn.client_seq_num, sizeof(receiving_seq));
+          int result = TLS_ERROR_SEND_AGAIN;
+          for (unsigned step = 0u; step < sizeof(wire.bytes) && result != 1; ++step) {
+            wire.budget = 1u;
+            result = tls13_send_alert(&conn, TLS_alert_decode_error);
+            check(result == 1 || result == TLS_ERROR_SEND_AGAIN);
+            check_equal(role ? conn.server_seq_num : conn.client_seq_num, receiving_seq, sizeof(receiving_seq));
+            check_equal((role ? conn.client_seq_num : conn.server_seq_num)[7], (uint8_t)(seq[7] + 1u));
+          }
+          check_equal(result, 1);
+          size_t plain_size = 0u;
+          check_equal(tls13_record_decrypt(conn.cipher_suite, &key, iv, seq,
+              wire.bytes, wire.size, plain, &plain_size), 1);
+          check_equal(plain_size, (size_t)7u);
+          check_equal(plain[0], (uint8_t)21u);
+          const uint8_t alert[] = {2u, 50u};
+          check_equal(plain + 5u, alert, sizeof(alert));
+        }
+      }
+    }
+    for (unsigned phase = 0u; phase < 4u; ++phase) {
+      it("role %u pre-key phase %u preserves plaintext alerts without sequence changes", role, phase) {
+        TLS_CTX ctx;
+        TLS_CONNECT conn;
+        key_update_wire wire;
+        key_update_clock clock = {0};
+        timed_key_prepare(&ctx, &conn, &wire, &clock, role, 0u, 0u);
+        const int states[] = {TLS_state_client_hello, TLS_state_client_hello_again,
+            TLS_state_server_hello, TLS_state_hello_retry_request};
+        conn.handshake_state = states[phase];
+        wire.budget = sizeof(wire.bytes);
+        check_equal(tls13_send_alert(&conn, TLS_alert_decode_error), 1);
+        const uint8_t expected[] = {21u, 3u, 3u, 0u, 2u, 2u, 50u};
+        check_equal(wire.size, sizeof(expected));
+        check_equal(wire.bytes, expected, sizeof(expected));
+        uint8_t zero[8] = {0};
+        check_equal(conn.client_seq_num, zero, sizeof(zero));
+        check_equal(conn.server_seq_num, zero, sizeof(zero));
+      }
+    }
+  }
+}
+
 spec("Crypto versioned peer close_notify facade") {
   it("rejects absent and malformed output without falsifying evidence") {
     uint32_t peer = UINT32_C(0xfeedbeef);

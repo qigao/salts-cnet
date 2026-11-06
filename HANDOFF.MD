@@ -485,7 +485,7 @@
   updates. Applications must choose compatible send/receive policies and accept
   disconnect on violation. Admission still preserves mandatory replies. No
   request_update=0 exemption, automatic recovery or retry is introduced.
-- Formal provider coverage adds 87 cases (463 total): exact/max/short bounds,
+- Formal provider spacing coverage adds 87 cases: exact/max/short bounds,
   fragment completion, shared-clock lifetimes/conflicts, burst precedence,
   nonbanked credit, partial reads, epoch zero, failed clock/peer derivation and
   exclusion of padding/unauthenticated data. Existing TestShangMiKeyUpdate adds
@@ -495,20 +495,31 @@
   byte-only combined failures use an intentional 400ms wait for a 250ms minimum.
   Server failure injection still waits for the native SEND completion marker.
 - Twelve unsupported-profile endpoint configurations fail before absent trust
-  files or policy references/callbacks. The pinned native-release-user full graph
-  and nine related formal CTests passed (90.23s); the affected provider test passed
-  again after final security-boundary additions (463 cases, no skips).
+  files or policy references/callbacks.
 - CI #391 exposed a pre-existing independent mTLS negative-fixture race:
   reject_malformed_ca_no_signature_match legitimately rejected CertificateRequest
   before the peer finished its later authentication messages. A broken pipe then
   hit an incorrectly late authFlightSent gate. As for the other malformed request
   cases, mark the exact rejection stimulus only after emitting that request.
   Keep native handshake-failure/no-CONNECTED/no-application assertions intact.
-- Two new formal early-reject scenarios first reproduced the missing gate. They
-  withhold the certificate tail and keep TCP open, then require the native peer
-  to terminate without a timeout; drain at most one bounded abort record. This
-  observes transport termination plus the native retained handshake error, not
-  authentication of optional abort-alert bytes. Unexpected traffic without a
-  terminal, excessive output or timeout cannot satisfy the early-reject gate.
-  The affected registered cnet_shangmi_mtls_native_client CTest passes (2.21s).
-  No retry, sleep, skipped test or relaxed native assertion repairs this race.
+- Two formal early-reject scenarios withhold the certificate tail and keep TCP
+  open. A received alert must authenticate as fatal decode_error; clean abrupt
+  transport termination is also permitted by the existing failure contract.
+  Bad MAC, malformed/truncated record, unexpected data or timeout cannot satisfy
+  the gate. Native retained handshake-failure assertions stay intact.
+
+## TLS 1.3 fatal alert sending direction (2026-11-07)
+
+- HIGH: the early-reject probe exposed tls13_send_alert using server traffic
+  keys/IV/sequence for both roles. Client alerts failed independent AEAD
+  authentication and advanced the receiving sequence. Select the active local
+  sending direction by role; preserve pre-key plaintext alerts. Pending partial
+  output reuses the already encrypted record and advances its sequence only once.
+- Sixteen formal provider cases cover both roles, both ShangMi AEAD suites,
+  handshake/established encrypted alerts with one-byte writes, and all four
+  pre-key states. Before the fix, four client-direction cases failed receiving
+  sequence preservation and both independent early-reject cases failed MAC.
+- With provider f856a0a1a468a80b6376528618cda926a666f479 (port tree
+  5bfc4769b17a01f8063d067ef9417cfb6031a8b0), native-release-user configure/full
+  build and all nine related CTests passed (88.89s). The provider suite executes
+  479 cases with zero skipped; independent mTLS early-reject records authenticate.

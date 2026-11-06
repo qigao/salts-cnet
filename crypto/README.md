@@ -57,6 +57,10 @@ update, all enabled minima must pass before another receiving-key derivation.
 These restrictive policies include replies and may reject legitimate bursts.
 See [peer spacing and its ownership](docs/SHANGMI-COVERAGE.md#peer-keyupdate-minimum-spacing).
 
+TLS1.3 encrypted fatal alerts use the local role's sending keys and sequence,
+including during handshake and partial transport output. See
+[alert direction and qualification](docs/SHANGMI-COVERAGE.md#tls-13-fatal-alert-direction).
+
 See [ShangMi coverage and production gates](docs/SHANGMI-COVERAGE.md) for the
 implemented operations, formal tests and remaining requirements. Algorithm
 tests do not qualify a TLS/TLCP/DTLS protocol or a hardware deployment.

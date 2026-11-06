@@ -1408,3 +1408,19 @@ The two scalars are copied at initialization; the caller may then erase them.
 Zero restores previous behavior. Core/CNet configuration structs and the matching
 provider ABI require rebuilding together; rollback reverts the fields and port
 pin together. No hot mutation or parallel versioned API is introduced.
+
+## TLS 1.3 fatal alert direction
+
+Encrypted fatal alerts use the local role's active sending key, IV and sequence
+in both handshake and established phases. Client alerts must not use or advance
+the server receiving direction. Partial transport writes resume the same pending
+ciphertext and consume one sending sequence; pre-key states retain their existing
+plaintext-alert behavior. This fixes incorrect client alert authentication without
+changing the public configuration or allowing recovery after a fatal TLS error.
+
+Formal provider tests cover both roles and ShangMi AEAD suites, handshake and
+established keys, one-byte output, receiving-sequence preservation and pre-key
+states. Independent mTLS peers withhold the remaining authentication flight after
+a malformed CertificateRequest and authenticate any received fatal decode_error.
+An invalid MAC or malformed record cannot qualify early rejection. The matching
+pinned provider and Core tests must be updated together when reverting this fix.
