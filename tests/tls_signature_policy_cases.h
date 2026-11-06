@@ -56,18 +56,33 @@ static int run_signature_policy_cases(void) {
   {
     const cnet_tls_signature_scheme handshake = CRYPTO_TLS_SIGNATURE_ECDSA_SECP256R1_SHA256;
     const cnet_tls_signature_scheme certificate = CRYPTO_TLS_SIGNATURE_ECDSA_SECP384R1_SHA384;
-    for (unsigned side = 0; side < 3; ++side) {
-      tls_case_options options = {.label = "separate handshake and certificate signatures",
-          .ca_file = CORE_TLS_TEST_P384_CA, .verified_hostname = "localhost", .expect_success = true,
-          .client_minimum = 13, .client_maximum = 13, .server_minimum = 13, .server_maximum = 13,
-          .client_signatures = &handshake, .client_signature_count = 1,
-          .server_signatures = &handshake, .server_signature_count = 1,
-          .client_certificate_signatures = &certificate, .client_certificate_signature_count = 1,
-          .server_certificate_signatures = &certificate, .server_certificate_signature_count = 1,
-          .expected_version = "TLSv1.3", .release_tls_context_early = true};
-      if (side == 1) { options.client_certificate_signatures = &handshake; options.expect_success = false; }
-      if (side == 2) { options.server_certificate_signatures = &handshake; options.expect_success = false; options.expect_server_rejection = true; }
-      REQUIRE(run_case(&options) == 0);
+    for (unsigned version = 0; version < 5; ++version) {
+      for (unsigned side = 0; side < 5; ++side) {
+        tls_case_options options = {.label = "separate handshake and certificate signatures",
+            .ca_file = CORE_TLS_TEST_P384_CA, .verified_hostname = "localhost", .expect_success = true,
+            .client_minimum = 13, .client_maximum = 13, .server_minimum = 13, .server_maximum = 13,
+            .client_signatures = &handshake, .client_signature_count = 1,
+            .server_signatures = &handshake, .server_signature_count = 1,
+            .client_certificate_signatures = &certificate, .client_certificate_signature_count = 1,
+            .server_certificate_signatures = &certificate, .server_certificate_signature_count = 1,
+            .expected_version = "TLSv1.3", .release_tls_context_early = true};
+        if (side == 1) { options.client_certificate_signatures = &handshake; options.expect_success = false; }
+        if (side == 2) { options.server_certificate_signatures = &handshake; options.expect_success = false; options.expect_server_rejection = true; }
+        const cnet_tls_signature_scheme shared[] = {handshake, certificate};
+        if (side >= 3) {
+          options.client_certificate_signatures = NULL; options.client_certificate_signature_count = 0;
+          if (side == 3) { options.client_signatures = shared; options.client_signature_count = 2; }
+          else { options.expect_success = false; options.expect_server_rejection = true; }
+        }
+        if (version != 0) {
+          options.client_minimum = version == 1 || version == 4 ? 12 : 0;
+          options.client_maximum = version == 1 || version == 4 ? 12 : 0;
+          options.server_minimum = version == 1 || version == 3 ? 12 : 0;
+          options.server_maximum = version == 1 || version == 3 ? 12 : 0;
+          options.expected_version = version == 2 ? "TLSv1.3" : "TLSv1.2";
+        }
+        REQUIRE(run_case(&options) == 0);
+      }
     }
   }
   for (unsigned bad = 0; bad < 9; ++bad) {
@@ -80,7 +95,7 @@ static int run_signature_policy_cases(void) {
       case 2: cc.certificate_signature_algorithm_count = 5; break;
       case 3: certs[1] = certs[0]; break;
       case 4: certs[1] = CRYPTO_TLS_SIGNATURE_RSA_PSS_RSAE_SHA256; break;
-      case 5: cc.minimum_version = 12; break;
+      case 5: certs[1] = CRYPTO_TLS_SIGNATURE_SM2_SM3; break;
       case 6: cc.security_profile = CNET_TLS_SECURITY_PROFILE_TLCP11; cc.minimum_version = cc.maximum_version = 0; break;
       case 7: cc.security_profile = CNET_TLS_SECURITY_PROFILE_SHANGMI_TLS13; break;
       case 8: certs[1] = (cnet_tls_signature_scheme)0xffff; break;

@@ -137,9 +137,7 @@ func TestClientIdentities(t *testing.T) {
 	for _, version := range []uint16{tls.VersionTLS12, tls.VersionTLS13} {
 		for _, mode := range []string{"file", "pem", "der"} {
 			scenarios := []string{"first_ca", "second_ca", "range_second_ca", "ordered", "empty_ca", "signature", "no_match", "no_request"}
-			if version == tls.VersionTLS13 {
-				scenarios = append(scenarios, "separate_certificate")
-			}
+			scenarios = append(scenarios, "separate_certificate", "range_separate_certificate")
 			if mode != "file" {
 				scenarios = append(scenarios, "encrypted_binary", "encrypted_empty", "encrypted_binary128", "encrypted_empty128", "encrypted_binary192", "encrypted_empty192")
 				for _, hash := range []string{"sha384", "sha512"} {
@@ -172,8 +170,11 @@ func TestClientIdentities(t *testing.T) {
 						}
 						hints.AddCert(second.root)
 						want = second.leaf
-					case scenario == "separate_certificate":
+					case scenario == "separate_certificate" || scenario == "range_separate_certificate":
 						t.Setenv("SALTS_TEST_TLS_SEPARATE_CERT_SIGNATURES", "1")
+						if scenario == "range_separate_certificate" {
+							t.Setenv("SALTS_TEST_TLS_CLIENT_RANGE", "1")
+						}
 						hints.AddCert(first.root)
 					case scenario == "first_ca":
 						hints.AddCert(first.root)

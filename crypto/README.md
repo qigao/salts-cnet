@@ -14,7 +14,7 @@ CMake targets, C11 source and C++17-usable C headers.
 
 Use the repository's user presets for the ASN1/Crypto/CNet build and formal
 CTest suite. The native GmSSL implementation is installed from the immutable
-`gmssl 3.2.0#41` vcpkg port, whose extension sources are pinned from
+`gmssl 3.2.0#42` vcpkg port, whose extension sources are pinned from
 `gmssl-extensions/`. `Salts::Crypto` links the imported `GmSSL::GmSSL` static
 library; it never compiles a duplicate GmSSL implementation.
 Private Ed448 libecc objects live under `vendor/libecc/` in this module.
@@ -37,6 +37,11 @@ The public `<crypto/sm2.h>`, `<crypto/sm3.h>`, `<crypto/sm4.h>` and
 They use caller-owned buffers and private provider state, with explicit
 identity/nonce, capacity, overlap, authentication and secret-erasure contracts.
 Applications do not need native GmSSL headers.
+
+TLS contexts can select certificate-chain signature algorithms independently
+of handshake signatures in standard TLS1.2/1.3 and range negotiation. TLS1.2
+client identity selection also respects CertificateRequest's shared list. See
+[certificate signature policy](docs/SHANGMI-COVERAGE.md#separate-certificate-signature-policy-tls-1213).
 
 TLS memory credentials accept explicit PBKDF2-HMAC-SHA256/384/512 with
 AES-128/192/256-CBC, alongside SM3/SM4. Existing work/size limits, initialization

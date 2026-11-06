@@ -336,8 +336,9 @@ allocation/trust loading. Pointer/count mismatches, duplicates and excess count
 fail with EINVAL. A valid list still requires compatible keys, certificates,
 peer offers, trust and identity; it does not bypass authentication checks.
 
-The list constrains handshake signatures and certificate-chain signatures.
-There is no independently configurable certificate-signature list. GmSSL #26
+The list constrains handshake signatures and, by default, certificate-chain
+signatures. The independent certificate list below can override the latter.
+GmSSL #26
 preserves the certificate list while filtering PKCS1 out of TLS 1.3 handshake
 selection, so PKCS1-before-PSS order cannot select an invalid CertificateVerify.
 Without `signature_algorithms_cert`, signature_algorithms also supplies the
@@ -350,8 +351,7 @@ exempt. This applies to both server and REQUIRED-client authentication.
 Explicit signature lists with iOS implicit system trust return ENOTSUP because
 the provider cannot obtain the native trust bridge's terminal issuer key;
 explicit anchors retain the normal contract. No iOS device qualification is
-claimed. Separate certificate-signature lists and general path building remain
-open work.
+claimed. General path building remains separate work.
 
 Formal tests cover 26 fail-fast configurations, nine endpoint/version successes
 and three P384-issuer rejections, caller-array erasure, RSA range narrowing with
@@ -1154,7 +1154,7 @@ compatible signature schemes. Native API cases reject malformed lists before
 I/O and verify four identities, late load failure and unsupported TLCP.
 Cross-platform/sanitizer qualification is the PR's normal LLVM CI gate.
 
-## Separate certificate signature policy (TLS 1.3)
+## Separate certificate signature policy (TLS 1.2/1.3)
 
 Crypto and CNet client/server configurations accept an immutable
 `certificate_signature_algorithms` / `certificate_signature_algorithm_count`
@@ -1164,9 +1164,9 @@ and independently controls CertificateRequest/ClientHello certificate offers,
 local identity selection and remote chain signature admission. Trust, hostname,
 purpose and revocation checks remain mandatory.
 
-STANDARD requires explicit TLS1.3-only bounds. SHANGMI_TLS13 accepts SM2/SM3.
-TLS1.2/ranges and TLCP reject explicit certificate lists with ENOTSUP before
-trust/credential I/O. RSA-PSS certificate signatures are not supported by this
+STANDARD accepts TLS1.2-only, TLS1.3-only and TLS1.2..1.3 bounds, including the
+default range. SHANGMI_TLS13 accepts SM2/SM3. TLCP rejects explicit certificate
+lists with ENOTSUP before trust/credential I/O. RSA-PSS certificate signatures are not supported by this
 slice; RSA-PSS handshake signatures remain available. The STANDARD certificate
 list admits PKCS1/SHA256 and ECDSA P256/SHA256 or P384/SHA384. Invalid counts,
 pointer/count mismatches and duplicates return EINVAL. iOS implicit system trust
@@ -1179,6 +1179,44 @@ signature_algorithms offer also constrains its certificate acceptance, per
 [RFC 8446 section 4.2.3](https://www.rfc-editor.org/rfc/rfc8446.html#section-4.2.3).
 Both this peer constraint and local policy must match; an empty intersection
 never falls back to a wider list.
+
+GmSSL #42 applies the same immutable certificate policy when TLS1.2 is selected,
+including a range context negotiating down to TLS1.2. ClientHello extension 50
+contains the certificate list independently of extension 13's handshake list.
+Server identity selection intersects local certificate policy with the peer's
+extension 50, or the peer's signature_algorithms when extension 50 is absent.
+Received server and client chains, including the top certificate's signature
+against its local issuer, use certificate policy rather than handshake policy.
+
+TLS1.2 CertificateRequest has one shared signature list and no independent
+extension vector. The server continues to advertise its handshake list, without
+adding certificate-only schemes that it does not allow for CertificateVerify.
+The client intersects this peer list separately with its own handshake and
+certificate policies before selecting an identity. All CA/type constraints still
+apply; no matching identity sends an empty Certificate as before. Thus a server
+requesting a P256 handshake key with a P384-signed chain must permit both schemes
+in its TLS1.2 request, while its independent certificate policy can restrict
+chains to P384. A disjoint request is rejected rather than weakening either
+policy. See [RFC 8446 section 4.2.3](https://www.rfc-editor.org/rfc/rfc8446.html#section-4.2.3)
+and [RFC 5246 section 7.4.4](https://www.rfc-editor.org/rfc/rfc5246.html#section-7.4.4).
+
+The existing copied context array remains the only policy owner. Initialization
+retains no caller array; connection-local selection uses one bounded 32-int
+intersection on the handshake stack. No new allocation, thread, dependency or
+public struct field is introduced. Validation, trust, first fatal error and
+quiescent context/session destruction retain their existing contracts. Revert
+the admission expansion and matching provider pin together to restore TLS1.2
+configuration rejection; no automatic version narrowing or fallback is added.
+
+Formal coverage adds six exact TLS1.2 ClientHello wire cases, including disabled
+policy, independent single/multiple schemes and one-byte writes; 22 new real
+CNet server-authentication cases across exact/range and forced TLS1.2 selection;
+45 native mTLS cases with independently signed P256/P384 chains and file/PEM/DER
+inputs; and nine independent TLS1.2/1.3 exact/range client-identity handshakes.
+Wrong peer chains must fail on the verifying endpoint before its application
+readiness; REQUIRED authentication rejects an unavailable client identity.
+Input-array erasure precedes progress, and
+existing TLS1.3/ShangMi and invalid-configuration tests remain selected.
 
 ## Retained certificate validity diagnostics
 

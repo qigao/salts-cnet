@@ -551,3 +551,34 @@
   (56.72s).
   SHA256 and SM3/SM4 cases remain in those entries. Additional PRFs, PKCS12/PFX,
   file-password loaders and standalone key-export formats are separate work.
+
+## TLS1.2/range independent certificate signatures (2026-11-07)
+
+- The existing certificate_signature_algorithms list was TLS1.3-only. Extend
+  STANDARD admission to exact TLS1.2 and ranges, using the same immutable context
+  array and no public layout change. TLCP still fails ENOTSUP before trust I/O.
+  Initialize the existing per-connection extension flag in the TLS1.2 path.
+- ClientHello extension 50 carries certificate policy separately from handshake
+  extension 13. Server selection intersects local certificate policy with the
+  peer's certificate list, or its handshake list if extension 50 is absent.
+  Both received chain roles and their top signature against a local issuer use
+  the certificate policy, preserving trust, fatal latching and owner teardown.
+- TLS1.2 CertificateRequest has one shared list. Do not union certificate-only
+  schemes into handshake offers: that would advertise unauthorized handshake
+  algorithms. Intersect its shared list separately with local handshake and
+  certificate policies, then select a CA/type-compatible identity. Empty
+  intersections preserve empty-Certificate/REQUIRED-rejection semantics. The
+  new intersection is a bounded 32-int handshake-stack array, without dynamic
+  storage, retained inputs or a new progress owner.
+- Formal coverage adds six byte-exact TLS1.2 ClientHello cases (485 provider
+  cases total), 22 new CNet exact/range/forced-TLS1.2 server-auth cases, 45 native
+  mTLS cases using independent P256/P384 certificates across file/PEM/DER, and
+  nine independent exact/range client-identity handshakes. Include the omitted
+  extension 50 fallback constraint and the TLS1.2 shared-request rejection with
+  matching TLS1.3 success controls. Caller arrays are erased before progress.
+- The new TLS1.2 formal case reproduced configuration rejection before the
+  implementation. Pinned GmSSL #42 uses 8cf1c6e282f958fed44e2c2c889824bdd6b8e330
+  / port tree 31ddf7a06fad9b7391f6e40c0a4bc0e3ff2a19b6. native-release-user
+  configure/full build and six related CTests passed (84.39s), then the two
+  affected CTests passed after final peer-constraint additions (22.62s).
+  No new dependency, configuration switch, retry, test skip or versioned API.
