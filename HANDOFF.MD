@@ -275,6 +275,13 @@
   "^saltscore.cnet_tcp_loopback$" --repeat until-fail:64 --output-on-failure`)
   passed all 64 runs. This does not qualify ARM64 or close the issue.
 
+- Follow-up formal NativeIO coverage uses 768 same-process runtime generations
+  (512 single-shard, 128 each for two/four shards), checking owner-local execution,
+  exact command settlement, closed admission and quiescent destruction. Four
+  invalid backend configurations exercise bootstrap error propagation and cleared
+  output ownership. Local native-release-user full graph and NativeIO/coroutine/
+  concurrency/CNet-loopback CTests passed; ARM64 reproduction remains required.
+
 ## 2026-11-06 TSan audio runtime package indexes
 
 - The private PulseAudio runtime is installed before the Linux capture SDK
