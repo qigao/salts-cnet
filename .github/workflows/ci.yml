@@ -190,9 +190,9 @@ jobs:
 
       - name: Set up shared dependency contract
         id: vcpkg
-        # GmSSL #41 decodes explicit PBKDF2 HMAC-SHA384/SHA512 credential PRFs.
+        # GmSSL #42 enforces independent TLS1.2 certificate signature policy.
         # Includes native Windows pkg-config; avoid MSYS2 for pkg-config.
-        uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-curl-cache@99156c278e9f10fe72376573a2fc8b5340a40183
+        uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-curl-cache@8cf1c6e282f958fed44e2c2c889824bdd6b8e330
         with:
           mode: read
           triplet: ${{ matrix.triplet }}

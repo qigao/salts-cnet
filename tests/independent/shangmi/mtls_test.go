@@ -64,6 +64,7 @@ func TestShangMiMutual(t *testing.T) {
 	t.Run("verification_depth", testVerificationDepth)
 	t.Run("certificate_signature_positions", testMutualCertificateSignaturePositions)
 	t.Run("signature_policy", testSignaturePolicy)
+	t.Run("separate_certificate_policy", testSeparateCertificatePolicy)
 	server, client := credentials(t, nil), clientCredentials(t, nil)
 
 	memoryFixtures(t, server.caPath, server.certPath, server.keyPath, client.caPath, client.certPath, client.keyPath)

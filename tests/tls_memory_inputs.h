@@ -7,6 +7,20 @@ typedef struct tls_test_memory {
   cnet_tls_credentials credentials;
 } tls_test_memory;
 
+static int tls_test_certificate_signatures(const char *name,
+    const cnet_tls_signature_scheme **schemes, size_t *count) {
+  static const cnet_tls_signature_scheme ec[] = {
+      CRYPTO_TLS_SIGNATURE_ECDSA_SECP256R1_SHA256, CRYPTO_TLS_SIGNATURE_ECDSA_SECP384R1_SHA384};
+  const char *value = getenv(name);
+  *schemes = NULL; *count = 0u;
+  if (!value) return SALTS_OK;
+  if (strcmp(value, "p256") == 0) { *schemes = ec; *count = 1u; }
+  else if (strcmp(value, "p384") == 0) { *schemes = ec + 1u; *count = 1u; }
+  else if (strcmp(value, "all") == 0) { *schemes = ec; *count = 2u; }
+  else return SALTS_EINVAL;
+  return SALTS_OK;
+}
+
 static int tls_test_read(tls_test_memory *m, unsigned slot, const char *path,
     const char *part, cnet_tls_data *out) {
   const char *mode = getenv("SALTS_TEST_TLS_MEMORY");

@@ -186,11 +186,12 @@ typedef struct crypto_tls_stream_client_config {
    * work normally. Trust, identity, purpose and revocation remain mandatory. */
   const crypto_tls_signature_scheme *signature_algorithms;
   size_t signature_algorithm_count;
-  /** Independent TLS1.3 certificate-chain signature allowlist, copied at init.
+  /** Independent TLS1.2/1.3 certificate-chain signature allowlist, copied at init.
    * NULL/0 uses signature_algorithms. Explicit lists contain 1..4 unique
    * RSA-PKCS1-SHA256 or ECDSA P256/SHA256, P384/SHA384 (STANDARD), or SM2/SM3
-   * (SHANGMI). RSA-PSS certificate signatures are unsupported. STANDARD must
-   * explicitly select TLS1.3 only; ranges/TLS1.2/TLCP return ENOTSUP before I/O.
+   * (SHANGMI). RSA-PSS certificate signatures are unsupported. STANDARD permits
+   * TLS1.2/1.3 and ranges; TLCP returns ENOTSUP before I/O. TLS1.2 client identity
+   * selection also obeys the peer CertificateRequest's shared signature list.
    * Controls certificate extension offers, selection and peer-chain verification.
    * Handshake signatures remain controlled by signature_algorithms. */
   const crypto_tls_signature_scheme *certificate_signature_algorithms;
@@ -265,11 +266,12 @@ typedef struct crypto_tls_stream_server_config {
   /** Same immutable signature allowlist contract as the client configuration. */
   const crypto_tls_signature_scheme *signature_algorithms;
   size_t signature_algorithm_count;
-  /** Independent TLS1.3 certificate-chain signature allowlist, copied at init.
+  /** Independent TLS1.2/1.3 certificate-chain signature allowlist, copied at init.
    * NULL/0 uses signature_algorithms. Explicit lists contain 1..4 unique
    * RSA-PKCS1-SHA256 or ECDSA P256/SHA256, P384/SHA384 (STANDARD), or SM2/SM3
-   * (SHANGMI). RSA-PSS certificate signatures are unsupported. STANDARD must
-   * explicitly select TLS1.3 only; ranges/TLS1.2/TLCP return ENOTSUP before I/O.
+   * (SHANGMI). RSA-PSS certificate signatures are unsupported. STANDARD permits
+   * TLS1.2/1.3 and ranges; TLCP returns ENOTSUP before I/O. TLS1.2 client identity
+   * selection also obeys the peer CertificateRequest's shared signature list.
    * Controls certificate extension offers, selection and peer-chain verification.
    * Handshake signatures remain controlled by signature_algorithms. */
   const crypto_tls_signature_scheme *certificate_signature_algorithms;

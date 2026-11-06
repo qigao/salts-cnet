@@ -1033,8 +1033,10 @@ static int run_python_ssl_server(const char *port_text,
       .key_file = client_key,
       .security_profile = tlcp ? CNET_TLS_SECURITY_PROFILE_TLCP11 :
           shangmi ? CNET_TLS_SECURITY_PROFILE_SHANGMI_TLS13 : CNET_TLS_SECURITY_PROFILE_STANDARD,
-      .signature_algorithms = tlcp || shangmi ? &sm2_signature : separate_cert ? rsa_signatures + 1u : rsa_only ? rsa_signatures : NULL,
-      .signature_algorithm_count = tlcp || shangmi || separate_cert ? 1u : rsa_only ? (strcmp(protocol, "tls12") == 0 ? 1u : 2u) : 0u,
+      .signature_algorithms = tlcp || shangmi ? &sm2_signature : separate_cert ?
+          (version_range || strcmp(protocol, "tls12") == 0 ? rsa_signatures : rsa_signatures + 1u) : rsa_only ? rsa_signatures : NULL,
+      .signature_algorithm_count = tlcp || shangmi ? 1u : separate_cert ? (version_range ? 2u : 1u) :
+          rsa_only ? (strcmp(protocol, "tls12") == 0 ? 1u : 2u) : 0u,
       .certificate_signature_algorithms = separate_cert ? rsa_signatures : NULL,
       .certificate_signature_algorithm_count = separate_cert ? 1u : 0u,
       .cipher_suites = version_range ? range_ciphers : peer_ciphers,
@@ -1768,6 +1770,10 @@ static int saltscore_original_entry_test_cnet_tls_ca_san_c(int argc, char **argv
         mtls.client_signature_count = client_mode ? (client_mode == 4u || (client_mode == 2u && mtls.client_maximum != 12) ? 2u : 1u) : 0u;
         mtls.server_signature_count = server_mode ? (server_mode == 4u || (server_mode == 2u && mtls.server_maximum != 12) ? 2u : 1u) : 0u;
         mtls.release_tls_context_early = true;
+        if (tls_test_certificate_signatures("SALTS_TEST_TLS_CLIENT_CERT_SIGNATURES",
+                &mtls.client_certificate_signatures, &mtls.client_certificate_signature_count) != SALTS_OK ||
+            tls_test_certificate_signatures("SALTS_TEST_TLS_SERVER_CERT_SIGNATURES",
+                &mtls.server_certificate_signatures, &mtls.server_certificate_signature_count) != SALTS_OK) return 2;
         if (mtls.security_profile == CNET_TLS_SECURITY_PROFILE_STANDARD) mtls.expected_server_binding = NULL;
         return run_case(&mtls);
       }

@@ -716,6 +716,66 @@ static tls_ret_t key_update_fragmented_receive(void *user, void *data, size_t si
   return (tls_ret_t)size;
 }
 
+spec("GmSSL TLS1.2 independent certificate signature offers") {
+  static TLS_CTX ctx;
+  static TLS_CONNECT conn;
+  before_each() { memset(&ctx, 0, sizeof(ctx)); memset(&conn, 0, sizeof(conn)); }
+  after_each() { tls_cleanup(&conn); tls_ctx_cleanup(&ctx); }
+  for (unsigned mode = 0u; mode < 3u; ++mode) {
+    for (unsigned partial = 0u; partial < 2u; ++partial) {
+      it("mode %u partial %u preserves distinct handshake and certificate lists", mode, partial) {
+        const int handshake = TLS_sig_ecdsa_secp256r1_sha256;
+        const int group = TLS_curve_secp256r1;
+        const int suite = TLS_cipher_ecdhe_ecdsa_with_aes_128_gcm_sha256;
+        const int certs[] = {TLS_sig_rsa_pkcs1_sha256, TLS_sig_ecdsa_secp256r1_sha256, TLS_sig_ecdsa_secp384r1_sha384};
+        check_equal(tls_ctx_init(&ctx, TLS_protocol_tls12, TLS_client_mode), 1);
+        check_equal(tls_ctx_set_cipher_suites(&ctx, &suite, 1u), 1);
+        check_equal(tls_ctx_set_supported_groups(&ctx, &group, 1u), 1);
+        check_equal(tls_ctx_set_signature_algorithms(&ctx, &handshake, 1u), 1);
+        ctx.signature_algorithms_cert = mode != 0u;
+        ctx.certificate_signature_algorithms_cnt = mode == 2u ? 3u : mode;
+        if (mode == 1u) ctx.certificate_signature_algorithms[0] = certs[2];
+        if (mode == 2u) memcpy(ctx.certificate_signature_algorithms, certs, sizeof(certs));
+        check_equal(tls_init(&conn, &ctx), 1);
+        key_update_wire wire = {0};
+        TLS_IO io = {.user = &wire, .send = key_update_capture, .recv = key_update_no_receive};
+        check_equal(tls_set_io(&conn, &io), 1);
+        int result = TLS_ERROR_SEND_AGAIN;
+        for (unsigned step = 0u; step < sizeof(wire.bytes) && result != 1; ++step) {
+          wire.budget = partial ? 1u : sizeof(wire.bytes);
+          result = tls_send_client_hello(&conn);
+          check(result == 1 || result == TLS_ERROR_SEND_AGAIN);
+        }
+        check_equal(result, 1);
+        int protocol;
+        const uint8_t *random, *session, *suites, *exts;
+        size_t session_size, suites_size, exts_size;
+        check_equal(tls_record_get_handshake_client_hello(wire.bytes, &protocol, &random,
+            &session, &session_size, &suites, &suites_size, &exts, &exts_size), 1);
+        check_equal(protocol, TLS_protocol_tls12);
+        unsigned handshake_count = 0u, cert_count = 0u;
+        while (exts_size) {
+          const uint8_t *data;
+          size_t size;
+          int type;
+          check_equal(tls_ext_from_bytes(&type, &data, &size, &exts, &exts_size), 1);
+          if (type == TLS_extension_signature_algorithms) {
+            const uint8_t expected[] = {0u, 2u, 4u, 3u};
+            check_equal(size, sizeof(expected)); check_equal(data, expected, size); ++handshake_count;
+          } else if (type == TLS_extension_signature_algorithms_cert) {
+            const uint8_t one[] = {0u, 2u, 5u, 3u};
+            const uint8_t many[] = {0u, 6u, 4u, 1u, 4u, 3u, 5u, 3u};
+            check_equal(size, mode == 1u ? sizeof(one) : sizeof(many));
+            check_equal(data, mode == 1u ? one : many, size); ++cert_count;
+          }
+        }
+        check_equal(handshake_count, 1u);
+        check_equal(cert_count, mode != 0u ? 1u : 0u);
+      }
+    }
+  }
+}
+
 spec("GmSSL authenticated peer update budget across fragmented reads") {
   for (unsigned scenario = 0u; scenario < 4u; ++scenario) {
     it("role and AEAD scenario %u rejects before the excess key derivation", scenario) {

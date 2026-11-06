@@ -1059,8 +1059,7 @@ static int crypto_tls_stream_context_create_common(
   if ((certificate_signatures == NULL) != (certificate_signature_count == 0u) ||
       certificate_signature_count > CRYPTO_TLS_SIGNATURE_MAX_COUNT) return CRYPTO_TLS_STREAM_EINVAL;
   if (certificate_signature_count) {
-    if (security_profile == CRYPTO_TLS_STREAM_SECURITY_PROFILE_TLCP11 ||
-        minimum != CRYPTO_TLS_STREAM_PROTOCOL_VERSION_1_3 || maximum != CRYPTO_TLS_STREAM_PROTOCOL_VERSION_1_3)
+    if (security_profile == CRYPTO_TLS_STREAM_SECURITY_PROFILE_TLCP11)
       return CRYPTO_TLS_STREAM_ENOTSUP;
     for (size_t i = 0u; i < certificate_signature_count; ++i) {
       for (size_t j = 0u; j < i; ++j)

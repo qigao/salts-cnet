@@ -67,3 +67,42 @@ func signatureCase(t *testing.T, server, client fixture, profile, version int, m
 		t.Fatalf("signature modes %v: %v\n%s", modes, err, out)
 	}
 }
+
+func testSeparateCertificatePolicy(t *testing.T) {
+	server := depthFixture(t, false, false, 0, false, true)
+	client := depthFixture(t, false, true, 0, false, true)
+	clientP256 := depthFixture(t, false, true, 0, false)
+	for _, version := range []int{12, 0, 13} {
+		for _, mode := range []string{"file", "pem", "der"} {
+			for _, scenario := range []string{"accept", "reject_remote_server", "reject_remote_client", "no_local_identity", "shared_request_constraint"} {
+				t.Run(fmt.Sprintf("version_%d/%s/%s", version, mode, scenario), func(t *testing.T) {
+					if mode != "file" {
+						t.Setenv("SALTS_TEST_TLS_MEMORY", mode)
+					}
+					t.Setenv("SALTS_TEST_TLS_CLIENT_CERT_SIGNATURES", "p384")
+					t.Setenv("SALTS_TEST_TLS_SERVER_CERT_SIGNATURES", "p384")
+					selected, outcome := client, "accept"
+					modes := [2]int{1, 4}
+					switch scenario {
+					case "reject_remote_server":
+						t.Setenv("SALTS_TEST_TLS_CLIENT_CERT_SIGNATURES", "p256")
+						outcome = "reject-client"
+					case "reject_remote_client":
+						t.Setenv("SALTS_TEST_TLS_CLIENT_CERT_SIGNATURES", "all")
+						selected, outcome = clientP256, "reject-server"
+					case "no_local_identity":
+						selected, outcome = clientP256, "reject-server"
+					case "shared_request_constraint":
+						modes[1] = 1
+						if version == 12 {
+							outcome = "reject-server"
+						}
+					}
+					// TLS1.2 CertificateRequest's one list must also permit the
+					// P384 certificate issuer; the client still signs with P256.
+					signatureCase(t, server, selected, 0, version, modes, outcome)
+				})
+			}
+		}
+	}
+}
