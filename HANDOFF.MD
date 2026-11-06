@@ -340,3 +340,45 @@
   RSA/P256 TLS1.2/1.3, both native mTLS roles, two intermediate levels, ShangMi,
   TLCP signing/encryption leaves, file/PEM/DER and unknown root-selection errors.
   No new test project, feature switch, verification rescan or retry is needed.
+
+## 2026-11-06 local KeyUpdate byte budgets and formal-test admission
+
+- `key_update_byte_limit` is a copied SHANGMI_TLS13 client/server scalar; zero
+  disables this budget and 1..2^34 bounds encrypted application plaintext per
+  local sending key. Records split at remaining capacity. Charge only after
+  successful encryption, not on every retry of pending ciphertext or on control
+  records. Reset on local sending-key updates, including mandatory responses;
+  receiving a peer's new key must not refill this independent budget.
+- GmSSL #37 uses the existing bounded record/KeyUpdate state machine and one
+  owner-local uint64 counter. Byte-only policy does not enable the record-count
+  trigger; either configured limit can trigger one update. Reject impossible
+  usage greater than the budget before subtraction. No new timer/queue/buffer.
+- Formal provider cases verify exact 2-byte prefixes from 5-byte input under
+  byte-at-a-time writes, original-key KeyUpdate/new-key application ordering,
+  simultaneous limits, mandatory responses, disabled/maximum/rejected limits
+  and failure-before-output for invalid counter state. Independent SM2 peers
+  check 3-byte logical sends across quota boundaries on both native roles and
+  mTLS server, limits 1/2/maximum and byte/record precedence. Configuration is
+  erased after synchronous context admission to verify copied ownership.
+- Corrected a previous qualification report: 72 certificate-signature mTLS
+  scenarios from #263 were not selected by CTest's anchored Go test filter.
+  Route the helper through registered TestShangMiMutual; its native mode must
+  expect CHAIN_SIGNATURE plus the explicit index, rather than depth/unknown.
+  Keep send callbacks checking the exact configured logical length (3 bytes for
+  quota tests), not an obsolete one-byte-only fixture assumption.
+- Use the existing user preset and formal CTests. Initial eight related tests
+  passed; cnet_shangmi_key_update passed after correcting fixture lengths, and
+  cnet_shangmi_required_mtls passed all newly admitted position cases (13.42s).
+  Three affected adjacent parser CTests also passed (56.03s); ten distinct
+  relevant formal CTests pass across the initial/affected runs. Final full CI
+  qualifies the delivered API, provider package and test-entrypoint correction.
+- Send-side KeyUpdate previously ignored secret/key derivation returns. Four
+  formal absent-digest cases (both roles and AEAD suites) reproduced SEND_AGAIN
+  instead of the fatal error. Check both derivation results before budget reset
+  or transport output; reject the failed transition with zero consumed bytes,
+  no emitted control ciphertext and the old budget unchanged. Crypto latches
+  the fatal stream error; no recovery/rollback to application traffic is allowed.
+  With the same formal failure fixture, GmSSL IO, required-mTLS and KeyUpdate
+  CTests passed after the fix (17.98s). Counter-invariant tests use valid AEAD
+  keys and an available transport, so a missing guard cannot pass merely because
+  unrelated cipher setup or backpressure also rejects the operation.

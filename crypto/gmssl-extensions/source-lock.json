@@ -8,12 +8,12 @@
   },
   "package": {
     "registry_repository": "https://github.com/qigao/vcpkg-cache",
-    "registry_commit": "7766055dfc3acef92f8697eb6bbf234751a14beb",
-    "port_tree": "52aee4f2f69afdfc07ff51ec006226ef41e756e9",
+    "registry_commit": "8ac7e955fcd1fea7f00df76fd7d243ed9914e995",
+    "port_tree": "a8a2d8c63f18597c672383f99f3892ea68a513fb",
     "name": "gmssl",
     "version": "3.2.0",
-    "port_version": 36,
-    "registry_reference": "7766055dfc3acef92f8697eb6bbf234751a14beb"
+    "port_version": 37,
+    "registry_reference": "8ac7e955fcd1fea7f00df76fd7d243ed9914e995"
   },
   "source_checkout": {
     "repository": "https://github.com/qigao/salts-core",

@@ -120,6 +120,24 @@ static int run_peer_policy_cases(void) {
     REQUIRE(cnet_tls_server_init(&server, &bad_server) == (invalid < 2u ? SALTS_ENOTSUP : SALTS_EINVAL));
     REQUIRE(client.impl == NULL && server.impl == NULL);
   }
+  for (unsigned invalid = 0u; invalid < 4u; ++invalid) {
+    const cnet_tls_security_profile profile = invalid == 0u ? CNET_TLS_SECURITY_PROFILE_STANDARD :
+        invalid == 1u ? CNET_TLS_SECURITY_PROFILE_TLCP11 : CNET_TLS_SECURITY_PROFILE_SHANGMI_TLS13;
+    const uint64_t limit = invalid < 2u ? UINT64_C(1) :
+        invalid == 2u ? CNET_TLS_KEY_UPDATE_BYTE_LIMIT_MAX + 1u : UINT64_MAX;
+    cnet_tls_client_config bad_client = {.size = sizeof(bad_client),
+        .ca_file = "absent-byte-limit-ca.pem", .peer_policy = &policy,
+        .security_profile = profile, .key_update_byte_limit = limit};
+    cnet_tls_server_config bad_server = {.size = sizeof(bad_server),
+        .cert_file = "absent-byte-limit-cert.pem", .key_file = "absent-byte-limit-key.pem",
+        .ca_file = "absent-byte-limit-ca.pem", .client_auth = CNET_TLS_CLIENT_AUTH_REQUIRED,
+        .peer_policy = &policy, .security_profile = profile, .key_update_byte_limit = limit};
+    const int expected = invalid < 2u ? SALTS_ENOTSUP : SALTS_EINVAL;
+    REQUIRE(cnet_tls_client_init(&client, &bad_client) == expected);
+    REQUIRE(cnet_tls_server_init(&server, &bad_server) == expected);
+    REQUIRE(client.impl == NULL && server.impl == NULL);
+    REQUIRE(atomic_load(&p.retains) == 0u && atomic_load(&p.calls) == 0u);
+  }
   REQUIRE(cnet_tls_client_init(&client, &cfg) != SALTS_OK);
   REQUIRE(client.impl == NULL && atomic_load(&p.retains) == 0u && atomic_load(&p.releases) == 0u);
   cfg.ca_file = CORE_TLS_TEST_P384_CA;

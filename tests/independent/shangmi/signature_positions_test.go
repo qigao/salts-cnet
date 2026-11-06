@@ -37,7 +37,7 @@ func damageChainSignature(t *testing.T, f fixture, index int) {
 	memoryFixtures(t, f.caPath, f.certPath, f.keyPath)
 }
 
-func TestMutualCertificateSignaturePositions(t *testing.T) {
+func testMutualCertificateSignaturePositions(t *testing.T) {
 	if *native == "" {
 		t.Fatal("-native is required")
 	}
@@ -64,7 +64,7 @@ func TestMutualCertificateSignaturePositions(t *testing.T) {
 							t.Setenv("SALTS_TEST_TLS_VALIDITY_DIAGNOSTIC", "signature")
 							t.Setenv("SALTS_TEST_TLS_VALIDITY_INDEX", fmt.Sprint(target))
 						}
-						depthCase(t, server, client, profile.id, profile.version, 0, 0, outcome)
+						configuredMutualCase(t, "--chain-signature-mtls", server, client, profile.id, profile.version, 0, 0, outcome)
 					})
 				}
 			}

@@ -62,6 +62,7 @@ typedef struct tls_probe {
   int last_error_status;
   int last_native_status;
   unsigned sent_count;
+  size_t expected_send_size; /* zero keeps the ordinary one-byte send contract */
   unsigned received_count;
   unsigned char received_byte;
   bool stream_transfer;
@@ -170,22 +171,26 @@ static void send_callback(void *user, cnet_connection connection, size_t size) {
       ++p->failed;
     else
       p->send_sizes[p->sent_count] = size;
-  } else if (size != 1u) ++p->failed;
+  } else if (size != (p->expected_send_size ? p->expected_send_size : 1u)) ++p->failed;
   ++p->sent_count;
 }
 static void recycle_callback(void *user) {
   ++((tls_probe *)user)->recycled_count;
 }
 
-static int send_byte(cnet_client *client, cnet_connection connection, unsigned char value) {
-  mem_buffer_t *buffer = mem_get_buffer(mem_global(), 1u);
+static int send_repeated_byte(cnet_client *client, cnet_connection connection, unsigned char value, size_t count) {
+  mem_buffer_t *buffer = mem_get_buffer(mem_global(), count);
   int status;
   if (buffer == NULL) return SALTS_ENOMEM;
-  *mem_buffer_data(buffer) = (char)value;
-  mem_set_used(buffer, 1u);
+  memset(mem_buffer_data(buffer), value, count);
+  mem_set_used(buffer, count);
   status = cnet_send_buffer(client, connection, buffer);
   mem_buffer_release(buffer);
   return status;
+}
+
+static int send_byte(cnet_client *client, cnet_connection connection, unsigned char value) {
+  return send_repeated_byte(client, connection, value, 1u);
 }
 
 static int tls_pool_acquire_rejected(cnet_client_pool *pool, const cnet_pool_key *key) {
@@ -282,6 +287,8 @@ typedef struct tls_case_options {
   cnet_tls_protocol_version server_minimum, server_maximum;
   const char *expected_version;
   crypto_tls_failure_reason expected_failure;
+  bool expected_failure_index_known;
+  size_t expected_failure_index;
   uint32_t client_depth, server_depth;
   const cnet_tls_cipher_suite *client_ciphers, *server_ciphers;
   size_t client_cipher_count, server_cipher_count;
@@ -502,7 +509,8 @@ static int run_case(const tls_case_options *options) {
             rejected->tls_diagnostic.reason, options->expected_failure, rejected->last_error_status);
       REQUIRE(rejected->tls_diagnostic.reason == options->expected_failure);
       REQUIRE(rejected->tls_diagnostic.certificate_index ==
-          (options->expected_failure == CRYPTO_TLS_FAILURE_IDENTITY ? 0u : SIZE_MAX));
+          (options->expected_failure_index_known ? options->expected_failure_index :
+           options->expected_failure == CRYPTO_TLS_FAILURE_IDENTITY ? 0u : SIZE_MAX));
     }
     /* A rejection must never deliver plaintext or publish a verified
      * server connection. Only the handshake-owning side determines rejection. */
@@ -913,6 +921,17 @@ static bool tls_test_verification_time(const char *variable, int64_t *value) {
   return true;
 }
 
+static bool tls_test_expected_certificate_index(size_t *index) {
+  const char *text = getenv("SALTS_TEST_TLS_VALIDITY_INDEX");
+  *index = SIZE_MAX;
+  if (!text) return true;
+  if (strcmp(text, "0") == 0) *index = 0u;
+  else if (strcmp(text, "1") == 0) *index = 1u;
+  else if (strcmp(text, "2") == 0) *index = 2u;
+  else return false;
+  return true;
+}
+
 static bool tls_probe_expected_validity(const tls_probe *probe) {
   const char *expected = getenv("SALTS_TEST_TLS_VALIDITY_DIAGNOSTIC");
   if (!expected) return true;
@@ -925,15 +944,8 @@ static bool tls_probe_expected_validity(const tls_probe *probe) {
   else if (strcmp(expected, "anchor") == 0) reason = CRYPTO_TLS_FAILURE_TRUST_ANCHOR;
   else if (strcmp(expected, "handshake") == 0) reason = CRYPTO_TLS_FAILURE_HANDSHAKE;
   else return false;
-  const char *index_text = getenv("SALTS_TEST_TLS_VALIDITY_INDEX");
-  size_t index = SIZE_MAX;
-  if (index_text) {
-    /* Fixtures use only these positions; reject misspelled expectations. */
-    if (strcmp(index_text, "0") == 0) index = 0u;
-    else if (strcmp(index_text, "1") == 0) index = 1u;
-    else if (strcmp(index_text, "2") == 0) index = 2u;
-    else return false;
-  }
+  size_t index;
+  if (!tls_test_expected_certificate_index(&index)) return false;
   if (probe->tls_diagnostic.reason != reason || probe->tls_diagnostic.certificate_index != index)
     fprintf(stderr, "validity diagnostic actual=%d:%zu expected=%d:%zu\n",
         probe->tls_diagnostic.reason, probe->tls_diagnostic.certificate_index, reason, index);
@@ -957,7 +969,15 @@ static int run_python_ssl_server(const char *port_text,
   const bool local_rotation = strncmp(protocol, "shangmi13-rotate", 15u) == 0;
   const uint32_t rotation_limit = strcmp(protocol, "shangmi13-rotate1") == 0 ? 1u :
       strcmp(protocol, "shangmi13-rotate2") == 0 ? 2u :
+      strcmp(protocol, "shangmi13-rotateboth-byte") == 0 ? 3u :
+      strcmp(protocol, "shangmi13-rotateboth-record") == 0 ? 1u :
       strcmp(protocol, "shangmi13-rotatemax") == 0 ? CNET_TLS_KEY_UPDATE_RECORD_LIMIT_MAX : 0u;
+  const bool byte_rotation = local_rotation &&
+      (strstr(protocol, "rotatebyte") != NULL || strstr(protocol, "rotateboth") != NULL);
+  const uint64_t byte_limit = strcmp(protocol, "shangmi13-rotatebyte1") == 0 ? 1u :
+      strcmp(protocol, "shangmi13-rotatebyte2") == 0 ? 2u :
+      strcmp(protocol, "shangmi13-rotatebytemax") == 0 ? CNET_TLS_KEY_UPDATE_BYTE_LIMIT_MAX :
+      strcmp(protocol, "shangmi13-rotateboth-byte") == 0 ? 2u : byte_rotation ? 7u : 0u;
   const unsigned rounds = local_rotation ? 5u : (key_update_exchange || peer_limit) ? 2u : 1u;
   const bool shangmi = strcmp(protocol, "shangmi13") == 0 || key_update_exchange || local_rotation || peer_limit;
   const bool approved_identity = expect_success;
@@ -984,7 +1004,7 @@ static int run_python_ssl_server(const char *port_text,
   int64_t verification_time;
   if (!tls_test_verification_time("SALTS_TEST_TLS_VERIFICATION_TIME", &verification_time)) return 2;
   const cnet_tls_signature_scheme sm2_signature = CRYPTO_TLS_SIGNATURE_SM2_SM3;
-  const cnet_tls_client_config tls_config = {
+  cnet_tls_client_config tls_config = {
       .size = sizeof(cnet_tls_client_config),
       /* The existing external peer CLI uses "-" only for the independent
        * Windows native system-root negative. NULL enables the production
@@ -1002,6 +1022,7 @@ static int run_python_ssl_server(const char *port_text,
       .cipher_suites = version_range ? range_ciphers : peer_ciphers,
       .cipher_suite_count = version_range ? 3u : !tlcp && !shangmi && strcmp(protocol, "tls12") == 0 ? 2u : 1u,
       .peer_policy = owned_policy, .key_update_record_limit = rotation_limit,
+      .key_update_byte_limit = byte_limit,
       /* TLCP's two leaves do not consume issuer depth. Exercise the smallest
        * explicit bound with independent dual-certificate peers. */
       .verification_depth = tlcp ? 1u : 0u,
@@ -1029,6 +1050,7 @@ static int run_python_ssl_server(const char *port_text,
 
   probe.client = &client;
   probe.expect_python_ok_record = true;
+  probe.expected_send_size = byte_rotation ? 3u : 1u;
   probe.receive_limit = rounds;
   REQUIRE(cnet_client_init(&client, &client_cfg) == SALTS_OK);
   initialized = true;
@@ -1038,6 +1060,8 @@ static int run_python_ssl_server(const char *port_text,
       .observer = {state_callback, receive_callback, &probe, send_callback},
       .tls = &tls_config};
   REQUIRE(tls_test_connect(&client, &connect_options, &outbound) == SALTS_OK);
+  tls_config.key_update_record_limit = 0u;
+  tls_config.key_update_byte_limit = 0u; /* The admitted context owns its limits. */
   verification_time = -1; /* The context must own its copied value before progress. */
 
   if (owned_policy != NULL) {
@@ -1074,10 +1098,10 @@ static int run_python_ssl_server(const char *port_text,
       REQUIRE(strcmp(digest, expected_server_sha256) == 0);
     REQUIRE(cnet_receive(&client, outbound, 1u) == SALTS_OK);
 
-    outgoing = mem_get_buffer(mem_global(), 1u);
+    outgoing = mem_get_buffer(mem_global(), byte_rotation ? 3u : 1u);
     REQUIRE(outgoing != NULL);
-    *mem_buffer_data(outgoing) = 0x46u;
-    mem_set_used(outgoing, 1u);
+    memset(mem_buffer_data(outgoing), 0x46u, byte_rotation ? 3u : 1u);
+    mem_set_used(outgoing, byte_rotation ? 3u : 1u);
     REQUIRE(cnet_send_buffer(&client, outbound, outgoing) == SALTS_OK);
     mem_buffer_release(outgoing);
     outgoing = NULL;
@@ -1099,7 +1123,7 @@ static int run_python_ssl_server(const char *port_text,
       /* Each round forces a distinct application record across local or
        * peer-requested rotations; completion counts exclude control records. */
       REQUIRE(cnet_receive(&client, outbound, 1u) == SALTS_OK);
-      REQUIRE(send_byte(&client, outbound, 0x46u) == SALTS_OK);
+      REQUIRE(send_repeated_byte(&client, outbound, 0x46u, byte_rotation ? 3u : 1u) == SALTS_OK);
       deadline = cmeta_monotonic_ms() + 9000u;
       while ((probe.received_count != round || probe.sent_count != round) &&
              !probe.terminal_count && cmeta_monotonic_ms() < deadline)
@@ -1223,7 +1247,15 @@ static int run_python_ssl_client(const char *port_path,
   const bool peer_limit_failure = peer_limit && strstr(outcome, "fail") != NULL;
   const uint32_t rotation_limit = strcmp(outcome, "rotate1") == 0 ? 1u :
       strcmp(outcome, "rotate2") == 0 ? 2u :
+      strcmp(outcome, "rotateboth-byte") == 0 ? 3u :
+      strcmp(outcome, "rotateboth-record") == 0 ? 1u :
       strcmp(outcome, "rotatemax") == 0 ? CNET_TLS_KEY_UPDATE_RECORD_LIMIT_MAX : 0u;
+  const bool byte_rotation = local_rotation &&
+      (strstr(outcome, "rotatebyte") != NULL || strstr(outcome, "rotateboth") != NULL);
+  const uint64_t byte_limit = strcmp(outcome, "rotatebyte1") == 0 ? 1u :
+      strcmp(outcome, "rotatebyte2") == 0 ? 2u :
+      strcmp(outcome, "rotatebytemax") == 0 ? CNET_TLS_KEY_UPDATE_BYTE_LIMIT_MAX :
+      strcmp(outcome, "rotateboth-byte") == 0 ? 2u : byte_rotation ? 7u : 0u;
   const unsigned rounds = local_rotation ? 5u : peer_limit && !peer_limit_failure ? 2u : 1u;
   const bool expect_orderly_close = strcmp(outcome, "close") == 0 || local_rotation || (peer_limit && !peer_limit_failure);
   const bool expect_local_peer_close = strcmp(outcome, "localclose") == 0;
@@ -1232,7 +1264,7 @@ static int run_python_ssl_client(const char *port_path,
   const bool expect_incomplete_send = strcmp(outcome, "race-eof-pending") == 0;
   const bool expect_eof_race = strcmp(outcome, "race-eof") == 0 || expect_incomplete_send;
   const unsigned expected_sends = expect_incomplete_send ? 0u : 1u;
-  const size_t response_size = expect_incomplete_send ? 65536u : 1u;
+  const size_t response_size = expect_incomplete_send ? 65536u : byte_rotation ? 3u : 1u;
   const bool expect_invalid_close = peer_limit_failure || strcmp(outcome, "eof") == 0 ||
       strcmp(outcome, "keyupdate-fail") == 0 ||
       strcmp(outcome, "truncated") == 0 || strcmp(outcome, "badalert") == 0 ||
@@ -1258,7 +1290,7 @@ static int run_python_ssl_client(const char *port_path,
       CRYPTO_TLS_SIGNATURE_RSA_PSS_RSAE_SHA256};
   int64_t verification_time;
   if (!tls_test_verification_time("SALTS_TEST_TLS_VERIFICATION_TIME", &verification_time)) return 2;
-  const cnet_tls_server_config tls_cfg = {
+  cnet_tls_server_config tls_cfg = {
       .size = sizeof(cnet_tls_server_config),
       .cert_file = cert_file,
       .key_file = key_file,
@@ -1272,6 +1304,7 @@ static int run_python_ssl_client(const char *port_path,
       .cipher_suites = peer_ciphers,
       .cipher_suite_count = !tlcp && !shangmi && strcmp(protocol, "12") == 0 ? 2u : 1u,
       .key_update_record_limit = rotation_limit,
+      .key_update_byte_limit = byte_limit,
       .peer_key_update_limit = peer_limit && strcmp(outcome, "limit-off") != 0 ? 2u : 0u,
       .minimum_version = !tlcp && !shangmi ? (strcmp(protocol, "12") == 0 ? 12 : 13) : 0,
       .maximum_version = !tlcp && !shangmi ? (strcmp(protocol, "12") == 0 ? 12 : 13) : 0};
@@ -1298,6 +1331,9 @@ static int run_python_ssl_client(const char *port_path,
   probe.receive_limit = rounds;
   if (expect_incomplete_send) client_cfg.max_send_bytes = response_size;
   REQUIRE(tls_test_server_init(&tls_server, &tls_cfg) == SALTS_OK);
+  probe.expected_send_size = byte_rotation ? 3u : 1u;
+  tls_cfg.key_update_record_limit = 0u;
+  tls_cfg.key_update_byte_limit = 0u;
   verification_time = -1;
   tls_live = true;
   if (expect_eof_race) {
@@ -1657,7 +1693,8 @@ static int saltscore_original_entry_test_cnet_tls_ca_san_c(int argc, char **argv
   if (argc == 8 && strcmp(argv[1], "--shangmi-required-client") == 0)
     return run_python_ssl_client(argv[2], argv[3], argv[4], argv[5], "shangmi13-mtls", argv[6], argv[7]);
   if ((argc == 12 && strcmp(argv[1], "--shangmi-mtls") == 0) ||
-      (argc == 16 && (strcmp(argv[1], "--depth-mtls") == 0 || strcmp(argv[1], "--signature-mtls") == 0))) {
+      (argc == 16 && (strcmp(argv[1], "--depth-mtls") == 0 || strcmp(argv[1], "--signature-mtls") == 0 ||
+          strcmp(argv[1], "--chain-signature-mtls") == 0))) {
     const bool success = strcmp(argv[8], "accept") == 0;
     const bool policy_client = strcmp(argv[8], "reject-policy-client") == 0;
     const bool policy_server = strcmp(argv[8], "reject-policy-server") == 0;
@@ -1703,7 +1740,14 @@ static int saltscore_original_entry_test_cnet_tls_ca_san_c(int argc, char **argv
       mtls.client_depth = (uint32_t)(argv[14][0] - '0');
       mtls.server_depth = (uint32_t)(argv[15][0] - '0');
       mtls.release_tls_context_early = true;
-      mtls.expected_failure = success ? CRYPTO_TLS_FAILURE_NONE : CRYPTO_TLS_FAILURE_DEPTH;
+      mtls.expected_failure = success ? CRYPTO_TLS_FAILURE_NONE :
+          strcmp(argv[1], "--chain-signature-mtls") == 0 ? CRYPTO_TLS_FAILURE_CHAIN_SIGNATURE :
+          CRYPTO_TLS_FAILURE_DEPTH;
+      if (strcmp(argv[1], "--chain-signature-mtls") == 0) {
+        if (!tls_test_expected_certificate_index(&mtls.expected_failure_index) ||
+            (!success && mtls.expected_failure_index == SIZE_MAX)) return 2;
+        mtls.expected_failure_index_known = true;
+      }
       if (mtls.security_profile == CNET_TLS_SECURITY_PROFILE_STANDARD) mtls.expected_server_binding = NULL;
       return run_case(&mtls);
     }

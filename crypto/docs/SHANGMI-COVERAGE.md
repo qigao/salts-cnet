@@ -487,8 +487,9 @@ bytes. All tests link the pinned provider; no second GmSSL build is embedded.
 Both Crypto and CNet client/server TLS configurations expose
 `key_update_record_limit`. For SHANGMI_TLS13, select a threshold from 1 through
 `CRYPTO_TLS_STREAM_KEY_UPDATE_RECORD_LIMIT_MAX` (CNet has the corresponding
-`CNET_TLS_KEY_UPDATE_RECORD_LIMIT_MAX`), currently 2^20. Zero keeps automatic
-local rotation disabled while mandatory peer-requested responses remain active.
+`CNET_TLS_KEY_UPDATE_RECORD_LIMIT_MAX`), currently 2^20. Zero disables this
+record-count trigger; the independent byte budget and mandatory peer responses
+retain their own contracts.
 A value above the maximum returns EINVAL. A nonzero threshold with STANDARD or
 TLCP returns ENOTSUP before allocation/trust loading: the STANDARD profile can
 negotiate TLS 1.2, which cannot honor TLS 1.3 KeyUpdate.
@@ -1194,3 +1195,47 @@ RSA/P256 TLS1.2/1.3, both native mTLS endpoint roles, two intermediate levels,
 ShangMi mTLS, TLCP dual leaves, and file/PEM/DER trust/identity inputs. Undamaged
 controls and top-certificate root-selection failures keep their prior behavior.
 The CNet probe checks the retained value again after owner destruction.
+
+## Local sending-key plaintext byte limit
+
+The immutable client/server `key_update_byte_limit` adds a per-sending-key
+application-plaintext budget for SHANGMI_TLS13. Zero disables this budget;
+1..2^34 bytes is accepted. Larger values return EINVAL, and nonzero values for
+STANDARD/TLCP return ENOTSUP before trust/identity I/O or policy retention.
+The record-count limit remains independent; either exhausted budget triggers
+one KeyUpdate before more application data is encrypted. This is a local key
+usage policy, not a received-update rate limiter or a delivery counter.
+
+Counting whole writes would depend on application chunking and mishandle partial
+I/O. Rounding the limit to record size would exceed a requested byte budget.
+Instead, GmSSL's existing record builder limits each application prefix to the
+remaining budget. The provider increments one fixed uint64 counter only after
+successful record encryption, then retains the same bounded pending ciphertext
+through partial writes. Re-entering the send path neither counts nor encrypts
+that record again. A small limit can split one application write across records;
+stream byte order and retained-input completion semantics remain unchanged.
+
+The fixed progress owner alone mutates the counter. Local sending-key derivation
+resets it, including a mandatory peer-request response; receiving a peer's new
+sending key does not reset this independent local budget. The existing pending
+KeyUpdate control path must finish before any new-key application record.
+Control/alert records do not consume application bytes. No extra buffers,
+queues, timers, background work or unbounded storage are introduced.
+
+The provider rejects an impossible counter greater than the configured budget
+before subtraction. Encryption failure preserves normal fatal error propagation;
+KeyUpdate secret/key derivation errors also terminate before control output or
+budget reset; an incomplete transition is not resumed. Crypto's first-failure
+latch prevents continuing that stream. Budgeting is a
+finite upper bound, so no saturating arithmetic is used. See
+[RFC 8446 section 4.6.3](https://www.rfc-editor.org/rfc/rfc8446.html#section-4.6.3)
+for key-update ordering and mandatory peer responses.
+
+The existing context configuration owns the copied scalar; callers may erase it
+after initialization. For example, set `key_update_byte_limit = 1024 * 1024`
+and optionally `key_update_record_limit = 4096` before initializing a ShangMi
+client/server context. Existing zero-initialized configurations keep their prior
+behavior. Applications rebuild against the extended configuration structs; no
+parallel versioned interface or hot update is introduced. Returning the field to
+zero at configuration time restores the prior byte-policy behavior. Time-based
+rotation and general post-handshake fragmentation remain separate work.

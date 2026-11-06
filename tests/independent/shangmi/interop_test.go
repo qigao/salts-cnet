@@ -154,7 +154,7 @@ func runNativeClientIdentities(t *testing.T, f fixture, offered, expected *fixtu
 		}
 		if strings.HasPrefix(corrupt, "rotate") {
 			if result == nil {
-				result = p.localRotation(false, localRotationLimit(corrupt))
+				result = p.localRotationScenario(false, corrupt)
 			}
 			return
 		}
@@ -332,7 +332,7 @@ func runNativeServerIdentities(t *testing.T, f fixture, client, primary *fixture
 	}
 	if strings.HasPrefix(scenario, "rotate") {
 		if err == nil {
-			err = p.localRotation(true, localRotationLimit(scenario))
+			err = p.localRotationScenario(true, scenario)
 		}
 		if err != nil {
 			raw.Close()

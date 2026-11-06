@@ -358,6 +358,8 @@ enum {
   CNET_TLS_KEY_UPDATE_RECORD_LIMIT_MAX = 1u << 20
 };
 
+#define CNET_TLS_KEY_UPDATE_BYTE_LIMIT_MAX (UINT64_C(1) << 34)
+
 typedef enum cnet_tls_protocol_version {
   CNET_TLS_PROTOCOL_VERSION_DEFAULT = 0,
   CNET_TLS_PROTOCOL_VERSION_1_2 = 12,
@@ -436,7 +438,8 @@ typedef struct cnet_tls_client_config {
   /** Optional extra admission; descriptor copied, context retained until quiescence. */
   const cnet_tls_peer_policy *peer_policy;
   /** SHANGMI_TLS13 local sending-key rotation threshold, 1..2^20 records.
-   * Zero disables automatic local rotation, not mandatory peer responses.
+   * Zero disables this record-count trigger, not the independent byte budget
+   * or mandatory peer responses.
    * At the threshold, KeyUpdate precedes the next application record and
    * requests reciprocal rotation unless answering a pending peer request.
    * Counts records per application traffic key,
@@ -444,6 +447,16 @@ typedef struct cnet_tls_client_config {
    * Nonzero STANDARD/TLCP returns SALTS_ENOTSUP; above maximum SALTS_EINVAL.
    * Fixed per TLS context; no timer. Peer updates use peer_key_update_limit. */
   uint32_t key_update_record_limit;
+  /** SHANGMI_TLS13 local sending-key application-plaintext budget, copied at
+   * init. Zero disables it; 1..2^34 bytes is accepted. Above MAX: SALTS_EINVAL;
+   * nonzero STANDARD/TLCP: SALTS_ENOTSUP, before trust I/O or policy retention.
+   * Application records split at the remaining budget. Successful encryption
+   * charges once despite pending ciphertext/partial writes. KeyUpdate precedes
+   * further application data after exhaustion; control/alert bytes are excluded.
+   * Local sending-key updates reset the budget; receiving-key updates do not.
+   * Either byte or record limit triggers rotation; peer responses remain
+   * mandatory. No timer, background work or application-message boundaries. */
+  uint64_t key_update_byte_limit;
   /** SHANGMI_TLS13 consecutive authenticated peer KeyUpdate limit; zero is
    * unlimited. Both request kinds count across polls. Only nonempty authenticated
    * application data resets the count. Exceeding it fails with SALTS_EPROTO.
@@ -519,6 +532,8 @@ typedef struct cnet_tls_server_config {
   const cnet_tls_peer_policy *peer_policy;
   /** Same local sending-key rotation contract as the client configuration. */
   uint32_t key_update_record_limit;
+  /** Same local plaintext-byte budget as the client configuration. */
+  uint64_t key_update_byte_limit;
   /** Same consecutive peer-update contract as the client configuration. */
   uint32_t peer_key_update_limit;
   /** Same memory-input contract as the client; CA required for REQUIRED auth. */
