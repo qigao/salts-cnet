@@ -306,8 +306,14 @@
   full-capacity rejection. Formal Disruptor tests exercise 4096 registrations
   each with one/four slots, last-slot reuse, full rejection and publication.
   Local full native-release-user graph and six related formal CTests passed.
-  Temporary passive ARM64 diagnostics are still required to tie this candidate
-  to the observed executor startup failure; passing x64 does not establish it.
+  Temporary diagnostic PR #262 / CI #375 confirmed the owning failure path on
+  Windows ARM64: the singleton weak CAS returned false with expected still
+  VACANT, immediately followed by executor startup failure and NativeIO ENOMEM.
+  It failed at generations 1125/29/1 for 1/2/4 owners respectively. The other nine
+  matrix jobs passed. Keep the same amplified formal suite for the strong-CAS
+  comparison, then remove the temporary diagnostics, worktree and branch.
+  The historical #370 assertion discarded its status; its exact cause remains
+  an inference from the now-reproduced startup failure, not a captured fact.
 
 ## 2026-11-06 TSan audio runtime package indexes
 
