@@ -154,7 +154,13 @@ static int decode_key(const crypto_tls_data *input, const crypto_tls_password *p
       &prf, &cipher, &iv, &iv_size, &ciphertext, &ciphertext_size, &cursor, &remaining) != 1 || remaining)
     goto end;
   const bool sm4 = prf == OID_hmac_sm3 && cipher == OID_sm4_cbc;
-  const bool aes = prf == OID_hmac_sha256 &&
+  const DIGEST *aes_prf = NULL;
+  switch (prf) {
+  case OID_hmac_sha256: aes_prf = DIGEST_sha256(); break;
+  case OID_hmac_sha384: aes_prf = DIGEST_sha384(); break;
+  case OID_hmac_sha512: aes_prf = DIGEST_sha512(); break;
+  }
+  const bool aes = aes_prf &&
       (cipher == OID_aes128_cbc || cipher == OID_aes192_cbc || cipher == OID_aes256_cbc);
   const size_t derived_size = cipher == OID_aes192_cbc ? AES192_KEY_SIZE :
       cipher == OID_aes256_cbc ? AES256_KEY_SIZE : SM4_KEY_SIZE;
@@ -165,7 +171,7 @@ static int decode_key(const crypto_tls_data *input, const crypto_tls_password *p
   /* The provider writes at most the ciphertext length, including padding. */
   if (ciphertext_size > capacity) { status = CRYPTO_TLS_STREAM_ERANGE; goto end; }
   if (aes) {
-    if (pbkdf2_hmac_genkey(DIGEST_sha256(), password->data, password->size, salt, salt_size,
+    if (pbkdf2_hmac_genkey(aes_prf, password->data, password->size, salt, salt_size,
         (size_t)iterations, derived_size, derived) != 1 ||
         aes_set_decrypt_key(&aes_key, derived, derived_size) != 1 ||
         aes_cbc_padding_decrypt(&aes_key, iv, ciphertext, ciphertext_size, out, out_size) != 1) goto end;

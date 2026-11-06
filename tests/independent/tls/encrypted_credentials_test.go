@@ -7,6 +7,7 @@ import (
 	"crypto/pbkdf2"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/sha512"
 	"crypto/x509/pkix"
 	"encoding/asn1"
 	"encoding/pem"
@@ -14,6 +15,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -36,6 +38,17 @@ func writeAESFixture(t *testing.T, f identity, password, scenario string) {
 	writeAESFixtureFrom(t, f, f, password, scenario)
 }
 func writeAESFixtureFrom(t *testing.T, source, target identity, password, scenario string, bits ...int) {
+	prfOID := append(asn1.ObjectIdentifier{}, sha256PRFOID...)
+	derive := sha256.New
+	if strings.HasPrefix(scenario, "sha384_") {
+		derive = sha512.New384
+		prfOID[len(prfOID)-1] = 10
+		scenario = strings.TrimPrefix(scenario, "sha384_")
+	} else if strings.HasPrefix(scenario, "sha512_") {
+		derive = sha512.New
+		prfOID[len(prfOID)-1] = 11
+		scenario = strings.TrimPrefix(scenario, "sha512_")
+	}
 	keyBytes := 32
 	if len(bits) != 0 {
 		keyBytes = bits[0] / 8
@@ -97,7 +110,7 @@ func writeAESFixtureFrom(t *testing.T, source, target identity, password, scenar
 	if work > 1000000 {
 		work = 10000
 	}
-	key, err := pbkdf2.Key(sha256.New, string(pass), salt, work, keyBytes)
+	key, err := pbkdf2.Key(derive, string(pass), salt, work, keyBytes)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -114,7 +127,7 @@ func writeAESFixtureFrom(t *testing.T, source, target identity, password, scenar
 	defer clear(padded)
 	ciphertext := make([]byte, len(padded))
 	cipher.NewCBCEncrypter(block, iv).CryptBlocks(ciphertext, padded)
-	prf := pkix.AlgorithmIdentifier{Algorithm: sha256PRFOID, Parameters: asn1.RawValue{FullBytes: []byte{5, 0}}}
+	prf := pkix.AlgorithmIdentifier{Algorithm: prfOID, Parameters: asn1.RawValue{FullBytes: []byte{5, 0}}}
 	keyLength := keyBytes
 	switch scenario {
 	case "absent_length":
@@ -125,6 +138,8 @@ func writeAESFixtureFrom(t *testing.T, source, target identity, password, scenar
 		prf = pkix.AlgorithmIdentifier{}
 	case "unsupported_prf":
 		prf.Algorithm = asn1.ObjectIdentifier{1, 2, 840, 113549, 2, 7}
+	case "wrong_prf":
+		prf.Algorithm = sha256PRFOID
 	case "bad_prf_parameters":
 		prf.Parameters = asn1.RawValue{FullBytes: []byte{2, 1, 0}}
 	case "absent_prf_parameters":
@@ -188,7 +203,18 @@ func TestEncryptedCredentials(t *testing.T) {
 				if bits == 256 {
 					scenarios = append(scenarios, "maximum_iterations")
 				}
+				for _, hash := range []string{"sha384", "sha512"} {
+					for _, scenario := range []string{"valid", "absent_length", "absent_prf_parameters", "empty_password", "wrong_password", "wrong_prf"} {
+						scenarios = append(scenarios, hash+"_"+scenario)
+					}
+					if bits == 256 && !ec {
+						for _, scenario := range []string{"bad_prf_parameters", "absent_prf", "unsupported_prf", "mixed_sm4", "wrong_length", "padding", "mismatched_key", "high_iterations", "short_salt", "trailing"} {
+							scenarios = append(scenarios, hash+"_"+scenario)
+						}
+					}
+				}
 				for _, scenario := range scenarios {
+					base := strings.TrimPrefix(strings.TrimPrefix(scenario, "sha384_"), "sha512_")
 					name := "rsa/"
 					if ec {
 						name = "p256/"
@@ -198,7 +224,7 @@ func TestEncryptedCredentials(t *testing.T) {
 						target.keyFile = filepath.Join(t.TempDir(), "key.pem")
 						password := "binary"
 						expect := "reject"
-						switch scenario {
+						switch base {
 						case "valid", "absent_length", "absent_prf_parameters", "minimum_salt", "maximum_salt", "maximum_iterations":
 							expect = "accept"
 						case "empty_password":
@@ -211,7 +237,7 @@ func TestEncryptedCredentials(t *testing.T) {
 							expect = "range"
 						}
 						source := f
-						if scenario == "mismatched_key" {
+						if base == "mismatched_key" {
 							source = other
 						}
 						writeAESFixtureFrom(t, source, target, password, scenario, bits)

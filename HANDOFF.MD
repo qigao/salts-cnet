@@ -523,3 +523,31 @@
   5bfc4769b17a01f8063d067ef9417cfb6031a8b0), native-release-user configure/full
   build and all nine related CTests passed (88.89s). The provider suite executes
   479 cases with zero skipped; independent mTLS early-reject records authenticate.
+
+## Explicit SHA384/SHA512 encrypted TLS memory credentials (2026-11-07)
+
+- The memory PKCS8 loader admitted only SM3/SM4 or SHA256/AES. GmSSL already
+  supplies generic PBKDF2-HMAC and SHA384/SHA512 digests; extend its bounded PRF
+  decoder and Crypto's explicit AES-only dispatch instead of adding a provider,
+  general ASN1 parser, digest inference or trial-decryption path. PRF omission
+  still means unsupported SHA1; malformed/unknown PRFs and SHA384/512 with SM4
+  fail before derivation. Work, salt, IV, key-size and output limits are unchanged.
+- All state remains owned by synchronous initialization. Borrow password/input
+  only during the call, erase derived keys/cipher/output on failure, and publish
+  only after exact PKCS8 parsing and certificate/private-key binding. No public
+  struct, configuration switch, allocation, thread or production dependency added.
+- Registered Go entries add 184 RSA/P256 PEM/DER admission scenarios (each checks
+  client/server contexts), 48 standard TLS1.2/1.3 client identity handshakes,
+  36 ShangMi native/native and independent mTLS paths, and 12 TLCP dual-key paths.
+  Both PRFs use every AES size; binary/empty passwords, exact PRF selection,
+  malformed parameters, work bounds and identity mismatch remain formal checks.
+  New identity scenarios require their generated fixture rather than selecting
+  an existing SHA256 input if its map entry is absent.
+- Before the implementation, the formal client-identities CTest failed all 96
+  newly valid admission cases. Pinned GmSSL #41 uses 99156c278e9f10fe72376573a2fc8b5340a40183
+  / port tree 789a8e17c3d0206a8434169134af3526c39bb62c. native-release-user
+  configure/full build and all five related CTests passed (83.83s). Existing
+  client-identities coverage passed again after its final fixture-map guard
+  (56.72s).
+  SHA256 and SM3/SM4 cases remain in those entries. Additional PRFs, PKCS12/PFX,
+  file-password loaders and standalone key-export formats are separate work.

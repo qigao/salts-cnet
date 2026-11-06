@@ -484,16 +484,25 @@ func TestTLCP(t *testing.T) {
 				suffix = ".aes192"
 				algorithm = pkcs.AES192CBC
 			}
-			aesDER, err := pkcs8.MarshalPrivateKey(key, []byte(password),
-				pkcs.NewPBESEncrypter(algorithm, pkcs.NewPBKDF2Opts(pkcs.SHA256, 16, 10000)))
-			if err != nil {
-				t.Fatal(err)
-			}
-			if err = os.WriteFile(f.keyPath+part+suffix+".der", aesDER, 0600); err != nil {
-				t.Fatal(err)
-			}
-			if err = os.WriteFile(f.keyPath+part+suffix, pem.EncodeToMemory(&pem.Block{Type: "ENCRYPTED PRIVATE KEY", Bytes: aesDER}), 0600); err != nil {
-				t.Fatal(err)
+			for _, hash := range []pkcs.Hash{pkcs.SHA256, pkcs.SHA384, pkcs.SHA512} {
+				path := f.keyPath + part + suffix
+				switch hash {
+				case pkcs.SHA384:
+					path += ".sha384"
+				case pkcs.SHA512:
+					path += ".sha512"
+				}
+				aesDER, err := pkcs8.MarshalPrivateKey(key, []byte(password),
+					pkcs.NewPBESEncrypter(algorithm, pkcs.NewPBKDF2Opts(hash, 16, 10000)))
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err = os.WriteFile(path+".der", aesDER, 0600); err != nil {
+					t.Fatal(err)
+				}
+				if err = os.WriteFile(path, pem.EncodeToMemory(&pem.Block{Type: "ENCRYPTED PRIVATE KEY", Bytes: aesDER}), 0600); err != nil {
+					t.Fatal(err)
+				}
 			}
 		}
 		bundle = rest
@@ -504,12 +513,21 @@ func TestTLCP(t *testing.T) {
 			runNativeClient(t, f, "localhost", true, []uint16{tlcp.ECC_SM4_GCM_SM3})
 			runNativeServer(t, f, verifiedConfig(f), "close")
 		})
-		for _, encryption := range []string{"aes128", "aes192", "aes"} {
-			t.Run(encryption+"_encrypted_memory_"+mode, func(t *testing.T) {
-				t.Setenv("SALTS_TEST_TLS_MEMORY", mode)
-				t.Setenv("SALTS_TEST_TLS_ENCRYPTED", encryption)
-				runNativeServer(t, f, verifiedConfig(f), "close")
-			})
+		for _, hash := range []string{"", "sha384", "sha512"} {
+			for _, encryption := range []string{"aes128", "aes192", "aes"} {
+				name := encryption + "_encrypted_memory_" + mode
+				if hash != "" {
+					name = hash + "_" + name
+				}
+				t.Run(name, func(t *testing.T) {
+					t.Setenv("SALTS_TEST_TLS_MEMORY", mode)
+					t.Setenv("SALTS_TEST_TLS_ENCRYPTED", encryption)
+					if hash != "" {
+						t.Setenv("SALTS_TEST_TLS_PBKDF2", hash)
+					}
+					runNativeServer(t, f, verifiedConfig(f), "close")
+				})
+			}
 		}
 		t.Run("encrypted_memory_"+mode, func(t *testing.T) {
 			t.Setenv("SALTS_TEST_TLS_MEMORY", mode)

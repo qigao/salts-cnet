@@ -10,12 +10,21 @@ typedef struct tls_test_memory {
 static int tls_test_read(tls_test_memory *m, unsigned slot, const char *path,
     const char *part, cnet_tls_data *out) {
   const char *mode = getenv("SALTS_TEST_TLS_MEMORY");
+  const char *prf = getenv("SALTS_TEST_TLS_PBKDF2");
+  const char *prf_suffix = "";
+  if (prf) {
+    if (!getenv("SALTS_TEST_TLS_ENCRYPTED")) return SALTS_EINVAL;
+    if (strcmp(prf, "sha384") == 0) prf_suffix = ".sha384";
+    else if (strcmp(prf, "sha512") == 0) prf_suffix = ".sha512";
+    else return SALTS_EINVAL;
+  }
   char name[2048];
-  if (!path || snprintf(name, sizeof(name), "%s%s%s%s", path, part,
+  if (!path || snprintf(name, sizeof(name), "%s%s%s%s%s", path, part,
       slot >= 2u && getenv("SALTS_TEST_TLS_ENCRYPTED") ?
           (strcmp(getenv("SALTS_TEST_TLS_ENCRYPTED"), "aes") == 0 ? ".aes" :
            strcmp(getenv("SALTS_TEST_TLS_ENCRYPTED"), "aes128") == 0 ? ".aes128" :
            strcmp(getenv("SALTS_TEST_TLS_ENCRYPTED"), "aes192") == 0 ? ".aes192" : ".encrypted") : "",
+      slot >= 2u ? prf_suffix : "",
       strcmp(mode, "der") == 0 ? ".der" : "") >= (int)sizeof(name)) return SALTS_EINVAL;
   FILE *f = fopen(name, "rb");
   if (!f) return SALTS_EIO;

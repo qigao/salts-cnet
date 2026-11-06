@@ -90,7 +90,7 @@ significant. NULL/0 selects plaintext, while a non-NULL pointer with zero length
 selects an empty password. Password bytes are borrowed only during init.
 Encrypted inputs use DER `EncryptedPrivateKeyInfo` or `ENCRYPTED PRIVATE KEY`
 PEM: PBES2 with either explicit PBKDF2-HMAC-SM3 / SM4-CBC or explicit
-PBKDF2-HMAC-SHA256 / AES-128/192/256-CBC. Salt is 8..64 bytes, IV is 16 bytes, optional
+PBKDF2-HMAC-SHA256/384/512 with AES-128/192/256-CBC. Salt is 8..64 bytes, IV is 16 bytes, optional
 key length is absent or the cipher key size (16, 24 or 32 bytes), and iterations are
 10000..1000000. PRF AlgorithmIdentifier parameters may be absent or NULL; an
 omitted PRF is rejected, including the implicit SHA1 default. Padded ciphertext is capped at
@@ -124,6 +124,34 @@ cases remain covered. CBC envelope encryption does not provide authentication;
 strict PKCS8 parsing and certificate binding remain mandatory. This addition
 applies to TLS memory credentials; the separate SM2 key-container export API
 keeps its documented SM3/SM4 protection format.
+
+GmSSL #41 also decodes the explicit HMAC-SHA384 and HMAC-SHA512 PRF identifiers
+defined by [RFC 8018 Appendix B.1.2](https://www.rfc-editor.org/rfc/rfc8018.html#appendix-B.1.2).
+Crypto selects the corresponding existing GmSSL digest only for AES-CBC memory
+credential import. The three AES key sizes remain independent of the digest
+size. The SM3/SM4 combination retains its separate admission rule; SHA384/512
+with SM4, omitted/unknown PRFs and malformed parameters still fail. No generic
+digest lookup, inferred algorithm, default PRF or trial decryption is introduced.
+
+This extends the existing credential format whitelist without changing public
+structs or adding configuration, dependencies, storage or runtime threads.
+The initialization owner borrows the inputs/password only for the call, validates
+the work/output limits before derivation, and commits an identity only after
+private-key parsing and certificate binding. Failure clears derived keys, cipher
+state and output, then returns the existing error without publishing a context.
+All existing trust, verification and immutable-context lifetimes remain intact.
+Revert the import dispatch and provider pin together to roll back the extension;
+SHA384/512 inputs then fail rather than selecting another scheme.
+
+Formal registered tests add 184 independent RSA/P256 admission scenarios, each
+checking both context roles; 48 standard TLS1.2/1.3 encrypted-client-identity
+handshakes; 36 native/native and independent ShangMi mTLS paths; and 12 TLCP
+server paths with independently protected signing/encryption keys. They cover
+all AES key sizes and PEM/DER, empty/binary passwords, exact PRF selection,
+unchanged work bounds, malformed envelopes and failed key/certificate binding.
+Input/password erasure precedes handshake progress. Existing SHA256 and SM3/SM4
+tests remain in the same formal entries. File-password loaders, standalone SM2
+key export, PKCS12/PFX and additional PRFs are not qualified by this extension.
 
 PKCS#12/PFX, other encrypted PKCS#8 algorithms and retained credential/key objects
 remain unimplemented. SDF/SKF hardware integration is deferred by user decision.
