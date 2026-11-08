@@ -660,8 +660,7 @@ static int crypto_tls_stream_alpn_copy(crypto_tls_stream_context *context,
     size_t length = strlen(protocols[index]);
     context->alpn_protocols[index] = (char *)crypto_tls_stream_malloc(length + 1u);
     if (context->alpn_protocols[index] == NULL) {
-      crypto_tls_session_cache_destroy(context->session_cache);
-  crypto_tls_stream_alpn_dispose(context);
+      crypto_tls_stream_alpn_dispose(context);
       return CRYPTO_TLS_STREAM_ENOMEM;
     }
     crypto_tls_stream_copy(CRYPTO_TLS_TEST_COPY_METADATA, context->alpn_protocols[index], protocols[index], length + 1u);
@@ -1014,6 +1013,7 @@ static void crypto_tls_stream_context_dispose(crypto_tls_stream_context *context
   for (index = 0u; index < CRYPTO_TLS_STREAM_VARIANT_COUNT; ++index) {
     if (context->tls_ready[index]) tls_ctx_cleanup(&context->tls[index]);
   }
+  crypto_tls_session_cache_destroy(context->session_cache);
   crypto_tls_stream_alpn_dispose(context);
   if (context->peer_policy.release != NULL)
     context->peer_policy.release(context->peer_policy.context);

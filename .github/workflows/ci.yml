@@ -142,6 +142,7 @@ jobs:
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 120
     env:
+      VCPKG_BINARY_CACHE: ${{ github.workspace }}/build/vcpkg-binary-cache
       VCPKG_DOWNLOADS: ${{ github.workspace }}/build/vcpkg-downloads
       CCACHE_DIR: ${{ github.workspace }}/build/ccache
       CCACHE_MAXSIZE: 256MiB
@@ -174,7 +175,7 @@ jobs:
 
       - name: Set up native LLVM
         if: runner.os != 'Windows'
-        uses: qigao/vcpkg-cache/.github/actions/setup-llvm-native@v0.1.7
+        uses: qigao/vcpkg-cache/.github/actions/setup-llvm-native@v0.1.1
         with:
           build-type: toolchain-only
           obfuscator: "false"
@@ -182,27 +183,38 @@ jobs:
       - name: Set up Windows LLVM-MinGW
         id: windows-llvm
         if: runner.os == 'Windows'
-        uses: qigao/vcpkg-cache/.github/actions/setup-llvm-mingw@v0.1.7
+        uses: qigao/vcpkg-cache/.github/actions/setup-llvm-mingw@v0.1.1
         with:
           target: ${{ matrix.target }}
           build-type: toolchain-only
           obfuscator: "false"
 
+      - name: Restore vcpkg binaries and downloads
+        id: vcpkg-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ${{ env.VCPKG_BINARY_CACHE }}
+            ${{ env.VCPKG_DOWNLOADS }}
+          key: vcpkg-v2-${{ runner.os }}-${{ runner.arch }}-${{ matrix.rid }}-${{ matrix.preset }}-v0.1.1-${{ steps.cache-paths.outputs.runner-image }}-${{ steps.windows-llvm.outputs.version }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', 'CMakeOptions.cmake', 'CMakePresets.json', 'CMakeUserPresets.json', 'presets/**', '.github/workflows/ci.yml') }}
+          restore-keys: |
+            vcpkg-v2-${{ runner.os }}-${{ runner.arch }}-${{ matrix.rid }}-${{ matrix.preset }}-v0.1.1-
+
       - name: Set up shared dependency contract
         id: vcpkg
         # GmSSL #44 adds bounded TLS sessions and certificate-policy fixes.
         # Includes native Windows pkg-config; avoid MSYS2 for pkg-config.
-        uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-curl-cache@v0.1.7
+        uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-curl-cache@v0.1.1
         with:
           mode: read
           triplet: ${{ matrix.triplet }}
           host-triplet: ${{ matrix.host }}
-          # Restore the local files cache below; CMake builds and caches misses.
-          restore-packages: "false"
+          # Match the full graph; cache misses compile through normal vcpkg.
+          features: "cnet,media,zstd"
           token: ${{ github.token }}
 
       - name: Restore re2c and Unicode host data
-        uses: qigao/vcpkg-cache/.github/actions/setup-re2c-tools@v0.1.7
+        uses: qigao/vcpkg-cache/.github/actions/setup-re2c-tools@v0.1.1
         with:
           token: ${{ github.token }}
 
@@ -268,20 +280,9 @@ jobs:
             echo "SALTSCORE_INSTALL_PREFIX=$GITHUB_WORKSPACE/package/sdk/$RID"
           } >> "$GITHUB_ENV"
 
-      - name: Restore vcpkg binaries and downloads
-        id: vcpkg-cache
-        uses: actions/cache/restore@v4
-        with:
-          path: |
-            ${{ env.VCPKG_BINARY_CACHE }}
-            ${{ env.VCPKG_DOWNLOADS }}
-          key: vcpkg-v1-${{ runner.os }}-${{ runner.arch }}-${{ matrix.rid }}-${{ matrix.preset }}-${{ steps.vcpkg.outputs.cache_revision }}-${{ steps.cache-paths.outputs.runner-image }}-${{ steps.windows-llvm.outputs.version }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', 'CMakeOptions.cmake', 'CMakePresets.json', 'CMakeUserPresets.json', 'presets/**', '.github/workflows/ci.yml') }}
-          restore-keys: |
-            vcpkg-v1-${{ runner.os }}-${{ runner.arch }}-${{ matrix.rid }}-${{ matrix.preset }}-${{ steps.vcpkg.outputs.cache_revision }}-
-
       - name: Install native ccache
         id: ccache
-        uses: qigao/vcpkg-cache/.github/actions/setup-ccache@v0.1.7
+        uses: qigao/vcpkg-cache/.github/actions/setup-ccache@v0.1.1
 
       - name: Restore compiler cache
         id: compiler-cache
