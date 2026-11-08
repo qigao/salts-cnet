@@ -236,6 +236,9 @@ typedef int (*cnet_sctp_session_mac_verify_fn)(void *context,
 
 /* The pointed-to provider context and all four callbacks are retained until
  * destroy. They must remain valid and callable only under the admitted Owner.
+ * MAC/verify must use a cryptographic key unknown to the remote peer. A plain
+ * DTLS exporter is shared with that peer and is not a server-private cookie
+ * key: use an independent secret or an additional untransmitted secret context.
  * peer_binding is an opaque, non-pointer DTLS generation identity and must be
  * nonzero. Ports, stream counts, timers, receive_window (at least 1500),
  * cookie_lifetime_ms and max_retransmits must be nonzero; t1_max_ms must be at
@@ -271,6 +274,13 @@ typedef struct cnet_sctp_session_create_config {
 cnet_sctp_session_status cnet_sctp_session_create(
     const cnet_sctp_session_create_config *config,
     uint64_t initial_time_ms, cnet_sctp_session **out);
+/* Read the immutable DTLS association identity under the admitted Owner.
+ * Refusal clears *binding. Does not admit wire or change Session state. */
+cnet_sctp_session_status cnet_sctp_session_get_peer_binding(
+    cnet_sctp_session *session,uint64_t *binding);
+/* Owner-only readiness for DATA/poll/pump, distinct from authenticated DTLS
+ * readiness and DCEP channel readiness. Refusal clears *ready. */
+cnet_sctp_session_status cnet_sctp_session_data_ready(cnet_sctp_session *,int *ready);
 
 /* start emits INIT. input consumes one complete SCTP packet and may emit one
  * reply. advance emits the next due retransmission/control packet. Output is

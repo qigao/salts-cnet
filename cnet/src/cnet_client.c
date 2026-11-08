@@ -1407,6 +1407,21 @@ int cnet_tls_negotiated_alpn(cnet_client *client, cnet_connection connection, ch
   return status;
 }
 
+int cnet_tls_session_reused(cnet_client *client, cnet_connection connection, bool *out) {
+  cnet_client_impl *impl = cnet_client_get(client);
+  cnet_shard_connection internal = {0};
+  cnet_session_state state = CNET_SESSION_FREE;
+  if (!out) return SALTS_EINVAL;
+  *out = false;
+  if (!impl) return SALTS_EINVAL;
+  cnet_client_record *record = cnet_client_find_record(impl,connection,&internal);
+  if (!record) return SALTS_ENOENT;
+  if (record->scheme != CNET_URI_TLS) return SALTS_ENOTSUP;
+  if (cnet_client_record_session_state(impl,record,&state) != SALTS_OK || state != CNET_SESSION_OPEN)
+    return SALTS_ENOTCONN;
+  return cnet_shards_tls_session_reused(&impl->shards,internal,out);
+}
+
 int cnet_tls_negotiated_version(cnet_client *client, cnet_connection connection, char *buffer,
                                 size_t capacity, size_t *out_size) {
   cnet_client_impl *impl = cnet_client_get(client);

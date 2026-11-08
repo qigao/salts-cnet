@@ -21,9 +21,18 @@ typedef struct salts_crypto_sm2_chain_entry {
   size_t issuer_identity_size; /* 1..8191, explicit binary bytes */
 } salts_crypto_sm2_chain_entry;
 
+/* Exact required ExtendedKeyUsage OID in this pinned peer profile. These
+ * values do not assert protocol-specific S/MIME, timestamp-authority or OCSP
+ * responder validation; enclosing protocols keep their additional contracts. */
 typedef enum salts_crypto_sm2_trust_purpose {
   SALTS_CRYPTO_SM2_TRUST_SERVER_SIGNING = 1,
-  SALTS_CRYPTO_SM2_TRUST_CLIENT_SIGNING = 2
+  SALTS_CRYPTO_SM2_TRUST_CLIENT_SIGNING = 2,
+  SALTS_CRYPTO_SM2_TRUST_CODE_SIGNING = 3,
+  SALTS_CRYPTO_SM2_TRUST_EMAIL_PROTECTION = 4,
+  SALTS_CRYPTO_SM2_TRUST_TIME_STAMPING = 8,
+  SALTS_CRYPTO_SM2_TRUST_OCSP_SIGNING = 9,
+  /* emailProtection EKU plus keyEncipherment KU, not digitalSignature. */
+  SALTS_CRYPTO_SM2_TRUST_EMAIL_ENCRYPTION = 10
 } salts_crypto_sm2_trust_purpose;
 typedef enum salts_crypto_sm2_revocation_policy {
   SALTS_CRYPTO_SM2_REVOCATION_EXTERNAL = 1,
@@ -53,7 +62,7 @@ typedef struct salts_crypto_sm2_trust_policy {
   void *revocation_context;
 } salts_crypto_sm2_trust_policy;
 
-/* Restricted certificate-path profile for a PINNED signing peer, not general
+/* Restricted certificate-path profile for a PINNED peer, not general
  * WebPKI path discovery or hostname verification. Pass leaf-first chain without
  * anchor, 1..4 entries, each canonical v3 DER <=4096 bytes, all curveSM2.
  * Every signature uses the next entry/explicit anchor and its supplied SM2 ID.
@@ -64,7 +73,9 @@ typedef struct salts_crypto_sm2_trust_policy {
  * Anchor, intermediates and leaf must be valid at the explicit time (Gregorian
  * dates, inclusive boundaries). CA certificates require critical CA=true basic
  * constraints, keyCertSign and sufficient pathLen; leaf requires CA=false,
- * digitalSignature, no keyCertSign/cRLSign and the exact requested EKU. CA EKU,
+ * digitalSignature (or keyEncipherment for EMAIL_ENCRYPTION), no keyCertSign/
+ * cRLSign and the exact requested EKU. EMAIL_ENCRYPTION maps to emailProtection;
+ * it does not admit keyAgreement-only leaves. CA EKU,
  * when present, must also contain that purpose; anyEKU alone is insufficient.
  * Leaf basicConstraints may be absent. KU and leaf EKU are mandatory.
  * Unsupported critical extensions, name constraints and policy constraint/

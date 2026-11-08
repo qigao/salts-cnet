@@ -8,9 +8,11 @@
 #include <crypto/tls_peer_policy.h>
 #include <crypto/tls_diagnostic.h>
 #include <crypto/tls_sm2_crl_policy.h>
+#include <crypto/tls_sm2_ocsp_policy.h>
 #include <crypto/tls_credentials.h>
 #include <crypto/tls_cipher.h>
 #include <crypto/tls_signature.h>
+#include <crypto/tls_group.h>
 
 #include <stddef.h>
 #include <stdint.h>
@@ -389,10 +391,38 @@ typedef enum cnet_tls_security_profile {
  * profiles/peer roles return SALTS_ENOTSUP during TLS initialization. */
 typedef crypto_tls_stream_peer_policy cnet_tls_peer_policy;
 typedef crypto_tls_sm2_crl_config cnet_tls_sm2_crl_config;
+
+typedef crypto_tls_sm2_ocsp_config cnet_tls_sm2_ocsp_config;
+/** Owned current-time OCSP snapshot; crypto/tls_sm2_ocsp_policy.h defines
+ * admission, exact applicability, bounds, ownership and limitations. SALTS status.
+ * Source bytes may be freed on return; caller releases the returned reference. */
+int cnet_tls_sm2_ocsp_peer_policy_create(const cnet_tls_sm2_ocsp_config *config,
+    cnet_tls_peer_policy *out_policy);
+int cnet_tlcp_sm2_ocsp_peer_policy_create(const cnet_tls_sm2_ocsp_config *config,
+    cnet_tls_peer_policy *out_policy);
+
 typedef crypto_tls_data cnet_tls_data;
+
+typedef crypto_tls_password cnet_tls_password;
 typedef crypto_tls_cipher_suite cnet_tls_cipher_suite;
 typedef crypto_tls_signature_scheme cnet_tls_signature_scheme;
+typedef crypto_tls_group cnet_tls_group;
 typedef crypto_tls_credentials cnet_tls_credentials;
+typedef crypto_tls_credential_object cnet_tls_credential_object;
+typedef crypto_tls_credential_kind cnet_tls_credential_kind;
+
+/** Crypto-owned reusable immutable identity; see crypto/tls_credentials.h.
+ * Returns SALTS status. Use a credentials descriptor with only .object set;
+ * initialization imports independent keys before the caller releases it. */
+int cnet_tls_credential_object_create(const cnet_tls_credentials *input,
+    cnet_tls_credential_kind kind, cnet_tls_credential_object **out);
+/** Authenticated PFX import; see crypto_tls_credential_object_from_pkcs12.
+ * Returns mapped SALTS status and publishes no object on failure. */
+int cnet_tls_credential_object_from_pkcs12(const cnet_tls_data *input,
+    const cnet_tls_password *password, cnet_tls_credential_kind kind,
+    cnet_tls_credential_object **out);
+int cnet_tls_credential_object_retain(cnet_tls_credential_object *object);
+void cnet_tls_credential_object_release(cnet_tls_credential_object *object);
 enum {
   CNET_TLS_SERVER_IDENTITY_MAX_COUNT = CRYPTO_TLS_SERVER_IDENTITY_MAX_COUNT,
   CNET_TLS_CLIENT_IDENTITY_MAX_COUNT = CRYPTO_TLS_CLIENT_IDENTITY_MAX_COUNT
@@ -508,15 +538,24 @@ typedef struct cnet_tls_client_config {
    * as crypto_tls_stream_client_config.cipher_suites. NULL/0 keeps defaults. */
   const cnet_tls_cipher_suite *cipher_suites;
   size_t cipher_suite_count;
+  /** Immutable copied key-exchange group allowlist, 1..GROUP_MAX_COUNT unique
+   * entries. NULL/0 keeps the profile default. STANDARD currently implements
+   * P256; SHANGMI_TLS13 implements SM2. Unsupported groups return ENOTSUP before
+   * trust I/O. TLCP's static-key profile rejects explicit group lists. */
+  const cnet_tls_group *supported_groups;
+  size_t supported_group_count;
   /** Same copied signature-list contract as Crypto TLS stream configuration. */
   const cnet_tls_signature_scheme *signature_algorithms;
   size_t signature_algorithm_count;
-  /** Independent TLS1.2/1.3 certificate-chain signature allowlist, copied at init.
+  /** Independent TLS/TLCP certificate-chain signature allowlist, copied at init.
    * NULL/0 uses signature_algorithms. Explicit lists contain 1..4 unique
    * RSA-PKCS1-SHA256 or ECDSA P256/SHA256, P384/SHA384 (STANDARD), or SM2/SM3
    * (SHANGMI). RSA-PSS certificate signatures are unsupported. STANDARD permits
-   * TLS1.2/1.3 and ranges; TLCP returns ENOTSUP before I/O. TLS1.2 client identity
-   * selection also obeys the peer CertificateRequest's shared signature list.
+   * TLS1.2/1.3 and ranges. TLCP clients admit SM2/SM3 or RSA-PKCS1-SHA256
+   * certificate issuers while retaining SM2 handshake signatures; the policy is
+   * local admission, without adding TLS extension 50 to TLCP. TLCP server lists
+   * return ENOTSUP while client authentication is unsupported. TLS1.2 client
+   * identity selection also obeys the peer CertificateRequest's shared list.
    * Controls certificate extension offers, selection and peer-chain verification.
    * Handshake signatures remain controlled by signature_algorithms. */
   const cnet_tls_signature_scheme *certificate_signature_algorithms;
@@ -528,6 +567,15 @@ typedef struct cnet_tls_client_config {
    * Certificate. TLCP client identities are unsupported. */
   const cnet_tls_client_identity *identities;
   size_t identity_count;
+  /** Reusable-client owned cache: 0 disables, 1..16 bounded TLS1.3 entries.
+   * Requires exact STANDARD TLS1.3 bounds or SHANGMI_TLS13. Other profiles/
+   * ranges and implicit iOS system trust return ENOTSUP before trust I/O;
+   * >16 returns EINVAL. Only connections sharing this TLS client share tickets.
+   * Entries bind exact name/cipher/ALPN and original peer chain; selected entries
+   * are consumed once, including failed connects. Resumed chains and peer policy
+   * are rechecked before OPEN. No 0RTT, persistence or server ticket issuance.
+   * See crypto_tls_stream_client_config for full cache ownership semantics. */
+  uint32_t session_cache_capacity;
 } cnet_tls_client_config;
 
 /** Configuration copied into a reusable server context during initialization. */
@@ -582,15 +630,24 @@ typedef struct cnet_tls_server_config {
    * as crypto_tls_stream_client_config.cipher_suites. NULL/0 keeps defaults. */
   const cnet_tls_cipher_suite *cipher_suites;
   size_t cipher_suite_count;
+  /** Immutable copied key-exchange group allowlist, 1..GROUP_MAX_COUNT unique
+   * entries. NULL/0 keeps the profile default. STANDARD currently implements
+   * P256; SHANGMI_TLS13 implements SM2. Unsupported groups return ENOTSUP before
+   * trust I/O. TLCP's static-key profile rejects explicit group lists. */
+  const cnet_tls_group *supported_groups;
+  size_t supported_group_count;
   /** Same copied signature-list contract as Crypto TLS stream configuration. */
   const cnet_tls_signature_scheme *signature_algorithms;
   size_t signature_algorithm_count;
-  /** Independent TLS1.2/1.3 certificate-chain signature allowlist, copied at init.
+  /** Independent TLS/TLCP certificate-chain signature allowlist, copied at init.
    * NULL/0 uses signature_algorithms. Explicit lists contain 1..4 unique
    * RSA-PKCS1-SHA256 or ECDSA P256/SHA256, P384/SHA384 (STANDARD), or SM2/SM3
    * (SHANGMI). RSA-PSS certificate signatures are unsupported. STANDARD permits
-   * TLS1.2/1.3 and ranges; TLCP returns ENOTSUP before I/O. TLS1.2 client identity
-   * selection also obeys the peer CertificateRequest's shared signature list.
+   * TLS1.2/1.3 and ranges. TLCP clients admit SM2/SM3 or RSA-PKCS1-SHA256
+   * certificate issuers while retaining SM2 handshake signatures; the policy is
+   * local admission, without adding TLS extension 50 to TLCP. TLCP server lists
+   * return ENOTSUP while client authentication is unsupported. TLS1.2 client
+   * identity selection also obeys the peer CertificateRequest's shared list.
    * Controls certificate extension offers, selection and peer-chain verification.
    * Handshake signatures remain controlled by signature_algorithms. */
   const cnet_tls_signature_scheme *certificate_signature_algorithms;
@@ -599,6 +656,12 @@ typedef struct cnet_tls_server_config {
    * Replaces the single identity fields; consumed during server init. */
   const cnet_tls_server_identity *identities;
   size_t identity_count;
+  /** Same context-owned TLS1.3 stateful server ticket contract as Crypto:
+   * both zero disables, otherwise capacity 1..16 and lifetime 1..604800 seconds.
+   * Requires exact STANDARD TLS1.3 or SHANGMI_TLS13. Reuse one tls_server to
+   * share tickets across accepted connections; no 0RTT or persistence. */
+  uint32_t session_ticket_capacity;
+  uint32_t session_ticket_lifetime_seconds;
 } cnet_tls_server_config;
 
 typedef struct cnet_connect_options {
@@ -1471,14 +1534,6 @@ int cnet_tls_negotiated_alpn(cnet_client *client, cnet_connection connection, ch
                              size_t capacity, size_t *out_size);
 
 /**
- * Copies the verified peer leaf certificate SHA-256 digest as 64 lowercase
- * hexadecimal characters plus a trailing NUL. The query is valid only while
- * the TLS connection remains open. A server connection without a presented
- * client certificate returns `SALTS_ENOENT`; plaintext returns `SALTS_ENOTSUP`.
- * Other errors are `SALTS_ENOTCONN` and the standard invalid/stale-handle
- * statuses.
- */
-/**
  * Copies the negotiated TLS protocol name (for example `TLSv1.3`) into
  * `buffer` after a TLS connection is open. `capacity` includes the trailing
  * NUL and `out_size` excludes it. Plaintext returns `SALTS_ENOTSUP`;
@@ -1487,6 +1542,12 @@ int cnet_tls_negotiated_alpn(cnet_client *client, cnet_connection connection, ch
  */
 int cnet_tls_negotiated_version(cnet_client *client, cnet_connection connection, char *buffer,
                                 size_t capacity, size_t *out_size);
+
+/** Actual accepted session restoration, queried on the progress owner for an
+ * OPEN TLS connection. False on errors; plain streams return ENOTSUP, stale
+ * generations ENOENT and non-open TLS connections ENOTCONN. Invalid pointers
+ * return EINVAL. out_reused borrows caller storage only during this call. */
+int cnet_tls_session_reused(cnet_client *client, cnet_connection connection, bool *out_reused);
 
 /**
  * Copies the negotiated TLS cipher-suite name into `buffer` after a TLS
@@ -1497,6 +1558,14 @@ int cnet_tls_negotiated_version(cnet_client *client, cnet_connection connection,
 int cnet_tls_negotiated_cipher(cnet_client *client, cnet_connection connection, char *buffer,
                                size_t capacity, size_t *out_size);
 
+/**
+ * Copies the verified peer leaf certificate SHA-256 digest as 64 lowercase
+ * hexadecimal characters plus a trailing NUL. The query is valid only while
+ * the TLS connection remains open. A server connection without a presented
+ * client certificate returns `SALTS_ENOENT`; plaintext returns `SALTS_ENOTSUP`.
+ * Other errors are `SALTS_ENOTCONN` and the standard invalid/stale-handle
+ * statuses. Resumed clients inspect the revalidated original peer certificate.
+ */
 int cnet_tls_peer_certificate_sha256(cnet_client *client, cnet_connection connection,
                                      char buffer[CNET_TLS_PEER_CERTIFICATE_SHA256_CAPACITY]);
 

@@ -15,6 +15,15 @@ static int run_peer_policy_cases(void) {
       .cert_file = CORE_TLS_TEST_P384_LEAF, .key_file = CORE_TLS_TEST_P384_KEY,
       .peer_policy = &policy};
   int result = 0;
+  for (unsigned invalid = 0u; invalid < 4u; ++invalid) {
+    cnet_tls_client_config cache = {.size = sizeof(cache), .ca_file = "absent-session-ca.pem",
+        .session_cache_capacity = invalid == 0u ? 17u : 1u,
+        .security_profile = invalid == 3u ? CNET_TLS_SECURITY_PROFILE_TLCP11 : CNET_TLS_SECURITY_PROFILE_STANDARD,
+        .minimum_version = invalid == 2u ? CNET_TLS_PROTOCOL_VERSION_1_2 : 0,
+        .maximum_version = invalid == 2u ? CNET_TLS_PROTOCOL_VERSION_1_2 : 0};
+    REQUIRE(cnet_tls_client_init(&client,&cache) == (invalid == 0u ? SALTS_EINVAL : SALTS_ENOTSUP));
+    REQUIRE(client.impl == NULL);
+  }
   REQUIRE(cnet_tls_server_init(&server, &server_cfg) == SALTS_EINVAL);
   REQUIRE(server.impl == NULL && client.impl == NULL);
   for (unsigned bad = 0u; bad < 5u; ++bad) {

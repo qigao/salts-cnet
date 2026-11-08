@@ -3899,6 +3899,17 @@ int cnet_owner_tcp_shutdown(cnet_owner *owner, cnet_session_handle session_handl
   return SALTS_OK;
 }
 
+int cnet_owner_tls_session_reused(cnet_owner *owner, cnet_session_handle handle, bool *out) {
+  cnet_owner_impl *impl = cnet_owner_get(owner);
+  if (!out) return SALTS_EINVAL;
+  *out = false;
+  if (!impl) return SALTS_EINVAL;
+  cnet_owner_session *session = cnet_owner_find_session(impl,handle);
+  if (!session) return SALTS_ENOENT;
+  if (session->peer.scheme != CNET_URI_TLS) return SALTS_ENOTSUP;
+  return cnet_tls_state_session_reused(&session->tls,out);
+}
+
 int cnet_owner_tls_negotiated_version(cnet_owner *owner, cnet_session_handle session_handle,
                                       char *buffer, size_t capacity, size_t *out_size) {
   cnet_owner_impl *impl = cnet_owner_get(owner);

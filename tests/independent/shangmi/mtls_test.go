@@ -5,9 +5,11 @@ import (
 	"crypto/sha256"
 	"crypto/x509"
 	"encoding/pem"
+	"flag"
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -15,6 +17,8 @@ import (
 	"github.com/emmansun/gmsm/pkcs8"
 	"github.com/emmansun/gmsm/sm3"
 )
+
+var python = flag.String("python", "", "configured formal fixture interpreter")
 
 // Both endpoints are production CNet/NativeIO/GmSSL here. Certificates and
 // fingerprint expectations are independent; this is not a second TLS engine.
@@ -78,7 +82,36 @@ func TestShangMiMutual(t *testing.T) {
 			encryptedMemoryFixture(t, client.keyPath, bits, prf)
 		}
 	}
+	t.Run("pkcs12", func(t *testing.T) {
+		if *python == "" {
+			t.Fatal("-python is required for PFX fixtures")
+		}
+		script := filepath.Join("..", "..", "..", "crypto", "tests", "asn1", "pkcs12_peer.py")
+		for _, f := range []fixture{server, client} {
+			if out, err := exec.Command(*python, script, "--fixture", f.certPath+".pfx", f.certPath, f.keyPath).CombinedOutput(); err != nil {
+				t.Fatalf("PFX fixture: %v\n%s", err, out)
+			}
+		}
+		t.Setenv("SALTS_TEST_TLS_MEMORY", "der")
+		t.Setenv("SALTS_TEST_TLS_PKCS12", "1")
+		mutual(t, server, client, "accept")
+		runNativeServerWithClient(t, server, &client, "close")
+		runNativeClientWithIdentity(t, server, &client, "localhost", true, "")
+	})
 	for _, mode := range []string{"pem", "der"} {
+		for _, encrypted := range []bool{false, true} {
+			t.Run(fmt.Sprintf("credential_object_%s/%t", mode, encrypted), func(t *testing.T) {
+				t.Setenv("SALTS_TEST_TLS_MEMORY", mode)
+				t.Setenv("SALTS_TEST_TLS_OBJECT", "1")
+				t.Setenv("SALTS_TEST_TLS_GROUP", "1")
+				if encrypted {
+					t.Setenv("SALTS_TEST_TLS_ENCRYPTED", "1")
+				}
+				mutual(t, server, client, "accept")
+				runNativeServerWithClient(t, server, &client, "close")
+				runNativeClientWithIdentity(t, server, &client, "localhost", true, "")
+			})
+		}
 		t.Run("memory_"+mode, func(t *testing.T) {
 			t.Setenv("SALTS_TEST_TLS_MEMORY", mode)
 			mutual(t, server, client, "accept")

@@ -2,7 +2,9 @@
 
 SCTP exposes `Salts::SCTP` from the root SaltsCore graph. Its bounded opaque
 Session and private protocol tests are independent of a TLS provider.
-Production CNet DTLS integration remains open in
+`Salts::SCTPDTLS` adds a bounded bridge to the production GmSSL-backed CNet
+DTLS owner. Its local Windows qualification is described below; broader platform
+and browser qualification remains open in
 [#188](https://github.com/qigao/salts-core/issues/188).
 
 ## Build and test
@@ -31,11 +33,81 @@ use plaintext loopback UDP solely to test the SCTP protocol.
 The OpenSSL-linked DTLS adapters and standalone DTLS consumer were removed.
 Their historical fingerprint, exporter, encrypted-record and revoked-owner
 results are not current qualification. No DTLS mode silently falls back to
-UDP: obsolete arguments fail. A non-OpenSSL production provider and real
-DTLS ownership tests are still required by #188. General Session owner,
+UDP: obsolete arguments fail. The replacement below uses production CNet DTLS
+and GmSSL in the existing project graph. General Session owner,
 stopped-session and generation checks remain in the formal C11 suite.
 Python TLS peers elsewhere in the repository remain external test processes;
 their platform OpenSSL implementation is not linked into Salts targets.
+
+## CNet DTLS bridge
+
+Include `<cnet/sctp_dtls.h>` and link `Salts::SCTPDTLS` for the C11 bridge.
+Keep `Salts::SCTP` alone for a provider-independent Session. The bridge borrows
+one existing DTLS owner and one Session on the same fixed Owner. Initialize
+only after DTLS READY, using `cnet_dtls_get_info().binding` as Session's exact
+`peer_binding`. DTLS, Session and provider context must outlive bridge destroy.
+DTLS READY, SCTP `data_ready` and DCEP channel readiness are separate gates.
+
+The host routes DTLS `on_receive` to `cnet_sctp_dtls_receive`, returning its
+result unchanged: ENOBUFS consumes nothing and DTLS retains the authenticated
+record for later advance. It routes every actual `on_send` to
+`cnet_sctp_dtls_send_complete`, including during error/abort drain. A wrong tag
+is unmatched; a real local send never implies remote SCTP acknowledgment.
+Drive bridge advance, DTLS advance, then the existing single host observation
+and complete batch routing. No second backend, worker or observer is created.
+
+Configure 1..64 copied input slots, each <=1280 bytes. One 1163-byte output
+staging slot is reserved before any output-producing Session start/open/send/
+poll/close. Commit exactly once with the actual result and written count, even
+for EMPTY or noncommitting failure. CAPACITY maps to ENOBUFS; it does not admit
+wire or poison the association. An admitted output stays immutable through its
+real local send callback. For example, after Session `data_ready` succeeds:
+
+```c
+#include <cnet/sctp_dtls.h>
+
+/* Same Owner; event/message are caller-owned, disjoint output buffers.
+ * Returns a Salts status; available is set only for a copied Session event. */
+static int poll_sctp(cnet_sctp_dtls *bridge, cnet_sctp_session *session,
+    uint64_t now, cnet_sctp_session_event *event, void *message,
+    size_t capacity, int *available) {
+  void *wire;
+  size_t wire_capacity, written = 0u;
+  *available = 0;
+  int result = cnet_sctp_dtls_reserve(bridge, &wire, &wire_capacity);
+  if (result) return result;
+  cnet_sctp_session_status status = cnet_sctp_session_poll(session, now,
+      event, message, capacity, wire, wire_capacity, &written);
+  result = cnet_sctp_dtls_commit(bridge, status, written);
+  if (!result) *available = status == CNET_SCTP_SESSION_OK;
+  return result;
+}
+```
+
+Session's cookie provider requires a cryptographic secret unknown to the peer.
+DTLS exporters are shared secrets with that peer, so a public exporter label
+alone is insufficient. The formal native provider calls `cnet_dtls_hmac`
+through CNet's sole physical Crypto instance with an OS-random private
+per-association exporter context. It erases that context on cleanup. Do not
+link a second static Crypto archive into a CNet consumer.
+
+Abort stops Session, discards unsubmitted storage and waits for an admitted
+send's actual terminal. Continue routing and progress until abort succeeds,
+then destroy bridge, Session and finally the drained DTLS owner. The borrowed
+datagram/listener/backend remain the host's responsibility. Replacing DTLS under
+a live bridge is invalid; generation checks refuse old Session traffic.
+
+The module-owned formal CTest `saltscore.sctp_dtls_native` uses the
+[native host](tests/dtls_native_peer.c) and [independent Pion peer](tests/secure/dtls_test.go).
+Ten scenarios cover both native roles, ordinary/external NativeIO, one/four/
+eight peers, mixed authentication failure/cancel and eight healthy clients.
+Every healthy peer exchanges 1 byte, 1 KiB, 24 KiB and logical-empty binary
+messages, with separate cumulative ACK receipts. One-slot bridge pressure and
+two encrypted records in one actual datagram exercise non-consuming delivery.
+The shared backend neighbor survives teardown. This local Windows IOCP/IPv4
+evidence does not qualify throughput, encrypted packet-loss recovery, browsers,
+other operating systems or sanitizers. It is part of the normal build/CTest
+graph, not a replacement standalone validation project.
 
 ## Installed opaque Session: bounded messages
 

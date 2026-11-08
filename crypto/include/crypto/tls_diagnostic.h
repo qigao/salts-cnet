@@ -36,7 +36,9 @@ typedef enum crypto_tls_failure_reason {
 /* Owned value with no certificate, key, hostname or provider pointers.
  * Index is zero-based in the peer's presented chain; SIZE_MAX means unknown.
  * Validity/purpose/signature failures identify the checked peer certificate,
- * including intermediate CAs and the TLCP encryption leaf. Root-selection
+ * including intermediate CAs and the TLCP encryption leaf. Depth identifies
+ * the first presented issuer beyond the configured bound (after one TLS or
+ * two TLCP leaves); a local anchor never gets a fabricated position. Root-selection
  * failures and local-only trust anchors remain unknown; no position is inferred.
  * Ignore index when reason is NONE. This records local handshake failure only,
  * not transport failures, post-handshake errors or context-init failures. */

@@ -1,6 +1,9 @@
 #include <asn1.h>
 #include <asn1_value.h>
 #include <crypto/asn1_crypto.h>
+#include <crypto/tls_credentials.h>
+#include <crypto/tls_group.h>
+#include <crypto/tls_stream.h>
 #include <tinytest.hpp>
 #include <cstdint>
 #include <cstddef>
@@ -11,6 +14,16 @@ static_assert(std::is_standard_layout<salts_asn1_reader>::value, "reader ABI");
 static_assert(SALTS_ASN1_ABI_VERSION == 1u, "ASN.1 ABI version");
 
 spec("Crypto ASN.1 C++17 public header") {
+    it("links immutable credential lifetime operations through the C ABI") {
+        crypto_tls_credential_object *object = nullptr;
+        check_equal(crypto_tls_credential_object_retain(object), static_cast<int>(CRYPTO_TLS_STREAM_EINVAL));
+        crypto_tls_credential_object_release(object);
+        check_equal(crypto_tls_credential_object_from_pkcs12(nullptr, nullptr,
+            CRYPTO_TLS_CREDENTIAL_SINGLE, &object), static_cast<int>(CRYPTO_TLS_STREAM_EINVAL));
+        check_null(object);
+        static_assert(CRYPTO_TLS_GROUP_SECP256R1 == 0x0017, "P256 wire group");
+        static_assert(CRYPTO_TLS_GROUP_SM2P256V1 == 0x0029, "SM2 wire group");
+    }
     it("links the C ABI and validates DER") {
         const std::uint8_t encoded[] = {0x02,0x01,0x2a};
         check_equal(salts_asn1_validate(encoded, sizeof(encoded), SALTS_ASN1_DER), SALTS_ASN1_OK);

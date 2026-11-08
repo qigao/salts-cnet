@@ -8,6 +8,19 @@ source or falls back to plaintext.
 
 ## Current software coverage
 
+The local completion pass keeps all remaining software work on one branch until
+implementation and formal tests are ready together. Credential objects own bounded,
+decrypted immutable material with explicit references; TLS contexts import independent
+provider key state. New policy inputs are validated before trust I/O and copied at
+initialization. Datagram security must preserve message boundaries, fixed progress
+ownership, bounded reassembly/replay/retransmission state, and native storage until
+real completion. CMS, PKIX and revocation workflows must authenticate their inputs
+before publication, and cached validation never bypasses freshness or trust policy.
+Session restoration must bind the authenticated peer, profile, hostname, ALPN and
+verification policy; 0-RTT additionally requires bounded replay protection. Functional
+completion and platform/side-channel qualification are recorded separately. SDF/SKF
+and hot update remain outside the authorized implementation scope.
+
 | Capability | Public Core interface / status | Formal evidence |
 |---|---|---|
 | SM2 | Raw private/public keys, identity-bound SM3 signatures, canonical DER public-key encryption | Standard generator, signature identity/message negatives, invalid scalar/point, maximum plaintext, corrupted/truncated ciphertext |
@@ -21,10 +34,12 @@ source or falls back to plaintext.
 | SM2 certificate primitives | SM2 public-key extraction, local private-key binding and explicit-issuer signature verification | Native and independent gmsm certificates; ID/issuer/DER/algorithm/tamper negatives; these operations do not validate certificate trust |
 | SM2 pinned-peer trust | Explicit bounded chain/anchor, leaf-key identity, validation time, signing purpose and revocation policy | Independently signed paths, CA/pathLen/KU/EKU/time/constraint negatives, callback gating and failure erasure; cross-platform CI required |
 | SM2 complete direct CRL | Explicit issuer/SM2 signing ID, full-CRL scope, time/age/number policy and serial checking | Independent gmsm CRLs, real pinned-trust callback, revoked/stale/rollback/scope/DER negatives; cross-platform CI required |
-| CMS / SM2 certificate workflows | CMS enabled in provider; public workflow qualification pending | Generic ASN1 parsing and existing X509 inspection alone do not qualify signing or trust |
+| SM2 direct-issuer OCSP | Bounded SM2/SM3 BasicOCSPResponse checking and immutable ShangMi/TLCP admission snapshots | Independent ASN.1/SM2 responses and pollux OCSP producer/parser; actual ShangMi mTLS and TLCP dual-certificate data/close; explicit no-check delegated responders; stapling/distribution remain separate |
+| CMS authenticated envelopes | Local finite RFC5083 container with SM2 key transport and SM4-GCM; authenticated pinned recipient paths | Independent Go ASN1/SM2/SM4 bidirectional tests, maximum signed payload composition, recipient-trust/corruption/output-erasure gates; sender identity requires inner SignedData |
+| CMS signed data | Local bounded SM2/SM3 RFC-content and ShangMi-content profiles; explicit pinned certificate trust | Independent gmsm/PKCS7 attached/detached signing and verification; rejection/output-erasure/callback gates; general PKIX and encryption workflows remain separate |
 | TLCP 1.1 ECC_SM4_GCM_SM3 | Explicit CNet client/server profile with dual SM2 server certificates | Independent GoTLCP bidirectional handshake/data/close, CA/DNS/IP/time/signature/KU negatives, local dual-identity admission and signature-extension/cipher rejection; cross-platform CI required |
 | TLS 1.3 ShangMi | Explicit CNet client/server RFC 8998 SM4-GCM profile with SM2 server authentication and REQUIRED-mTLS | Independent server-authenticated handshake/data/close, certificate/CertificateVerify/Finished negatives, exact profile rejection, fragmentation and abnormal EOF; native/native mTLS with independent certificates/digests and independent mTLS in both native directions; cross-platform CI required |
-| DTLS | Issue #188 resumed; implementation and CNet/SCTP qualification pending | Existing TLS tests do not qualify DTLS |
+| DTLS1.2 | Finite opaque client/server, GmSSL AES128-GCM/P256/EMS/cookies, ordinary/external CNet datagrams and bounded SCTPDTLS bridge | Independent Python/Pion, actual Windows IOCP, supplied-chain PKIX and up to eight concurrent SCTP peers; general policies/path building and wider platform qualification pending |
 | SDF / SKF hardware | Requires selected vendor runtime/device and its integration tests | No software fallback for non-exportable keys |
 
 GmSSL 3.2.0 port revision 24 enables SM9, ZUC and CMS and exports the enabled
@@ -47,6 +62,277 @@ nonempty authenticated application record is received.
 Revision 24 adds bounded in-memory certificate-chain and plain PKCS#8 key
 admission. It checks the complete chain ordering and each private-key binding
 before committing the context's owned identity.
+
+### Direct-issuer OCSP and transport admission
+
+`crypto/sm2_ocsp.h` verifies the finite direct-issuer SM2/SM3 profile of
+[RFC 6960](https://www.rfc-editor.org/rfc/rfc6960.html). Certificate/path trust
+must already be established; status checking alone cannot authenticate a
+certificate signature. SHA1 (identifier only), SHA256 and SM3 CertID hashes and
+both responder Name/key-hash forms bind the configured issuer. Embedded
+certificates never establish trust: if present, the collection must contain
+exactly the configured issuer. Direct-checking functions reject delegation.
+Separate explicit delegated-checking functions require a caller-selected responder
+certificate directly signed by the same CA, digitalSignature KU, OCSPSigning EKU,
+current validity and validity at producedAt. A noncritical exact DER NULL
+id-pkix-ocsp-nocheck is mandatory: this is the issuer's authorization to trust the
+responder for that certificate's lifetime under RFC 6960 section 4.2.2.2.1.
+No-check is never inferred from missing revocation data. The existing pinned-path
+validator enforces the complete responder path/signature/purpose rules with a
+separate explicit certificate-signing ID. Response signature IDs remain independent.
+Optional embedded certificates contain exactly that responder and optionally the
+exact issuer; they supply neither a new anchor nor a discovered responder. Other
+responder revocation/discovery workflows fail outside this finite profile.
+
+The synchronous primitive owns no memory or I/O. Its inputs are immutable
+borrows, with explicit UTC validation seconds, SM2 response ID, maximum age,
+clock skew and authenticated rollback floor. It parses every entry, including
+entries after the target. A target must have exactly one matching good status;
+revoked, unknown, absent or multiple matches fail. A separately named snapshot
+validation operation authenticates a collection without claiming any target is
+good. Collections are at most 64 KiB and 16 distinct DER CertIDs. Unsupported
+single-response extensions and unknown/duplicate response extensions fail.
+
+All entries require thisUpdate <= producedAt < nextUpdate. Each thisUpdate and
+producedAt must be no later than validation time plus explicit skew (0..3600
+seconds); validation time minus skew must be before nextUpdate. Age is bounded
+from thisUpdate, and thisUpdate cannot precede the caller-maintained floor.
+No request, retry, clock, cache or floor persistence is hidden in the primitive.
+Optional exact nonces use nested OCTET STRING encoding and 32..128 bytes per
+[RFC 9654](https://www.rfc-editor.org/rfc/rfc9654.html); NULL/0 requires nonce-free
+responses. The caller owns secure nonce generation and rollback-floor updates.
+
+`crypto/tls_sm2_ocsp_policy.h` and the matching CNet factories copy one immutable
+nonce-free snapshot (<100 KiB including metadata). Creation authenticates the
+whole snapshot against host UTC before publication. Handshakes recheck current
+time, issuer signatures with a separately configured certificate SM2 ID, and
+every actual leaf's good status after mandatory TLS authentication and before
+application readiness. ShangMi accepts one leaf and an optional exact issuer;
+TLCP server authentication accepts two distinct signing/encryption leaves and
+an optional exact common issuer. Both TLCP leaves must pass. Unsupported
+profiles/roles fail before trust loading or retain. No new thread, receive owner,
+network fetch, allocation in checks, mutable cache, wire stapling or established
+connection revalidation is introduced. Caller buffers can be erased on return;
+release the caller's policy reference after context creation. Each context keeps
+its own reference until its streams are destroyed.
+
+For example, set `cnet_tls_sm2_ocsp_config` with an authenticated issuer DER,
+response DER, explicit certificate/response IDs, maximum age and rollback floor;
+call `cnet_tls_sm2_ocsp_peer_policy_create`, then set the client/server context's
+`peer_policy` before construction. TLCP clients use
+`cnet_tlcp_sm2_ocsp_peer_policy_create` with `peer_is_server=true`. Any factory
+failure publishes no reference. See the public header for exact error and alias
+contracts. A fresh context selects a fresh snapshot; this does not add hot reload.
+
+Formal Crypto tests cover the three hashes, both responder forms, explicit IDs,
+nonce/time/age/floor boundaries, full-entry parsing, status/signature/DER failures
+and pinned-trust callback ordering. Formal CNet tests use actual authenticated
+ShangMi endpoints in both roles, a separately implemented OCSP library and TLCP
+dual-certificate handshakes, including independent revocations and missing status,
+same-name issuer substitution, explicit delegated responders and no-check/
+KU/EKU/certificate signature/time/identity negatives, profile/role rejection, erased source buffers,
+early context/reference release, application data and orderly close. Functional
+passing tests do not establish side-channel resistance or general PKIX support.
+
+### CMS authenticated encryption design
+
+The local completion also adds a finite RFC 5083 AuthEnvelopedData schema:
+one issuer/serial SM2 key-transport recipient, SM4-GCM, a freshly generated
+16-byte content key and 12-byte nonce, and a separate 16-byte mac. The explicit
+SM4-GCM algorithm OID is 1.2.156.10197.1.104.8 with GCM nonce/tag parameters.
+The RFC describes the CMS container; this SM4 profile does not assert AES-only
+RFC 5084 algorithm conformance or full national CMS certification.
+
+Keep the existing Salts ASN1 owner for canonical DER, public Core SM2 key
+transport and SM4-GCM for cryptography, and the pinned-chain owner for recipient
+trust. Do not use unauthenticated CBC decryption or infer authentication from
+provider CMS parsing. A distinct EMAIL_ENCRYPTION purpose reuses the same chain,
+anchor, identity, validity, KU/EKU and revocation contract, requiring
+keyEncipherment and emailProtection rather than signing usage. SignedData never
+accepts this encryption-only purpose. This avoids parallel path-validation rules.
+
+One synchronous operation owns bounded temporary storage; it securely erases
+content keys and all decrypted workspace on every admitted exit. No plaintext
+escapes before the complete GCM tag succeeds. Authenticated encryption provides
+ciphertext integrity for the recovered key; anyone knowing the public recipient
+key can create a new envelope, so it does not identify a sender. Applications
+requiring sender identity compose an attached SignedData inside the envelope and
+verify that signed payload with its own authenticated signer path before use.
+There is no key/password retention, new dependency, worker or progress owner.
+
+Only id-data content, exactly one key-transport recipient, and no originator,
+authenticated or unauthenticated attributes are admitted in this finite profile.
+Other CMS encodings/algorithms fail; no trial decryption or format fallback.
+Changing this profile requires rebuilding consumers, and rollback removes the
+new interface and its encryption-purpose branch together. Existing signing and
+TLS purpose behavior stays stable. Formal independent Go ASN1/SM2/SM4 tests cover both directions, empty/binary/maximum
+payloads, fresh key/nonce generation, complete signed-payload composition,
+key/recipient/tag/DER corruption, output erasure, long issuer Names, explicit
+certificate signing IDs and trust callback gating. These local results do not
+establish cross-platform or side-channel qualification.
+
+### CMS signed data and explicit application purposes
+
+`crypto/sm2_cms.h` owns one bounded SM2/SM3 signer for attached or detached
+SignedData. It explicitly selects RFC 5652 content OIDs or the national SM2 CMS
+content-OID family. This qualifies a finite signed-data profile, not every CMS
+message/algorithm combination or national standards certification. It composes
+canonical Salts::ASN1 with existing GmSSL-backed SM2/SM3 primitives. No native
+provider pointer, alternate provider, filesystem, network worker or retained
+application storage is introduced.
+
+The native provider's CMS facade uses national content OIDs and its own digest
+construction. Core needs explicit format admission, exact signed attributes,
+per-signature SM2 IDs, bounded output and mandatory application trust. Therefore
+Core owns this format composition instead of exposing the native CMS facade as
+an already-qualified generic workflow. Wrapping native parsing alone would also
+leave signature verification and certificate trust with different publication
+boundaries. Duplicating SM2 arithmetic or implementing a second DER parser is
+rejected; existing public primitives and the canonical ASN1 owner remain the
+only cryptographic/parser authorities.
+
+Signatures cover the exact canonical signed-attribute SET with SM2's explicit
+identity binding. Mandatory contentType/messageDigest attributes bind the selected
+format and SM3 of the raw content. A single signingTime is accepted as signed
+metadata; it never changes validation time. Unknown/duplicate attributes, unsigned
+attributes, absent attributes, extra signers/certificates, CRLs and BER fail.
+Digest and signature AlgorithmIdentifiers are finite and require absent/NULL
+parameters. Certificates and signed attributes enforce DER SET ordering, including
+IMPLICIT sets. Signer issuer/serial and the embedded certificate set must match
+the caller's explicit path exactly. Embedded data never supplies trust anchors.
+
+Verification first parses the complete envelope and authenticates its content
+and signature, then applies `salts_crypto_sm2_validate_pinned_chain`: authenticated
+leaf pin, explicit anchor/time/purpose, independent issuer SM2 IDs, CA/pathLen,
+KU/EKU and the selected revocation policy. Only full success copies content to
+the caller. Rejected signatures/malformed envelopes cannot invoke revocation.
+This remains the restricted pinned profile; general PKIX discovery and hostname
+verification are not inferred from CMS parsing.
+
+The same trust policy now admits exact CodeSigning, EmailProtection, TimeStamping
+and OCSPSigning EKUs in addition to server/client signing. These are application
+purpose constraints, not protocol-specific timestamp/OCSP/S-MIME qualifications.
+The leaf must contain the exact EKU and every CA EKU, when present, must permit it.
+Existing path, key-usage, critical-extension, time and revocation rules remain.
+No anyEKU or unavailable-revocation fallback is added.
+
+Every input is a synchronous immutable borrow. Sign output requires MAX_DER;
+verify output requires MAX_CONTENT (64 KiB). Caller owns exclusive output/written
+storage, disjoint from inputs. Invalid admission preserves output. An admitted
+failure erases the corresponding full bound and sets written=0. Signing uses a
+single bounded temporary allocation (at most 2*MAX_DER+MAX_CONTENT+8), erases it
+before release, and publishes only complete DER. Verification allocates no heap
+and exposes no borrowed/partially authenticated plaintext. API examples:
+
+```c
+salts_crypto_sm2_cms_sign_config signing = {
+    .format = SALTS_CRYPTO_SM2_CMS_SHANGMI,
+    .detached = true,
+    .private_key = signer_private_key,
+    .signer_identity = signer_id,
+    .signer_identity_size = signer_id_size,
+    .certificates = certificate_spans, /* leaf first, excludes trust anchor */
+    .certificate_count = certificate_count
+};
+int status = salts_crypto_sm2_cms_sign(&signing, message, message_size,
+    envelope, SALTS_CRYPTO_SM2_CMS_MAX_DER, &envelope_size);
+/* Use the complete envelope only when status == SALTS_CRYPTO_OK. */
+
+salts_crypto_sm2_cms_verify_config checking = {
+    .format = SALTS_CRYPTO_SM2_CMS_SHANGMI,
+    .detached = true,
+    .signer_identity = signer_id,
+    .signer_identity_size = signer_id_size,
+    .chain = chain_entries, /* each entry has its certificate issuer's ID */
+    .chain_count = chain_count,
+    .trust = &authenticated_policy
+};
+status = salts_crypto_sm2_cms_verify(&checking, envelope, envelope_size,
+    message, message_size, verified, SALTS_CRYPTO_SM2_CMS_MAX_CONTENT, &verified_size);
+/* Consume verified[0..verified_size) only on full success. */
+```
+
+Formal module-owned tests use the existing independent gmsm/PKCS7 dependency for
+both directions, both content-OID profiles, attached/detached empty/binary/maximum
+content, explicit binary/maximum signer IDs and separately signed certificate IDs.
+Native tests cover admission/alias/boundary and exact erasure behavior. Additional
+path/purpose/clock/pin/revocation/signature/attribute/signer-count/DER negatives
+check that no content or premature revocation callback escapes. Functional tests
+do not establish constant-time arithmetic or other-platform qualification.
+
+References: [RFC 5652](https://www.rfc-editor.org/rfc/rfc5652.html),
+[gmsm v0.41.1 PKCS7 source](https://github.com/emmansun/gmsm/tree/v0.41.1/pkcs7),
+[official GB/T 35275 metadata](https://openstd.samr.gov.cn/bzgk/std/newGbInfo?hcno=A7B91213CC4862B31BE2C84665CB8F7E).
+
+### Immutable identity objects and authenticated PFX
+
+`crypto_tls_credential_object_create` normalizes a bounded raw identity once,
+checks each key/certificate binding, and owns an immutable DER allocation.
+`crypto_tls_credential_object_from_pkcs12` imports authenticated DER PFX v3
+using the same object. CNet exposes the corresponding `cnet_tls_credential_object_*`
+functions and maps errors to SALTS codes. Configurations use a credentials
+value with only `size` and `object` set. Mixing raw input and an object fails.
+
+The creator owns one reference. Retain/release may run concurrently while each
+caller holds a live reference; context construction borrows a held reference.
+Each context imports independent provider key state synchronously. The source
+bytes/password may be erased after object creation, and the object may be released
+after context construction. Final release clears the allocation before freeing it.
+Output slots must own no reference and remain disjoint from every input
+span/descriptor. Alias rejection preserves all input/output storage; other
+failures publish NULL. This prevents early publication clearing from overwriting
+borrowed keys, passwords or descriptor fields. Formal admission tests cover those
+aliases through both raw and PFX constructors.
+There is no mutable global key registry, unbounded cache or new I/O owner.
+The DER object avoids repeating PEM/password work while retaining the provider's
+existing per-context mutable-key lifetime. Sharing mutable provider keys directly
+would couple stream teardown and native state; copying caller descriptors alone
+would retain unauthenticated or short-lived input. Both alternatives are rejected.
+
+PFX import follows [RFC 7292](https://www.rfc-editor.org/rfc/rfc7292.html).
+It verifies the MAC before processing encrypted safes or keys. SHA2/SM3 MAC and the
+existing finite PBES2 PRF/cipher pairs are admitted; legacy PBE, SHA1 MAC,
+unauthenticated import and nested safe contents fail. The caller supplies UTF-8
+BMP text, including empty or embedded-NUL passwords; integrity uses BMPString
+plus its terminator while PBES2 uses the original bytes. Invalid UTF-8 and
+non-BMP characters fail. No alternate password encoding or trial decryption runs.
+
+Limits are 64 KiB PFX, 8 safes, 32 bags, 16 certificates, 2 keys, and 2,000,000
+total KDF iterations. Each KDF uses 10,000..1,000,000 iterations and 8..64-byte
+salts; chain/key limits below still apply. Certificate and key bags may be unordered.
+Actual public-key binding selects the leaf, and unique issuer names plus verified
+signatures order the supplied chain. TLCP roles select both SM2 keys together.
+SM2 issuer signatures use the standard default ID. Unrelated/ambiguous/duplicate
+certificates fail; metadata attributes never select or authorize an identity.
+Import verifies container integrity and local binding; it does not establish
+peer trust or certificate validity. Those checks remain with TLS verification.
+
+The independent Python suite covers RSA/P256, plaintext/shrouded key bags,
+encrypted/plain safes, all six SHA2 MACs and SM3, empty/binary/BMP passwords, bad MACs,
+wrong passwords, DER/work/input limits, mismatched keys and ambiguous identity
+sets. It also preserves cryptography-produced encrypted contents while raising
+that producer's fixed 2048-round MAC to the admitted minimum, and checks the
+result with both implementations. Original low-round producer output is rejected.
+CNet standard TLS, ShangMi mTLS and TLCP tests perform authenticated application
+I/O after PFX/password erasure and object release. Concurrent native context
+construction and final-reference release are covered separately; these checks
+do not qualify private-key side channels or every platform.
+
+These public struct additions require rebuilding Core and consumers together.
+Existing raw-input initialization remains available. Rollback removes the object
+and group fields/functions together; applications then use raw credentials and
+profile-default groups. No parallel versioned API or automatic compatibility path
+is introduced.
+
+### Explicit key-exchange groups
+
+Client/server `supported_groups` lists are copied during initialization. STANDARD
+implements P-256 and SHANGMI_TLS13 implements SM2. The list controls key exchange,
+not certificate signature curves. Unknown/profile-incompatible groups fail with
+ENOTSUP before trust I/O; pointer/count conflicts, duplicate entries and excess
+counts fail with EINVAL. NULL/0 preserves the profile default. Static ECC TLCP
+has no negotiated group choice and rejects an explicit list. Formal tests cover
+pre-I/O rejection and real standard/ShangMi handshakes after list erasure.
 
 ### Memory credentials and trust inputs
 
@@ -183,8 +469,10 @@ an explicit separator so SHA512/224 and SHA512/256 cannot match SHA512 by prefix
 Implicit/explicit SHA1, other KDF/cipher schemes, PKCS12 and standalone key
 exports remain separate work.
 
-PKCS#12/PFX, other encrypted PKCS#8 algorithms and retained credential/key objects
-remain unimplemented. SDF/SKF hardware integration is deferred by user decision.
+The local completion adds authenticated PKCS#12/PFX and retained identity objects
+as described above. Other unsupported encrypted PKCS#8 algorithms and standalone
+export variants remain separate from those finite profiles. SDF/SKF hardware
+integration is deferred by user decision.
 
 ### Immutable server identity selection
 
@@ -1443,8 +1731,9 @@ buffer (53 bytes of fixed encoding plus at most 459 ticket bytes). This closes
 an unchecked network-length write into that buffer; oversized tickets fail
 instead of overflowing it. Secret derivation and file completion failures
 propagate, ticket-count overflow is rejected, and temporary derived material is
-cleared on all admitted exits. No session restore/cache API or 0-RTT capability
-is qualified by receiving these messages.
+cleared on all admitted exits. Receiving these messages alone does not qualify
+restoration; the finite client cache below has separate qualification. 0-RTT
+remains unsupported.
 
 Applications rebuild against the matching pinned provider ABI. No Core/CNet
 configuration changes are required. Rolling back requires reverting the port
@@ -1520,3 +1809,943 @@ states. Independent mTLS peers withhold the remaining authentication flight afte
 a malformed CertificateRequest and authenticate any received fatal decode_error.
 An invalid MAC or malformed record cannot qualify early rejection. The matching
 pinned provider and Core tests must be updated together when reverting this fix.
+
+
+## TLCP local certificate signature policy
+
+The local GmSSL #44 candidate and Crypto/CNet enable client-side independent
+`certificate_signature_algorithms` for TLCP server authentication. The handshake
+continues using SM2/SM3; the explicit certificate list admits SM2/SM3 and
+RSA-PKCS1-SHA256 issuers, including mixed allowlists. NULL/0 uses the handshake
+list. Unsupported schemes, invalid pointer/count or duplicate lists fail before
+trust loading. TLCP server lists remain ENOTSUP while client authentication is
+unsupported. Other protocols retain their previous selection contracts.
+
+This is local chain admission. No TLS extension 50 is added to TLCP, and the
+native ClientHello still carries TLCP's 0x0704 handshake pair. After complete
+native name/time/purpose/signature/depth authentication, policy checks both
+sibling leaves against their actual common issuer, then every presented issuer
+and the top certificate's signature using the selected local anchor. The anchor's
+own signature is outside the allowlist. An encryption leaf is never treated as
+its signing sibling's issuer. Incompatible policy rejects before application
+readiness and uses the existing fatal latch and diagnostic lifetime.
+
+The first formal test reproduced ENOTSUP against the old Core/#43 combination.
+The ordinary single-chain matcher then reproduced false rejection of valid
+RSA-issued SM2 dual leaves, motivating the explicit sibling boundary above.
+Independent GoTLCP tests cover SM2/RSA issuers, exact/mixed/default lists, source
+array erasure before progress, CA file/PEM/DER, optional issuer transmission,
+real handshake/data/close and signature-policy rejection. Native admission tests
+cover all malformed lists and the unsupported server role. This does not qualify
+separate TLCP issuers/IDs, client authentication or another wire profile.
+
+Provider changes are registered as GmSSL 3.2.0#44 in the vcpkg-cache completion
+commit `3c9cb8cbcc6b3645d47e02585e987b708406cd98`, with port tree
+`29cd5565d2fc85b03b1f555206e4745ca85f55bd`. Released as vcpkg-cache `v0.1.7`,
+baseline `47e38f1465f95e9211edcbcfd5e3c8e96289a20c`; Core's registry and shared
+CI Actions select that release. The local GmSSL overlay has been removed from the
+build configuration. The old registry #43 alone cannot qualify this capability.
+No source-tree GmSSL build or extra validation project is introduced.
+
+
+## Depth failure positions
+
+The local provider #44 candidate records the first presented issuer exceeding
+`verification_depth`, with zero-based peer-chain indices. TLS has one leaf and
+TLCP has two: a depth of one first rejects issuer index 2 or 3, respectively.
+The position comes from the verifier's existing bounded traversal, without
+changing error ordering, path admission or the number of accepted certificates.
+A local-only anchor never receives a fabricated position. Crypto/CNet keep the
+owned diagnostic after failure and teardown; unavailable positions remain SIZE_MAX.
+
+Existing independent mTLS tests reproduced missing positions before the fix, then
+passed exact index assertions for TLS1.2/TLS1.3/ShangMi, both failing endpoints,
+CA file/PEM/DER and included roots. Independent TLCP tests add valid one-issuer
+controls and two/three-issuer failures, checking index 3 even when the native
+failure is detected later in traversal. Native buffers, retained policies,
+terminal latches and destruction boundaries remain unchanged.
+
+
+## Context-owned client TLS1.3 session cache
+
+The local completion branch adds optional `session_cache_capacity` (0 disabled, 1..16)
+for exact STANDARD TLS1.3 and ShangMi TLS1.3 client contexts. TLS1.2/ranges,
+TLCP and implicit iOS system trust reject enabled caches before trust loading.
+Server-side ticket issuance has the separate contract below; 0RTT remains unsupported. Cache entries never
+cross contexts: the same immutable context owns credentials, roots, signatures,
+verification time/depth, ALPN offers and retained peer policy for their lifetime.
+Each entry additionally binds the exact verified hostname, negotiated ALPN,
+profile/cipher and previously authenticated peer chain. No file sessions, secret
+serialization, global registry or context-pointer cache key is introduced.
+
+A context owns one fixed allocation (<=16 entries, each bounded by a 459-byte
+opaque ticket, 32-byte PSK, 4096-byte chain and existing name/ALPN limits).
+Concurrent stream owners serialize bounded copies under one platform mutex; no
+allocation, I/O, cryptography or user callback runs under it. Entries are inserted
+in a documented cyclic replacement order, securely clearing overwritten secrets.
+The first handshake call consumes the newest matching nonexpired entry once, copying it
+to fixed stream-owned storage and erasing the cache slot. Failed connect or
+abandoned stream does not restore a consumed ticket. A miss/expired ticket uses
+the normal full TLS handshake; server rejection of a PSK uses TLS's specified
+full-authentication path, never a weaker trust/profile or application replay.
+
+Ticket age uses the existing monotonic clock adapter, exact milliseconds plus
+age_add modulo 2^32 per RFC8446. Negative/backward clock behavior fails, lifetime
+is at most seven days, and expiry does not extend on selection. Only PSK_DHE is
+offered alongside full certificate authentication; pure PSK and early data remain
+disabled. On accepted PSK Finished, the original peer chain is revalidated using
+the same current native trust/name/time/purpose/signature/depth rules, then the
+retained application admission policy runs again before READY. A different ALPN
+or cipher rejects before application data. Fresh ticket capture occurs only after
+that authenticated readiness boundary. No cached revocation decision is reused.
+
+The context outlives every stream through existing references. Final context
+release destroys its quiescent mutex and clears all cache secrets; stream
+teardown clears the consumed ticket/PSK snapshot after native work drains. The
+change rebuilds Core/CNet against the matching GmSSL #44 ABI, whose bounded
+NST callback is synchronous and performs no socket operation. Rollback removes
+the cache setting and provider callback together. The provider patch and #44
+version tree are registered at the immutable commit above; #43 is not interchangeable.
+
+Formal qualification uses `saltscore.cnet_tls_session_resumption` (independent
+Go standard TLS1.3) and `saltscore.cnet_shangmi_session_resumption` (independent
+pollux SM2/SM3/SM4-GCM). Both cover first full authentication, two subsequent
+PSK_DHE connections, data/close, disabled-cache controls and rejected tickets
+after server ticket-key rotation. They release the caller's reusable context
+before the last handshake; stream references preserve the cache and policy.
+Standard TLS additionally rejects changed ALPN, a freshly denying peer policy
+and an original certificate that expires while its ticket remains valid. The
+independent peer confirms PSK acceptance and no application byte on rejection.
+`crypto.algorithms.tls_session_cache` covers fixed eviction/copying, exact host,
+expiry boundaries, clock rollback, repeated identities and concurrent one-entry
+consumption. Existing CNet admission tests reject unsupported settings before
+loading deliberately absent trust files. These are native Release results;
+cross-platform and sanitizer qualification remain separate.
+
+For CNet, set `session_cache_capacity` in the client config passed to
+`cnet_tls_client_init`, then use that same client's `tls_client` in each
+`cnet_connect_options`. For STANDARD also set both protocol bounds to
+`CNET_TLS_PROTOCOL_VERSION_1_3`; for ShangMi choose its explicit profile.
+Check initialization/connect errors normally. Query `cnet_tls_session_reused`
+on OPEN, and destroy the reusable client when no further connects need its
+cache. Per-connect ephemeral contexts do not retain tickets across connections.
+Changing trust/identity/policy configuration creates a new context and empty
+cache. Cached entries are consumed once; repeated copies still present in the
+cache are deduplicated by exact hostname/ticket, without unbounded spent-ticket
+history or any promise about a server reissuing an already consumed identity.
+
+## Context-owned TLS1.3 server tickets (local implementation contract)
+
+Server contexts accept an explicit fixed ticket capacity (1..16) and
+lifetime (1..604800 seconds), both zero to disable. Exact STANDARD TLS1.3 and
+ShangMi TLS1.3 are admitted; TLS1.2/ranges/TLCP fail before identity/trust I/O.
+Each authenticated handshake issues at most one random 32-byte opaque identity,
+only if the client advertised PSK_DHE. There is no persistent/encrypted ticket
+payload, global key, shared cluster state or new provider dependency. The
+server's immutable retained context owns the sole fixed PSK/state table.
+
+Entries own original authenticated client chains (when REQUIRED), exact SNI,
+selected local leaf digest, ALPN, cipher and monotonic issuance/lifetime/age_add.
+Shared stream owners serialize bounded table copies; no crypto, allocation,
+I/O or callbacks run under the lock. Full capacity securely evicts the cyclic
+oldest slot; expired/evicted/unknown/binding-mismatched tickets decline PSK and
+perform full certificate authentication. Clock/invariant failures are fatal.
+Failed binder validation never becomes full-auth success. Lookups do not consume
+server entries before proof: unauthenticated ClientHello replay must not erase
+another client's entry. Fresh ECDHE and both Finished messages remain required;
+no 0RTT/pure PSK/automatic application replay is admitted.
+
+The provider derives the PSK and emits the NST through the same stream-owned
+record path. Core holds the new ticket secret in bounded pending storage and
+publishes the entry only after Core's mandatory verification and peer policy
+admit READY. A rejected/abandoned handshake's emitted identity remains unusable.
+Resumed REQUIRED-mTLS restores and revalidates the original client chain and
+reruns current peer policy before OPEN. New contexts have empty stores; closing
+the last reference clears all pending/consumed/cached secrets after native work
+drains. Provider partial NST output must drain before handshake completion,
+including after its issuance count reaches zero. Qualification must include
+independent client PSK_DHE/mTLS, binding/expiry/corrupt-binder/capacity failures,
+context release/concurrent owners and bounded partial record output. This
+contract alone does not claim production qualification. The local implementation
+now passes independent Go TLS client server-authentication and REQUIRED-mTLS
+resumption, SNI/ALPN/capacity changes, disabled-client/server controls, peer policy
+and original client-certificate expiry. Independent pollux clients qualify the
+ShangMi server-authenticated path, bad binder without consuming a valid entry,
+unknown tickets, expired tickets and invalid ages. Native formal cases cover
+byte-at-a-time NST output, callback/size/lifetime failure and matching received
+PSKs for both AEAD suites. Go interoperation also exposed and corrected an
+extra length prefix in the native RFC6066 status_request encoder/parser.
+
+## Configured-anchor name constraints
+
+The native verifier already checks intermediate CA name constraints. A local
+regression with an independent Go x509 oracle reproduced a narrower HIGH defect:
+configured-anchor constraints checked only the nearest issuer, allowing a leaf
+outside the permitted DNS subtree through an unconstrained intermediate.
+The local provider patch applies configured-anchor constraints to every
+subordinate certificate and excludes an identical presented anchor itself.
+Standard TLS tests cover accepted/rejected intermediate and anchor constraints,
+with/without a presented anchor. TLCP covers direct and intermediate dual-leaf
+paths, preserving the required equal-entity/SAN checks before name constraints.
+CONSTRAINTS positions remain SIZE_MAX; no fabricated index is added.
+This does not establish general path discovery, policy trees, self-issued
+rollover exceptions, all name forms or cross-signing qualification.
+
+## DTLS1.2 private record foundation
+
+The first internal profile uses the registered DTLS-capable
+TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256 record construction (RFC5288/6347), with
+GmSSL AES-GCM. It does not repurpose RFC8998 TLS1.3 cipher IDs as DTLS profiles.
+This record primitive stays private. The finite opaque client and CNet datagram
+composition described below build on its verified handshake/trust path. The
+server listener extension is also described below; SCTP remains separate.
+No additional production provider.
+
+A stream owner will exclusively own separate sending/receiving key epochs.
+The private record primitive has fixed key state, a 48-bit sending sequence and
+a 64-record receiving replay window. It allocates nothing and retains no input
+or output pointer. Parse views borrow one complete record within a datagram;
+the caller retains that datagram while consuming any coalesced records. The
+primitive never turns UDP into a byte stream. Payloads are bounded to 16384
+bytes, AES-GCM overhead to 37 bytes including the DTLS header; MTU reservation
+and handshake fragmentation belong to the eventual datagram owner.
+
+Seal requires already reserved output storage and advances the nonce exactly
+once on success, before external I/O can publish it. Capacity/alias rejection
+changes no key/sequence; encryption failure latches sending failure. Exhausted
+48-bit sequences never wrap. Receiving checks the admitted epoch and replay
+window before decryption but commits the window only after tag authentication.
+Bad tags, stale/replayed or wrong-epoch records publish no plaintext and cannot
+advance receiving state. Per RFC6347 these unauthenticated packet failures are
+discard outcomes, not permission to reset keys or authenticate an application.
+Private cookie, fragment assembly, timer and key-schedule helpers are described
+below. Authenticated record dispatch, complete flight storage/retransmission and
+close still need the full handshake owner. Clear/destruction requires quiescence
+and erases keys/state. These internals cannot qualify production DTLS or #188.
+
+## DTLS1.2 handshake preparation (private contract)
+
+Before exposing a DTLS handshake, private preparation now provides a stateless
+cookie gate, bounded message assembly and an owner-driven retransmission timer.
+These are protocol components, not certificate authentication or network READY.
+
+The immutable listener cookie context owns one OS-random 32-byte secret.
+Cookie lifetime is explicit (1..60000 monotonic milliseconds); the 32-byte
+cookie contains an eight-byte issuance time and a 24-byte truncated HMAC-SHA256.
+GmSSL computes the MAC. It binds a domain label, canonical binary peer address
+(including port, 1..32 bytes), issuance time and the complete ClientHello with
+its cookie vector normalized to empty. There are no retained per-peer cookies,
+previous keys or automatic key-source changes. Verification checks the MAC
+before treating an authenticated future timestamp as clock failure. Cookie
+age must be strictly below the configured limit; failed MAC/age/address/parameter
+binding gets another stateless challenge, never an allocated handshake.
+
+The gate accepts one unfragmented epoch-zero ClientHello per datagram, <=4096
+body bytes. Body protocol is exactly DTLS1.2; legacy DTLS1.0 outer record format
+is accepted solely for this initial framing, with no protocol downgrade.
+Header/vector/extension lengths, duplicate extension types and complete input
+consumption are checked. At most 32 extensions are scanned. It mirrors the
+incoming record sequence in HelloVerifyRequest, uses server handshake sequence
+zero, and emits a 60-byte response no larger than the received datagram. Valid
+cookies produce only an address-verified, borrowed ClientHello view. The actual
+owner must copy/retain it before reusing input storage and still perform all
+certificate, key-exchange, transcript and Finished checks.
+
+After cookie admission, one progress owner reserves the fixed assembler.
+Eight message slots each own <=16384 body bytes plus a per-byte bitmap.
+Expected message sequence and a bounded future window are authoritative;
+old/far-future fragments do not mutate it. Identical overlaps are accepted,
+conflicting overlaps/type/length fail transactionally, and completion requires
+all bytes. Views last until explicit consume/clear; consume erases one slot and
+advances the 16-bit sequence without wrap. Transcript normalization uses the
+unfragmented 12-byte DTLS handshake header once per consumed message, never once
+per fragment. Stateless pre-cookie fragments are discarded, not reassembled.
+
+The timer owns no transport, payload or worker. Its caller provides monotonic
+time and explicitly marks a whole flight sent only after actual NativeIO send
+terminals. A due timer authorizes one retransmission, doubles its interval up
+to the configured ceiling and waits for another sent notification. Repeated
+polls while output is pending cannot authorize more retries. Acknowledged
+flights stop; retry exhaustion is terminal; clock rollback/deadline overflow
+fails rather than saturating or retrying. The future owner must retain old
+epoch material for retransmissions, reserve output before sealing records with
+new record sequences and drain real native terminals before teardown. Default
+timers will follow RFC6347's 1-second initial / 60-second ceiling guidance;
+private tests use explicit fake time. No public API or completed DTLS claim is
+made by these components.
+
+The private key schedule requires Extended Master Secret (RFC7627) for this
+DTLS1.2 profile, with no legacy master-secret branch. A bounded SHA256 transcript
+hashes normalized complete DTLS messages once; the cookie-less ClientHello and
+HelloVerifyRequest are excluded. The handshake owner validates message order,
+syntax and proof before committing transcript changes. Per-sender sequence
+checks reject duplicate/wrapped additions; the owner supplies the admitted
+post-cookie starting sequences, including a ClientHello after a renewed cookie
+challenge. Hash snapshots do not consume state.
+No public noncopyable SHA256 context is cloned: private native SHA256 state is
+pointer-free, as used by the provider's HMAC implementation.
+
+After validated P256 ECDH, a 32-byte shared secret and the transcript through
+ClientKeyExchange derive the 48-byte EMS master secret. The SHA256 TLS PRF key
+expansion uses server_random || client_random and splits 40 bytes into two
+16-byte AES keys and two four-byte fixed IVs. The owner retains distinct client/
+server epoch-one record states and erases temporary key blocks. Finished uses
+the role-specific label and current transcript hash to compute exactly 12 bytes.
+An authenticated wrong Finished is terminal and erases both traffic directions
+and master secret; it cannot turn into cookie/retransmission recovery. The
+private exchange helper below supplies P256 point and key-exchange proof checks;
+certificate chain/purpose/hostname/revocation admission, EMS extension negotiation,
+flight storage and authenticated record dispatch still need the full handshake
+owner. The PRF itself must propagate every native HMAC failure,
+clear failed output and erase all secret working state on every admitted exit.
+
+`crypto.algorithms.dtls_handshake` is the formal TinyTest/Python entry for these
+components. Python independently verifies the cookie HMAC and canonical message
+bytes. Its SHA256/HMAC key schedule computes the EMS master, both directional
+keys/IVs, role-specific Finished and a 65-byte multi-block PRF; Python-generated
+Finished proofs are checked natively and native AES-GCM records are decrypted
+with the independently derived keys. Synthetic transcript bodies are explicitly
+not valid certificates, signed ECDHE parameters or a network handshake.
+Native digest callbacks inject failure at every init/update/finish call,
+including after partial PRF output, and require full output erasure with intact
+guards. Other cases cover malformed/aliased input, transactional overlap,
+bounded transcript/message/sequence space, stable hash snapshots, clock/retry
+boundaries and permanent key erasure after an invalid authenticated Finished.
+No exported API, transport dependency or alternate crypto provider is added.
+Protocol references: [DTLS1.2 framing/cookies/flights](https://www.rfc-editor.org/rfc/rfc6347.html),
+[Extended Master Secret](https://www.rfc-editor.org/rfc/rfc7627.html) and
+[AES-GCM TLS key/nonce layout](https://www.rfc-editor.org/rfc/rfc5288.html).
+
+The private `crypto_dtls_exchange` helper exclusively owns a fresh GmSSL P256
+ephemeral key per handshake. Public bytes are copied into future flight storage,
+never borrowed from native key memory. Exchange accepts exactly one canonical
+uncompressed P256 point, with coordinate range/on-curve checks supplied by
+GmSSL. Both successful exchange and admitted malformed-point/crypto failure erase
+the private scalar and make that ephemeral terminal. Neither reinitialization
+nor a repeated exchange can reuse it without explicit clear and a new handshake.
+Shared output remains caller-owned and must be erased after derivation; neither
+the ephemeral nor the key schedule retains its pointer.
+
+ServerKeyExchange verification takes one already trust-admitted DER leaf and
+the complete handshake body. It does not replace chain, hostname, expiry,
+purpose or revocation checks. The finite private profile supports P256 with
+ECDHE-ECDSA/AES128-GCM/SHA256 and ECDSA-SHA256, or ECDHE-RSA/AES128-GCM/SHA256
+and RSA-PKCS1-SHA256. Scheme/cipher/key-type mismatch fails, without another
+signature trial. The signature binds client_random || server_random || exact
+encoded named-curve parameters. Exact body/certificate consumption, signature
+length <=512, P256 point validation and native signature verification precede
+publication of any peer point. This helper does not sign a server flight or
+implement client authentication, negotiation or a public DTLS profile.
+
+The same formal CTest driver independently creates ECDSA/RSA certificates and
+signed key-exchange bodies. Native negative cases cover every short prefix,
+mutated randoms/parameters/scheme/signature, wrong key type, malformed points,
+truncated/trailing vectors and signature-internal trailing junk. Native fresh
+ECDH keys are checked against Python P256 ECDH, then their EMS master and encrypted
+record are checked independently through AES-GCM. These checks compose the real
+cryptographic primitives, but still are not a DTLS network handshake. No new
+production dependency or side-channel qualification is implied.
+
+## Private DTLS client owner work
+
+The private owner now composes these primitives into a server-authenticated
+DTLS1.2 client, with mandatory cookie exchange and EMS, explicit DER roots and
+ASCII DNS reference identity. It offers the two existing AES128-GCM P256 suites,
+with exact ECDSA-SHA256/RSA-PKCS1-SHA256 schemes, optional one-protocol ALPN and
+optional one imported client identity, and no resumption or renegotiation. Unsupported negotiation
+fails; no verification-disable or legacy-master branch is introduced. This
+private structure remains internal; the opaque client facade described below
+exposes this finite profile. This scope does not qualify all of #188/#219.
+
+One progress owner exclusively owns fixed root/peer-chain buffers (4096 bytes,
+at most five certificates each), the existing eight-slot assembler, transcript,
+ephemeral/traffic secrets, at most five immutable flight bodies of 4114 bytes,
+one stable native-send buffer and one bounded decrypted-record scratch buffer.
+Config data is copied at initialization; optional existing peer policy is
+retained once until quiescent clear. Application callbacks borrow one complete
+authenticated record only for the callback, with no reentry. Certificate path,
+time, purpose, name/constraints and proof verification precede READY; peer policy
+runs once after Finished, with certificate verification repeated before READY.
+
+Output prepare reserves a new record sequence and lends one immutable datagram
+until the caller reports its actual send terminal. While output is pending or a
+flight remains unsent, input returns BUSY without consumption; the future native
+adapter must retain that input and route all actual terminals first. Retries
+rebuild records from retained flight plaintext using fresh record sequences;
+logical handshake messages hash once. A repeated current HelloVerifyRequest or
+complete previous ServerHelloDone also requests retransmission before timeout,
+sharing the same six-retry budget and exponential backoff. Partial old messages
+never reset a timer. Timers arm only after whole-flight send terminals. Abort
+erases secrets but preserves a pending wire buffer; clear
+rejects outstanding native borrows. Native integration/drain remains separate.
+Malformed records/bad tags/wrong epochs/replays are discard outcomes; invalid
+authenticated Finished/policy/alert, retry exhaustion and clock rollback are
+terminal. One queued application send is bounded by the 1200-byte datagram;
+there is no application replay or hidden worker. Close uses an authenticated
+close_notify and waits for its actual local send terminal before erasing keys.
+
+`crypto.algorithms.dtls_client_independent` exercises the whole private client
+against an independent Python wire oracle. It computes ECDHE signatures and
+the complete EMS/Finished transcript independently, exercises ECDSA and RSA
+leaf identities, mandatory EMS/ALPN negotiation, DER certificate path/time/
+DNS/usage/critical-extension/name-constraint failures, real intermediate chains,
+optional ALPN, renewed cookies, reordered/overlapping certificate and Finished
+fragments and final-flight loss. Authenticated Finished can arrive before CCS,
+but READY and peer policy still wait for both. Epoch-zero Finished fragments
+cannot occupy authenticated message slots. A bad tag cannot poison replay
+state. Application data stays behind READY, preserves individual record/empty
+message boundaries and honors one-send backpressure. Abort during an encrypted
+send erases keys while retaining the immutable wire until its terminal.
+
+`crypto.algorithms.dtls_client_pion` additionally runs real UDP loopback against
+[Pion DTLS v3.1.15](https://github.com/pion/dtls/tree/v3.1.15). Twelve cases cover
+ECDSA/RSA servers, absent/P256/RSA client credentials, with/without loss of the
+first native Finished, MTU-512 peer handshake
+fragmentation, native client certificate fragmentation, mutual Finished proof, bidirectional application data and
+authenticated close. The Go adapter reports local UDP send returns to the
+private owner; it does not exercise NativeIO, CNet/SCTP or their cancellation
+and whole-batch routing contracts. Current execution is native Windows x64
+Release; no sanitizer, other OS or production-readiness claim follows.
+
+Dependency decision: the existing scripted oracle cannot detect every shared
+interpretation mistake, and this repository had no independent DTLS stack.
+Pion reuses the existing Go test toolchain and module/cache mechanism, uses MIT
+licensing and pure Go (`CGO_ENABLED=0`), and introduces no SDK ABI, vcpkg package
+or production crypto provider. OpenSSL/BoringSSL are excluded by project scope;
+adding another native test executable dependency would add platform setup while
+leaving the existing Go peer infrastructure unused. The module is exact-pinned
+with checksums and no local upstream modifications; removing the Pion test and
+its isolated module reverses the test-only dependency. License provenance is
+recorded in the root `THIRD_PARTY_NOTICES.md`.
+
+The selected version follows the upstream fixes for
+[signature-scheme confusion (3.1.13)](https://github.com/pion/dtls/security/advisories/GHSA-7c2r-jhm9-43vf)
+and [premature session caching (3.1.14)](https://github.com/pion/dtls/security/advisories/GHSA-hhpj-h56m-9f2p).
+This check is not a claim that the library has no other security defects. The
+test peer has no session store, requires verified client authentication in its
+mTLS cases, uses bounded
+connection deadlines and joins/cleans its processes/connections. The server
+contract below extends this client-only evidence to server authentication and
+required mTLS. General signature/group policies, SCTP admission and broader
+PKIX/DTLS qualification remain open. The finite public client/server and their
+actual NativeIO evidence are described below.
+
+## Private DTLS server owner contract
+
+The server implementation uses an immutable listener context: existing memory
+credentials import/binding owns one GmSSL signing key and certificate chain,
+the stateless cookie context, optional exact DNS/SNI and optional ALPN, and optional
+mandatory client-certificate roots/peer policy. Raw DER/PEM, bounded encrypted
+PKCS8 and immutable credential objects use the established credentials entry.
+Context lifecycle/admission is exclusive; stream leases are atomic so separate
+stream owners can drain concurrently. Context clear returns BUSY while a stream
+lease remains; streams return their lease only at quiescent clear. No password,
+configuration byte pointer or borrowed credential-object storage survives init.
+
+Cookie validation precedes stream admission, ephemeral key generation and a
+listener lease. The stream copies a verified ClientHello into its canonical
+transcript and owns eight bounded assembly slots, at most five handshake flight
+bodies (each <=4096 DER chain bytes plus vector framing), one 1200-byte pending
+wire and one bounded scratch record. Certificate messages fragment under this
+MTU. The server uses GmSSL signing/ECDH/AEAD and strict P256/SHA256 RSA/ECDSA
+negotiation with mandatory EMS; unsupported identity/scheme combinations fail.
+Unknown well-formed ClientHello extensions are ignored as required by TLS;
+duplicate/malformed or incompatible mandatory extensions are rejected.
+
+Required mTLS sends CertificateRequest, verifies the client path/time/usage,
+verifies CertificateVerify over the canonical DTLS transcript, derives EMS
+through ClientKeyExchange, then verifies client Finished before peer policy.
+Server Finished is sent only after all admission checks; server READY waits
+for its actual send terminal. The final proof bytes remain bounded for reacting
+to retransmitted authenticated client Finished throughout the active connection,
+including the RFC6347 last-flight retention interval; no master secret is needed
+for resealing. Application callbacks, pending-send/abort/drain/close and timer
+failure follow the existing exclusive owner contracts. The opaque server facade
+and CNet admission below retain those same leases and wire borrows.
+
+SNI configuration is explicit. NULL/0 selects the sole fixed identity without
+using SNI for routing or admission; a nonempty configured DNS name requires a
+matching ClientHello name and the empty ServerHello acknowledgment required by
+[RFC6066 section 3](https://www.rfc-editor.org/rfc/rfc6066.html#section-3).
+There is no peer detection, retry with another policy, or automatic disabling of
+configured SNI checks. Pion v3.1.15's shared
+[ServerName parser](https://github.com/pion/dtls/blob/v3.1.15/pkg/protocol/extension/server_name.go)
+requires a nonempty name list even in ServerHello and drops this valid empty
+acknowledgment. Pion UDP tests therefore explicitly configure the fixed-identity
+context; Pion still verifies the server's root/chain and DNS certificate identity.
+The independent Python client oracle tests configured SNI: it verifies the
+acknowledgment, actual ECDHE signature and complete EMS/Finished transcript for
+both ECDSA and RSA, rejects the wrong name without a different-policy retry,
+and checks authenticated bad Finished, bad tags/replay, final-flight resealing
+and abort while encrypted output is pending. No upstream module is modified.
+
+`crypto.algorithms.dtls_server_pion` covers 16 positive UDP combinations:
+two server identities, server authentication or P256/RSA mTLS (including
+CertificateVerify/Finished reordering), with/without loss of the first server
+Finished. A noncritical padding extension makes the server certificate cross
+the actual 1200-byte fragmentation boundary; the peer uses MTU 512. Nine
+negative cases cover a missing client identity, untrusted CA, wrong EKU,
+corrupted CertificateVerify/signature-scheme mismatch, peer policy rejection,
+missing EMS, incompatible ALPN and unsupported group. Policy runs once per
+admitted authenticated client and does not rerun when the final flight repeats.
+Raw credentials and predecoded credential objects both complete handshakes.
+
+TinyTest adds proof-of-address rejection before any stream lease, independent
+fresh server randoms under a shared listener, two outstanding leases, context
+clear rejection during stream ownership, stable pending wire through abort,
+actual terminal drain, mismatched private-key rejection and policy-reference
+balance. DNS, exact chain metadata and outer datagram framing have one shared
+private implementation in `crypto_dtls_wire`, used by both roles. Fragmented
+flight storage remains server-owned; received plaintext never occupies an
+authenticated Finished slot. Future-epoch records before ECDH key derivation
+are discarded; after derivation a reordered authenticated Finished waits for
+CertificateVerify/CCS rather than bypassing proof or publishing READY.
+
+Both protocol structures stay internal; the client now has the opaque facade
+below. General credential-list/signature/group policies, SCTP admission and
+broader platform/PKIX qualification remain open.
+
+## Private DTLS client certificate authentication
+
+The optional `crypto_dtls_client_config.credentials` is one existing
+`crypto_tls_credentials` input, consumed exclusively during client initialization.
+The established memory importer validates key/chain binding and owns independent
+decoded key state; raw buffers, password bytes and credential-object storage are
+not retained. DER/PEM/encrypted PKCS8 and objects follow that existing import
+contract. This private profile admits one RSA or P256 key and at most five
+certificates totaling 4096 DER bytes, with ECDSA-SHA256/RSA-PKCS1-SHA256 certificate
+signatures. Invalid identity configuration fails before ClientHello or peer-policy
+retention. No alternate provider, file lookup or handshake credential callback is
+introduced.
+
+CertificateRequest is accepted exactly once, between ServerKeyExchange and
+ServerHelloDone. It is part of the canonical transcript, with the shifted peer
+Finished sequence tracked from the actual Done message. Types, nonempty even
+signature vector and the complete CA-name vector must parse before selection;
+every DER name's RDN contents are checked even after an earlier matching name.
+Selection requires the key's signing type/scheme and each chain signature in the
+request's shared list. A nonempty CA list must match an issuer in the configured
+chain using the native DER-name comparison (no general name normalization or
+path discovery). CA hints do not supply trust. If no suitable identity exists,
+the protocol requires an empty Certificate and no CertificateVerify; only an
+explicit optional-auth server can then complete the handshake. No certificate is
+sent without a request. See [RFC5246 sections 7.4.4/7.4.6/7.4.8](https://www.rfc-editor.org/rfc/rfc5246.html#section-7.4.4).
+
+The final flight owns Certificate, ClientKeyExchange, CertificateVerify, CCS and
+Finished (at most five messages). The certificate body bound is 4096 DER bytes
+plus five three-byte lengths and one three-byte list length, i.e. 4114 bytes.
+It is fragmented at the existing 1200-byte wire MTU; the same one-owner pending
+send/actual-terminal/BUSY contract applies to every fragment. EMS snapshots the
+transcript through ClientKeyExchange, including Certificate; CertificateVerify
+signs that digest with GmSSL's ECDSA/RSA primitives, then Finished uses the
+transcript including CertificateVerify. The canonical DTLS headers are included
+once, regardless of fragmentation or retransmission, as required by
+[RFC6347 section 4.2.6](https://www.rfc-editor.org/rfc/rfc6347.html#section-4.2.6).
+The imported identity/key is erased after final-flight construction or on failure;
+cached messages permit retransmission with fresh record sequences and the exact
+same proof, without a signing key. Abort erases all secrets while preserving an
+outstanding native wire borrow through its actual terminal.
+
+The formal Python client oracle independently checks client certificate bytes,
+ECDSA/RSA CertificateVerify, EMS and both Finished values. It covers raw/object
+identities, renewed/reordered peer messages, root/intermediate hints, request
+type/scheme/chain-signature mismatch, no identity, malformed/trailing names,
+duplicate requests, no-request identity privacy, retransmission and abort with a
+pending Certificate. The Pion client suite additionally requires actual mTLS,
+validates certificate trust/purpose/proof, and forces native certificate
+fragmentation with a legitimate noncritical padding extension. TinyTest checks
+initialization rejection before retain, input independence and key erasure during
+abort with a borrowed wire. These extend private-owner evidence only; they do not
+qualify public DTLS, NativeIO/CNet transport, every credential encoding on this
+wire, general PKIX, sanitizers or other operating systems.
+
+## Private DTLS exporter and master retention
+
+Both private owners accept an explicit `enable_exporter` at initialization
+(on the listener context for the server). It defaults to false. Export only
+succeeds on the exclusive progress owner in authenticated READY, outside any
+callback. Client READY still requires peer Finished, CCS, certificate admission
+and policy; server READY additionally requires its final Finished's actual send
+terminal. Pending application/retransmission sends do not invalidate READY; an
+export never mutates their wire, timer, transcript or sequence state.
+
+**HIGH — security/lifetime tradeoff:** the TLS1.2 exporter requires the original
+48-byte EMS master. Default sessions continue erasing that master on admission.
+An enabled session retains the same owned master in its existing secrets state,
+without a second copy or global cache, until close is accepted (including a
+peer-initiated close), abort, failure or clear. Close admission erases it before
+the pending close_notify's actual terminal, while record keys remain valid until
+that terminal. The `master_live` fact prevents derivation/Finished use after
+erasure. Callers own and must erase exported material independently.
+
+Alternatives considered: predeclared labels with cached outputs would preserve
+early master erasure but could not accept application context selected after
+handshake; unconditional retention would extend every session's secret lifetime.
+The explicit opt-in allows dynamic exporter requests while preserving the default
+erasure contract. This is a private API change only; disable the option to restore
+the default lifecycle. It adds no provider/dependency or session persistence.
+
+The primitive follows [RFC5705 section 4](https://www.rfc-editor.org/rfc/rfc5705.html#section-4):
+SHA256 TLS PRF over master, label, client_random then server_random, and, when
+requested, uint16 context length plus exact context bytes. Absent context and a
+present empty context produce distinct values. EMS remains mandatory. This finite
+profile admits 1..255 printable ASCII label bytes, 0..1024 context bytes and
+1..1024 output bytes; no output is published for bounds/state/alias errors.
+Output is caller-owned and fixed-size; inputs are call-scoped borrows. PRF failure
+propagates ECRYPTO and clears output through the native PRF failure contract.
+No automatic retry or alternate derivation is introduced.
+
+Reserved handshake labels, their prefixes/extensions (including `extended master
+secret`) and embedded NUL/nonprintable labels are rejected, preventing use as a
+handshake PRF oracle. The application chooses registered labels or private
+EXPERIMENTAL labels and must agree with its peer on purpose/context; the helper
+does not perform upper-layer negotiation or enforce all registry prefix rules.
+Owner/listener storage and inputs/output cannot overlap. The primitive itself is
+private and does not grant authenticated READY; only the owner wrapper does.
+
+Formal Python peers independently derive and compare both roles with absent,
+empty and binary/maximal context, multi-block/maximal output, invalid labels and
+sizes, pre-READY/default-off/closing/failure refusal, retained-wire export and
+post-retransmission stability. Go/Pion UDP tests compare both endpoint roles,
+including required mTLS and Finished loss. Pion v3.1.15 explicitly rejects
+nonempty context and treats empty as absent, so its qualification covers absent
+context only; the independent Python oracle covers context semantics without
+modifying Pion. TinyTest covers bounds/aliases, callback admission and master
+erasure without damaging traffic epochs. Test adapters clear exported bytes after
+delivery and during error cleanup, and report mismatches without printing keys.
+No SRTP/SCTP negotiation, public DTLS API, sanitizer or cross-platform production
+qualification follows from exporter agreement.
+
+## Private DTLS fatal alert delivery
+
+The two private owners distinguish protocol rejection, peer alerts and local
+abort/I/O/clock failures. A rejected post-cookie handshake or authenticated
+protocol message can prepare one fatal alert. This never grants READY or accepts
+application data. Bad outer framing, wrong epoch, replay and bad AEAD tags retain
+their discard behavior; an authenticated bad Finished remains terminal. Cookie
+validation still precedes server stream admission; no fatal response is prepared
+for an unverified address or a client without its admitted cookie.
+
+The alert uses the local **current write epoch**, which advances only when the
+CCS datagram has an actual successful local send terminal. Having derived traffic
+keys is insufficient. For example, a server rejecting the client's encrypted
+Finished before sending its own CCS emits an epoch-zero plaintext alert; a client
+rejecting server Finished after sending its CCS emits an epoch-one AES-GCM alert.
+The existing GmSSL-backed record primitive reserves that record's sequence/nonce.
+If encryption or sequence admission fails, the owner records the alert error and
+does not substitute plaintext. See [RFC6347 record epochs](https://www.rfc-editor.org/rfc/rfc6347.html#section-4.1)
+and [TLS error alerts](https://www.rfc-editor.org/rfc/rfc5246.html#section-7.2.2).
+
+**HIGH — failure/drain contract:** alert preparation occurs before write-key
+erasure. Finished has a private pure check so the owner can seal a failure alert,
+then immediately erase both traffic epochs, master, ephemeral key, transcript,
+scratch and outstanding logical flight. The existing destructive Finished verifier
+still erases on failed proof. Only the sealed alert (15 bytes plaintext or 39 bytes
+encrypted) survives; no signing/record key is retained to service a failed session.
+The first protocol error remains the owner failure, while a separate alert error
+records construction/send failure. No recovery or alternate implementation runs.
+
+The owner remains FAILED. After a negative receive result, callers may drain the
+single prepared alert through `next` and report exactly one actual `sent` terminal.
+`next` returns OK with that datagram; further preparation returns BUSY until its
+terminal. `sent` returns the original failure even if the alert's local send
+succeeds. After that, `next` returns the original failure, with no automatic
+retry/timer or re-admission. This follows the non-retransmitted-alert rule in
+[RFC6347 section 4.2.7](https://www.rfc-editor.org/rfc/rfc6347.html#section-4.2.7).
+The terminated association does not retain keys to generate fresh alerts for later
+repeats; this is an explicit bounded shutdown choice, not a retransmission service.
+
+Abort discards an alert that has not been handed to native I/O. Once output is
+borrowed, abort preserves those exact bytes and clear returns BUSY until the real
+terminal, just as for normal output. Clear may discard an unprepared alert. Server
+context leases still release only when the stream clears; sibling contexts and
+owners remain live. Both CNet roles below drain this error output and all
+previously prepared operations before reclaim.
+
+The finite description mapping includes handshake_failure for negotiation,
+decode_error for malformed request/CCS/alert encodings, certificate_unknown for
+path rejection, decrypt_error for signed parameters, CertificateVerify and
+Finished proof failures, access_denied for peer policy, and internal_error for
+an application callback failure. This is not a full per-X509-error alert taxonomy.
+An incoming well-formed fatal alert records its peer description, terminates and
+erases secrets without echo. Once peer CCS or authenticated epoch-one traffic has
+been observed, epoch-zero alerts are ignored; unauthenticated alerts cannot kill
+an established connection. Malformed authenticated alerts remain terminal.
+
+Python formal peers verify plaintext/encrypted alert bytes in both directions,
+actual write epoch, post-READY forged Finished, immediate secret erasure, stable
+pending output, failed send preserving the original error, no retries, peer fatal
+without echo and bad-tag/late-plaintext rejection. TinyTest additionally forces
+nonce exhaustion to verify a missing encrypted alert cannot turn into plaintext,
+and covers borrow/abort/clear plus pure-versus-destructive Finished checks.
+
+Pion UDP tests receive real native alerts: nine server-side admission rejects and
+four native-client policy rejects after peer Finished. Pion exposes handshake
+alerts as errors but returns EOF from Read for a post-handshake fatal. The latter
+test therefore requires its independently decoded AccessDenied classification,
+observed through the existing logger interface, as well as EOF; EOF alone cannot
+pass. The observer keeps one atomic boolean, discards other logger output and
+retains/prints no packets, keys or session data. `pion/logging` v0.2.4 was already
+pinned transitively and is now an explicit test import; its version/license and
+all dependency checksums remain unchanged. No upstream patches or wire rewrite.
+
+Remaining DTLS work includes general negotiation/identity policies and wider
+PKIX/platform/sanitizer qualification. SCTP composition and bounded supplied-chain
+PKIX evidence are extended below. Fatal delivery does not close
+#188/#219 or qualify production DTLS by itself.
+
+## Opaque DTLS client and CNet datagram composition
+
+`<crypto/dtls_stream.h>` exposes a complete finite client profile: DTLS1.2,
+mandatory cookie exchange and EMS, P256 ECDHE, AES128-GCM, ECDSA/RSA SHA256,
+required explicit DER/PEM roots and ASCII DNS identity, optional single ALPN,
+one imported client identity and retained peer policy. It introduces no new
+provider, verification bypass, resumption or renegotiation. The listener/accept
+entry below separately supports the finite server profile.
+The private client/server structures and all GmSSL types stay internal.
+
+Creation copies configuration, roots and credentials; their byte/object/password
+borrows end on return. Roots and each peer chain have a 4096-byte/five-certificate
+bound. The peer policy retains once until successful destroy. One exclusive
+owner drives the stream; the application callback borrows one authenticated
+record only until return and cannot mutate the stream recursively. Destroy
+also refuses recursion from the policy release callback. Invalid input fails
+before publication; failed creation leaves a nonaliasing output slot NULL.
+
+`next` borrows one immutable wire datagram until exactly one `sent` terminal.
+`CRYPTO_DTLS_BUSY` consumes no new input and preserves that borrow; IDLE means no
+output, DROP means an unauthenticated record discard. Negative Crypto status
+terminates or rejects according to the public operation contract; allocation
+failure is `CRYPTO_DTLS_ENOMEM`. Accepted asynchronous output must await its real
+terminal even after abort. FAILED can still publish one sealed fatal, with the
+first failure preserved. Destroy returns BUSY with a prepared wire; it performs
+no I/O or waiting. These are the same verified owner/erasure semantics described
+above, accessed without exposing its layout.
+
+`<cnet/dtls.h>` borrows an already bound CNet datagram and fixed numeric peer.
+The host owns raw observation, receive credits, callback routing and any shared
+NativeIO backend. The bridge owns the Crypto client, 1..64 preallocated input
+slots (each at most 16421 wire bytes), one application tag and one prepared wire.
+Application datagrams are copied, including empty messages, with a 1163-byte
+limit under the 1200-byte output MTU. Input ENOBUFS consumes nothing; the host
+must retain/retry the borrowed packet before its raw receive view expires.
+No worker, second poll owner, backend ownership or raw observer replacement is
+introduced. See [CNet ownership and architecture](../../docs/CNET-POLICY-HIERARCHY.md#dtls-client-composition-with-a-borrowed-datagram).
+
+A successful application admission is pending before wire preparation. Its one
+callback reports the actual local send outcome, not peer acknowledgment. Abort
+before native admission reports cancellation once; abort after native admission
+keeps the borrow and reports the real terminal. A first bridge failure rejects
+new admission immediately while advance/send routing still drains a fatal or
+previously submitted output. Application callback errors retain their original
+negative Salts status, separately from Crypto diagnostics. Close only queues
+authenticated shutdown; the host drives to CLOSED to deliver it. The host retires
+input routing after failure/abort, routes the whole observed batch even on error,
+and destroys only after its own routing and native borrows are quiescent.
+
+Formal `saltscore.cnet_dtls_native` runs actual NativeIO UDP against the existing
+independent Pion v3.1.15 peer: fourteen ordinary/external client scenarios cover
+ECDSA/RSA, required mTLS, policy/callback failure with decoded fatal alerts,
+maximum/oversize/empty application messages, exporter agreement, copied/full
+input admission, foreign-source filtering, exact tagged send settlement and
+abort before/after native application submission. Three more cases cover pending
+handshake output drain, including backend-capacity nonadmission. Shared-backend
+neighbors progress during failure and after bridge destroy. Wrong/duplicate send
+tags, callback mutation reentry and retained policy release are checked. The
+existing Pion version/licenses are reused in CNet's formal Go test module; CGO
+is disabled. `saltscore.cnet_dtls_cpp17` checks public C++17 declarations and
+linked C symbols. The Crypto handshake test also checks opaque creation,
+independent root storage, pending-wire destroy and recursive policy release.
+
+The complete native-release-user graph and the affected tests passed locally
+on Windows x64 LLVM-MinGW Release with IOCP. This does not qualify Linux/macOS
+runtime branches, sanitizers, SCTP, general PKIX/negotiation policy or the
+remaining #219 software scope. The server extension follows below. Export stays
+explicitly opt-in, and callers own/erase exported bytes as documented above.
+
+## Opaque DTLS server listener and native admission
+
+`crypto_dtls_listener_create` imports one RSA/P256 identity and optional explicit
+required-mTLS roots/peer policy into an immutable context. Configuration bytes,
+credential objects and passwords are borrowed only through create; imported
+keys/roots have independent storage. The listener retains policy once, not once
+per stream. Its random cookie key has an explicit 1..60000-ms lifetime bound for
+issued proofs; replacing that key requires draining/destroying the listener,
+not hot reload. Destroy is BUSY with any stream lease and rejects recursive
+policy-release destruction. Create/admission/destroy require lifecycle exclusion;
+separate admitted stream owners can progress independently. Gates may borrow
+the immutable context concurrently while lifecycle operations are excluded.
+
+`crypto_dtls_listener_gate` borrows explicit canonical peer bytes including
+family/IP/port, at most 32 bytes. It allocates no peer/stream state and acquires
+no lease. A valid first ClientHello without current proof yields one 60-byte
+HelloVerifyRequest, never larger than its triggering packet. Malformed packets
+return DROP, with no reply/address proof. Argument/state/crypto errors remain
+negative; overlapping outputs/inputs/context are rejected without overwriting
+them. A future timestamp with valid MAC remains a clock error. Cookie validity
+establishes return routability only, not peer authentication or protocol READY.
+
+`crypto_dtls_stream_accept` independently rechecks that cookie before allocating
+the opaque stream or taking its listener lease. DROP/negative publishes no
+stream. OK publishes an admitted owner: if post-cookie negotiation already
+failed, get_info reports FAILED/the original error, and next/sent still drains
+its one sealed fatal. This is explicit ownership admission, not successful
+authentication or warning-and-continue. READY still requires trust/proof/policy
+and the actual server Finished send terminal. Both roles then share next/sent,
+receive/write, close, exporter, abort and destroy, with no parallel versioned API.
+Destroying the stream releases its lease; it never destroys the shared listener.
+The host owns bounded peer admission, duplicate association rejection and rate
+limits, and must not create two live routed owners for the same association.
+
+CNet consumers use `cnet_dtls_listener_create`/`cnet_dtls_listener_destroy` so the
+opaque listener is created by the same physical Crypto instance inside the
+existing CNet DSO. They return Salts statuses, including EBUSY for live leases.
+Do not additionally link a static Crypto archive into that consumer. CNet's
+`cnet_dtls_cookie_gate` encodes family, address, network-order port and IPv6 scope
+without native sockaddr padding; malformed input maps to OK/no proof/no reply.
+`cnet_dtls_accept` requires a verified cookie-bearing datagram and returns EPROTO
+without publishing an owner on invalid proof. Successful admission consumes the
+borrowed packet and uses the same bounded ring/send bridge as the client.
+
+The host sends cookie replies through raw datagram send under a separate tag
+namespace, retains its reply reservation through the real terminal and budgets
+receive credits accordingly. The formal host uses one reservation and one peer
+slot. Accepted streams use their own tag domains; no retry/resubmission of an
+accepted native send is introduced. A first failure on a newly admitted FAILED
+stream is latched at its next advance, before fatal submission; get_info already
+reports the security failure immediately after accept. No extra post-observe
+advance is needed. Stop admissions, drain cookie sends and all stream I/O,
+destroy streams, then listener and raw transport. Neighboring users remain live.
+
+The initial module-owned `saltscore.cnet_dtls_native` slice includes 24 server
+scenarios (12 ordinary and 12 external): ECDSA/RSA server identity, mTLS, missing
+or untrusted client identity, policy rejection, strict SNI mismatch, unsupported
+ALPN/EMS, callback failure with encrypted fatal, and abort before/after actual
+application submission. Positive paths verify maximum/oversize/empty datagrams,
+exporter agreement, authenticated close and exact tagged local terminals.
+Malformed real UDP input before cookie exchange creates no stream/reply. Every
+case requires an actual cookie send terminal; live-stream listener destroy is
+BUSY, policy survives bridge teardown until listener destroy, and shared IOCP
+neighbors progress through failure and final teardown. Together with the client,
+that slice has 41 NativeIO scenarios. Crypto TinyTest checks two shared opaque leases,
+wrong-address proof, malformed/aliased gate rejection, pending wire stability,
+abort/drain and recursive policy release. C++17 links the CNet listener entry.
+
+Pion positive server cases explicitly use the documented fixed-identity mode:
+v3.1.15 cannot decode a valid empty SNI acknowledgment. It still verifies CA/DNS
+and signed key exchange. The native strict mismatch test requires an actual
+decoded rejection; strict positive SNI's existing independent Python oracle
+continues to qualify its complete cryptographic wire behavior. No automatic
+policy change, wire rewrite, upstream patch or additional provider is used.
+
+For that slice, the full native-release-user graph built and 13 affected/adjacent CTests passed
+on Windows x64 LLVM-MinGW Release, including the sole-Crypto-owner audit and
+existing owner regressions. Native runtime evidence remains IOCP/IPv4; concurrent
+multi-peer native load, IPv6 runtime, Linux/macOS, sanitizers, SCTP and general
+negotiation/PKIX qualification are not established by those initial tests. The
+subsequent evidence below extends SCTP, supplied-chain PKIX and multi-peer load.
+#188/#219 and the overall local software pass remain open.
+
+## SCTP composition and authenticated delivery backpressure
+
+`Salts::SCTPDTLS`, owned by the SCTP module, now connects the existing bounded
+C11 Session to `<cnet/dtls.h>`. It borrows both owners and provides no second
+SCTP engine, observer/backend or crypto provider. `Salts::SCTP` remains
+provider-independent. CNet assigns an immutable nonzero association binding;
+Session must match it before initialization and every bridge reservation/
+advance. Replacement at the same public wrapper address cannot authorize old
+Session DATA under new keys. Identity/tag exhaustion fails rather than wraps.
+
+The bridge copies 1..64 SCTP input packets (<=1280 bytes), reserves a single
+1163-byte output slot before Session output can commit and forwards real
+tagged local sends. SCTP cumulative ACKs, DCEP readiness, local terminals and
+business delivery remain separate. Abort never destroys borrowed DTLS or the
+shared backend; drain continues through actual callbacks before bridge destroy.
+See the [host contract and example](../../sctp/README.md#cnet-dtls-bridge).
+
+Actual 24 KiB SCTP traffic exposed a correctness gap: a full application queue
+previously became a fatal callback error. CNet `on_receive` now treats only
+`SALTS_ENOBUFS` as non-consuming delivery backpressure; it maps to Crypto
+`CRYPTO_DTLS_BUSY`. Crypto owns one authenticated plaintext record (16384-byte
+capacity, including a distinct pending flag for zero-length input) plus the
+remaining encrypted datagram tail (16421-byte capacity). Whole-datagram framing
+is preflighted before admission; later progress retries delivery without
+decrypting the same record or consuming replay state twice. New raw input is
+refused while these bounded obligations remain. Output storage remains separate.
+`pending_receive` exposes retained work; close waits, and failure/abort erases
+it. Invalid output descriptors fail before callbacks, and mutation reentry is
+refused. A terminal error during deferred delivery seals fatal80 and preserves
+the concrete CNet error. It is never changed into success or a capacity increase.
+
+The new `crypto_dtls_stream_hmac` / `cnet_dtls_hmac` helper derives 32 bytes
+using an opt-in READY exporter request, computes GmSSL HMAC-SHA256 on <=4096
+bytes, then erases temporary key/context. Invalid arguments/state leave output
+unchanged. CNet consumers call through its existing sole Crypto owner. Exporters
+are shared with the peer: authenticating a server-private cookie also requires
+an independent private secret. The formal SCTP provider supplies an OS-random
+32-byte private per-association exporter context, keeps it off the wire and
+erases it at cleanup. The independent peer verifies an ordinary exporter HMAC
+and separately confirms the private-context MAC differs; no key/proof logs.
+
+The module-owned `saltscore.sctp_dtls_native` has ten scenarios: eight native
+server cases (ordinary/external, 1/4/8 mixed or 8 healthy peers) and two native
+client cases. Across 44 actual DTLS attempts there are four untrusted peers,
+four canceled after DCEP and 36 healthy peers. Each healthy peer exchanges four
+messages (1 byte, 1024 bytes, 24576 bytes, logical-empty binary PPID57), and
+native receipt accounting requires exactly four cumulative ACKs. The bridge
+uses one ingress slot. The independent peer coalesces two already encrypted
+application records into one real UDP datagram to exercise retained wire tails.
+No packet/key rewriting or alternate protocol implementation is introduced.
+
+Negative cases cover wrong binding/Owner, reservation/capacity, wrong/duplicate
+send tags and same-address DTLS replacement. Failed/canceled peers do not stop
+siblings. Healthy peer workers remain connected until cumulative ACK/drain;
+closing them early produced actual Winsock ICMP10054 and was fixed at fixture
+lifetime ownership rather than ignored. External tests use one four-request,
+two-endpoint NativeIO backend and a live neighboring raw datagram through full
+association/listener teardown. This is functional concurrent load, not a
+throughput benchmark, encrypted packet-loss or browser qualification.
+
+The existing CNet CTest also adds nonempty/empty deferred delivery and deferred
+fatal cases in both roles/modes: 53 base scenarios plus the 60 PKIX cases below,
+113 total. Empty records must be delivered once despite repeated backpressure.
+The existing opaque Crypto TinyTest rejects pre-READY HMAC, oversized/aliased
+input and checks unchanged output. Session TinyTest checks query clearing and
+Owner/closed refusal without changing the established Session ABI version.
+
+## Broader PKIX supplied-chain qualification
+
+The existing formal `saltscore.cnet_dtls_native` now independently qualifies
+15 certificate profiles in each native DTLS role and ordinary/external mode,
+60 real handshake cases. Go generates, signs and parses fixtures independently
+and checks their expected x509 result before native execution. Go's verifier
+does not enforce the leaf TLS signing KU, so that one fixture explicitly
+documents its native protocol-specific rejection expectation.
+
+Profiles are: valid leaf plus two intermediates; same-name anchors with the
+wrong root first; expired/future certificates; path length; non-CA issuer;
+CA signing KU; CA EKU restriction; intermediate and configured-root DNS
+constraints; leaf signing KU; wrong leaf EKU; unknown critical extension;
+bad signature; and required explicit policy without a certificate policy.
+Positive cases require READY and exactly one peer-policy callback. Negative
+cases require an independently decoded CertificateUnknown fatal, no READY and
+no peer-policy admission; EOF alone is insufficient. Actual fatal output is
+drained before teardown. The existing provider passed these cases without
+adding a new production dependency or modifying its sources in this step.
+
+This is evidence for the bounded supplied-chain/anchor profile, not arbitrary
+path discovery, AIA fetching, WebPKI or a general positive policy-tree engine.
+Existing chain limits (five certificates, 4096 DER bytes) remain unchanged.
+Rejecting required explicit policy does not prove positive policy mapping or
+the complete [RFC 5280 validation algorithm](https://www.rfc-editor.org/rfc/rfc5280#section-6.1).
+SCTP transport composition follows the bounded ownership profile documented
+above; full [RFC 8261](https://www.rfc-editor.org/rfc/rfc8261) interoperability
+and browser/platform acceptance remain separate gates.
+
+The complete `native-release-user` build graph and 31 affected/adjacent CTests
+passed on Windows x64 LLVM-MinGW Release in 28.13 seconds. This includes all
+Crypto DTLS tests, C++17 headers, both native DTLS suites, existing SCTP tests
+and sole-Crypto-owner/original-owner audits. Subsequent empty-delivery and
+Session-query edges passed their two CTests in 8.65 seconds after a complete
+graph build. Executables run only through CTest, with `PYTHONOPTIMIZE=1`.
+No Linux/macOS/IPv6 runtime, sanitizer, hardware or performance result is claimed.

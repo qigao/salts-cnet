@@ -3,6 +3,7 @@ package tlcpinterop
 import (
 	"bytes"
 	"context"
+	"crypto"
 	"crypto/rand"
 	"crypto/x509"
 	"crypto/x509/pkix"
@@ -28,6 +29,7 @@ import (
 )
 
 var native = flag.String("native", "", "production CNet formal peer")
+var python = flag.String("python", "", "configured formal fixture interpreter")
 
 // Inspect the actual ClientHello without replacing either protocol engine.
 // The signature extension is TLCP's hash/signature pair, not RFC 8998's ID.
@@ -74,6 +76,9 @@ func signatureExtension(record []byte) ([]byte, error) {
 		value, err := vector(2)
 		if err != nil {
 			return nil, err
+		}
+		if kind == 50 {
+			return nil, errors.New("TLS certificate-signature extension is not a TLCP wire extension")
 		}
 		if kind == 13 {
 			if signature != nil {
@@ -125,6 +130,9 @@ type fixture struct {
 }
 
 func credentials(t *testing.T, change func(int, *x509.Certificate)) fixture {
+	return credentialsWithIssuer(t, change, nil)
+}
+func credentialsWithIssuer(t *testing.T, change func(int, *x509.Certificate), issuer crypto.Signer) fixture {
 	t.Helper()
 	dir := t.TempDir()
 	now := time.Now().UTC()
@@ -140,7 +148,10 @@ func credentials(t *testing.T, change func(int, *x509.Certificate)) fixture {
 	root := &x509.Certificate{SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: "TLCP test CA"}, NotBefore: now.Add(-time.Hour), NotAfter: now.Add(24 * time.Hour),
 		IsCA: true, BasicConstraintsValid: true, MaxPathLenZero: true, KeyUsage: x509.KeyUsageCertSign | x509.KeyUsageCRLSign}
 	var err error
-	certs[0], err = smx509.CreateCertificate(rand.Reader, root, root, &keys[0].PublicKey, keys[0])
+	if issuer == nil {
+		issuer = keys[0]
+	}
+	certs[0], err = smx509.CreateCertificate(rand.Reader, root, root, issuer.Public(), issuer)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -153,12 +164,13 @@ func credentials(t *testing.T, change func(int, *x509.Certificate)) fixture {
 		if change != nil {
 			change(i, cert)
 		}
-		certs[i], err = smx509.CreateCertificate(rand.Reader, cert, root, &keys[i].PublicKey, keys[0])
+		certs[i], err = smx509.CreateCertificate(rand.Reader, cert, root, &keys[i].PublicKey, issuer)
 		if err != nil {
 			t.Fatal(err)
 		}
 	}
-	f := fixture{rootKey: keys[0], caPath: filepath.Join(dir, "ca.pem"), certPath: filepath.Join(dir, "dual.pem"), keyPath: filepath.Join(dir, "keys.pem")}
+	rootSM2, _ := issuer.(*sm2.PrivateKey)
+	f := fixture{rootKey: rootSM2, caPath: filepath.Join(dir, "ca.pem"), certPath: filepath.Join(dir, "dual.pem"), keyPath: filepath.Join(dir, "keys.pem")}
 	f.root, err = smx509.ParseCertificate(certs[0])
 	if err != nil {
 		t.Fatal(err)
@@ -281,10 +293,20 @@ func runNativeClient(t *testing.T, f fixture, identity string, accept bool, suit
 	port := fmt.Sprint(listener.Addr().(*net.TCPAddr).Port)
 	args := []string{"--external-ip-san", port, "tlcp", identity, f.caPath, expectation}
 	if len(policy) != 0 {
-		if len(policy) != 3 {
-			t.Fatal("expected issuer, CRL, policy mode")
+		if len(policy) != 3 && len(policy) != 4 && len(policy) != 6 {
+			t.Fatal("expected issuer, revocation response, policy mode, optional OCSP selector")
 		}
-		args = []string{"--tlcp-crl-policy", port, identity, f.caPath, policy[0], policy[1], expectation, policy[2]}
+		selector := "--tlcp-crl-policy"
+		if len(policy) >= 4 {
+			if policy[3] != "ocsp" {
+				t.Fatal("invalid revocation selector")
+			}
+			selector = "--tlcp-ocsp-policy"
+		}
+		args = []string{selector, port, identity, f.caPath, policy[0], policy[1], expectation, policy[2]}
+		if len(policy) == 6 {
+			args = append(args, policy[4], policy[5])
+		}
 	}
 	command := exec.CommandContext(ctx, *native, args...)
 	output, runErr := command.CombinedOutput()
@@ -513,7 +535,29 @@ func TestTLCP(t *testing.T) {
 		}
 		bundle = rest
 	}
+	t.Run("pkcs12", func(t *testing.T) {
+		if *python == "" {
+			t.Fatal("-python is required for PFX fixtures")
+		}
+		script := filepath.Join("..", "..", "..", "crypto", "tests", "asn1", "pkcs12_peer.py")
+		if out, err := exec.Command(*python, script, "--fixture", f.certPath+".pfx", f.certPath, f.keyPath+".sign", f.keyPath+".enc").CombinedOutput(); err != nil {
+			t.Fatalf("PFX fixture: %v\n%s", err, out)
+		}
+		t.Setenv("SALTS_TEST_TLS_MEMORY", "der")
+		t.Setenv("SALTS_TEST_TLS_PKCS12", "1")
+		runNativeServer(t, f, verifiedConfig(f), "close")
+	})
 	for _, mode := range []string{"pem", "der"} {
+		for _, encrypted := range []bool{false, true} {
+			t.Run(fmt.Sprintf("credential_object_%s/%t", mode, encrypted), func(t *testing.T) {
+				t.Setenv("SALTS_TEST_TLS_MEMORY", mode)
+				t.Setenv("SALTS_TEST_TLS_OBJECT", "1")
+				if encrypted {
+					t.Setenv("SALTS_TEST_TLS_ENCRYPTED", "1")
+				}
+				runNativeServer(t, f, verifiedConfig(f), "close")
+			})
+		}
 		t.Run("memory_"+mode, func(t *testing.T) {
 			t.Setenv("SALTS_TEST_TLS_MEMORY", mode)
 			runNativeClient(t, f, "localhost", true, []uint16{tlcp.ECC_SM4_GCM_SM3})

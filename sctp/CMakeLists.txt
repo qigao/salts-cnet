@@ -52,6 +52,14 @@ add_library(cnet_sctp_session STATIC
   src/sctp_webrtc.c)
 add_library(Salts::SCTP ALIAS cnet_sctp_session)
 target_link_libraries(cnet_sctp_session PUBLIC cnet_sctp_wire)
+file(GLOB _sctp_dtls_sources CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/src/sctp_dtls_*.c")
+source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}/src" PREFIX "src" FILES ${_sctp_dtls_sources})
+add_library(cnet_sctp_dtls STATIC ${_sctp_dtls_sources})
+add_library(Salts::SCTPDTLS ALIAS cnet_sctp_dtls)
+target_link_libraries(cnet_sctp_dtls PUBLIC Salts::SCTP Salts::CNet)
+set_target_properties(cnet_sctp_dtls PROPERTIES
+  EXPORT_NAME SCTPDTLS C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF
+  POSITION_INDEPENDENT_CODE ON FOLDER "SCTP")
 target_include_directories(cnet_sctp_session
   PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
@@ -118,13 +126,14 @@ endif()
 
 # Only SaltsCore exports this ABI, never an old standalone package.
 if(PROJECT_NAME STREQUAL "SaltsCore")
-  install(TARGETS cnet_sctp_wire cnet_sctp_session
+  install(TARGETS cnet_sctp_wire cnet_sctp_session cnet_sctp_dtls
     EXPORT SaltsCoreTargets ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR})
-  install(FILES include/cnet/sctp_wire.h include/cnet/sctp_session.h
+  install(FILES include/cnet/sctp_wire.h include/cnet/sctp_session.h include/cnet/sctp_dtls.h
     DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/cnet)
 endif()
 
 if(BUILD_TESTING)
+  add_subdirectory(tests)
   add_executable(cnet_sctp_wire_test tests/wire_test.c)
   target_link_libraries(cnet_sctp_wire_test PRIVATE Salts::SCTPWire Salts::TinyTest)
   set_target_properties(cnet_sctp_wire_test PROPERTIES

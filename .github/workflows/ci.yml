@@ -174,7 +174,7 @@ jobs:
 
       - name: Set up native LLVM
         if: runner.os != 'Windows'
-        uses: qigao/vcpkg-cache/.github/actions/setup-llvm-native@v0.1.6
+        uses: qigao/vcpkg-cache/.github/actions/setup-llvm-native@v0.1.7
         with:
           build-type: toolchain-only
           obfuscator: "false"
@@ -182,7 +182,7 @@ jobs:
       - name: Set up Windows LLVM-MinGW
         id: windows-llvm
         if: runner.os == 'Windows'
-        uses: qigao/vcpkg-cache/.github/actions/setup-llvm-mingw@v0.1.6
+        uses: qigao/vcpkg-cache/.github/actions/setup-llvm-mingw@v0.1.7
         with:
           target: ${{ matrix.target }}
           build-type: toolchain-only
@@ -190,9 +190,9 @@ jobs:
 
       - name: Set up shared dependency contract
         id: vcpkg
-        # GmSSL #43 decodes the complete explicit SHA-2 PBKDF2 credential PRF family.
+        # GmSSL #44 adds bounded TLS sessions and certificate-policy fixes.
         # Includes native Windows pkg-config; avoid MSYS2 for pkg-config.
-        uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-curl-cache@5c4eb708fe29752f43da9b4464ed00e11bcb30c8
+        uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-curl-cache@v0.1.7
         with:
           mode: read
           triplet: ${{ matrix.triplet }}
@@ -202,7 +202,7 @@ jobs:
           token: ${{ github.token }}
 
       - name: Restore re2c and Unicode host data
-        uses: qigao/vcpkg-cache/.github/actions/setup-re2c-tools@v0.1.6
+        uses: qigao/vcpkg-cache/.github/actions/setup-re2c-tools@v0.1.7
         with:
           token: ${{ github.token }}
 
@@ -225,10 +225,13 @@ jobs:
         with:
           go-version-file: tests/independent/shangmi/go.mod
           cache-dependency-path: |
+            cnet/tests/tickets/go.sum
+            crypto/tests/algorithms/independent/go.sum
             crypto/tests/x509/independent/go.sum
             tests/independent/tlcp/go.sum
             tests/independent/shangmi/go.sum
             sctp/tests/independent/pion/go.sum
+            sctp/tests/secure/go.sum
 
       - name: Install private virtual audio test runtime
         if: matrix.preset == 'ci-tsan'
@@ -278,7 +281,7 @@ jobs:
 
       - name: Install native ccache
         id: ccache
-        uses: qigao/vcpkg-cache/.github/actions/setup-ccache@v0.1.6
+        uses: qigao/vcpkg-cache/.github/actions/setup-ccache@v0.1.7
 
       - name: Restore compiler cache
         id: compiler-cache

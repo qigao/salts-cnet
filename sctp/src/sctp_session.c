@@ -74,6 +74,20 @@ static uint16_t first_set(uint16_t bits) {
   }
   return sid;
 }
+cnet_sctp_session_status cnet_sctp_session_get_peer_binding(cnet_sctp_session *s,uint64_t *binding) {
+  if(!binding) return CNET_SCTP_SESSION_INVALID;
+  *binding=0u;
+  cnet_sctp_session_status status=guard(s);
+  if(status!=CNET_SCTP_SESSION_OK) return status;
+  *binding=s->association.config.peer_binding;
+  return CNET_SCTP_SESSION_OK;
+}
+cnet_sctp_session_status cnet_sctp_session_data_ready(cnet_sctp_session *s,int *ready){
+  if(!ready)return CNET_SCTP_SESSION_INVALID;
+  *ready=0;cnet_sctp_session_status status=guard(s);
+  if(status!=CNET_SCTP_SESSION_OK)return status;
+  *ready=s->association.data_ready!=0u;return CNET_SCTP_SESSION_OK;
+}
 
 /* A valid RFC6525 SID retirement cannot reuse the SID while old user DATA
  * is still copied/retained. Fail closed on invariant violations rather than

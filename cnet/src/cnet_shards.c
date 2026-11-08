@@ -808,6 +808,15 @@ int cnet_shards_tcp_shutdown(cnet_shards *shards, cnet_shard_connection connecti
              : SALTS_ENOENT;
 }
 
+int cnet_shards_tls_session_reused(cnet_shards *shards, cnet_shard_connection connection, bool *out) {
+  cnet_shards_impl *impl = cnet_shards_get(shards);
+  if (!out) return SALTS_EINVAL;
+  *out = false;
+  if (!impl || !cnet_shard_connection_valid(connection)) return SALTS_ENOENT;
+  cnet_shard_record *record = cnet_shards_get_record(impl,connection.shard);
+  return record ? cnet_owner_tls_session_reused(&record->owner,connection.session,out) : SALTS_ENOENT;
+}
+
 int cnet_shards_tls_negotiated_version(cnet_shards *shards, cnet_shard_connection connection,
                                        char *buffer, size_t capacity, size_t *out_size) {
   cnet_shards_impl *impl = cnet_shards_get(shards);

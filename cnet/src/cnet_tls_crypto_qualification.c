@@ -240,6 +240,7 @@ int cnet_crypto_tls_test_client_context(
         policy, effective_dns_name, exact_protocol, cipher_capacity,
         CNET_CRYPTO_OWNER_TEST_ONLY, &options);
     if (status != SALTS_OK) return status;
+    if (policy->session_cache_capacity != 0u) return SALTS_ENOTSUP;
     if (policy->cert_file != NULL) {
         auth.struct_size = (uint32_t)sizeof(auth);
         auth.client_auth = CRYPTO_TLS_CLIENT_AUTH_NONE;
@@ -269,6 +270,7 @@ int cnet_crypto_tls_test_server_context(
         policy, exact_protocol, cipher_capacity,
         CNET_CRYPTO_OWNER_TEST_ONLY, &options);
     if (status != SALTS_OK) return status;
+    if (policy->session_ticket_capacity || policy->session_ticket_lifetime_seconds) return SALTS_ENOTSUP;
     if (policy->client_auth == CNET_TLS_CLIENT_AUTH_REQUIRED) {
         auth.struct_size = (uint32_t)sizeof(auth);
         auth.client_auth = CRYPTO_TLS_CLIENT_AUTH_REQUIRED;
@@ -864,6 +866,12 @@ static int copy_name(const cnet_tls_state *state, const char *value,
     memcpy(buffer, value, length + 1u);
     *out_size = length;
     return SALTS_OK;
+}
+
+int cnet_tls_state_session_reused(const cnet_tls_state *state, bool *out) {
+  if (!out) return SALTS_EINVAL;
+  *out = false;
+  return state ? SALTS_ENOTSUP : SALTS_EINVAL;
 }
 
 int cnet_tls_state_negotiated_version(const cnet_tls_state *state,

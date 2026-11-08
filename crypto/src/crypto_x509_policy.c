@@ -19,7 +19,7 @@ static unsigned decimal(const uint8_t *p, size_t n) {
   return value;
 }
 static int leap(unsigned y) { return y%4u == 0u && (y%100u != 0u || y%400u == 0u); }
-int salts_crypto_x509_date(const salts_asn1_tlv *v, int64_t *out) {
+static int date_value(const salts_asn1_tlv *v, int64_t *out, int x509) {
   static const unsigned days[] = {31,28,31,30,31,30,31,31,30,31,30,31};
   size_t digits = v->tag_number == 23u ? 12u : 14u, k;
   if (v->tag_class || v->constructed || (v->tag_number != 23u && v->tag_number != 24u) ||
@@ -29,13 +29,19 @@ int salts_crypto_x509_date(const salts_asn1_tlv *v, int64_t *out) {
   unsigned y = decimal(v->content, k), m = decimal(v->content+k, 2), d = decimal(v->content+k+2, 2);
   unsigned h = decimal(v->content+k+4, 2), min = decimal(v->content+k+6, 2), sec = decimal(v->content+k+8, 2);
   if (k == 2) y += y >= 50u ? 1900u : 2000u;
-  else if (y < 2050u) return 0; /* RFC5280 uses UTCTime through 2049. */
+  else if (!y || (x509 && y < 2050u)) return 0; /* RFC5280 uses UTCTime through 2049. */
   if (m < 1 || m > 12 || d < 1 || d > days[m-1]+(unsigned)(m == 2 && leap(y)) || h > 23 || min > 59 || sec > 59) return 0;
   /* Gregorian days before Jan 1 y, relative to Jan 1 1970; bounded by year9999. */
   int64_t before = (int64_t)(y-1u)*365 + (y-1u)/4u - (y-1u)/100u + (y-1u)/400u - 719162;
   for (unsigned i=1; i<m; ++i) before += days[i-1]+(unsigned)(i == 2 && leap(y));
   *out = (before+d-1)*86400 + h*3600 + min*60 + sec;
   return 1;
+}
+int salts_crypto_x509_date(const salts_asn1_tlv *v, int64_t *out) {
+  return date_value(v,out,1);
+}
+int salts_crypto_generalized_time(const salts_asn1_tlv *v, int64_t *out) {
+  return v->tag_number == 24u && date_value(v,out,0);
 }
 int salts_crypto_x509_valid_time(const crypto_x509_der_view *v, int64_t now) {
   salts_asn1_reader r; salts_asn1_tlv first, last; int64_t a, b;

@@ -89,12 +89,15 @@ static int same(const void *a, size_t an, const void *b, size_t bn) {
 static int valid_span(const salts_crypto_sm2_cert_span *span) {
   return span->der && span->size && span->size <= SALTS_CRYPTO_SM2_TRUST_MAX_CERT_SIZE;
 }
-static int admitted(const salts_crypto_sm2_chain_entry *chain, size_t count,
+int salts_crypto_sm2_trust_admitted(const salts_crypto_sm2_chain_entry *chain, size_t count,
     const salts_crypto_sm2_trust_policy *p, const uint8_t *out) {
   if (!chain || !count || count > SALTS_CRYPTO_SM2_TRUST_MAX_CHAIN || !p || !out ||
       !valid_span(&p->anchor) || !p->expected_leaf_public_key || p->validation_time < 0 ||
       p->validation_time > INT64_C(253402300799) ||
-      (p->purpose != SALTS_CRYPTO_SM2_TRUST_SERVER_SIGNING && p->purpose != SALTS_CRYPTO_SM2_TRUST_CLIENT_SIGNING) ||
+      (p->purpose != SALTS_CRYPTO_SM2_TRUST_SERVER_SIGNING && p->purpose != SALTS_CRYPTO_SM2_TRUST_CLIENT_SIGNING &&
+       p->purpose != SALTS_CRYPTO_SM2_TRUST_CODE_SIGNING && p->purpose != SALTS_CRYPTO_SM2_TRUST_EMAIL_PROTECTION &&
+       p->purpose != SALTS_CRYPTO_SM2_TRUST_TIME_STAMPING && p->purpose != SALTS_CRYPTO_SM2_TRUST_OCSP_SIGNING &&
+       p->purpose != SALTS_CRYPTO_SM2_TRUST_EMAIL_ENCRYPTION) ||
       (p->revocation != SALTS_CRYPTO_SM2_REVOCATION_EXTERNAL && p->revocation != SALTS_CRYPTO_SM2_REVOCATION_NOT_CHECKED)) return 0;
   if (p->revocation == SALTS_CRYPTO_SM2_REVOCATION_EXTERNAL) { if (!p->check_revocation) return 0; }
   else if (p->check_revocation || p->revocation_context) return 0;
@@ -110,16 +113,17 @@ static int admitted(const salts_crypto_sm2_chain_entry *chain, size_t count,
 int salts_crypto_sm2_validate_pinned_chain(const salts_crypto_sm2_chain_entry *chain,
     size_t count, const salts_crypto_sm2_trust_policy *policy, uint8_t public_key[65]) {
   cert_policy certs[SALTS_CRYPTO_SM2_TRUST_MAX_CHAIN+1] = {0};
-  if (!admitted(chain, count, policy, public_key)) return SALTS_CRYPTO_EINVAL;
+  if (!salts_crypto_sm2_trust_admitted(chain, count, policy, public_key)) return SALTS_CRYPTO_EINVAL;
   for (size_t i=0; i<=count; ++i) {
     const salts_crypto_sm2_cert_span *span = i == count ? &policy->anchor : &chain[i].certificate;
     cert_policy *c = &certs[i];
     if (crypto_x509_der_inspect(span->der, span->size, &c->view) != SALTS_ASN1_OK || c->view.version != 2 ||
         !salts_crypto_x509_valid_name(c->view.subject_der, c->view.subject_size) || !salts_crypto_x509_valid_name(c->view.issuer_der, c->view.issuer_size) ||
         salts_crypto_sm2_x509_public_key(span->der, span->size, c->public_key) != SALTS_CRYPTO_OK ||
-        !salts_crypto_x509_valid_time(&c->view, policy->validation_time) || !extensions(c, (unsigned)policy->purpose)) goto reject;
+        !salts_crypto_x509_valid_time(&c->view, policy->validation_time) || !extensions(c, policy->purpose == SALTS_CRYPTO_SM2_TRUST_EMAIL_ENCRYPTION ? 4u : (unsigned)policy->purpose)) goto reject;
     if (i == 0) {
-      if (c->ca || !(c->ku & 1u) || (c->ku & ((1u<<5)|(1u<<6))) || !c->eku || !c->purpose ||
+      const unsigned required_usage = policy->purpose == SALTS_CRYPTO_SM2_TRUST_EMAIL_ENCRYPTION ? 1u << 2 : 1u;
+      if (c->ca || !(c->ku & required_usage) || (c->ku & ((1u<<5)|(1u<<6))) || !c->eku || !c->purpose ||
           memcmp(c->public_key, policy->expected_leaf_public_key, 65)) goto reject;
     } else {
       if (!c->basic || !c->basic_critical || !c->ca || !(c->ku & (1u<<5)) || c->path_length < i-1u ||

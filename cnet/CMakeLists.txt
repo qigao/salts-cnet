@@ -51,11 +51,19 @@ endif()
 
 # Salts source at refactor/cnet-ipc-name-native: native C11 FIFO, indexed peers,
 # and caller-owned IPC path. Keep the entire CNet DSO in one ownership domain.
+file(GLOB _cnet_dtls_sources CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/src/cnet_dtls*.c")
+source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}/src" PREFIX "src" FILES ${_cnet_dtls_sources})
+set(_cnet_dtls_relative_sources)
+foreach(_source IN LISTS _cnet_dtls_sources)
+  file(RELATIVE_PATH _relative "${PROJECT_SOURCE_DIR}" "${_source}")
+  list(APPEND _cnet_dtls_relative_sources "${_relative}")
+endforeach()
 set(_saltscore_cnet_sources
   cnet/src/cnet_resources.c
   cnet/src/cnet_client.c
   cnet/src/cnet_command.c
   cnet/src/cnet_datagram.c
+  ${_cnet_dtls_relative_sources}
   cnet/src/cnet_kcp.c
   cnet/src/cnet_kcp_fec.c
   cnet/src/cnet_kcp_secure.c
@@ -207,4 +215,8 @@ if(BUILD_TESTING)
     COMMAND "${Python3_EXECUTABLE}" -B -m unittest discover
       -s "${PROJECT_SOURCE_DIR}/tests/cnet-owner"
       -p test_native_crypto_owner_audit.py -v)
+endif()
+
+if(BUILD_TESTING)
+  add_subdirectory(tests)
 endif()

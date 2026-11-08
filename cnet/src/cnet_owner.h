@@ -343,6 +343,7 @@ int cnet_owner_tcp_shutdown(cnet_owner *owner, cnet_session_handle session,
                             cnet_tcp_shutdown how);
 int cnet_owner_preserve_send_on_eof(cnet_owner *owner, cnet_session_handle session);
 
+int cnet_owner_tls_session_reused(cnet_owner *owner, cnet_session_handle session, bool *out_reused);
 int cnet_owner_tls_negotiated_version(cnet_owner *owner, cnet_session_handle session, char *buffer,
                                       size_t capacity, size_t *out_size);
 int cnet_owner_tls_negotiated_cipher(cnet_owner *owner, cnet_session_handle session, char *buffer,

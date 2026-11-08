@@ -8,6 +8,7 @@
 #include <crypto/tls_diagnostic.h>
 #include <crypto/tls_cipher.h>
 #include <crypto/tls_signature.h>
+#include <crypto/tls_group.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -168,9 +169,15 @@ typedef struct crypto_tls_stream_client_config {
    * narrowing or fallback. Unknown/unsupported/profile/version conflict:
    * ENOTSUP; pointer/count mismatch, duplicates or excess count: EINVAL.
    * Local order is preserved; peer/key compatibility still gates negotiation.
-   * Signature algorithms use their separate list; groups keep profile defaults. */
+   * Signature algorithms and key-exchange groups use their separate lists. */
   const crypto_tls_cipher_suite *cipher_suites;
   size_t cipher_suite_count;
+  /** Immutable copied key-exchange group allowlist, 1..GROUP_MAX_COUNT unique
+   * entries. NULL/0 keeps the profile default. STANDARD currently implements
+   * P256; SHANGMI_TLS13 implements SM2. Unsupported groups return ENOTSUP before
+   * trust I/O. TLCP's static-key profile rejects explicit group lists. */
+  const crypto_tls_group *supported_groups;
+  size_t supported_group_count;
   /** Optional ordered signature allowlist, copied during initialization.
    * NULL/0 keeps profile defaults; explicit lists contain 1..4 unique schemes.
    * STANDARD admits RSA-PKCS1-SHA256, RSA-PSS-RSAE-SHA256 and ECDSA P256/SHA256
@@ -186,12 +193,15 @@ typedef struct crypto_tls_stream_client_config {
    * work normally. Trust, identity, purpose and revocation remain mandatory. */
   const crypto_tls_signature_scheme *signature_algorithms;
   size_t signature_algorithm_count;
-  /** Independent TLS1.2/1.3 certificate-chain signature allowlist, copied at init.
+  /** Independent TLS/TLCP certificate-chain signature allowlist, copied at init.
    * NULL/0 uses signature_algorithms. Explicit lists contain 1..4 unique
    * RSA-PKCS1-SHA256 or ECDSA P256/SHA256, P384/SHA384 (STANDARD), or SM2/SM3
    * (SHANGMI). RSA-PSS certificate signatures are unsupported. STANDARD permits
-   * TLS1.2/1.3 and ranges; TLCP returns ENOTSUP before I/O. TLS1.2 client identity
-   * selection also obeys the peer CertificateRequest's shared signature list.
+   * TLS1.2/1.3 and ranges. TLCP clients admit SM2/SM3 or RSA-PKCS1-SHA256
+   * certificate issuers while retaining SM2 handshake signatures; the policy is
+   * local admission, without adding TLS extension 50 to TLCP. TLCP server lists
+   * return ENOTSUP while client authentication is unsupported. TLS1.2 client
+   * identity selection also obeys the peer CertificateRequest's shared list.
    * Controls certificate extension offers, selection and peer-chain verification.
    * Handshake signatures remain controlled by signature_algorithms. */
   const crypto_tls_signature_scheme *certificate_signature_algorithms;
@@ -209,6 +219,21 @@ typedef struct crypto_tls_stream_client_config {
    * file reads or shared-context mutation. TLCP client identities: ENOTSUP. */
   const crypto_tls_client_identity *identities;
   size_t identity_count;
+  /** Context-owned client TLS1.3 ticket cache: 0 disables, 1..16 fixed slots.
+   * Requires exact STANDARD TLS1.3 or SHANGMI_TLS13; TLS1.2/ranges/TLCP and
+   * implicit iOS system trust return ENOTSUP before trust I/O. Entries never
+   * cross contexts and bind exact verified hostname, ALPN, cipher and original
+   * authenticated peer chain. Each cached entry is consumed once; expiry is measured
+   * by monotonic milliseconds. Full cache replaces the oldest cyclic slot,
+   * securely clearing it. A miss/expired/rejected ticket uses TLS's full
+   * authenticated handshake; no plaintext/profile fallback or application replay.
+   * Restored chains are revalidated, including the current peer policy, before
+   * READY. 0RTT, pure PSK and persistence are not enabled; server issuance is
+   * configured separately by the server ticket fields.
+   * All cache/stream copies are bounded; references preserve context lifetime.
+   * Concurrent owners serialize cache copies only; no crypto/I/O/callback under
+   * its lock. Rebuild against the matching GmSSL callback ABI. */
+  uint32_t session_cache_capacity;
 } crypto_tls_stream_client_config;
 
 /** Configuration copied into a reusable server context during initialization. */
@@ -263,15 +288,24 @@ typedef struct crypto_tls_stream_server_config {
   /** Same immutable cipher allowlist contract as the client configuration. */
   const crypto_tls_cipher_suite *cipher_suites;
   size_t cipher_suite_count;
+  /** Immutable copied key-exchange group allowlist, 1..GROUP_MAX_COUNT unique
+   * entries. NULL/0 keeps the profile default. STANDARD currently implements
+   * P256; SHANGMI_TLS13 implements SM2. Unsupported groups return ENOTSUP before
+   * trust I/O. TLCP's static-key profile rejects explicit group lists. */
+  const crypto_tls_group *supported_groups;
+  size_t supported_group_count;
   /** Same immutable signature allowlist contract as the client configuration. */
   const crypto_tls_signature_scheme *signature_algorithms;
   size_t signature_algorithm_count;
-  /** Independent TLS1.2/1.3 certificate-chain signature allowlist, copied at init.
+  /** Independent TLS/TLCP certificate-chain signature allowlist, copied at init.
    * NULL/0 uses signature_algorithms. Explicit lists contain 1..4 unique
    * RSA-PKCS1-SHA256 or ECDSA P256/SHA256, P384/SHA384 (STANDARD), or SM2/SM3
    * (SHANGMI). RSA-PSS certificate signatures are unsupported. STANDARD permits
-   * TLS1.2/1.3 and ranges; TLCP returns ENOTSUP before I/O. TLS1.2 client identity
-   * selection also obeys the peer CertificateRequest's shared signature list.
+   * TLS1.2/1.3 and ranges. TLCP clients admit SM2/SM3 or RSA-PKCS1-SHA256
+   * certificate issuers while retaining SM2 handshake signatures; the policy is
+   * local admission, without adding TLS extension 50 to TLCP. TLCP server lists
+   * return ENOTSUP while client authentication is unsupported. TLS1.2 client
+   * identity selection also obeys the peer CertificateRequest's shared list.
    * Controls certificate extension offers, selection and peer-chain verification.
    * Handshake signatures remain controlled by signature_algorithms. */
   const crypto_tls_signature_scheme *certificate_signature_algorithms;
@@ -292,6 +326,21 @@ typedef struct crypto_tls_stream_server_config {
    * policies are common to the entire immutable set. No hot replacement. */
   const crypto_tls_server_identity *identities;
   size_t identity_count;
+  /** Stateful TLS1.3 server tickets: both fields zero disables; capacity 1..16
+   * and lifetime 1..604800 seconds enable one NST per handshake advertising
+   * PSK_DHE. Requires exact STANDARD TLS1.3 or SHANGMI_TLS13 (else ENOTSUP).
+   * Invalid bounds/pairing: EINVAL, before trust/identity I/O. The immutable
+   * retained context owns bounded PSK/chain/SNI/ALPN/local-leaf/cipher state;
+   * the wire ticket is only a random 32-byte lookup identity. Cyclic full-store
+   * eviction securely clears old state. Unknown/expired/wrong-binding tickets
+   * decline PSK and require full authentication. Binder failures remain fatal.
+   * Restored mTLS chains and current peer policy are revalidated before READY.
+   * Entries become usable only after admission, outlive individual streams and
+   * clear on final context release. No persistence/cluster sharing, hot key
+   * rotation, TLS1.2/TLCP tickets, pure PSK or 0RTT. Server lookup does not consume
+   * entries before proof and never extends their original lifetime. */
+  uint32_t session_ticket_capacity;
+  uint32_t session_ticket_lifetime_seconds;
 } crypto_tls_stream_server_config;
 
 typedef struct crypto_tls_stream_context crypto_tls_stream_context;
@@ -352,6 +401,10 @@ void crypto_tls_stream_destroy(crypto_tls_stream *stream);
  * Negotiated metadata remains historical inspection, not readiness evidence. */
 int crypto_tls_stream_handshake(crypto_tls_stream *state, bool *out_complete);
 bool crypto_tls_stream_handshake_complete(const crypto_tls_stream *state);
+/* Owned historical metadata after successful authenticated readiness. Before
+ * completion: ENOTCONN with false. Invalid arguments: EINVAL. Owner-thread only;
+ * true is actual peer-accepted PSK_DHE, never merely an offered/cached ticket. */
+int crypto_tls_stream_session_reused(const crypto_tls_stream *state, bool *out_reused);
 /* Narrow within context bounds before the first handshake call. DEFAULT uses
  * the corresponding context bound; widening returns ENOTSUP without changing
  * state. Changes after the first handshake call are rejected. */
