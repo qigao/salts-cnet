@@ -174,7 +174,7 @@ jobs:
 
       - name: Set up native LLVM
         if: runner.os != 'Windows'
-        uses: qigao/vcpkg-cache/.github/actions/setup-llvm-native@v0.1.6
+        uses: qigao/vcpkg-cache/.github/actions/setup-llvm-native@v0.1.7
         with:
           build-type: toolchain-only
           obfuscator: "false"
@@ -182,7 +182,7 @@ jobs:
       - name: Set up Windows LLVM-MinGW
         id: windows-llvm
         if: runner.os == 'Windows'
-        uses: qigao/vcpkg-cache/.github/actions/setup-llvm-mingw@v0.1.6
+        uses: qigao/vcpkg-cache/.github/actions/setup-llvm-mingw@v0.1.7
         with:
           target: ${{ matrix.target }}
           build-type: toolchain-only
@@ -192,7 +192,7 @@ jobs:
         id: vcpkg
         # GmSSL #44 adds bounded TLS sessions and certificate-policy fixes.
         # Includes native Windows pkg-config; avoid MSYS2 for pkg-config.
-        uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-curl-cache@3c9cb8cbcc6b3645d47e02585e987b708406cd98
+        uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-curl-cache@v0.1.7
         with:
           mode: read
           triplet: ${{ matrix.triplet }}
@@ -202,7 +202,7 @@ jobs:
           token: ${{ github.token }}
 
       - name: Restore re2c and Unicode host data
-        uses: qigao/vcpkg-cache/.github/actions/setup-re2c-tools@v0.1.6
+        uses: qigao/vcpkg-cache/.github/actions/setup-re2c-tools@v0.1.7
         with:
           token: ${{ github.token }}
 
@@ -281,7 +281,7 @@ jobs:
 
       - name: Install native ccache
         id: ccache
-        uses: qigao/vcpkg-cache/.github/actions/setup-ccache@v0.1.6
+        uses: qigao/vcpkg-cache/.github/actions/setup-ccache@v0.1.7
 
       - name: Restore compiler cache
         id: compiler-cache

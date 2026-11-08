@@ -1733,3 +1733,30 @@
   user changes, .env, local build/cache/index artifacts remain untouched.
   Staged diff check passed. Push the feature branch without merge/release;
   cross-platform CI acceptance and outstanding issue scope remain separate.
+
+## 2026-11-09 — authorized merge and vcpkg-cache v0.1.7 release
+
+- User explicitly requested "merge code, relese vcpkg-cache 0.1.7", extending
+  the prior push-only instruction. Merge the completion candidate without
+  closing unfinished #188/#219 scope. The earlier request not to wait for macOS
+  runners remains in force; report pending CI separately from local results.
+- Created and merged vcpkg-cache PR #307 with expected head
+  `abdf62e0ad1af32cad73f3d7895150953b126af5`; merge commit
+  `47e38f1465f95e9211edcbcfd5e3c8e96289a20c`. Published stable source release
+  https://github.com/qigao/vcpkg-cache/releases/tag/v0.1.7 at that exact commit.
+  Created a new tag atomically; no existing tag/package was overwritten.
+  The cache repository has no automatic check runs for this PR.
+- Copied all three Lemon 1.0.0 assets from v0.1.6 after local SHA-256 checks,
+  then verified v0.1.7's tag, published state, asset sizes and digests against
+  v0.1.6. Native dependency ABI packages were not rebuilt/published by release.
+  Assets/notes are under TEMP/qigao-vcpkg-cache-v0.1.7-nhocjl8h.
+- Core registry reference is v0.1.7; baseline is the exact release commit.
+  All five shared setup Actions select v0.1.7. Git diff confirms the GmSSL port,
+  Actions, scripts, toolchain and vcpkg identity are unchanged from the previously
+  qualified 3c9cb8c candidate. Only release documentation/merge metadata changed.
+  Native user-preset configure succeeded using the release registry, vcpkg was
+  no-work (853us), and complete graph build was no-work. Log:
+  TEMP/salts-219-vcpkg-017-adoption.log. The 87 distinct formal Windows tests
+  remain the runtime evidence; unchanged tests were not repeated for ceremony.
+  Staged diff check passed. Cross-platform/sanitizer acceptance remains separate
+  and must not be inferred from this explicit merge or source release request.

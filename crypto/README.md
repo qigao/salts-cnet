@@ -17,8 +17,9 @@ CTest suite. The native GmSSL implementation is installed from the immutable
 `gmssl 3.2.0#44` vcpkg port, whose extension sources are pinned from
 `gmssl-extensions/`. `Salts::Crypto` links the imported `GmSSL::GmSSL` static
 library; it never compiles a duplicate GmSSL implementation.
-The #219 completion candidate pins the registry and CI dependency action to
-`3c9cb8cbcc6b3645d47e02585e987b708406cd98`, which registers #44 with TLCP
+The #219 completion candidate uses the registry and shared CI Actions from
+`v0.1.7`, with immutable baseline `47e38f1465f95e9211edcbcfd5e3c8e96289a20c`.
+It registers #44 with TLCP
 certificate policy, depth positions, bounded TLS sessions, anchor constraints
 and PRF erasure fixes. No local GmSSL overlay is required.
 Private Ed448 libecc objects live under `vendor/libecc/` in this module.
