@@ -1842,8 +1842,10 @@ separate TLCP issuers/IDs, client authentication or another wire profile.
 Provider changes are registered as GmSSL 3.2.0#44 in the vcpkg-cache completion
 commit `3c9cb8cbcc6b3645d47e02585e987b708406cd98`, with port tree
 `29cd5565d2fc85b03b1f555206e4745ca85f55bd`. Released as vcpkg-cache `v0.1.7`,
-baseline `47e38f1465f95e9211edcbcfd5e3c8e96289a20c`; Core's registry and shared
-CI Actions select that release. The local GmSSL overlay has been removed from the
+baseline `47e38f1465f95e9211edcbcfd5e3c8e96289a20c`. The current registry and
+CI Actions select binary-cache release `v0.1.1`, baseline
+`4ac631f89e07cebfd347848af642f31fe8c4edec`, retaining that same #44 port tree.
+The local GmSSL overlay has been removed from the
 build configuration. The old registry #43 alone cannot qualify this capability.
 No source-tree GmSSL build or extra validation project is introduced.
 

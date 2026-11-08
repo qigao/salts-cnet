@@ -1760,3 +1760,46 @@
   remain the runtime evidence; unchanged tests were not repeated for ceremony.
   Staged diff check passed. Cross-platform/sanitizer acceptance remains separate
   and must not be inferred from this explicit merge or source release request.
+
+## 2026-11-09 — vcpkg-cache v0.1.1 binary-cache adoption
+
+- Published provider v0.1.1 at `4ac631f89e07cebfd347848af642f31fe8c4edec`:
+  148 exact native ABI ZIPs plus `cache-index.json`, for Linux x64/ARM64,
+  Windows LLVM-MinGW x64/ARM64 and macOS ARM64. All five native producer jobs
+  passed. All 149 native/index uploaded asset sizes and server SHA-256 digests
+  matched local artifacts. Lemon assets retain the prior bytes; GmSSL remains
+  #44 at port tree `29cd5565d2fc85b03b1f555206e4745ca85f55bd`.
+- Core CI now restores its Actions binary/download cache before shared setup,
+  uses v0.1.1 Actions/registry, and supplies the real `cnet,media,zstd` features.
+  Published exact ABIs restore first; unlisted ABIs compile and populate the
+  writable files cache. Authentication, TLS, bad metadata and corrupt archives
+  remain fatal. macOS x64/Android target ABIs are not prewarmed by this release.
+- Windows reference builds acquire no MSYS2: libpq 16.9#5 has a native CMake
+  frontend backend; tree-sitter CLI uses native Python gzip extraction; pkgconf
+  uses the verified standalone executable. ZeroMQ 4.3.5#4 fixes its ARM clock
+  constant and explicit <new> include. Successful Windows producer logs contain
+  no MSYS2 acquisition. This does not qualify libpq database/NLS runtime tests.
+- Local adoption used canonical vcpkg scripts
+  `04a9d8e5212d01ee1dd9478eadd9caade4f8b0d4` and tool
+  `2026-07-27-98d7cb0cf1f4686a3e43aa5672b6230c1d56bce8`, via the ordinary
+  shared setup/manifest restore, then `cmake --fresh --preset native-release-user`,
+  complete `cmake --build --preset native-release-user --parallel 8` and
+  `cmake --build --preset install-native-release-user --parallel 8` under
+  VsDevCmd. The 11 local ABIs were unlisted (local toolchain identity differs
+  from the hosted producer); ordinary source builds completed and cached them.
+- `ctest --preset native-release-user -R
+  "^saltscore\.(cnet_tcp_loopback|gmssl_tls_io_abi|gmssl_shangmi_provider)$"`
+  passed all 3 cases. CMeta's existing `user-release`/`release`/`install-release`
+  presets then built and installed against this SDK; `ctest --preset release
+  -R "^salts.native."` passed all 15 formal integration cases. No independent
+  consumer/smoke project was created. Other downstream/sanitizer CI is separate.
+- Local configuration lessons: keep RUNNER_TEMP short on Windows (the initial
+  deeply nested TEMP directory hit Git's path limit; the successful job used
+  `C:/t/qc012`). Shared bootstrap requires a fresh job directory. After changing
+  vcpkg/toolchain ownership, refresh CMake's configuration cache: otherwise its
+  cached `Z_VCPKG_ROOT_DIR` can retain the old checkout despite a new outer
+  toolchain path. Do not silently select that old toolchain.
+- The local .env's GITHUB_TOKEN overrode `gh auth token`; the first live restore
+  correctly stopped at HTTP 401. The verification selected the already active
+  GitHub login before importing project environment settings. Credentials and
+  TLS handling were unchanged, and the user's .env was not edited.
