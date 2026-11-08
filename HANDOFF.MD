@@ -611,3 +611,1125 @@
   build and all five related CTests passed (107.31s); client-identities completed
   in 73.04s under the unchanged formal timeout. No extra verification project,
   CMake feature flag, test skip, retry or relaxed assertion.
+
+
+## Local #219 completion branch (2026-11-07, not yet pushed)
+
+- User requires completing the remaining authorized software locally in one pass,
+  then pushing after completion. Work only in feat/crypto-219-completion at the
+  existing salts-core-cnet-policies worktree; preserve the unrelated dirty main
+  checkout. No remote Git/PR/issue closure or push has occurred. Provider stays
+  pinned to GmSSL 3.2.0#43; no new production dependency or provider changes yet.
+- Implemented bounded, atomically retained immutable decrypted credential objects
+  and explicit profile-specific group lists. Contexts import separate provider key
+  state. Formal tests erase/release all source material before actual TLS/TLCP/
+  ShangMi handshakes and cover concurrent context construction and input rejection.
+- Added authenticated DER PKCS12/PFX import into those objects: integrity before
+  decryption, finite SHA2/SM3 MACs, existing PBES2 AES/SM4 policy, bounded cumulative
+  KDF work, strict BMP password encoding, complete bag/certificate/key matching,
+  and TLCP dual-key roles. Independent Python fixtures plus actual CNet standard,
+  ShangMi and TLCP handshakes pass. Legacy SHA1/PBE and general exports remain out
+  of this finite import profile. The configured Python executable is passed into
+  the existing formal peers, with no interpreter fallback search.
+- Added finite SM2/SM3 CMS SignedData: explicit RFC/national content OIDs, canonical
+  signed attributes, exact embedded certificate set, separate signature/issuer IDs,
+  pinned path/time/purpose/revocation checks before output. Native GmSSL CMS is not
+  wrapped as a generic trust API. Independent gmsm/PKCS7 tests cover attached/
+  detached, four-level paths, maximum messages/IDs and signed malformed attributes.
+- Added finite RFC5083 AuthEnvelopedData composition using existing SM2 key
+  transport and SM4-GCM: one recipient, fresh key/nonce, separate full tag, no CBC
+  padding oracle, and private plaintext until complete authentication. Recipient
+  trust reuses the existing path owner with EMAIL_ENCRYPTION (emailProtection EKU
+  and keyEncipherment KU); SignedData rejects encryption-only trust. A shared
+  private CMS schema helper owns bounded ASN1 composition only, not cryptography.
+  Independent Go ASN1/SM2/SM4 tests cover both directions through maximum signed
+  payload size, fresh key/nonce, long issuer Names, independent certificate IDs,
+  corruption, recipient trust, callback gates and exact output erasure. Inner
+  signed payload composition is tested; GCM does not authenticate sender identity.
+- Added direct-issuer SM2 OCSP primitives and copied immutable TLS/CNet snapshots:
+  SHA1(identifier-only)/SHA256/SM3 CertIDs, responder Name/key hashes, explicit SM2
+  IDs and time/age/skew/rollback/nonce policy, all-entry validation and distinct
+  snapshot-authentication vs actual-target-good decisions. Real ShangMi mTLS in
+  both roles and TLCP dual-leaf tests cover status, issuer substitution, lifetime,
+  data/close and unsupported role/profile gates. A separate pollux OCSP producer/
+  verified parser qualifies independent wire composition. Delegation, wire
+  stapling and distribution/cache workflows are still separate work.
+- Fixed new OCSP factory alias admission order: an unrelated invalid field must
+  never trigger output clearing over borrowed input. Formal regression covers
+  each aliased span and ordinary failure clearing. OCSP skew fixture initially
+  encoded local timezone: DER requires UTC; fix the independent fixture, not the
+  production validator. New CMS negative mutation fixtures clone encoded input so
+  one corruption cannot make later negative cases pass for the wrong reason.
+- Validation uses saved native-release-user LLVM-MinGW environment and full graph
+  builds, then formal CTest only. The LLVM-MinGW bin directory must precede PATH
+  so C++ tests load libc++/libunwind; the earlier launch failure was rerun passing.
+  Crypto/CNet/provider selection (54 formal CTests) passed in 160.96s before the
+  envelope addition. Full build plus CMS envelope/signing/trust/admission and C++
+  header tests passed (five tests, 2.70s); final long-name/max-content additions
+  passed all three CMS tests in 2.05s. Latest OCSP primitive/snapshot/actual-transport
+  group passed four tests in 3.59s. Logs are under TEMP/salts-219-*.log. No new
+  verification project, feature flag, skip, retry or relaxed authentication.
+- #219 is NOT complete: general PKIX/path discovery/constraints, remaining trust/
+  diagnostic configuration, delegated/distributed revocation, separate TLCP
+  issuers/IDs and client auth, session restore/cache/0RTT/PHA, production DTLS and
+  CNet/SCTP integration, and actual private-arithmetic side-channel qualification
+  remain. SDF/SKF remains user-deferred; hot update remains excluded. Session
+  research found native file-based tickets and an unfinished age calculation;
+  do not expose those helpers as a production memory-session API without binding
+  peer/profile/hostname/ALPN/policy and qualification. No constant-time or full
+  platform/production-DTLS claim follows from functional local tests.
+
+- Continued OCSP completion adds explicit same-issuer delegated responder
+  primitives and immutable snapshot inputs. Reuses pinned path validation for
+  responder digitalSignature/OCSPSigning, explicit issuer ID and validity at now
+  and producedAt. Requires issuer-signed noncritical exact NULL ocsp-nocheck;
+  no missing-status fallback or recursive revocation. Direct functions never infer
+  delegation. Optional embedded certificates match the configured responder and
+  optional exact issuer. Signer-ID and CertID-issuer binding remain separate.
+  Independent Crypto delegation tests and actual ShangMi mTLS/TLCP dual-leaf
+  tests pass; TLCP encrypted-leaf revoked/unknown/missing status still rejects.
+  Snapshot bound is now <100 KiB, checks remain allocation-free and references
+  retain every copied public input. Full build plus six OCSP/CRL tests passed in
+  6.64s; affected TLCP tests passed after delegation additions (1.95s). Delegated
+  responder discovery, non-no-check revocation and wire stapling are still open.
+
+- TLCP independent certificate-signature work now changes the local provider port:
+  feat/gmssl-219-completion has port-version 44, a new
+  tlcp-certificate-signatures.patch and its portfile registration, uncommitted and
+  unpushed. Core admits TLCP CLIENT SM2/SM3 or RSA-PKCS1-SHA256 certificate lists;
+  handshake remains SM2. Server lists still ENOTSUP while client auth is absent.
+  Provider enforces both sibling leaves with the actual common issuer, presented
+  issuer signatures and the selected local anchor signature after full native
+  authentication. Initial ordinary-chain matching falsely used the encryption
+  leaf as issuer and rejected valid RSA leaves; the dedicated sibling matcher
+  fixes the ownership/schema boundary instead of weakening mapping checks.
+- Latest full configure/build uses explicit
+  -DVCPKG_OVERLAY_PORTS=C:/projects/cpp/turbonet/.worktrees/vcpkg-cache-signature-position/ports/gmssl
+  with native-release-user. This is the local dependency fact source; Core's
+  committed manifest/registry still select #43. Final publication must register
+  #44 tree/version/baseline and update Core's pin together before removing the
+  override. Shared binary cache restore/build/upload remains active (first local
+  #44 build took 13s); there was no remote Git push/PR/issue mutation.
+- The new CNet TLCP certificate-policy CTest reproduced ENOTSUP on old Core/#43.
+  Full graph build + native ABI/admission and independent TLCP policy tests pass
+  with #44 (2 tests, 2.77s). Expanded default/mixed/optional-issuer tests are next.
+  Task-only source snapshots for patch generation are under ignored
+  build/provider-tlcp-policy (no CMake project); remove only those task files
+  when the complete local pass is finished. Do not modify the dirty main tree.
+
+- Expanded TLCP certificate-policy tests now pass default/exact/mixed allowlists,
+  SM2/RSA issuers, CA file/PEM/DER and optional transmitted issuer (48 scenarios).
+  Source arrays are erased before progress; ClientHello rejects any accidental
+  TLS extension 50. Full graph and all 57 selected Crypto/CNet/provider CTests
+  passed on the local #44 overlay (167.61s), before the depth-position addition.
+- Added x509-depth-positions.patch to the same unpublished #44 port. The native
+  verifier records the first presented issuer beyond its existing bound (TLS
+  depth+1, TLCP depth+2) only when that peer position actually exists. Crypto
+  retains the existing DEPTH reason with that index; authentication/error ordering
+  is unchanged and local anchors stay unknown. Existing mTLS tests reproduced
+  old missing positions; full build plus ABI/TLCP-policy/mTLS tests passed (3,
+  29.05s). Actual independent TLCP chains with one/two/three issuers qualify the
+  valid boundary and index 3 for both final and earlier traversal failures;
+  the full TLCP suite passed (10.78s). Generic malformed/constraint diagnostics
+  and other positions are not claimed complete by this slice.
+- Review found constructor output aliases could clear borrowed raw/PFX/key/
+  password/descriptor storage before rejection. Both identity constructors now
+  reject alias before clearing, preserve aliased storage, and document that out
+  owns no reference on entry. Formal ABI/admission and independent PFX tests pass
+  after the fix (2, 4.94s). This is separate from the earlier OCSP alias boundary.
+- CodeGraph sync completed: 75 changed files / 1219 nodes, 30.3s, before the final
+  alias test additions; .codegraph stays ignored. No commit or push performed.
+  Current #44 source extraction under vcpkg/buildtrees includes local patches;
+  do not mistake it for an unmodified #43 source when generating later patches.
+  The task-only build/provider-tlcp-policy snapshot is #43 for tls_vrf.c/tlcp.c;
+  its role is patch generation only, not a separate verification project.
+
+- Final local regression after depth and credential-alias fixes: full configured
+  graph already built; `ctest --preset native-release-user -R
+  'crypto\.|saltscore\.(cnet_|crypto_tls_|gmssl_)' --output-on-failure` passed
+  57/57 tests in 167.99s (TEMP/salts-219-local-regression-depth.log). Native Release
+  only: no new Linux sanitizer/device/macOS/platform CI claim. No push, commit or
+  issue closure. Keep user request to finish the authorized software pass before
+  pushing; #219 remains incomplete despite these local capability additions.
+
+- Read-only refreshed #188 and its original #195 contract at exact commit
+  e7895b5961258ee8f7d900eb0f6fc1e51766b533. It specifies a bounded datagram owner,
+  replay/flight timers, pre-auth anti-amplification and SCTP transaction/output
+  reservation, but no chosen DTLS version/cipher profile. The historical contract
+  path is absent from this checkout; it was read via GitHub, not restored.
+  RFC6347/5288 research is started for a first-party DTLS1.2 record layer over
+  existing GmSSL primitives; NO DTLS code/public API or supported recipe added.
+  Do not treat TLS byte-stream feed/take or existing SCTP peer_binding as DTLS.
+  Next software work includes selecting/documenting an actual DTLS profile,
+  handshake/trust/fragment/replay/retransmission state and real NativeIO/SCTP
+  bridge before any production or interoperability claim. Session restoration
+  also needs authenticated peer/profile/hostname/ALPN/policy binding and a
+  bounded owned cache; native file-session helpers remain unqualified.
+
+- 2026-11-08 local completion pass: added context-owned client TLS1.3 session
+  cache and actual accepted-restoration queries through Crypto/CNet. Capacity
+  0 disables; 1..16 slots support exact STANDARD TLS1.3 and SHANGMI_TLS13 only.
+  Each entry owns bounded ticket/PSK/original authenticated chain/name/ALPN;
+  one mutex serializes copies, never crypto, allocation, callbacks or I/O.
+  Cyclic replacement, expiry, consumption and final context/stream destruction
+  clear secrets. Repeated host/ticket entries are deduplicated while cached.
+  First handshake progress consumes the newest exact-name nonexpired entry
+  once, not stream construction; failure does not put it back. No unbounded
+  spent-ticket history or persistent/file cache. Monotonic millisecond age plus
+  age_add uses modulo-2^32 arithmetic; expiry never extends on selection.
+- Initial independent Go TLS test exposed no tickets on the first full handshake:
+  PSK_DHE was advertised only on a cache hit. Cache-enabled first handshakes now
+  advertise psk_dhe_ke without an identity; the identity/binder appears on hits.
+  Pure PSK and 0RTT remain disabled. Server PSK refusal uses the protocol's full
+  certificate authentication path. Accepted PSK_DHE restores/revalidates the
+  original chain with current trust/name/time/purpose/signature/depth rules,
+  checks the original ALPN/cipher and reruns retained peer policy before READY.
+  No previously cached revocation decision is treated as current admission.
+- Provider candidate remains GmSSL3.2.0#44 in the local provider completion
+  worktree. New tls13-client-session-cache.patch adds a synchronous bounded NST
+  callback carrying the derived PSK, lifetime, age_add and borrowed ticket.
+  Rebuild the matching ABI; no socket/file owner is added to Core/CNet. The
+  source snapshots build/provider-session-base/{include/gmssl/tls.h,src/tls_psk.c}
+  are pre-session-patch #44 and exist ONLY to generate patches, not a verification
+  project. Registry version/baseline and Core pins are still #43: do not claim a
+  fresh registry build supports the local changes. Keep the explicit overlay
+  until ALL authorized software work is complete, then register/pin/publish
+  the exact final port tree with Core. No commit/push/issue closure yet.
+- Formal cache tests cover malformed bounds, cyclic eviction, copied secrets,
+  exact hostname, exact expiry, UINT64_MAX age arithmetic, backwards clocks,
+  duplicate identities and eight concurrent one-entry consumers (one winner).
+  Independent Go TLS1.3 and pollux ShangMi peers each prove first full auth,
+  two PSK_DHE restorations, disabled-cache controls, rejected tickets after
+  server key rotation, data/close and caller-context release before the last
+  handshake. Standard TLS also proves changed ALPN, newly denying peer policy
+  and original-certificate expiry reject resumed connections with the expected
+  retained diagnostic and no application byte. CNet admission rejects enabled
+  unsupported ranges/profiles and excessive capacity before absent trust I/O.
+- Full configured native-release-user graph built; formal CTest filter
+  `crypto\.|saltscore\.(cnet_|crypto_tls_|gmssl_)` passed 60/60 in 191.90s
+  (TEMP/salts-219-session-regression.log). Windows x64 LLVM-MinGW Release only;
+  Linux sanitizers/macOS/Android/device validation was not executed. CodeGraph
+  sync succeeded (58 files, 1100 nodes, 21.4s); its affected analysis returned no
+  test candidates, so actual module reads and formal regressions determined
+  coverage. .codegraph remains ignored and uncommitted.
+- #219 is still incomplete: Core server ticket issuance and other restoration
+  profiles, PHA/0RTT, general PKIX/path constraints/cross-signing, richer trust
+  parameters, stapling/distribution/advanced CRLs and persistent revocation
+  cache, non-no-check delegate revocation, separate TLCP issuers/signing IDs and
+  client authentication, first-party DTLS/SCTP (#188), and real SM2/SM9 private
+  arithmetic side-channel qualification. Hardware stays user-deferred; hot
+  update excluded. Functional tests do not establish constant-time behavior.
+- Final affected checks after the 60-test pass: the legacy qualification facade
+  rejects nonzero cache capacity only after normal config admission validates
+  struct size. Its two static/shared-owner CTests passed after full rebuild.
+  The historical standard-TLS aggregate excludes the separately registered new
+  resumption test, avoiding duplicate execution; all its previous suites still
+  run. Configure/full build and those three affected tests passed (72.61s,
+  TEMP/salts-219-session-final-registration.log). Eight additional native NST
+  callback cases verify derived-PSK/metadata delivery and fatal rejection for
+  callback returns 0/-1/2 without ticket-count publication or application bytes;
+  return 1 releases the next application record. Full graph rebuilt and the
+  affected saltscore.gmssl_tls_io_abi CTest passed again (TEMP/
+  salts-219-session-callback.log). git diff --check passes; no new platform claim.
+
+- 2026-11-08 continuation for server tickets / PKIX / DTLS: server Crypto/CNet
+  configs now carry session_ticket_capacity (1..16) and lifetime seconds
+  (1..604800), both zero to disable, exact STANDARD TLS1.3 / SHANGMI_TLS13 only.
+  The context owns a bounded stateful table; random 32-byte wire identities map
+  to PSK/original client chain/exact SNI/ALPN/cipher/selected-local-leaf digest.
+  A bounded pending issuance snapshot is published only after Core admission.
+  Lookups copy without consumption, so forged binders cannot erase real tickets;
+  binder verification remains native and fatal on failure. Resumed mTLS restores
+  and revalidates the chain and reruns peer policy. No 0RTT/pure PSK/persistence.
+  Invalid/mismatched/expired/missing entries use protocol-defined full auth.
+- Native tls13-server-session-cache.patch adds issue/lookup callbacks, bounded
+  complete PSK identity/binder vector checking (<=16), correct HRR transcript
+  binding, retained SNI, and suppresses CertificateRequest in an accepted PSK
+  handshake. It also fixes NST partial output: after issuance count becomes zero,
+  pending record bytes must still drain before native handshake completion.
+  Issue secrets clear on all paths, and no early_data extension is advertised.
+  The independent Go client exposed a real RFC6066 status_request framing error
+  (extra outer length); encoder/parser/printer now use the direct OCSP struct.
+  Exact bytes, independent empty vectors and malformed lengths are formal cases.
+- New formal CNet tickets tests belong to cnet/tests, with registration in that
+  owner. Existing BUILD_TESTING gating is reused; no new feature switch or
+  consumer/smoke project. Go standard TLS qualifies server auth, REQUIRED-mTLS,
+  disabled client/server, changed ALPN/SNI, one-slot eviction, policy rejection,
+  original client-certificate expiry and early context release. Pollux qualifies
+  ShangMi server auth, bad binders followed by successful original-ticket reuse,
+  unknown tickets, invalid ages and actual one-second ticket expiry. Private
+  cache tests add readonly concurrent lookup, expiry and identity-collision
+  rejection. Eight native output cases cover byte-at-a-time NST and callback/
+  bounds/lifetime failures across AES/SM4. Before PKIX/DTLS additions, full graph
+  and 62 related CTests passed (191.85s, TEMP/salts-219-server-tickets-regression.log).
+  Test-driver pitfall fixed: do not cancel the native server process before
+  waiting for its final successful cleanup after peer close_notify.
+- PKIX correction: an initial analysis of x509_ext.c's NameConstraints dispatch
+  was incomplete; x509_vrf.c DOES implement intermediate constraints. Independent
+  Go x509 verification plus real CNet reproduced the narrower HIGH anchor bug:
+  anchor constraints checked only the nearest CA, permitting an out-of-subtree
+  leaf through an unconstrained intermediate (TEMP/salts-219-pkix-constraints-before.log).
+  x509-anchor-constraints.patch now checks every subordinate and excludes an
+  identical presented anchor. Six standard-TLS oracle cases cover intermediate/
+  anchor controls with/without a presented root. Eight TLCP cases cover direct/
+  intermediate chains and both leaves; unequal SANs must still fail the existing
+  entity-pair check as CERTIFICATE before constraints, while equal outside SANs
+  fail as CONSTRAINTS. Both affected CTests passed after correction. Constraint
+  index remains SIZE_MAX. This is not full PKIX/path-building qualification;
+  self-issued rollover behavior and general policy/cross-signing remain open.
+- DTLS work is INTERNAL ONLY: crypto_dtls_record.{h,c} implements an allocation-
+  free DTLS1.2 AES128-GCM epoch/record primitive over GmSSL, not a public DTLS
+  API/handshake/provider. It bounds plaintext to 16384, uses 13-byte headers,
+  8-byte explicit nonce + 16-byte tag, epoch/48-bit sequence AAD and 64-record
+  replay window. Sequence never wraps; no replay update before authenticated
+  tag; wrong epochs/replay/auth failures publish no plaintext. Datagram views
+  preserve coalesced record boundaries. Alias/capacity failures do not mutate
+  keys/sequence, and quiescent clear erases keys. AES temporary initialization
+  zeros unused schedule bytes before copying owned state.
+  crypto.algorithms.dtls_record uses TinyTest plus an independent Python AESGCM
+  oracle (test-only existing cryptography), including a valid explicit nonce
+  DIFFERENT from the header sequence, exact native output decryption, maximum/
+  empty records, replay/reordering/window edges, forged high sequence/tag/header,
+  expiry of the 48-bit sending space, aliases and coalesced input. First formal
+  run passed (TEMP/salts-219-dtls-record.log). No DTLS network readiness claim.
+- Source-only patch snapshots build/provider-server-session-base (includes
+  client-session #44; tls.h/tls_psk.c/tls13.c/tls_ocsp.c) and
+  build/provider-pkix-constraints-base/src/x509_vrf.c feed the task-only patch
+  generation scripts in build/. They are NOT separate validation projects.
+  Provider candidate is still unpublished #44, registry/Core pins still #43;
+  keep explicit local overlay. No commit, push, PR or issue mutation performed.
+  User root worktree remains untouched. CodeGraph final sync: 82 files, 1800
+  nodes, 19.7s; .codegraph stays ignored. All current execution remains native
+  Windows x64 Release, without new sanitizer/macOS/Android/device claims.
+- Remaining: general PKIX path discovery/policies/cross-signing and fuller
+  constraint qualification; DTLS handshake/trust/cookies/anti-amplification,
+  bounded fragment/flight/retransmission/close, NativeIO/SCTP ownership and
+  independent DTLS network qualification (#188); TLS1.2/TLCP restoration, PHA/
+  0RTT, advanced revocation/distribution/stapling, TLCP client auth/separate IDs/
+  issuers, and private arithmetic side-channel qualification. Hardware remains
+  user-deferred; hot update excluded. #219 is NOT complete, do not push early.
+- Final combined local evidence: full configured graph and CTest filter
+  `crypto\.|saltscore\.(cnet_|crypto_tls_|gmssl_)` passed 65/65 in 198.64s
+  (TEMP/salts-219-tickets-pkix-dtls-final.log). After zero-initializing the private
+  AES schedule temporary and making Python oracle checks independent of assert
+  optimization, full graph rebuilt and crypto.algorithms.dtls_record passed
+  again with PYTHONOPTIMIZE=1 (TEMP/salts-219-dtls-record-final.log). This is the
+  last source/test change; do not rerun the same successful scope for ceremony.
+  Both worktree diffs pass git diff --check. No commit/push/issue closure.
+
+## DTLS preparation and native PRF failure propagation (2026-11-08)
+
+- Continue the same local-only completion branches. User still requires one
+  completed software pass before publication; no commit/push/PR/issue change.
+  GmSSL remains the only production provider, hardware deferred and hot update
+  excluded. General PKIX and a production DTLS handshake are NOT complete.
+- Private crypto_dtls_cookie.{h,c} now implements stateless address/ClientHello
+  HMAC-SHA256 cookies, a 60-byte nonamplifying challenge and strict bounded
+  epoch-zero input validation. No connection allocation or retained per-peer
+  state precedes a valid cookie. A future listener must canonicalize the peer
+  address and own the immutable random-key context. Cookie verification is only
+  address proof, never certificate trust or handshake READY.
+- Private crypto_dtls_handshake.{h,c} provides eight owned 16KiB message slots,
+  overlap-aware bounded fragment assembly, once-only complete-message views,
+  no sequence wrap and a timer armed only after actual whole-flight send
+  terminals. Conflicting fragments fail transactionally. Fake monotonic time
+  covers retry authorization, delayed sends, doubling/cap, exhaustion, backward
+  clocks, overflow and acknowledgment. Full flight storage/transport draining
+  remains the future handshake owner's job.
+- Private crypto_dtls_secrets.{h,c} adds bounded canonical SHA256 transcript
+  snapshots, EMS-only SHA256 master/key expansion and role-specific Finished
+  verification. All supplied shared-secret/random/hash inputs are borrowed only
+  for a call; key derivation commits both epoch-one directions atomically.
+  Wrong authenticated Finished body/role/hash/length (including empty NULL)
+  erases master and both traffic epochs and latches failure. Semantic order,
+  certificate trust and authenticated record dispatch remain the owner boundary.
+  Transcript initialization accepts actual post-cookie starting sequences;
+  hardcoding ClientHello sequence one breaks renewed-cookie challenges under
+  RFC6347 section 4.2.1. Excluded ClientHello/HelloVerifyRequest bytes never hash.
+- HIGH native finding: tls_prf ignored every HMAC failure, could use unfinished
+  output and left secret HMAC state/blocks on the stack. Local provider #44 adds
+  tls-prf-failfast-erasure.patch after the existing candidate patches: check all
+  HMAC calls and produced lengths, clear the complete requested output after
+  any admitted failure, erase all base/work HMAC and block state at exit. No
+  replacement PRF or new dependency. Invalid admission leaves output untouched.
+  Overlay configure rebuilt this exact patched provider; publication/pins are
+  still pending the entire completion pass, as described above.
+- Formal crypto.algorithms.dtls_handshake uses TinyTest plus Python stdlib
+  SHA256/HMAC and the existing test-only cryptography AESGCM oracle. Tests cover
+  Python/native cookie exchange, independently normalized fragmented messages,
+  EMS master/directional keys/IVs, both Finished proofs and 65-byte PRF output.
+  Synthetic transcript bodies intentionally are not an actual certificate or
+  ECDHE handshake. Native digest callbacks fail at EVERY init/update/finish
+  invocation, including after prior output blocks, with full output-zero and
+  guard checks. The second TinyTest source defines TINYTEST_NO_MAIN to share
+  the existing runner; do not introduce a separate consumer/smoke project.
+- Full configured native-release-user graph and 3 initial related CTests passed
+  (1.73s, TEMP/salts-219-dtls-secrets-first.log). Shared PRF regression through
+  CTest filter `crypto\.|saltscore\.(cnet_|crypto_tls_|gmssl_)` passed 66/66
+  (198.11s, TEMP/salts-219-dtls-secrets-regression.log), with PYTHONOPTIMIZE=1.
+  After final private transcript-start/empty-Finished changes, full graph built
+  and both DTLS CTests passed again (0.21s, TEMP/salts-219-dtls-secrets-final.log).
+  Handshake suite: 15 TinyTest cases, 679 assertions; record suite: 7/138.
+  No need to repeat unchanged successful shared-PRF scope without a new concern.
+- Source-only PRF patch snapshot: build/provider-dtls-prf-base/src/tls.c;
+  generator: build/provider-dtls-prf.py. These ignored artifacts generate the
+  provider patch, not validation projects. The Core user root remains untouched.
+- Next: validated P256 exchange, signed key-exchange parameters, credential/
+  trust admission and EMS negotiation inside a complete DTLS owner, then bounded
+  flight storage/dispatch/close, NativeIO/SCTP and independent network tests.
+  General PKIX path discovery/policies/cross-signing, TLS1.2/TLCP restoration,
+  PHA/0RTT and other previously listed software qualification gaps remain open.
+  Private components alone must not enable a public DTLS API or close #188/#219.
+
+- Follow-on in the same local pass: crypto_dtls_exchange.{h,c} now owns a fresh
+  GmSSL P256 ephemeral key with copied public export and a terminal one-use ECDH
+  operation. Canonical uncompressed points require coordinate/on-curve checks;
+  malformed-point/crypto failure and success all erase the private scalar.
+  A repeated exchange/reinit without explicit clear fails. Public flight bytes
+  must be retained before exchange consumes the native key.
+- Private ServerKeyExchange verification takes an ALREADY trust-admitted DER
+  leaf, not an untrusted chain. Bounded exact body/DER consumption, P256 params,
+  cipher/scheme/key-type matching and the native proof all precede peer-point
+  publication. Current finite internals: ECDSA-P256/SHA256 with ECDHE-ECDSA or
+  RSA-PKCS1/SHA256 with ECDHE-RSA, both AES128-GCM/SHA256. Proof binds both randoms
+  and exact encoded EC parameters. No signature trial/fallback, signing path or
+  public DTLS API. Trust/purpose/expiry/hostname/revocation and offered-scheme
+  admission remain the full handshake owner's prerequisite.
+- Existing formal handshake test now includes dtls_exchange.c with
+  TINYTEST_NO_MAIN. Python independently signs ECDSA/RSA ServerKeyExchange and
+  computes P256 ECDH against two native fresh keys, checks the derived EMS master
+  and decrypts native AES-GCM output. Negative cases include all short prefixes,
+  bad randoms/signatures/algorithms/points, coordinate range, trailing DER/body/
+  signature, alias rejection and complete private-scalar erasure. Final full
+  graph build and both DTLS CTests passed (0.38s, PYTHONOPTIMIZE=1,
+  TEMP/salts-219-dtls-exchange-final.log). Handshake suite now 19 cases / 1147
+  assertions; record suite remains 7 / 138. Shared PRF has not changed after the
+  earlier 66/66 regression, so that success still covers the provider mutation.
+  Next full owner work starts with certificate trust and EMS negotiation plus
+  real bounded flights/record dispatch; P256/SKE helper mechanics are now present.
+  The final source pass reuses Crypto's signature identifiers and names encoded
+  parameter bounds; both worktree diffs pass git diff --check. CodeGraph remains
+  local/ignored. No public API/pin publication, commit, push or issue closure.
+
+## Private DTLS client owner and real independent UDP interoperability (2026-11-08)
+
+- Same local-only Core/provider completion branches; no commit, push, PR or issue
+  mutation. GmSSL remains the only production provider. Candidate #44 provider
+  patches and registry/Core #43 pins are unchanged this turn; keep the overlay
+  until the entire software completion pass is ready to publish together.
+- Added private crypto_dtls_client.{h,c}, composing existing cookie/framing/
+  transcript/ECDH/AEAD primitives into a server-authenticated DTLS1.2 CLIENT.
+  It negotiates the two P256 AES128-GCM suites (ECDSA-SHA256 or RSA-PKCS1-SHA256),
+  mandatory cookie and EMS, strict ASCII DNS identity and optional one-protocol
+  ALPN. No verification-disable, legacy-master, client-auth, ticket, renegotiation
+  or worker branch. No public header/capability/API is enabled.
+- One exclusive progress owner owns fixed roots/chain storage (4096 bytes and
+  <=5 certificates each), eight message slots, three <=1200-byte flight entries,
+  one pending wire datagram and one bounded plaintext scratch area. Config
+  roots/name/ALPN are copied; existing crypto_tls_stream_peer_policy is retained
+  once and released only on quiescent clear. Data context stays caller-owned
+  until clear; data views borrow only during callback; mutation reentry rejects.
+- Certificate parsing is strict/exact DER and bounded. Native
+  tls_cert_chain_verify_ex supplies the same chain/time/purpose/usage/constraints/
+  hostname checks as TLS1.2. Trust admission precedes ServerKeyExchange proof;
+  certificate verification runs again after Finished before READY. Peer policy
+  runs exactly once after Finished, never in lieu of proof or mandatory trust.
+  Master secret and ephemeral private scalar are erased once no longer needed.
+  No exporter/resumption/PHA capability is implemented by this finite owner.
+- Output prepare lends one stable owned wire until an actual sent terminal.
+  Input returns BUSY without consumption while output is pending or a flight
+  is unsent; the future NativeIO adapter must retain that datagram and route
+  actual terminals first. Abort erases secrets but preserves pending wire; clear
+  stays BUSY until sent drains it. Retransmission retains logical messages and
+  reseals with fresh record sequences, without rehashing or regenerating ECDH.
+  Timeouts and recognized repeated HVR/previous complete ServerHelloDone share
+  six retries and exponential backoff. Partial old messages do not reset timers.
+  A new HVR sequence is a new challenge even if its opaque cookie is unchanged.
+- Authenticated Finished fragments can arrive before CCS, but neither READY
+  nor policy/data callbacks precede both. Epoch-zero fragments cannot occupy a
+  Finished slot. Bad tags/replays/wrong epochs are discard outcomes and do not
+  poison replay admission. Invalid authenticated proofs/alerts/policy, terminal
+  send failure, exhausted retries and clock rollback permanently fail/erase.
+  Record callbacks preserve zero-length and coalesced record boundaries. One
+  queued send is bounded to MTU minus AEAD overhead; no application replay.
+  close_notify waits for its actual local send terminal before key erasure.
+- Formal tests remain module-owned. dtls_client_cases.c joins the existing
+  TinyTest runner with TINYTEST_NO_MAIN. dtls_client_endpoint.c is a pipe peer
+  for Python/Go tests, matching existing Crypto interoperability endpoints;
+  it is not a consumer/smoke project. The scripted Python oracle independently
+  computes signatures/ECDH/EMS/Finished/AEAD and checks negotiation, trust/time/
+  DNS/usage/critical-extension/constraint negatives, real intermediate paths,
+  loss/reordered/overlapping certificate/Finished fragments, pre-CCS gating,
+  authenticated bad Finished, policy rejection, bad tags/replay, send BUSY,
+  abort during encrypted pending send, clear and policy-reference balance.
+- Added a test-only Go module under crypto/tests/algorithms/independent:
+  github.com/pion/dtls/v3 v3.1.15, exact go.mod/go.sum, CGO_ENABLED=0/GOWORK=off.
+  Four real UDP-loopback cases cover ECDSA/RSA, MTU-512 peer fragmentation,
+  bidirectional application data/close and loss of the first client Finished.
+  The bridge reports actual Go UDP write returns; it does NOT exercise Core
+  NativeIO/CNet/SCTP or their whole-batch routing/cancellation contracts.
+- Dependency rationale, profile/ownership/rollback and security-review sources
+  are in crypto/docs/SHANGMI-COVERAGE.md, Private DTLS client owner work. Pion
+  addresses independent-stack evidence absent from the scripted oracle while
+  reusing existing Go tooling, with no production SDK ABI/vcpkg/native provider
+  dependency. Upstream signature-confusion/session-caching fixes were reviewed;
+  v3.1.15 follows patched v3.1.13/14. Root THIRD_PARTY_NOTICES.md records precise
+  MIT/BSD provenance for runtime test-module dependencies; no vendored copies
+  or upstream local modifications. Go restore used `go mod tidy`, tests enforce
+  `-mod=readonly -count=1`. No separate validation build was created.
+- Validation: full native-release-user graph built and `ctest --preset
+  native-release-user -R "dtls_" --output-on-failure` passed 4/4 (1.82s,
+  PYTHONOPTIMIZE=1, TEMP/salts-219-dtls-client-final.log). Current TinyTest
+  handshake suite: 24 cases / 1274 assertions; record suite: 7 / 138. Python:
+  11 test methods with negative subcases; Pion: 4 subcases. Configure/build of
+  the source GLOB/source_group change also passed through the same user preset
+  (TEMP/salts-219-dtls-client-graph.log). No source changed after the final run.
+  Shared PRF/provider sources did not change; the earlier 66/66 shared regression
+  remains valid and was not repeated for ceremony. Only Windows x64 Release
+  ran; no sanitizer/macOS/Linux/Android runtime claims.
+- Next: a Core DTLS SERVER and mTLS/credential/policy composition, required
+  exporter/transport semantics, then actual NativeIO/CNet/SCTP ownership/drain
+  integration and expanded independent qualification. Fixed-profile private
+  client success is not production DTLS or completion of #188/#219. General
+  PKIX path discovery/policies/cross-signing, TLS1.2/TLCP resumption and other
+  previously listed software work remain open. Hardware stays deferred and
+  hot reload excluded. Do not push this incomplete overall pass early.
+
+## Private DTLS server and required client authentication (2026-11-08)
+
+- Continue the same local-only completion pass. No commit/push/PR/issue change.
+  Provider #44 overlay, provider port/version files and Core's pending #43 pins
+  are unchanged this turn. Production still uses GmSSL only; the existing pinned
+  Pion v3.1.15 test module is reused without upstream patches or new dependencies.
+- Added crypto_dtls_server.{h,c}: immutable listener context plus one exclusive
+  progress owner per admitted stream. Context startup reuses
+  crypto_tls_memory_validate/identity/trust, including DER/PEM, encrypted PKCS8
+  and credential objects, rather than copying credential decoding. Native key
+  binding and supported RSA/P256 identity/certificate signatures must succeed
+  before publication. Context owns the signing key, chain, cookie key, optional
+  client roots/policy, SNI and ALPN; input/password/object pointers do not survive
+  init. Shared native signing copies immutable key state into local sign state.
+- Context lifecycle/admission is exclusive; atomic stream leases support other
+  stream owners draining concurrently. Clear returns BUSY while any lease lives;
+  final quiescent stream clear releases its lease, then context clear erases
+  keys/cookie and releases its single policy reference. Private C test fixtures
+  include this atomic counter, so MSVC targets get the same actual-required
+  /experimental:c11atomics admission as the Crypto implementation. MSVC was not
+  executed; current evidence remains LLVM-MinGW Windows x64 Release.
+- Stateless cookie gate precedes stream storage admission; server_accept checks
+  the proof again and takes no lease/generates no ephemeral on invalid MAC,
+  address mismatch or expiry. Valid proof initializes the canonical ClientHello
+  transcript, fresh random/ECDH, bounded server flights and expected sequences.
+  At most five <=4114-byte bodies, eight message slots and one 1200-byte pending
+  wire live per stream. Certificate bodies fragment under MTU with original
+  handshake seq; every sent/retransmitted record reserves a fresh record seq.
+- Required mTLS sends CertificateRequest for P256/RSA SHA256 proofs and verifies
+  client path/time/usage, CertificateVerify over the complete canonical DTLS
+  transcript, then client Finished and current certificate admission again.
+  EMS snapshot is through ClientKeyExchange, before CertificateVerify. A valid
+  encrypted Finished may wait behind a reordered CertificateVerify and CCS;
+  no policy/data/READY bypass occurs. Before ECDH keys exist, future-epoch records
+  are discarded and ordinary peer-flight retransmission recovers them.
+- Context peer policy reuses the existing STANDARD / remote-CLIENT contract,
+  is retained once per context, and checks once per verified handshake. Local
+  server READY waits for actual server Finished send terminal. The master and
+  ephemeral private scalar are erased; cached final client/server proof bytes
+  permit last-flight responses throughout the active association without PSKs
+  or master recomputation. Repeated authenticated client Finished reseals the
+  saved server flight and does not rerun policy. Pending wire survives abort;
+  neither stream nor context storage can clear until its actual terminal.
+- Extracted common DNS validation, strict bounded chain views and outer record
+  framing into crypto_dtls_wire.{h,c}; both roles use those same facts. Role
+  sequence/proof state, server fragmentation and last-flight ownership remain
+  in their explicit owners. No fake client role/key swapping or generic engine
+  registry was introduced. Existing source GLOB/source_group collects internals.
+- Important interop finding: Pion v3.1.15 ServerName.Unmarshal requires a
+  nonempty name list even inside ServerHello, so a standards-valid empty SNI
+  acknowledgment is silently dropped and the peer keeps resending ClientHello.
+  First attempts therefore timed out in native KEY phase; header-only test
+  diagnostics plus reading the pinned parser established the cause. RFC6066
+  requires that acknowledgment when SNI guides identity/security policy;
+  do NOT treat it as freely optional or suppress configured SNI checks to make
+  an interop test pass. The temporary omission was corrected before delivery.
+- Server configuration now explicitly permits NULL/0 name for one fixed identity
+  without SNI routing/admission, or a configured name requiring exact matching
+  SNI plus the proper empty acknowledgment. There is no peer detection, fallback
+  or policy retry. Pion tests explicitly select fixed identity; Pion still
+  verifies server chain/root/DNS certificate identity. Independent Python client
+  tests strict SNI, actual ECDHE signatures and the ENTIRE EMS/Finished transcript
+  for RSA/ECDSA, wrong-name rejection, bad authenticated Finished versus bad tag,
+  final resealing, READY gating and abort during pending encrypted Finished.
+- The test peer initially hid per-subcase failures until a 90-second Go timeout.
+  Formal Go test now uses -failfast/-v, and the UDP adapter observes early peer
+  handshake errors immediately. Transport traces contain only plaintext record
+  headers/phase/verification status, with no key log or credential dump. All
+  application traffic is fixed fixture data; unexpected-payload diagnostics
+  report only byte count. Logging-guide review: no new production logs.
+- Go server suite has 25 subcases: 16 positive combinations of RSA/ECDSA server,
+  no client cert or P256/RSA mTLS (plus explicit CertificateVerify/Finished
+  record reordering), and loss/no loss of the first server Finished; 9 rejects
+  cover missing/untrusted/wrong-purpose client, corrupted CertificateVerify,
+  wrong proof scheme, policy refusal, missing EMS, ALPN and group mismatch.
+  A legitimate noncritical 1024-byte certificate padding extension forces real
+  native certificate fragmentation; Pion uses MTU 512. Positive cases preserve
+  negotiated handshake message bytes; reordering only repackages records.
+  Negative proof mutations are explicit.
+- TinyTest server cases cover address proof before leases, two shared-context
+  leases with fresh randoms, BUSY clear, pending-wire/abort/drain lifetime,
+  mismatched key rejection and policy reference balance. Existing formal Python
+  fixture also supplies PKCS8 keys for these C tests; they remain module-owned.
+  dtls_server_endpoint is the formal pipe adapter, not a validation consumer.
+- Final full native-release-user graph built; `ctest --preset native-release-user
+  -R "dtls_" --output-on-failure` passed 6/6 in 4.92s, PYTHONOPTIMIZE=1
+  (TEMP/salts-219-dtls-server-final.log). TinyTest: handshake 28/1421 assertions,
+  record 7/138; Python client 11 methods, strict server 4 methods; Pion client
+  owner 4 subcases, server owner 25. Only comments/docs and unexpected-payload
+  test diagnostics changed after this run.
+  After diagnostic cleanup, formal dtls_server_pion CTest passed again (1/1,
+  2.85s; TEMP/salts-219-dtls-server-log-check.log). Both worktrees passed
+  git diff --check; existing line-ending conversion warnings remain.
+  Shared native provider/TLS paths are unchanged; earlier 66/66 broader evidence
+  is not relabeled as a rerun. No sanitizer/other OS/runtime-device claims.
+- Design, source/protocol links and SNI policy/qualification limits are in
+  crypto/docs/SHANGMI-COVERAGE.md, Private DTLS server owner contract. No public
+  DTLS API is exposed and #188/#219 remain incomplete. Next: native CLIENT
+  CertificateRequest/credential selection and CertificateVerify, exporter and
+  transport semantics, actual NativeIO/CNet/SCTP retained I/O/drain integration,
+  fatal-alert generation and broader PKIX/DTLS qualification. General PKIX path/
+  policy/cross-signing, TLS1.2/TLCP resumption and previously listed software gaps
+  are still open. Hardware remains user-deferred; hot update excluded. Do not
+  publish the overall incomplete pass early; user root worktree stays untouched.
+
+## Private DTLS client certificate authentication (2026-11-08)
+
+- Continue the authorized local-only #219 pass; no commit/push, PR or issue
+  changes. User root worktree and provider #44 overlay remain untouched. No new
+  dependencies or production provider; existing GmSSL signing/import and existing
+  Pion v3.1.15 formal test module only.
+- crypto_dtls_client_config now optionally borrows one crypto_tls_credentials at
+  initialization. The existing memory importer validates binding and owns an
+  independent RSA/P256 key/chain, including credential-object inputs. Config,
+  bytes/password/object storage may be erased/released after init. Invalid raw
+  descriptors, aliases, key mismatch and unsupported identity fail before peer
+  policy retain or ClientHello. No public API was introduced.
+- Client accepts CertificateRequest once between ServerKeyExchange and Done.
+  It validates the complete types/signatures/CA-name encoding, checks every DER
+  RDN even after a matching name, and selects by signing type, proof scheme,
+  every chain signature, and optional root/intermediate issuer hint. Names are
+  hints, never trust. Native DER-name comparison is intentionally retained; this
+  is not general X.501 name normalization/path discovery. No suitable identity
+  sends the RFC-required empty Certificate without CertificateVerify; acceptance
+  is the remote optional-auth server's explicit choice. No request sends no cert.
+- The final flight now owns up to five messages, each bounded by the 4114-byte
+  encoded Certificate body (4096 DER + 5*3 + 3). next fragments at wire MTU1200,
+  with a single stable pending wire until actual sent. Actual whole-flight
+  terminals arm retry; each retry uses new record sequences and cached identical
+  logical proof. All previous BUSY/input/abort/drain contracts are retained.
+- EMS hashes through ClientKeyExchange including the optional Certificate.
+  CertificateVerify signs that canonical SHA256 digest using native ECDSA or
+  RSA-PKCS1, then client Finished hashes through CertificateVerify. Actual Done
+  sequence determines the shifted server Finished sequence; HVR bounds reserve
+  enough sequence space. Imported identity/key is erased once the final flight
+  is constructed, or on failure/abort/clear. Retransmission never signs again.
+- Formal independent Python oracle verifies certificate bytes, both signature
+  kinds, EMS and Finished without native PRF/key outputs. Added raw/object inputs,
+  request/type/scheme/chain-signature/CA matching, root/intermediate hints,
+  malformed names including invalid RDN after an earlier match, duplicate
+  requests, no-request privacy, no credential, reordered server flight,
+  retransmission and abort during pending Certificate. 19 test methods total.
+- Pion client suite now has 12 combinations: RSA/ECDSA server, no identity or
+  P256/RSA client, with/without first client Finished loss. mTLS cases require
+  actual chain/purpose/proof verification by Pion. A legitimate noncritical
+  padding extension forces native client certificate fragmentation. Fixed data
+  and authenticated close still pass; wire loss is after actual local send.
+- TinyTest adds independent credential import/borrow lifetime and failed-init
+  cases. Important fixture correction: GmSSL EC key storage is the actual
+  secp256r1 private scalar; X509_KEY.has_private_key is used by its RSA path,
+  so that field was an invalid EC test expectation. The test now checks scalar
+  presence, independent imported certificate bytes, and whole identity erasure.
+  Earlier compile-time pointer comparison assertion was also corrected to C
+  pointer inequality; no production workaround was added for either test bug.
+- Full native-release-user graph built successfully. Initial formal `ctest
+  --preset native-release-user -R "dtls_" --output-on-failure` passed 6/6 in
+  6.40s (TEMP/salts-219-client-mtls-test.log). Subsequent stricter RDN validation
+  passed client Python/Pion; the only failed test was the EC flag expectation
+  above (TEMP/salts-219-client-mtls-final.log). After correcting that fixture,
+  final handshake CTest passed 1/1 in 0.23s, 30 TinyTest cases/1466 assertions
+  (TEMP/salts-219-client-mtls-lifetime.log). Final expanded request/reordering
+  oracle passed 1/1 in 0.94s, 19 Python methods
+  (TEMP/salts-219-client-mtls-requests.log). No behavior changes after these runs;
+  unchanged passing scopes were not repeated for ceremony. PYTHONOPTIMIZE=1 in
+  all Python runs; Windows x64 LLVM-MinGW Release, no sanitizer/other OS claims.
+- CodeGraph sync succeeded (TEMP/salts-219-client-mtls-codegraph.log); index is
+  ignored and remains local. git diff --check passed with existing line-ending
+  conversion warnings. Contract/protocol references are in
+  crypto/docs/SHANGMI-COVERAGE.md, Private DTLS client certificate authentication.
+- #188/#219 remain incomplete: exporter, fatal alerts, general negotiation and
+  credential lists, actual NativeIO/CNet/SCTP lifetime/transport integration,
+  broader PKIX/platform qualification and the previously recorded ticket/PKIX
+  gaps remain. Hardware stays deferred; hot reload excluded. Do not publish
+  this overall software pass until complete.
+
+## Private DTLS RFC5705 exporter (2026-11-08)
+
+- Same local-only #219 completion pass. No commit/push/PR/issue action; user root
+  worktree and provider #44 overlay untouched. Reused GmSSL SHA256 TLS PRF and
+  the existing Python/Pion formal peers; no dependency or public DTLS API added.
+- Private client config and listener config gain enable_exporter, default false.
+  Owner export succeeds only in authenticated READY, outside callbacks. Server
+  READY still waits for its final Finished's actual send terminal; peer policy,
+  Finished and CCS gates remain mandatory. Export during a pending application
+  or final-flight retransmission is read-only and preserves the pending wire.
+- HIGH lifetime tradeoff documented in SHANGMI-COVERAGE.md: arbitrary post-READY
+  labels/context need the original master. Explicit opt-in retains that same
+  owned 48-byte EMS master, not a second copy. Default admission still erases it.
+  Accepted local/remote close erases it immediately, before close_notify send
+  terminal; abort/failure/clear also erase it. Traffic epochs remain until their
+  actual terminal. New master_live records availability independently of epochs;
+  use after forgetting returns ESTATE without damaging traffic keys.
+- Rejected alternatives: unconditional retention changes default secret lifetime;
+  preconfigured cached label outputs cannot serve later application context.
+  No global cache, session persistence, automatic retry or alternate PRF. Disable
+  the private option to recover default erasure behavior. Full rationale/ownership
+  and protocol links are in Private DTLS exporter and master retention.
+- RFC5705 derivation uses master, label, client_random then server_random;
+  optional context adds uint16 length and exact bytes. Absent and present empty
+  context are distinct. Limits: 1..255 printable ASCII label bytes, context
+  0..1024 bytes and output 1..1024 bytes. Handshake labels, prefix/extension
+  collisions (including extended master secret), embedded NUL and invalid sizes
+  fail. Application must agree on registered/private EXPERIMENTAL label purpose;
+  this does not implement SRTP/SCTP or validate every registry collision.
+- Invalid state/arguments/aliases leave output unchanged. Admitted native PRF
+  failure propagates ECRYPTO and zero output, covered by existing native PRF
+  stage-failure tests. External requests/output cannot alias owner/listener
+  storage; helper rejects secret/random/input/output aliases. No retained input
+  pointers or exporter logs. Caller owns/erases exported bytes; formal pipe
+  adapters zero delivered material and their whole state on error cleanup.
+- Python peers independently compare both endpoint roles across absent/empty/
+  binary/maximal context, output boundaries/multiple PRF blocks, invalid labels,
+  before READY/default-off/close/failure rejection, pending send and post-retry
+  stability. Client has 20 test methods; strict server 5. Server abort/forged
+  Finished cases run with exporter enabled so erasure is observed as well.
+- Go/Pion existing 12 client and 25 server subcases are retained. Loss cases
+  enable native exporter; no-loss cases verify default-off refusal. Successful
+  peers compare 65-byte no-context exports in both native roles, including mTLS,
+  and require master erasure on close admission. Pion v3.1.15's State exporter
+  rejects nonempty context and conflates empty/absent; no upstream changes or
+  wire rewrite. Context semantics are independently covered by Python.
+- Full native-release-user graph built. Initial dtls_ CTest passed 6/6 in 7.23s
+  (TEMP/salts-219-exporter-test.log). After master-use guard and adapter cleanup
+  refinements, final affected CTest filter dtls_(handshake|client_|server_) passed
+  5/5 in 6.36s (TEMP/salts-219-exporter-final.log), PYTHONOPTIMIZE=1. TinyTest
+  handshake: 33 cases/1616 assertions. Unchanged record test's earlier pass is
+  not relabeled a rerun. No sanitizer or other OS qualification; current runtime
+  remains LLVM-MinGW Windows x64 Release. git diff --check passed with existing
+  line-ending warnings.
+  CodeGraph sync completed (TEMP/salts-219-exporter-codegraph-final.log,
+  5908 nodes, 35.7s); its ignored index remains local.
+- #188/#219 remain incomplete: fatal-alert delivery, general negotiation and
+  identity lists, actual NativeIO/CNet/SCTP retained I/O/transport integration,
+  broad PKIX/platform coverage and prior software gaps. Hardware stays deferred,
+  hot reload excluded. Do not push the overall incomplete pass early.
+
+## Private DTLS fatal alerts and error-output drain (2026-11-08)
+
+- Continue the local-only #219 pass. No commit/push/PR/issue action. User root
+  worktree and GmSSL #44 overlay untouched; no new production dependency/provider
+  or public API. Existing formal module-owned C/Python/Pion tests only.
+- Added a bounded crypto_dtls_fatal snapshot in each private owner: at most
+  39 sealed wire bytes, size, local/peer description and secondary alert error.
+  Protocol reject prepares it BEFORE clearing both traffic epochs/master,
+  ephemeral key, transcript, scratch and logical flights. The primary failure
+  remains immutable. A failed seal/nonce admission records its own error and
+  exposes no alert; never substitutes plaintext after epoch-one activation.
+- Current local write epoch advances only after successful actual CCS send
+  terminal. Derived keys alone do not activate it: server rejecting encrypted
+  client Finished before sending server CCS emits plaintext epoch zero; client
+  rejecting server Finished/policy after local CCS emits encrypted epoch one.
+  Cookie gate still precedes server lease/admission; no fatal is generated for
+  unverified server addresses or before the client has an admitted cookie.
+- Added pure crypto_dtls_finished_check. Owners reject/prepare/erase immediately
+  on error, without consuming keys before fatal sealing. Existing destructive
+  crypto_dtls_finished_verify delegates to it and retains its erasure contract.
+  Synthetic tests compare pure/destructive checks, not handshake qualification.
+- FAILED may still publish exactly one fatal through next. Its immutable wire
+  obeys the same native borrow/BUSY/actual-sent terminal protocol. sent preserves
+  the original failure, including actual send failure; alert error records that
+  secondary failure. No automatic retry/timer, READY or session resurrection.
+  Abort drops unprepared alert output but preserves pending bytes until terminal;
+  clear can discard unprepared output, never reclaim a native borrow early.
+- Local abort/I/O/clock failure does not initiate an alert. Received well-formed
+  peer fatal stores its description and fails without echo. After peer CCS or
+  authenticated epoch-one traffic, epoch-zero alerts are discarded. Bad tags,
+  replay/wrong epoch and invalid outer framing remain discard outcomes; this
+  change does not turn unauthenticated corrupt records into fatal alert oracles.
+- Finite descriptions cover handshake/decode/certificate/proof/policy/callback
+  failures; authenticated incorrect repeated client Finished after server READY
+  also uses decrypt_error. Full per-X509-error taxonomy remains outside this
+  finite profile. Context leases/policy references still drain at stream clear.
+- Python peers verify epoch-zero and decrypt epoch-one alerts, correct local
+  direction, proof/policy rejection, keys erased BEFORE alert output, pending
+  abort/clear, original failure on failed sends, no retransmission, peer fatal
+  without echo, bad-tag/replay and late-plaintext resistance. Client now has 23
+  methods; strict server 7. A Q opcode reports bounded alert metadata for these
+  formal pipe tests only. It is not a public protocol/config/API.
+- TinyTest adds fatal framing/nonce reservation, exhaustion without plaintext
+  fallback, actual owner failure preservation and borrow/abort/drain cases.
+  Final handshake suite is 36 cases/1686 assertions. The synthetic overflow
+  fixture is explicitly not a network handshake. Independent Python supplies
+  the separate cryptographic wire proof.
+- Pion has 16 client subcases (12 successes plus 4 native peer-policy rejects)
+  and 25 server subcases (16 successes plus 9 rejects). Negative server tests now
+  actually deliver the native fatal and await a peer alert error BEFORE any
+  cancellation/socket close. Client policy failures deliver encrypted fatal.
+  Initial new client test correctly failed because Pion reports post-handshake
+  fatal to Read as EOF, not its private alertError. Reading pinned conn.go showed
+  that its decoder logs the alert classification before closing the read queue.
+  Test-only fatalObserver uses the existing logger interface, observes ONLY
+  decoded AccessDenied into one atomic boolean, discards all other log output,
+  and requires that observation for EOF to qualify. No upstream patch, wire
+  rewrite, acceptance of bare EOF or packet/key logging. The already pinned
+  pion/logging v0.2.4 import is now direct; versions/checksums/licenses unchanged.
+- Full native-release-user graph built. Initial dtls_ CTest passed 6/6 in 7.17s
+  (TEMP/salts-219-fatal-test.log). Expanded Pion run exposed the EOF distinction;
+  server passed while client failed (TEMP/salts-219-fatal-pion.log). After fixing
+  the test observation, client Pion passed 1/1 in 2.70s
+  (TEMP/salts-219-fatal-pion-client-final.log). Added nonce exhaustion owner case
+  passed handshake CTest 1/1 in 0.34s (TEMP/salts-219-fatal-nonce.log). Final
+  server proof-description refinement passed affected Python/Pion CTests 2/2 in
+  3.61s (TEMP/salts-219-fatal-server-final.log). Unchanged successful scopes were
+  not repeated for ceremony; do not relabel prior logs as a new matrix run.
+  PYTHONOPTIMIZE=1; LLVM-MinGW Windows x64 Release. No sanitizer/other OS claims.
+  CodeGraph sync completed (TEMP/salts-219-fatal-codegraph-final.log, 641 nodes,
+  13.3s). git diff --check passed with existing line-ending warnings; index stays
+  ignored and local.
+- Contract, architecture tradeoffs and RFC links are in SHANGMI-COVERAGE.md,
+  Private DTLS fatal alert delivery. One-shot terminal shutdown intentionally
+  erases keys rather than retaining a failed association to generate additional
+  alerts for later repeats. Actual NativeIO/CNet host integration must honor this
+  error-output drain; this is not evidence of transport integration yet.
+- #188/#219 remain incomplete: general negotiation/identity policies, actual
+  NativeIO/CNet/SCTP integration, broader PKIX/platform qualification, and prior
+  software gaps. Hardware deferred, hot reload excluded. Keep this overall pass
+  local until all authorized software work is finished.
+
+## Opaque DTLS client and real CNet/NativeIO composition (2026-11-08)
+
+- Continue in feat/crypto-219-completion, local only, no commit/push/PR/issue
+  actions. User root worktree and unpublished provider #44 overlay unchanged.
+  This is one implemented client slice, not completion of all #188/#219.
+- New public crypto/dtls_stream.h is an opaque, fully backed finite client:
+  mandatory DTLS1.2 cookie/EMS, P256 ECDHE, AES128-GCM, RSA/ECDSA SHA256,
+  explicit trust/DNS, optional single ALPN/client identity/policy and exporter.
+  No provider types, server placeholder, resumption or new dependency. Private
+  client/server structures remain private. Config/credential byte borrows end
+  at create; policy retains until quiescent destroy. Destroy guards recursive
+  invocation from policy.release after the private client has been cleared;
+  TinyTest exercises this callback and independent imported-root storage.
+- New cnet/dtls.h borrows an existing bound datagram/fixed peer. CNet depends
+  only on public Crypto/datagram APIs; Crypto does not depend on NativeIO.
+  Host owns receive credits, observation and whole-batch routing. No worker,
+  alternate backend, observer replacement or cancellation of shared sockets.
+  At init allocate 1..64 full-wire input slots; copy receive views and <=1163
+  application bytes. Input ENOBUFS consumes nothing and requires host lifetime
+  handling. Production wiping reuses existing CNet crypto_wipe, with GmSSL
+  still implementing all DTLS cryptography. No duplicate production erase loop.
+- Prepared wire remains immutable through real local send completion. Native
+  send ENOBUFS proves nonadmission and retains it for later capacity; accepted
+  output is never resubmitted. Domain high32/sequence low32 tags do not wrap and
+  must be reserved against every sender on the shared datagram. Actual datagram
+  request/generation matching stays in its existing owner. Unknown tags do not
+  match; duplicate terminal is rejected before settlement.
+- Application tag is pending at admission, even before wire preparation. One
+  callback reports local terminal, not peer receipt. Abort before submission
+  reports cancellation; after submission waits/reports the actual native result.
+  Aborting never cancels/stops a shared datagram/backend. First bridge errors
+  immediately reject admission instead of appearing as retryable BUSY while
+  fatal output drains. Concrete negative application callback status survives
+  alongside Crypto's failure diagnostics. Host retires protocol input after
+  abort/failure but still routes all actual send terminals and whole batches.
+- Module-owned formal CNet test uses only public APIs and actual UDP NativeIO,
+  with independent Pion v3.1.15 server in the existing Go test module. Same exact
+  Pion/logging/dependency versions/licenses already qualified in Crypto; no new
+  production provider or upstream patches. Added readonly go.sum, C++17 header
+  and linked-symbol test. Sources use CONFIGURE_DEPENDS GLOB/source_group and
+  existing single CNet owner, including original/static-owner variants.
+- Seventeen native scenarios: fourteen ordinary/external interop cases cover
+  RSA/ECDSA, mTLS, policy/callback failures with decoded fatal49/80 (EOF alone
+  cannot pass), max/oversize/empty messages, exporter agreement, foreign source,
+  abort before/after native application submission and actual tagged terminals.
+  Three handshake abort cases distinguish capacity-proven nonadmission from
+  actual pending output. External backend has three requests/two endpoints;
+  neighboring UDP progresses during failure and after bridge destruction.
+  Owned ingress probe copies invalid input, mutates source to a fatal and checks
+  full-ring rejection cannot overwrite it; the real handshake must still pass.
+  Callback mutation reentry, policy references and whole-batch error routing
+  are checked without synthetic successful send completions.
+- Fixture bring-up exposed real contract mistakes: completion batch capacity
+  exceeded the backend's three-request bound; changed the declared batch to
+  three. Ordinary observe ETIMEDOUT means no events, not protocol failure; kept
+  that documented outcome while propagating real errors. External backend must
+  close before destroy after endpoint/request drain; fixed cleanup ordering.
+  No toolchain/dependency fallback or skipped tests was introduced.
+- Full native-release-user graph built. Related CTest filter
+  dtls_|crypto.algorithms.cpp17_header|saltscore.cnet_owner_original passed
+  10/10 in 13.56s (TEMP/salts-219-dtls-native-regression.log), covering Crypto's
+  six DTLS tests, public header and existing CNet owner regressions. Expanded
+  seventeen-scenario native test passed 1/1 in 1.69s
+  (TEMP/salts-219-dtls-native-tag-drain.log). After the final pending/error guard
+  changes, full graph + cnet_dtls_ passed 2/2 in 1.67s
+  (TEMP/salts-219-dtls-native-failfast.log). Earlier passing scopes were not
+  relabeled as reruns. All through formal CTest; no standalone validation project.
+  Final public create-contract review also fixed NULL config to clear a valid
+  output slot, matching the documented failure publication; existing opaque
+  TinyTest now checks it from a non-NULL sentinel. Full graph + handshake and
+  cnet_dtls_ CTests passed 3/3 in 1.86s
+  (TEMP/salts-219-dtls-native-create-final.log).
+  Final git diff --check passed (existing LF/CRLF warnings only). CodeGraph sync
+  completed in 8.7s (TEMP/salts-219-dtls-native-codegraph-final.log); no index
+  files appear in git status and no local analysis artifacts are staged.
+  Runtime is Windows x64 LLVM-MinGW Release, PYTHONOPTIMIZE=1; no sanitizer,
+  Linux/macOS or Android device claims. Stale skill references cnet/README.md,
+  native-io/ARCHITECTURE.md and cmake/CmakeUtils.cmake are absent in this checkout;
+  actual public headers, sources, formal tests and existing architecture docs
+  supplied the contracts instead. This is analysis-source handling, not a
+  substitute for missing build dependencies.
+- Architecture tradeoffs/rollback and exact owner/capacity/error contracts are
+  in docs/CNET-POLICY-HIERARCHY.md and crypto/docs/SHANGMI-COVERAGE.md. Remaining:
+  public server/listener and real server NativeIO admission, SCTP, general
+  negotiation/identity policies, broader PKIX/platform/sanitizer qualification
+  and prior software gaps. Hardware remains deferred, hot reload excluded.
+  Do not push this overall incomplete pass early.
+
+## Opaque DTLS server and real NativeIO admission (2026-11-08)
+
+- Continue the same local feat/crypto-219-completion worktree. No commit/push,
+  PR/issue action, CI wait, provider-overlay change or root-worktree edit.
+  GmSSL remains the production DTLS provider; no new dependency/version.
+- Extended crypto/dtls_stream.h with an opaque immutable listener and finite
+  server admission. Existing stream operations dispatch internally by role,
+  preserving private GmSSL/owner layouts. Config/credential byte borrows end at
+  create; optional required-mTLS policy retains once per listener. Cookie expiry
+  is explicit 1..60000 ms. Lifecycle create/admit/destroy is exclusive; separate
+  admitted owners may progress independently. Listener clear rejects live leases
+  and recursive destruction from policy release. No server placeholder/versioned
+  interface, peer table, background worker or hot reload was introduced.
+- Public allocation-free gate copies no peer state, issues at most 60-byte HVR
+  no larger than input, and maps malformed packets to DROP/no reply. Outputs
+  and listener storage cannot alias inputs or each other. Valid cookies prove
+  return routability only. Accept rechecks proof BEFORE allocating its stream
+  or acquiring the shared listener lease. Wrong proof publishes no owner.
+  Post-cookie negotiation rejection may publish an already FAILED owner: OK
+  means ownership admission, never authentication. Its get_info error is visible
+  immediately, and next/sent retains the fatal/actual-terminal drain contract.
+- CNet uses the public listener gate with canonical family/address/port/IPv6
+  scope bytes, independent of sockaddr padding and host byte order. New accept
+  rechecks proof before bridge allocation and uses the same bounded ring,
+  application tags and native output settlement as client. Invalid proof is
+  EPROTO with unchanged zero owner. Host owns bounded peer table, duplicate
+  association admission, rate/capacity limits, cookie reply reservation/terminal,
+  receive credits and whole-batch routing. Raw sockets/backends stay borrowed.
+  No NativeIO dependency moved into Crypto.
+- A post-cookie FAILED stream can be admitted during observe. The next normal
+  advance latches its first Crypto error BEFORE submitting a fatal; no redundant
+  post-route advance. All new application admission then refuses the permanent
+  error, while output and neighboring completions still drain. Both roles use
+  identical send/close/export/abort/destroy contracts. Keys erase on failure;
+  retained sealed wire still waits for actual completion.
+- Build caught direct listener calls from CNet consumers being unavailable from
+  the CNet import library: the static Crypto member is private to that DSO.
+  Corrected the owner boundary with cnet_dtls_listener_create/destroy forwarding
+  through its sole existing Crypto instance, returning Salts statuses. Did NOT
+  link another static Crypto into the tests/consumer or export private provider
+  structs. Existing physical-owner and negative owner audits passed afterward.
+- First native server handshake stalled on strict SNI. Existing coverage docs
+  and pinned Pion source confirm v3.1.15 drops a valid empty ServerHello SNI ACK.
+  Positive Pion fixtures now EXPLICITLY configure fixed identity; they still
+  verify CA/DNS/key-exchange proof. Strict mismatch is a separate native reject;
+  unchanged independent Python tests verify full strict-positive SNI wire.
+  No production policy fallback, peer detection, wire rewriting or upstream
+  patch. RSA fixture also needed its generated CA added to identity.roots for
+  its new client-verifier role; previously it supplied only CA file/server key.
+  The test preserves mandatory verification rather than bypassing trust.
+- Extended the existing public-only native CNet fixture/Go module. One bounded
+  host cookie reservation and peer slot; actual cookie sends use raw tag5 and
+  accepted owners use domain7. Every cookie-less/malformed receive also checks
+  accept refuses without publishing state. The host pauses/reposts receive
+  demand around actual cookie terminal. Shared backend remains three requests,
+  two endpoints; no second observer. Existing CTest registration covers it.
+- 24 server scenarios (12 ordinary + 12 external): ECDSA/RSA, mTLS, missing and
+  untrusted client identity, policy, strict SNI mismatch, ALPN/EMS rejection,
+  callback encrypted fatal, abort before/after native application submission.
+  Positive paths cover max/oversize/empty messages, exporter agreement, exact
+  local tags and authenticated close. Malformed actual UDP before cookie
+  exchange yields no state/reply. Every scenario requires a real cookie send
+  terminal, BUSY listener destroy with a stream, and correct final policy release.
+  Shared IOCP neighbor survives failure and complete listener teardown. Export
+  comparisons wipe both native response and independent exported byte arrays.
+  Combined with unchanged 17 client cases: 41 actual NativeIO scenarios.
+- Added formal opaque-listener TinyTest: invalid config before policy retain,
+  malformed/aliased gate, wrong-address proof, two live context leases, BUSY
+  listener clear, pending wire stable through abort, real terminal before destroy,
+  and recursive listener policy release. C++17 links new CNet listener entry.
+  No independent consumer/smoke validation or new feature switch.
+- Complete native-release-user graph built. Initial public handshake/C++ tests
+  passed while the new native test correctly exposed the fixture problems above.
+  After fixes, full graph and affected/adjacent filter
+  dtls_|crypto.algorithms.cpp17_header|saltscore.cnet_native_crypto_owner|saltscore.cnet_owner_original
+  passed 13/13 in 14.75s (TEMP/salts-219-dtls-server-native-regression.log).
+  Added malformed real-UDP negative passed native CTest 1/1 in 2.92s
+  (TEMP/salts-219-dtls-server-native-framing.log). Final unverified-accept check
+  and full graph/native CTest passed 1/1 in 2.69s
+  (TEMP/salts-219-dtls-server-native-admission-final.log). All executable tests ran
+  through CTest/preset, PYTHONOPTIMIZE=1, LLVM-MinGW Windows x64 Release.
+  No other OS, IPv6 runtime or sanitizer claim. Final git diff --check passed
+  with existing LF/CRLF warnings. CodeGraph final sync succeeded in 25.7s
+  (TEMP/salts-219-dtls-server-native-codegraph-final.log); no index files appear
+  in git status. Stale skill paths from the prior handoff
+  remain absent; actual headers/sources/formal callers are the contract source.
+- Architecture, error/ownership/admission, single-provider linking, rollback and
+  scope are synchronized in docs/CNET-POLICY-HIERARCHY.md, Crypto README and
+  SHANGMI-COVERAGE.md. Remaining #188/#219 work includes SCTP, general negotiation/
+  identity policies, broader PKIX, concurrent multi-peer native load and wider
+  platform/sanitizer evidence, plus prior software gaps. Hardware is deferred.
+  Keep the overall pass local until the authorized software scope is finished.
+
+## 2026-11-09 — #219 SCTP, supplied-chain PKIX and concurrent native load
+
+- Continued the authorized local one-shot pass in
+  `C:/projects/cpp/turbonet/.worktrees/salts-core-cnet-policies`, branch
+  `feat/crypto-219-completion`, base `260097031e83c73138e6f23a0ec8f95bce9d7c16`.
+  Existing uncommitted completion work remains intact. No commit/push, PR/issue
+  update or macOS-runner wait. The unrelated dirty root housekeeping worktree
+  was not modified. The unpublished GmSSL 3.2.0#44 overlay is unchanged in this
+  step; manifest publication remains coordinated with that provider revision.
+- Added `<cnet/sctp_dtls.h>` and `Salts::SCTPDTLS`: SCTP owns the bounded bridge,
+  borrows Session/CNet DTLS, copies 1..64 inputs and reserves one 1163-byte output
+  before Session transactions. Host reserve/commit preserves existing Session
+  poll/receipt semantics. No second engine, observer/backend or static Crypto
+  owner; pure `Salts::SCTP` stays independent. Immutable CNet binding and
+  sequence exhaustion checks prevent old Session traffic after DTLS replacement.
+  Abort discards only unsubmitted work and waits for real admitted terminals.
+  Session exposes unversioned readonly binding/data-ready queries; no ABI version
+  bump or parallel API. Query tests cover NULL, Owner and stopped states.
+- Real load first exposed premature Session poll/pump before SCTP DATA readiness;
+  fixed the explicit readiness gate instead of treating CLOSED as EMPTY. Then
+  a full upper ring became fatal80: fixed authenticated application backpressure.
+  Only CNet ENOBUFS/Crypto BUSY is non-consuming. Opaque Crypto owns one 16384-byte
+  plaintext slot plus a 16421-byte encrypted tail, rejects new raw input until
+  drained, retries delivery without AEAD/replay reconsumption and keeps output
+  separate. `pending_receive` exposes it; failure/abort erases retained bytes.
+  Deferred terminal rejection seals fatal80 and preserves concrete CNet error.
+  Output descriptor validation precedes callbacks; mutation reentry is refused.
+  This is bounded protocol flow control, not an automatic recovery/fallback.
+- Added exporter-bound GmSSL HMAC through Crypto/CNet's same physical owner.
+  Review caught that ordinary exporters are shared with the peer and cannot by
+  themselves authenticate a server-only SCTP cookie. Before delivery, changed
+  the formal provider to an OS-random private 32-byte per-association exporter
+  context, never transmitted/logged and erased at cleanup. Independent Pion
+  checks ordinary exporter HMAC agreement and private-context MAC separation.
+  Opaque TinyTest checks pre-READY, oversize/alias rejection and unchanged output.
+- Formal module-owned `saltscore.sctp_dtls_native` uses production CNet/GmSSL
+  and existing pinned Pion modules, no new production dependency. Ten scenarios
+  cover both native roles, ordinary/external progress, 1/4/8 peers including
+  eight healthy peers and mixed authentication failure/cancel. Across 44 real
+  attempts: four untrusted, four canceled after DCEP, 36 healthy peers each with
+  four echoed messages and exactly four separate cumulative ACK receipts.
+  Payloads: 1/1024/24576 bytes and logical-empty PPID57. One-slot upper ingress
+  and two encrypted records coalesced in one actual UDP datagram exercise pressure.
+  Wrong binding/Owner, reservation/CAPACITY, wrong/duplicate terminals and stale
+  same-wrapper replacement are negatives. A four-request/two-endpoint external
+  backend neighbor survives full teardown. Early successful peer close caused
+  actual Winsock ICMP10054; fixed worker lifetime through ACK/drain, not ignored.
+  These tests establish functional concurrency, not throughput or loss behavior.
+- Existing CNet native test now has 113 scenarios: 53 base client/server cases
+  (including nonempty/empty backpressure and deferred fatal) plus 60 PKIX cases.
+  Fifteen PKIX profiles run in both roles/modes: valid two-intermediate chain,
+  wrong-first same-name anchors, expiry/future, path length, non-CA, CA KU/EKU,
+  intermediate/root DNS constraints, leaf KU/EKU, unknown critical extension,
+  signature corruption and required explicit policy without certificate policy.
+  Go independently generates/signs/parses/prechecks fixtures; leaf signing KU
+  has its explicit TLS-specific exception to Go Verify. Negatives require actual
+  decoded CertificateUnknown, no READY/policy admission and complete fatal drain.
+  Initial fixture mistakes (same-name root PublicKey and non-CA MaxPathLen)
+  correctly failed and were repaired. Existing GmSSL passed without provider edits.
+  This does not implement arbitrary path discovery/AIA/WebPKI or positive policy
+  mapping/tree processing. Existing five-cert/4096-byte chain limits remain.
+- Preserved this older checkout's existing BUILD_TESTING gate; no new feature
+  switch. SCTP tests are registered from its own tests/CMakeLists.txt. An initial
+  accidental placement under the Linux DSO guard produced No tests found on
+  Windows, caught and corrected before acceptance. No installed-consumer/smoke
+  project. Root's unrelated BUILD_TESTS housekeeping migration remains untouched.
+- Build environment recovery: process-level tool bootstrap was lost at a turn
+  boundary. Root .env alone has stale pkgconf/re2c settings for this isolated
+  build. Restore credentials/cache settings internally from root .env, then use
+  this build's CMakeCache inputs for Qigao toolchain, chainload, triplets,
+  PKG_CONFIG_EXECUTABLE, RE2C_EXECUTABLE root, install prefix and installed-bin
+  PATH; derive overlay triplets from the configured shared cache checkout.
+  QIGAO_PKGCONF_VERSION is the configured wheel METADATA version (3.0.7.post0),
+  not native --version (3.0.7) or root .env pkgconf (2.4.3). Missing triplets and
+  stale values failed rather than silently falling back. The temporary wrong
+  2.4.3 package identity caused genuine vcpkg ABI misses/rebuilds; restoring tool
+  facts made subsequent configure no-work. Shared cache remains enabled; misses
+  may build and cache as authorized. No secret values printed or MSYS2 added.
+- Validation (Windows x64 LLVM-MinGW Release, native-release-user full graph,
+  PYTHONOPTIMIZE=1, all executables through CTest):
+  - `TEMP/salts-219-sctp-pkix-multi-final.log`: 31/31 passed, 28.13s, filter
+    `dtls_|crypto.algorithms.cpp17_header|saltscore.cnet_native_crypto_owner|saltscore.cnet_owner_original|^cnet_sctp_`.
+    Covers Crypto DTLS, C++17, CNet native (then 109 scenarios), SCTP native ten
+    scenarios and existing SCTP/single-Crypto-owner/original-owner regressions.
+  - Subsequent empty-record backpressure and Session-query edges: full graph
+    build, then `^saltscore.cnet_dtls_native$|^cnet_sctp_public_api_test$`, 2/2
+    passed in 8.65s, `TEMP/salts-219-sctp-pkix-edge.log` (CNet now 113 scenarios).
+  - Both-role SCTP run: 1/1 passed in 5.63s,
+    `TEMP/salts-219-sctp-dtls-both-roles.log`.
+  Architecture/tradeoffs/migration/rollback and evidence are synchronized in
+  CNET-POLICY-HIERARCHY, SCTP/Crypto README, SHANGMI-COVERAGE and NATIVE-TESTING.
+  THIRD_PARTY_NOTICES records the pinned test-only dependencies and licenses.
+  Final CodeGraph sync succeeded in 35.6s
+  (`TEMP/salts-219-sctp-pkix-multi-codegraph-final.log`); index remains ignored.
+  Final git diff --check passed with existing LF/CRLF conversion warnings.
+- Scope still open: broader negotiation/identity/path-building/policy-tree work,
+  full browser/interoperability/platform and sanitizer qualification, prior
+  software gaps in the overall pass. IPv4 Windows IOCP only for these new native
+  cases; no Linux/macOS/IPv6/device/benchmark claims. SDF/SKF stays deferred.
+  Do not close #188/#219 or publish the overall pass from this slice alone.
+
+## 2026-11-09 — explicit push request and immutable dependency registration
+
+- User explicitly requested "push code", superseding the prior local-only
+  publication hold. Publish the current completion candidate branches; this
+  does not declare all #188/#219 scope complete, merge or create a release.
+- Registered GmSSL 3.2.0#44 and its exact port tree
+  `29cd5565d2fc85b03b1f555206e4745ca85f55bd` in vcpkg-cache commit
+  `3c9cb8cbcc6b3645d47e02585e987b708406cd98`, pushed branch
+  `feat/gmssl-219-completion`. Six already-qualified patches cover TLCP
+  certificate signature policy, depth positions, client/server TLS sessions,
+  anchor constraints and PRF fail-fast erasure. Upstream patch context whitespace
+  is preserved; metadata diff check passed, and the real registry build applied
+  all patches successfully. No extra validation project or provider rewrite.
+- Core registry reference/baseline and CI dependency action now pin that exact
+  pushed commit. Added the three new formal Go modules to existing setup-go
+  cache inputs; shared vcpkg caches/ccache and build-on-miss behavior remain.
+  README/coverage now describe the registered dependency rather than requiring
+  unpublished local patches. No credentials or local environment file staged.
+- Removed the cached local GmSSL overlay via the existing user preset:
+  `cmake --preset native-release-user -DVCPKG_OVERLAY_PORTS=` followed by
+  `cmake --build --preset native-release-user`. Registry resolution fetched the
+  pushed port tree and rebuilt GmSSL #44 in 14s; full graph build succeeded.
+  The active cache has an empty VCPKG_OVERLAY_PORTS. Log:
+  `TEMP/salts-219-registry-publish-build.log`.
+- With the registered dependency, formal CTest filter
+  `crypto|tls|tlcp|sctp|cnet_pkix|cnet_owner_original|gmssl_shangmi` passed
+  82/82 in 238.52s (`TEMP/salts-219-registry-publish-tests.log`). The five
+  ShangMi cases omitted by that name filter ran once separately with
+  `-R shangmi -E "crypto|tls|tlcp|sctp|cnet_pkix|cnet_owner_original|gmssl_shangmi"`,
+  passed 5/5 in 21.43s (`TEMP/salts-219-registry-publish-shangmi.log`). Thus
+  87 distinct related tests passed against the published port, including
+  standard/ShangMi session tickets, PKIX/revocation, TLS/TLCP identities,
+  DTLS/SCTP load and sole-Crypto-owner audits. Same Windows Release preset and
+  PYTHONOPTIMIZE=1; no repeat of successful cases for the additional filter.
+- Staged only the ongoing completion scope in Core's feature worktree; root
+  user changes, .env, local build/cache/index artifacts remain untouched.
+  Staged diff check passed. Push the feature branch without merge/release;
+  cross-platform CI acceptance and outstanding issue scope remain separate.

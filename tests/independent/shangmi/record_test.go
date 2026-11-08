@@ -317,6 +317,11 @@ func alterClientHello(msg []byte, scenario string) error {
 }
 
 func (p *recordPeer) client(cfg tls13gm.ClientConfig, corrupt string) error {
+	return p.clientWithSession(cfg, corrupt, nil)
+}
+
+func (p *recordPeer) clientWithSession(cfg tls13gm.ClientConfig, corrupt string,
+	after func(*tls13gm.ClientHandshaker, bool) error) error {
 	h, err := tls13gm.NewClientHandshakerWithConfig(cfg)
 	if err != nil {
 		return err
@@ -327,7 +332,10 @@ func (p *recordPeer) client(cfg tls13gm.ClientConfig, corrupt string) error {
 	if err != nil {
 		return err
 	}
-	if corrupt != "" && corrupt != "finished" {
+	if corrupt == "psk_binder" {
+		ch[len(ch)-1] ^= 1
+		p.altered = true
+	} else if corrupt != "" && corrupt != "finished" {
 		if err = alterClientHello(ch, corrupt); err != nil {
 			return err
 		}
@@ -347,13 +355,31 @@ func (p *recordPeer) client(cfg tls13gm.ClientConfig, corrupt string) error {
 	if err = p.keys(secrets.ServerHandshakeTrafficSecret, secrets.ClientHandshakeTrafficSecret); err != nil {
 		return err
 	}
-	for _, process := range []func([]byte) error{h.HandleEncryptedExtensions, h.HandleCertificate, h.HandleCertificateVerify, h.HandleServerFinished} {
+	sawCertificate := false
+	for {
 		msg, err := p.handshake()
 		if err != nil {
 			return err
 		}
+		var process func([]byte) error
+		switch msg[0] {
+		case 8:
+			process = h.HandleEncryptedExtensions
+		case 11:
+			process = h.HandleCertificate
+			sawCertificate = true
+		case 15:
+			process = h.HandleCertificateVerify
+		case 20:
+			process = h.HandleServerFinished
+		default:
+			return fmt.Errorf("unexpected server handshake %d", msg[0])
+		}
 		if err = process(msg); err != nil {
 			return err
+		}
+		if msg[0] == 20 {
+			break
 		}
 	}
 	finished, err := h.ClientFinished()
@@ -368,10 +394,21 @@ func (p *recordPeer) client(cfg tls13gm.ClientConfig, corrupt string) error {
 		return err
 	}
 	secrets = h.Secrets()
-	return p.keys(secrets.ServerApplicationTrafficSecret, secrets.ClientApplicationTrafficSecret)
+	if err = p.keys(secrets.ServerApplicationTrafficSecret, secrets.ClientApplicationTrafficSecret); err != nil {
+		return err
+	}
+	if after != nil {
+		return after(h, !sawCertificate)
+	}
+	return nil
 }
 
 func (p *recordPeer) server(cfg tls13gm.ServerConfig, corrupt string) error {
+	return p.serverWithSession(cfg, corrupt, nil)
+}
+
+func (p *recordPeer) serverWithSession(cfg tls13gm.ServerConfig, corrupt string,
+	after func(*tls13gm.ServerHandshaker, bool) error) error {
 	h, err := tls13gm.NewServerHandshakerWithConfig(cfg)
 	if err != nil {
 		return err
@@ -422,5 +459,11 @@ func (p *recordPeer) server(cfg tls13gm.ServerConfig, corrupt string) error {
 		return err
 	}
 	secrets = h.Secrets()
-	return p.keys(secrets.ClientApplicationTrafficSecret, secrets.ServerApplicationTrafficSecret)
+	if err = p.keys(secrets.ClientApplicationTrafficSecret, secrets.ServerApplicationTrafficSecret); err != nil {
+		return err
+	}
+	if after != nil {
+		return after(h, len(cert) == 0 && len(cv) == 0)
+	}
+	return nil
 }

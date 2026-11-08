@@ -463,7 +463,7 @@ the capabilities and terminal semantics admitted below them.
 | Scope | Contract / examples | Authoritative implementation |
 | --- | --- | --- |
 | **L1 Raw Transport** | TCP / UDP / IPC / Pipe; exact OS endpoint, peer, native handle, raw stream/datagram capabilities | Existing CNet transports and NativeIO |
-| **L1.5 Channel Stack** | Exact supported recipe: TLS over TCP, KCP over UDP, PSK secure KCP/FEC over UDP; prospective DTLS/SCTP only after qualification | Existing CNet TLS/KCP/packet endpoint, plus Crypto for cryptographic primitives |
+| **L1.5 Channel Stack** | Exact supported recipe: TLS over TCP, KCP over UDP, PSK secure KCP/FEC over UDP; bounded SCTP/DTLS bridge with local native evidence below | Existing CNet TLS/KCP/packet endpoint and SCTPDTLS bridge, plus Crypto for cryptographic primitives |
 | **L2 Owner control plane** | Hard capacities, retained memory, request/completion credits, progress and host timers | Existing Client/Datagram/NativeIO Owner; one observe path |
 | **L3 Connection/session lifecycle** | One-shot, persistent, eligible pool reuse, explicit recovery, terminal drain | Existing Connection/Manager/Pool/ManagedDial; UDP packet sessions are not TCP sockets |
 | **L4 Logical transfer** | Latency vs bulk, bounded retained vectors, FIFO, backpressure, channel-specific send terminals | Stream WriteQueue or the *existing* datagram/KCP endpoint protocol storage; not a second application queue |
@@ -484,7 +484,7 @@ capabilities proven by its actual implementation/configuration.
 | Reliable packet | KCP -> UDP | KCP sequencing/retransmission; logical message boundaries only in qualified **message mode**, not arbitrary KCP stream mode; no encryption/auth by default | Existing `cnet_kcp` and `cnet_packet_endpoint` |
 | Secure reliable packet | Existing PSK v1 security + KCP + Reed-Solomon FEC -> UDP | Authenticated KCP session with bounded FEC and reliable ordered delivery according to its message-mode contract; **not DTLS** | Existing `cnet_secure_kcp` / packet endpoint security config; independent protocol qualification still applies |
 | Secure datagram | DTLS -> UDP | Secure datagrams, **not** reliable/ordered delivery | **Not a production CNet channel yet**: no datagram-preserving DTLS session/lease contract |
-| WebRTC DataChannel | SCTP -> DTLS -> UDP | Message/multistream SCTP over authenticated DTLS | **Not production-integrated**: SCTP/DTLS owner and generation/terminal bridge missing |
+| WebRTC DataChannel | SCTP -> DTLS -> UDP | Message/multistream SCTP over authenticated DTLS | Bounded C11 SCTPDTLS bridge implemented; local native DCEP/data/generation/drain evidence below. Full browser/platform qualification remains open. |
 | QUIC | QUIC (integrated TLS 1.3) -> UDP | Secure streams/multiplexing, optional unreliable datagrams where implemented | **Not a current CNet channel**; do not model QUIC as generic DTLS + KCP |
 | Local stream | IPC or Pipe | Only byte-stream/handle operations proved for that variant | Existing raw transport only; never infer TCP socket options or TLS support |
 
@@ -1021,3 +1021,226 @@ is bounded for the specified workload, not general scheduler QoS. Production
 DTLS/SCTP (#188), matched performance (#189), adaptive batching and new independent
 per-connection stream deadlines remain separate work. Existing host-owned timers
 and protocol READY/replay authority do not move into CNet.
+
+## DTLS client composition with a borrowed datagram
+
+The local #219 implementation adds finite opaque Crypto streams and an opt-in
+CNet datagram bridge. Its public contracts are [crypto/dtls_stream.h](../crypto/include/crypto/dtls_stream.h)
+and [cnet/dtls.h](../cnet/include/cnet/dtls.h); [the formal host](../cnet/tests/dtls_native_peer.c)
+demonstrates actual ordinary and external progress. The [profile and qualification](../crypto/docs/SHANGMI-COVERAGE.md#opaque-dtls-client-and-cnet-datagram-composition)
+describe mandatory cookie/EMS, trust/name/proof checks and remaining SCTP
+work. This does not replace the existing TCP/TLS or raw UDP APIs.
+
+| Owner | State and authority |
+| --- | --- |
+| Crypto opaque stream | Handshake, trust/policy admission, keys, replay, protocol timers, READY, immutable wire and fatal/close output |
+| CNet DTLS bridge | Copied fixed peer, bounded input ring, one admitted application tag, prepared/submitted/completed wire bookkeeping and first bridge error |
+| Borrowed CNet datagram | Socket, receive credit, native request/generation matching and actual send terminal |
+| Host / external NativeIO owner | One observe owner, whole-batch dispatch, receive-buffer lifetime, shared-backend capacity and final shutdown |
+
+The chosen dependency is CNet -> public Crypto API and public datagram API.
+Putting NativeIO in Crypto would reverse the transport dependency; reaching into
+Crypto/GmSSL private structs from CNet would duplicate protocol ownership and
+expose layout. Creating a second poll/worker owner would break shared-backend
+composition. The borrowed bridge instead leaves scheduling and observation with
+the existing host, including ordinary CNet datagram progress. No Actor, CMeta,
+reflection registry or second event loop is needed for this boundary.
+
+One fixed owner calls `cnet_dtls_advance` before observing, then routes each raw
+receive and actual send callback to `cnet_dtls_receive`/`cnet_dtls_send_complete`.
+The next advance consumes those records and terminals. Routing an error does
+not end the observed batch. Native request/generation matching stays in the raw
+datagram; the bridge additionally requires the same socket, fixed peer and unique
+wire tag. Nonzero `tag_domain` reserves the high 32 bits among **all** users of
+that datagram; the low 32 bits increase once per prepared wire and fail on
+exhaustion instead of wrapping. A namespace cannot be reused before the host's
+old callbacks and native work are quiescent.
+
+Memory is bounded at initialization: 1..64 input slots, each with capacity 16421
+wire bytes plus size metadata; one Crypto client with fixed handshake/record
+storage; one application send of at most 1163 bytes; one 1200-byte output wire.
+There is no queue growth during progress. Successful receive copies a raw
+callback's borrowed packet. Input ENOBUFS copies nothing: the host must retain
+and retry before its view expires, and budget receive credits/retained storage
+accordingly. The bridge cannot defer ownership of the raw callback's view.
+Application receive borrows authenticated plaintext only until its callback
+returns. Mutating callback reentry is rejected.
+
+Application send admission copies the bytes and records its tag immediately;
+`send_pending` includes this state before wire preparation. Exactly one callback
+reports its local send outcome, not remote delivery. Raw send ENOBUFS proves
+nonadmission, so the same immutable prepared wire can wait for later capacity.
+An accepted asynchronous send is never resubmitted or released on a cancellation
+request alone. Actual NativeIO completion is the only settlement authority.
+
+Abort erases protocol secrets and queued input, cancels an admitted but
+unsubmitted application exactly once, and waits for any submitted wire's real
+terminal. An already submitted application reports that actual status. It never
+stops/cancels the borrowed datagram/backend. The first failure rejects new
+admission immediately, including while a sealed fatal remains pending; error
+drain still runs through advance and real send routing. Application callback
+errors preserve their concrete negative Salts code alongside Crypto diagnostics.
+The host retires protocol input routing after abort/failure, continues routing
+every outstanding send terminal and the rest of every observed batch, and keeps
+all borrowed owners alive until quiescence. Authenticated close must be driven
+to CLOSED; destroying with unprepared protocol output may discard that output.
+
+The software uses the existing GmSSL handshake/crypto implementation and existing
+CNet memory erasure facility. Export is opt-in, with the established master-key
+retention/erasure contract; exported bytes belong to the caller. No trust,
+name, certificate proof or application admission check can be overridden by the
+transport adapter. Migration consists of adding the two public headers and
+explicit host routing around an existing bound datagram, with no versioned
+parallel API or config conversion. Rollback is abort, route/drain, destroy the
+bridge, then reuse the unchanged raw datagram and shared backend.
+
+Local Windows x64 Release qualification covers seventeen independent-peer native
+scenarios plus the C++17 public-header/link test. It includes actual shared IOCP
+capacity pressure, neighbors surviving failure/teardown, copied input/full-ring
+rejection, authenticated fatal delivery and application abort both before and
+after native submission. These client tests do not qualify Linux/macOS runtime,
+sanitizers, server/listener composition, SCTP or general negotiation/PKIX. The
+server evidence follows below; this client composition does not close #188/#219.
+
+### Server admission protocol
+
+The server extension keeps one immutable Crypto listener (credentials, cookie
+key, optional required mTLS/policy/SNI) separate from per-peer stream owners.
+Listener create/admission/destroy is lifecycle-exclusive; admitted stream owners
+may progress independently. Listener destroy is BUSY while any stream lease
+exists. The host owns the bounded peer table, receive credits and cookie reply
+storage, with one fixed progress owner per admitted association. Raw receive
+views are borrowed until callback return: the host either gates/accepts in that
+scope or copies into bounded staging before later admission.
+
+Cookie gating allocates no stream or per-peer state and returns at most one
+60-byte reply no larger than the triggering packet. Family/IP/port/IPv6 scope
+are encoded explicitly without sockaddr padding. Admission independently
+rechecks the cookie before allocating Crypto and CNet stream storage. Invalid
+proof publishes no stream; post-cookie negotiation rejection can publish a
+FAILED stream so its sealed fatal retains the normal native drain contract.
+Address proof does not grant certificate trust, peer policy admission or READY.
+Host capacity/rate rejection does not submit a partial handshake or acquire a
+lease. No new peer-table policy or background worker is hidden in the bridge.
+
+Both roles then share the same bounded CNet receive ring, tag sequencing,
+actual-terminal bookkeeping, failure propagation and abort/destroy protocol.
+An accepted bridge releases its listener lease only at quiescent destroy;
+destroying one bridge never clears sibling sessions or the host's socket/backend.
+Cookie replies belong to the host's raw send namespace and remain separate from
+accepted-stream tags. Repeated ClientHello for a routed peer goes to that owner,
+not a second admission. Stop listener admission, drain/destroy all associations
+and host cookie sends, then destroy listener and raw transport, in that order.
+Rollback uses the same order; no config migration or new dependency is required.
+
+CNet consumers create/destroy the listener through the CNet entry points, which
+operate on its existing physical Crypto instance and map Crypto results into
+Salts status codes. Directly linking static Crypto into the same consumer would
+create a second owner. The CNet wrapper resolves this at the module boundary;
+the native Crypto-owner audit remains the formal evidence for that constraint.
+
+The initial twenty-four ordinary/external server cases qualify actual Windows IOCP
+admission, cookie sends, ECDSA/RSA, mTLS and rejection/fatal drain, application
+tags, abort and neighbor survival. Positive Pion tests explicitly configure fixed
+identity because that pinned peer rejects valid empty SNI acknowledgment; strict
+SNI is unchanged and has separate Python wire evidence and a native rejection
+case. With seventeen client cases, that initial suite had 41 scenarios. Shared
+opaque listener leases and release reentry are checked in Crypto TinyTest.
+The 13-test local regression also includes both public C++17 header checks,
+Crypto wire peers and existing CNet original/single-owner audits. This does not
+qualify concurrent multi-peer native load or SCTP; the subsequent evidence below
+extends that scope. IPv6, other OS/sanitizer runtime and general negotiation/PKIX
+remain separate qualification work.
+
+### SCTP transport reservation and association binding
+
+SCTP remains the owner of stream/message generation, DATA/ACK/retransmission,
+DCEP and business receipts. A narrow SCTP-module bridge borrows one Session and
+one CNet DTLS association on the same fixed owner. It copies authenticated
+SCTP input into a configured 1..64 packet ring (1280 bytes per slot), reserves
+one 1163-byte output staging slot BEFORE any Session transaction can commit,
+then submits that slot through CNet DTLS outside callbacks. No Session protocol
+state or plaintext is admitted before DTLS READY. The host calls the bridge
+advance, DTLS advance, then its existing single observe/whole-batch dispatch.
+
+The host uses reserve/commit for output-producing Session control/business calls;
+Session input/timer/message-pump use the same reservation internally. Session
+poll and receipt semantics stay on the established public Session API rather
+than a second message engine. A successful reservation must be committed once,
+including failed/empty Session outcomes. CAPACITY is a noncommitting Session
+result; a committed output waits in bounded staging if DTLS is busy. Accepted
+CNet sends settle only at their real local callback, with distinct monotonically
+tagged bridge sends. They never become SCTP ACK or remote application success.
+No extra poller, unbounded queue, wire concatenation or plaintext fallback.
+
+CNet assigns an immutable nonzero incarnation per DTLS association; exhaustion
+fails rather than wraps. Session's admitted peer_binding must equal that exact
+incarnation. Every bridge progress/reservation checks it again, so a replaced
+association cannot encrypt retained old SCTP DATA under a new authenticated peer.
+Borrowed DTLS/Session/provider storage must outlive bridge destroy. Abort stops
+Session admission, discards unsubmitted staging/input and waits for any admitted
+DTLS send callback; it never destroys/cancels the borrowed transport/backend.
+Protocol/business receipt collection remains separate, and native completion
+routing continues after error or abort. Destroy requires no reservation or
+pending send. The host then stops/drains/destroys DTLS and its listener/backend.
+
+The profile preserves exactly one SCTP packet per DTLS application datagram.
+Existing Session fragments application messages at 1024-byte payloads; its
+caller-provided 1163-byte output bound prevents oversized wire commitment.
+Incoming packets remain bounded by Session's 1280-byte ingress limit. Bridge
+ENOBUFS consumes no input and propagates through DTLS on_receive. The Crypto
+owner retains one authenticated plaintext record (<=16384 bytes) and the owned
+remaining encrypted datagram tail (<=16421 bytes), in addition to the configured
+CNet ingress ring. Later advance retries application delivery without reopening
+AEAD or consuming the replay window again. Write/control progress uses separate
+storage. No unbounded queue or implicit capacity increase is introduced.
+
+`pending_receive` exposes this obligation. Close refuses while retained input
+remains, and abort/failure erases it. Callback reentry is refused; a later
+terminal callback rejection seals the same encrypted fatal as immediate
+rejection. Invalid next-output descriptors fail before pumping callbacks.
+
+The separate `Salts::SCTPDTLS` static target belongs to SCTP and publicly links
+`Salts::SCTP` and `Salts::CNet`. Pure SCTP retains no CNet/provider dependency;
+CNet does not depend back on SCTP. A second Session engine, another observer,
+reverse CNet dependency and a duplicate static Crypto owner were rejected:
+each would split an existing state or lifetime authority. CNet forwards the
+exporter-bound HMAC through its sole Crypto owner. A shared exporter alone
+cannot authenticate a server-private cookie; the formal provider additionally
+mixes an OS-random private per-association context and erases it on cleanup.
+
+DTLS binding is unique within the loaded CNet owner and rejects 64-bit
+exhaustion. Bridge tags reserve a nonzero 32-bit domain plus monotonic sequence;
+sequence exhaustion fails before any Session output transaction. Session
+`data_ready` is distinct from DTLS READY and DCEP OPEN/ACK. The host polls ULP
+events only when the Session permits it. Noncommitting INVALID/EMPTY/CAPACITY
+outcomes release the reservation without poisoning the association; actual
+ingress/protocol, clock or transport failures remain latched.
+
+Local formal evidence: `saltscore.sctp_dtls_native` exercises ten scenarios,
+both native DTLS/SCTP roles and ordinary/external NativeIO, one/four/eight-peer
+tables, eight healthy concurrent clients and mixed authentication failure/cancel.
+It makes 44 real DTLS attempts: four untrusted, four canceled after DCEP and 36
+healthy peers. Each healthy peer echoes four messages (1 byte, 1 KiB, 24 KiB and
+logical empty PPID57), with four separately verified cumulative ACK receipts.
+An independent peer coalesces two encrypted records into one actual UDP
+datagram; the bridge has only one ingress slot. Wrong binding, Owner rejection,
+reservation/capacity, duplicate/wrong send tags and replacement at the same
+DTLS wrapper address are explicit negatives. A shared IOCP neighbor stays live
+through association/listener teardown. This is functional load evidence, not a
+throughput, packet-loss, browser or cross-platform qualification.
+
+The existing CNet native CTest now has 113 scenarios: 53 client/server cases
+including deferred delivery, deferred fatal and empty-record delivery, plus 60
+PKIX cases (15 profiles, two roles, two progress modes). The PKIX cases verify
+supplied chains/anchors, validity, CA/KU/EKU, constraints, signatures, unknown
+critical extensions and required-policy rejection. They do not establish a
+general path builder or positive policy-tree implementation. See
+[the coverage record](../crypto/docs/SHANGMI-COVERAGE.md#broader-pkix-supplied-chain-qualification).
+
+Migration is additive: include `<cnet/sctp_dtls.h>`, link `Salts::SCTPDTLS`, bind
+Session to the authenticated DTLS incarnation, forward callbacks and bracket
+host Session outputs with reserve/commit. There is no configuration/data
+migration or parallel versioned API. Rollback stops admission, aborts/drains the
+bridge through real terminals and destroys bridge before Session/DTLS; removal
+of the bridge restores the independent Session boundary without changing CNet.

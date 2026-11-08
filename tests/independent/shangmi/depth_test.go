@@ -111,6 +111,9 @@ func depthFixture(t *testing.T, shangmi, client bool, intermediates int, sendRoo
 
 func depthCase(t *testing.T, server, client fixture, profile, version, clientDepth, serverDepth int, outcome string) {
 	t.Helper()
+	if outcome != "accept" {
+		t.Setenv("SALTS_TEST_TLS_VALIDITY_INDEX", "2")
+	}
 	configuredMutualCase(t, "--depth-mtls", server, client, profile, version, clientDepth, serverDepth, outcome)
 }
 

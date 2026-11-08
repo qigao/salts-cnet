@@ -29,6 +29,7 @@ import (
 )
 
 var native = flag.String("native", "", "production CNet test executable")
+var python = flag.String("python", "", "configured formal fixture interpreter")
 
 type identity struct {
 	leaf, root        *x509.Certificate
@@ -104,6 +105,15 @@ func TestClientIdentities(t *testing.T) {
 	for _, f := range []identity{first, second} {
 		writeAESFixture(t, f, "binary", "")
 	}
+	for _, f := range []identity{first, second} {
+		if *python == "" {
+			t.Fatal("-python is required for PFX fixtures")
+		}
+		script := filepath.Join("..", "..", "..", "crypto", "tests", "asn1", "pkcs12_peer.py")
+		if out, err := exec.Command(*python, script, "--fixture", f.cert+".pfx", f.cert, f.keyFile).CombinedOutput(); err != nil {
+			t.Fatalf("PFX fixture: %v\n%s", err, out)
+		}
+	}
 	emptyFirst, emptySecond := first, second
 	emptyFirst.keyFile = filepath.Join(t.TempDir(), "key.pem")
 	emptySecond.keyFile = filepath.Join(t.TempDir(), "key.pem")
@@ -140,7 +150,7 @@ func TestClientIdentities(t *testing.T) {
 			scenarios := []string{"first_ca", "second_ca", "range_second_ca", "ordered", "empty_ca", "signature", "no_match", "no_request"}
 			scenarios = append(scenarios, "separate_certificate", "range_separate_certificate")
 			if mode != "file" {
-				scenarios = append(scenarios, "encrypted_binary", "encrypted_empty", "encrypted_binary128", "encrypted_empty128", "encrypted_binary192", "encrypted_empty192")
+				scenarios = append(scenarios, "pkcs12", "object", "object_encrypted", "encrypted_binary", "encrypted_empty", "encrypted_binary128", "encrypted_empty128", "encrypted_binary192", "encrypted_empty192")
 				for _, prf := range aesFixturePRFs {
 					hash := prf.name
 					for _, bits := range []int{128, 192, 256} {
@@ -156,7 +166,21 @@ func TestClientIdentities(t *testing.T) {
 					want := first.leaf
 					hints := x509.NewCertPool()
 					auth := tls.RequireAndVerifyClientCert
+					if strings.HasPrefix(scenario, "object") {
+						t.Setenv("SALTS_TEST_TLS_OBJECT", "1")
+						t.Setenv("SALTS_TEST_TLS_GROUP", "1")
+					}
 					switch {
+					case scenario == "pkcs12":
+						t.Setenv("SALTS_TEST_TLS_PKCS12", "1")
+						hints.AddCert(second.root)
+						want = second.leaf
+					case scenario == "object" || scenario == "object_encrypted":
+						hints.AddCert(second.root)
+						want = second.leaf
+						if scenario == "object_encrypted" {
+							t.Setenv("SALTS_TEST_TLS_ENCRYPTED", "1")
+						}
 					case strings.HasPrefix(scenario, "encrypted_"):
 						t.Setenv("SALTS_TEST_TLS_ENCRYPTED", "1")
 						if pair, ok := extra[scenario]; ok {

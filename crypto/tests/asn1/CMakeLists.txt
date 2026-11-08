@@ -25,3 +25,11 @@ add_test(NAME crypto.asn1.sm2_keys_independent
   COMMAND "${Python3_EXECUTABLE}" -B "${CMAKE_CURRENT_SOURCE_DIR}/sm2_keys_peer.py"
     "$<TARGET_FILE:crypto_sm2_keys_peer>")
 set_tests_properties(crypto.asn1.sm2_keys_independent PROPERTIES TIMEOUT 120)
+
+add_executable(crypto_pkcs12_peer pkcs12_peer.c)
+target_link_libraries(crypto_pkcs12_peer PRIVATE Salts::Crypto)
+set_target_properties(crypto_pkcs12_peer PROPERTIES FOLDER "Crypto/tests/asn1")
+add_test(NAME crypto.asn1.pkcs12_independent
+  COMMAND "${Python3_EXECUTABLE}" -B "${CMAKE_CURRENT_SOURCE_DIR}/pkcs12_peer.py"
+    "$<TARGET_FILE:crypto_pkcs12_peer>")
+set_tests_properties(crypto.asn1.pkcs12_independent PROPERTIES TIMEOUT 120)

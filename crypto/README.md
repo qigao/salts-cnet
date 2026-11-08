@@ -14,9 +14,13 @@ CMake targets, C11 source and C++17-usable C headers.
 
 Use the repository's user presets for the ASN1/Crypto/CNet build and formal
 CTest suite. The native GmSSL implementation is installed from the immutable
-`gmssl 3.2.0#43` vcpkg port, whose extension sources are pinned from
+`gmssl 3.2.0#44` vcpkg port, whose extension sources are pinned from
 `gmssl-extensions/`. `Salts::Crypto` links the imported `GmSSL::GmSSL` static
 library; it never compiles a duplicate GmSSL implementation.
+The #219 completion candidate pins the registry and CI dependency action to
+`3c9cb8cbcc6b3645d47e02585e987b708406cd98`, which registers #44 with TLCP
+certificate policy, depth positions, bounded TLS sessions, anchor constraints
+and PRF erasure fixes. No local GmSSL overlay is required.
 Private Ed448 libecc objects live under `vendor/libecc/` in this module.
 No backwards-compatibility alias, fallback or duplicate BER/DER owner.
 
@@ -38,9 +42,26 @@ They use caller-owned buffers and private provider state, with explicit
 identity/nonce, capacity, overlap, authentication and secret-erasure contracts.
 Applications do not need native GmSSL headers.
 
+Reusable immutable identities and authenticated PKCS#12/PFX inputs are exposed in
+`<crypto/tls_credentials.h>`. Contexts import independent provider state, so input
+bytes, passwords and the caller's object reference can be released before stream
+progress. Profile-specific group lists are copied at initialization. See
+[identity objects and PFX](docs/SHANGMI-COVERAGE.md#immutable-identity-objects-and-authenticated-pfx).
+
+`<crypto/sm2_cms.h>` provides bounded SM2/SM3 SignedData with explicit pinned
+signer trust. `<crypto/sm2_cms_envelope.h>` provides one-recipient SM2/SM4-GCM
+authenticated envelopes with recipient trust; sender identity requires an inner
+verified SignedData. `<crypto/sm2_ocsp.h>` verifies direct-issuer or explicitly
+selected delegated OCSP responses. Delegates require an issuer-signed no-check
+certificate. Crypto/CNet snapshot factories copy all admission material and
+recheck current status before application readiness. See
+[the finite CMS and OCSP profiles](docs/SHANGMI-COVERAGE.md#current-software-coverage).
+
 TLS contexts can select certificate-chain signature algorithms independently
 of handshake signatures in standard TLS1.2/1.3 and range negotiation. TLS1.2
-client identity selection also respects CertificateRequest's shared list. See
+client identity selection also respects CertificateRequest's shared list. The
+local candidate adds TLCP client-side SM2/RSA issuer lists independently of its
+SM2 handshake. See
 [certificate signature policy](docs/SHANGMI-COVERAGE.md#separate-certificate-signature-policy-tls-1213).
 
 TLS memory credentials accept explicit PBKDF2-HMAC-SHA2 (SHA224, SHA256, SHA384,
@@ -59,7 +80,86 @@ TLS1.3 KeyUpdate and NewSessionTicket reception supports bounded record
 fragmentation/coalescing while preserving key-change boundaries and independent
 duplex storage. Ticket serialization checks its fixed capacity before writing.
 See [post-handshake framing](docs/SHANGMI-COVERAGE.md#bounded-tls-13-post-handshake-framing);
-session restoration and 0-RTT remain separate capabilities.
+this framing coverage alone does not qualify restoration.
+
+Exact STANDARD TLS1.3 and ShangMi TLS1.3 clients can enable a fixed context-owned
+ticket cache using `session_cache_capacity` (0 disables, 1..16 entries).
+Only streams sharing the immutable context share tickets. Accepted PSK_DHE
+resumption revalidates the original certificate chain and current peer policy,
+and enforces the original ALPN, before application data. Crypto and CNet expose
+`*_session_reused` for actual accepted restoration. Independent Go TLS and
+ShangMi peers cover full/resumed data/close and ticket refusal; certificate expiry,
+ALPN/policy rejection and bounded concurrency have formal regression coverage.
+See [ownership and limits](docs/SHANGMI-COVERAGE.md#context-owned-client-tls13-session-cache).
+Server contexts can enable one stateful ticket per admitted TLS1.3 handshake
+with `session_ticket_capacity` (1..16) and `session_ticket_lifetime_seconds`
+(1..604800); both zero disables. The retained server context owns PSKs and
+authenticated peer state; a ticket carries only a random lookup identity.
+Fresh binder/ECDHE/Finished verification and original mTLS chain/policy checks
+remain mandatory. Independent standard TLS clients cover mTLS/SNI/ALPN/expiry
+and capacity; independent ShangMi clients cover server-authenticated resumption
+and ticket/binder negatives. See [server ownership and qualification](docs/SHANGMI-COVERAGE.md#context-owned-tls13-server-tickets-local-implementation-contract).
+TLS1.2/TLCP restoration, persistence and 0-RTT remain open.
+
+Configured-anchor name constraints now cover every subordinate certificate,
+including through an unconstrained intermediate and in TLCP dual-leaf paths.
+This is not general PKIX/path-building qualification. DTLS1.2 AES-GCM records,
+replay protection, stateless cookies, bounded reassembly/timers, EMS/Finished and
+P256 exchange/signed-parameter helpers are internal only, with independent
+Python wire/key-schedule/signature/ECDH tests.
+Internal DTLS1.2 client/server owners now compose those pieces into cookie/EMS
+negotiation, verified certificate admission, Finished, application records and
+close. The client can select one imported P256/RSA identity from the server's
+CertificateRequest and prove possession; the server supports required client authentication
+and retained peer policies, shared credential contexts and explicit SNI admission.
+Independent Python and Pion UDP-loopback tests cover ECDSA/RSA, fragmented/lost/
+reordered flights and negative authentication paths. General negotiation policy
+and broader platform qualification remain unfinished. The bounded SCTP bridge
+and supplied-chain PKIX cases now have local native evidence described below. Finite opaque
+client/server APIs in `<crypto/dtls_stream.h>` expose these profiles without
+provider headers; `<cnet/dtls.h>` composes either role with an existing bound
+datagram in ordinary or host-owned NativeIO mode. Server cookie gating precedes
+stream allocation; shared listener credentials remain leased until all accepted
+streams drain and are destroyed. CNet consumers create/destroy listeners through
+`cnet_dtls_listener_create`/`cnet_dtls_listener_destroy` in the same CNet DSO,
+preserving its single physical Crypto instance. See the
+[server admission contract](docs/SHANGMI-COVERAGE.md#opaque-dtls-server-listener-and-native-admission).
+See the [client composition and limits](docs/SHANGMI-COVERAGE.md#opaque-dtls-client-and-cnet-datagram-composition) and the
+[private contract](docs/SHANGMI-COVERAGE.md#dtls12-handshake-preparation-private-contract).
+The [private client owner](docs/SHANGMI-COVERAGE.md#private-dtls-client-owner-work)
+documents verification, bounded sends, teardown and the exact test scope.
+
+Authenticated application delivery supports bounded backpressure: Crypto's
+`CRYPTO_DTLS_BUSY`, mapped from CNet `on_receive` returning `SALTS_ENOBUFS`,
+consumes no application data. The stream owns one deferred plaintext record and
+the remaining encrypted datagram tail until later progress; it never decrypts
+or consumes replay state twice for a delivery retry. Other callback errors
+remain terminal. `pending_receive` exposes that retained obligation.
+
+`crypto_dtls_stream_hmac` derives an exporter-bound key and computes a bounded
+HMAC-SHA256 proof without exposing that key. CNet callers use `cnet_dtls_hmac`
+through the same physical Crypto owner. An exporter is shared with the peer:
+server-only SCTP cookie authentication must additionally use an independent
+secret key/context, never a public exporter label alone. The native fixture
+uses an OS-random private per-association context and erases it at teardown.
+
+The C11 [SCTP bridge](../sctp/README.md#cnet-dtls-bridge) links through
+`Salts::SCTPDTLS`, preserving the provider-independent `Salts::SCTP` target.
+See [current SCTP, backpressure and PKIX qualification](docs/SHANGMI-COVERAGE.md#sctp-composition-and-authenticated-delivery-backpressure)
+for the real multi-peer load and rejection matrix; these are bounded profiles,
+not a general WebPKI/path-builder qualification.
+The [private server contract](docs/SHANGMI-COVERAGE.md#private-dtls-server-owner-contract)
+documents credential ownership, listener leases, mTLS and SNI test boundaries.
+Both private owners also support an explicit opt-in RFC5705 exporter after READY.
+Default sessions erase the master after admission; exporter sessions retain it
+until close admission, abort, failure or clear. Context-aware derivation and
+independent peer agreement are described in the
+[exporter contract](docs/SHANGMI-COVERAGE.md#private-dtls-exporter-and-master-retention).
+Private DTLS protocol failures can also prepare one fatal alert in the actual
+local write epoch, erase secrets immediately and retain the output through its
+real send terminal. Peer fatal alerts terminate without echo; malformed outer framing,
+bad tags and replays retain their discard behavior. See the
+[fatal alert contract](docs/SHANGMI-COVERAGE.md#private-dtls-fatal-alert-delivery).
 
 ShangMi TLS1.3 client/server contexts can require minimum peer KeyUpdate time
 and authenticated application-byte spacing with `peer_key_update_min_interval_ms`
@@ -130,7 +230,9 @@ See [X.509 DER scope](docs/X509-DER-ASN1-INSPECTION.md).
 
 Handshake diagnostics retain expired/not-yet-valid results and the zero-based
 position of the certificate actually checked in the peer's presented chain.
-This includes intermediate CAs and TLCP's encryption leaf. Local-only trust
+This includes intermediate CAs and TLCP's encryption leaf. The local candidate
+also reports the first presented issuer beyond the configured depth, accounting
+for both TLCP leaves. Local-only trust
 anchors and failures without a known position use `SIZE_MAX`; the diagnostic
 remains an owned value after stream teardown. See `<crypto/tls_diagnostic.h>`.
 

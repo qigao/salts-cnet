@@ -2074,6 +2074,62 @@ static int original_sctp_public_api_contract(void) {
 }
 
 spec("SCTP public Wire and opaque Session API") {
+  static cnet_sctp_session *progress_session;
+  static test_context progress_owner;
+
+  before_each() {
+    progress_session = NULL;
+    progress_owner = (test_context){UINT32_C(0x11223344),
+        UINT32_C(0x10203040), UINT32_C(0x13579bdf), 1};
+  }
+
+  after_each() {
+    if (progress_session) {
+      progress_owner.owner_admitted = 1;
+      cnet_sctp_session_stop(progress_session);
+      cnet_sctp_session_destroy(progress_session);
+    }
+  }
+
+  it("guards binding and readiness queries with Owner and closed state") {
+    uint64_t binding = 99u;
+    int ready = 1;
+    cnet_sctp_session_create_config config =
+        session_config(5000u, 1, &progress_owner);
+    check(cnet_sctp_session_get_peer_binding(NULL, &binding) ==
+        CNET_SCTP_SESSION_INVALID);
+    check(binding == 0u);
+    check(cnet_sctp_session_data_ready(NULL, &ready) ==
+        CNET_SCTP_SESSION_INVALID);
+    check(ready == 0);
+    check(cnet_sctp_session_create(&config, 0u, &progress_session) ==
+        CNET_SCTP_SESSION_OK);
+    check(cnet_sctp_session_get_peer_binding(progress_session, &binding) ==
+        CNET_SCTP_SESSION_OK);
+    check(binding == config.peer_binding);
+    check(cnet_sctp_session_data_ready(progress_session, &ready) ==
+        CNET_SCTP_SESSION_OK);
+    check(ready == 0);
+    progress_owner.owner_admitted = 0;
+    check(cnet_sctp_session_get_peer_binding(progress_session, &binding) ==
+        CNET_SCTP_SESSION_OWNER);
+    check(binding == 0u);
+    ready = 1;
+    check(cnet_sctp_session_data_ready(progress_session, &ready) ==
+        CNET_SCTP_SESSION_OWNER);
+    check(ready == 0);
+    progress_owner.owner_admitted = 1;
+    check(cnet_sctp_session_stop(progress_session) == CNET_SCTP_SESSION_OK);
+    binding = 99u;
+    check(cnet_sctp_session_get_peer_binding(progress_session, &binding) ==
+        CNET_SCTP_SESSION_CLOSED);
+    check(binding == 0u);
+    ready = 1;
+    check(cnet_sctp_session_data_ready(progress_session, &ready) ==
+        CNET_SCTP_SESSION_CLOSED);
+    check(ready == 0);
+  }
+
   it("preserves the original ABI, real wire round-trip and full Session lifecycle") {
     const int result = original_sctp_public_api_contract();
     check(result == 0, "SCTP public native API contract returned %d", result);

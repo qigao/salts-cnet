@@ -47,10 +47,50 @@ target_link_libraries(crypto_sm2_crl_admission PRIVATE Salts::Crypto Salts::Tiny
 set_target_properties(crypto_sm2_crl_admission PROPERTIES FOLDER "Crypto/tests/x509")
 add_test(NAME crypto.x509.sm2_crl_admission COMMAND crypto_sm2_crl_admission)
 
+add_executable(crypto_sm2_cms_admission sm2_cms_admission.c)
+target_link_libraries(crypto_sm2_cms_admission PRIVATE Salts::Crypto Salts::TinyTest)
+set_target_properties(crypto_sm2_cms_admission PROPERTIES FOLDER "Crypto/tests/x509")
+add_test(NAME crypto.x509.sm2_cms_admission COMMAND crypto_sm2_cms_admission)
+
+add_executable(crypto_sm2_ocsp_admission sm2_ocsp_admission.c)
+target_link_libraries(crypto_sm2_ocsp_admission PRIVATE Salts::Crypto Salts::TinyTest)
+set_target_properties(crypto_sm2_ocsp_admission PROPERTIES FOLDER "Crypto/tests/x509")
+add_test(NAME crypto.x509.sm2_ocsp_admission COMMAND crypto_sm2_ocsp_admission)
+
 # Formal independent certificate generation/verification, never a consumer project.
 # Android is build-only in the established CI; Go is a host test peer.
 if(NOT CMAKE_SYSTEM_NAME STREQUAL "Android")
   find_program(SALTS_CRYPTO_TEST_GO go REQUIRED)
+  add_executable(crypto_sm2_ocsp_peer sm2_ocsp_peer.c)
+  target_link_libraries(crypto_sm2_ocsp_peer PRIVATE Salts::Crypto)
+  set_target_properties(crypto_sm2_ocsp_peer PROPERTIES FOLDER "Crypto/tests/x509")
+  add_test(NAME crypto.x509.sm2_ocsp_independent
+    COMMAND "${SALTS_CRYPTO_TEST_GO}" test -mod=readonly -count=1 -timeout=90s -run "^TestSM2OCSP$"
+      -args -ocsp-peer "$<TARGET_FILE:crypto_sm2_ocsp_peer>")
+  set_tests_properties(crypto.x509.sm2_ocsp_independent PROPERTIES
+    WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/independent"
+    ENVIRONMENT "CGO_ENABLED=0;GOWORK=off" TIMEOUT 180)
+  add_test(NAME crypto.x509.sm2_ocsp_delegation
+    COMMAND "${SALTS_CRYPTO_TEST_GO}" test -mod=readonly -count=1 -timeout=90s -run "^TestSM2OCSPDelegation$"
+      -args -ocsp-peer "$<TARGET_FILE:crypto_sm2_ocsp_peer>")
+  set_tests_properties(crypto.x509.sm2_ocsp_delegation PROPERTIES
+    WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/independent"
+    ENVIRONMENT "CGO_ENABLED=0;GOWORK=off" TIMEOUT 180)
+  add_executable(crypto_sm2_cms_peer sm2_cms_peer.c)
+  target_link_libraries(crypto_sm2_cms_peer PRIVATE Salts::Crypto)
+  set_target_properties(crypto_sm2_cms_peer PROPERTIES FOLDER "Crypto/tests/x509")
+  add_test(NAME crypto.x509.sm2_cms_independent
+    COMMAND "${SALTS_CRYPTO_TEST_GO}" test -mod=readonly -count=1 -timeout=90s -run "^TestSM2CMS$"
+      -args -cms-peer "$<TARGET_FILE:crypto_sm2_cms_peer>")
+  set_tests_properties(crypto.x509.sm2_cms_independent PROPERTIES
+    WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/independent"
+    ENVIRONMENT "CGO_ENABLED=0;GOWORK=off" TIMEOUT 180)
+  add_test(NAME crypto.x509.sm2_cms_envelope_independent
+    COMMAND "${SALTS_CRYPTO_TEST_GO}" test -mod=readonly -count=1 -timeout=90s -run "^TestSM2CMSEnvelope$"
+      -args -cms-peer "$<TARGET_FILE:crypto_sm2_cms_peer>")
+  set_tests_properties(crypto.x509.sm2_cms_envelope_independent PROPERTIES
+    WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/independent"
+    ENVIRONMENT "CGO_ENABLED=0;GOWORK=off" TIMEOUT 180)
   add_executable(crypto_sm2_x509_peer sm2_peer.c)
   target_link_libraries(crypto_sm2_x509_peer PRIVATE Salts::Crypto)
   set_target_properties(crypto_sm2_x509_peer PROPERTIES FOLDER "Crypto/tests/x509")

@@ -93,6 +93,86 @@ cleanup:
   return result;
 }
 
+static int run_cnet_ocsp_policy_case(char **argv) {
+  const char *label = "CNet owned direct-issuer SM2 OCSP snapshot";
+  uint8_t issuer[4096], response[65536], responder[4096];
+  char delegate_id[8192];
+  char certificate_id[] = "1234567812345678", response_id[] = "1234567812345678";
+  const bool peer_is_server = strcmp(argv[8], "client") == 0;
+  const bool accept = strcmp(argv[12], "accept") == 0;
+  cnet_tls_peer_policy policy = {0}; cnet_tls_client client = {0}; cnet_tls_server server = {0};
+  int result = 0;
+  cnet_tls_sm2_ocsp_config config = {.size = sizeof(config),
+      .issuer_certificate = issuer, .issuer_certificate_size = crl_policy_read_file(argv[9],issuer,sizeof(issuer)),
+      .response = response, .response_size = crl_policy_read_file(argv[10],response,sizeof(response)),
+      .certificate_signing_identity = certificate_id, .certificate_signing_identity_size = 16u,
+      .response_signing_identity = response_id, .response_signing_identity_size = 16u,
+      .minimum_this_update = strtoll(argv[11],NULL,10), .maximum_age_seconds = 3600u,
+      .peer_is_server = peer_is_server};
+  REQUIRE(config.issuer_certificate_size && config.response_size);
+  if (argv[14]) {
+    config.responder_certificate = responder;
+    config.responder_certificate_size = crl_policy_read_file(argv[14],responder,sizeof(responder));
+    config.responder_issuer_identity_size = strlen(argv[15]);
+    REQUIRE(config.responder_certificate_size && config.responder_issuer_identity_size < sizeof(delegate_id));
+    memcpy(delegate_id,argv[15],config.responder_issuer_identity_size);
+    config.responder_issuer_identity = delegate_id;
+  }
+  if (strcmp(argv[13],"wrong-cert-id") == 0) certificate_id[0] = '!';
+  if (strcmp(argv[13],"wrong-response-id") == 0) response_id[0] = '!';
+  if (strcmp(argv[13],"wrong-role") == 0) config.peer_is_server = !peer_is_server;
+  if (strcmp(argv[13],"factory-reject") == 0 || strcmp(argv[13],"wrong-response-id") == 0) {
+    REQUIRE(cnet_tls_sm2_ocsp_peer_policy_create(&config,&policy) == SALTS_ECONNABORTED);
+    REQUIRE(!policy.context && !policy.check && !policy.release && !policy.retain);
+    goto cleanup;
+  }
+  for (unsigned invalid = 0u; invalid < 10u; ++invalid) {
+    cnet_tls_sm2_ocsp_config bad = config;
+    if (invalid == 0u) bad.size = 0u;
+    if (invalid == 1u) bad.issuer_certificate_size = 4097u;
+    if (invalid == 2u) bad.response_size = 65537u;
+    if (invalid == 3u) bad.maximum_age_seconds = 0u;
+    if (invalid == 4u) bad.certificate_signing_identity_size = 8192u;
+    if (invalid == 5u) bad.response_signing_identity_size = 0u;
+    if (invalid == 6u) bad.response = NULL;
+    if (invalid == 7u) bad.issuer_certificate = NULL;
+    if (invalid == 8u) bad.maximum_clock_skew_seconds = 3601u;
+    if (invalid == 9u) bad.minimum_this_update = -1;
+    REQUIRE(cnet_tls_sm2_ocsp_peer_policy_create(&bad,&policy) == SALTS_EINVAL);
+    REQUIRE(!policy.context && !policy.check && !policy.release && !policy.retain);
+  }
+  REQUIRE(cnet_tls_sm2_ocsp_peer_policy_create(&config,&policy) == SALTS_OK);
+  REQUIRE(policy.context && policy.check && policy.retain && policy.release);
+  REQUIRE(policy.supported_profiles == CRYPTO_TLS_PEER_POLICY_SHANGMI_TLS13);
+  REQUIRE(policy.supported_peer_roles == (config.peer_is_server ? CRYPTO_TLS_PEER_POLICY_SERVER : CRYPTO_TLS_PEER_POLICY_CLIENT));
+  if (strcmp(argv[13],"wrong-role") == 0) {
+    cnet_tls_client_config cc = {.size = sizeof(cc), .ca_file = "absent-ocsp-trust.pem",
+        .security_profile = CNET_TLS_SECURITY_PROFILE_SHANGMI_TLS13, .peer_policy = &policy};
+    cnet_tls_server_config sc = {.size = sizeof(sc), .ca_file = "absent-ocsp-trust.pem",
+        .cert_file = "absent-ocsp-cert.pem", .key_file = "absent-ocsp-key.pem",
+        .client_auth = CNET_TLS_CLIENT_AUTH_REQUIRED, .security_profile = CNET_TLS_SECURITY_PROFILE_SHANGMI_TLS13,
+        .peer_policy = &policy};
+    REQUIRE((peer_is_server ? cnet_tls_client_init(&client,&cc) : cnet_tls_server_init(&server,&sc)) == SALTS_ENOTSUP);
+    REQUIRE(!client.impl && !server.impl); goto cleanup;
+  }
+  memset(issuer,0,sizeof(issuer)); memset(response,0,sizeof(response));
+  memset(responder,0,sizeof(responder)); memset(delegate_id,0,sizeof(delegate_id));
+  memset(certificate_id,0,sizeof(certificate_id)); memset(response_id,0,sizeof(response_id));
+  tls_case_options options = {.label = label, .ca_file = argv[2], .server_ca_file = argv[3],
+      .server_cert_file = argv[4], .server_key_file = argv[5], .client_cert_file = argv[6], .client_key_file = argv[7],
+      .verified_hostname = strcmp(argv[13],"wrong-name") == 0 ? "127.0.0.2" : "localhost",
+      .expect_success = accept, .expect_server_rejection = !accept && !peer_is_server,
+      .security_profile = CNET_TLS_SECURITY_PROFILE_SHANGMI_TLS13,
+      .client_peer_policy = peer_is_server ? &policy : NULL, .server_peer_policy = peer_is_server ? NULL : &policy,
+      .release_peer_policy = &policy, .release_tls_context_early = true};
+  REQUIRE(run_case(&options) == 0);
+  REQUIRE(policy.context == NULL);
+cleanup:
+  (void)cnet_tls_client_destroy(&client); (void)cnet_tls_server_destroy(&server);
+  if (policy.release) policy.release(policy.context);
+  return result;
+}
+
 typedef struct tlcp_crl_probe {
   cnet_tls_peer_policy actual;
   atomic_uint references, calls, invalid;
@@ -143,8 +223,34 @@ invalid:
   return SALTS_ECONNABORTED;
 }
 
+/* Share the transport/lifetime probes while selecting the explicit revocation
+ * format. Production factories retain their separate typed configurations. */
+static int create_tlcp_revocation_case(const cnet_tls_sm2_crl_config *c,
+    bool ocsp, bool shangmi, char **argv, cnet_tls_peer_policy *out) {
+  if (!ocsp) return shangmi ? cnet_tls_sm2_crl_peer_policy_create(c, out) :
+      cnet_tlcp_sm2_crl_peer_policy_create(c, out);
+  cnet_tls_sm2_ocsp_config o = {.size = sizeof(o),
+      .issuer_certificate = c->issuer_certificate, .issuer_certificate_size = c->issuer_certificate_size,
+      .response = c->crl, .response_size = c->crl_size,
+      .certificate_signing_identity = c->certificate_signing_identity,
+      .certificate_signing_identity_size = c->certificate_signing_identity_size,
+      .response_signing_identity = c->crl_signing_identity,
+      .response_signing_identity_size = c->crl_signing_identity_size,
+      .maximum_age_seconds = c->maximum_age_seconds, .peer_is_server = c->peer_is_server};
+  uint8_t responder[4096];
+  if (argv[9]) {
+    o.responder_certificate = responder;
+    o.responder_certificate_size = crl_policy_read_file(argv[9],responder,sizeof(responder));
+    o.responder_issuer_identity = argv[10]; o.responder_issuer_identity_size = strlen(argv[10]);
+  }
+  int status = shangmi ? cnet_tls_sm2_ocsp_peer_policy_create(&o, out) :
+      cnet_tlcp_sm2_ocsp_peer_policy_create(&o, out);
+  memset(responder,0,sizeof(responder));
+  return status;
+}
 static int run_cnet_tlcp_crl_policy_case(char **argv) {
-  const char *label = "CNet TLCP dual-certificate CRL admission";
+  const bool ocsp = strcmp(argv[1], "--tlcp-ocsp-policy") == 0;
+  const char *label = "CNet TLCP dual-certificate revocation admission";
   uint8_t issuer[4096], crl[65536];
   char certificate_id[] = "1234567812345678", crl_id[] = "1234567812345678";
   cnet_tls_peer_policy policy = {0};
@@ -164,20 +270,20 @@ static int run_cnet_tlcp_crl_policy_case(char **argv) {
   REQUIRE(config.issuer_certificate_size != 0u && config.crl_size != 0u);
   if (strcmp(argv[8], "unsupported-client-auth") == 0) {
     config.peer_is_server = false;
-    REQUIRE(cnet_tlcp_sm2_crl_peer_policy_create(&config, &policy) == SALTS_ENOTSUP);
+    REQUIRE(create_tlcp_revocation_case(&config, ocsp, false, argv, &policy) == SALTS_ENOTSUP);
     REQUIRE(policy.check == NULL && policy.release == NULL && policy.retain == NULL && policy.context == NULL);
     goto cleanup;
   }
   if (strcmp(argv[8], "factory-reject") == 0) {
-    REQUIRE(cnet_tlcp_sm2_crl_peer_policy_create(&config, &policy) == SALTS_ECONNABORTED);
+    REQUIRE(create_tlcp_revocation_case(&config, ocsp, false, argv, &policy) == SALTS_ECONNABORTED);
     REQUIRE(policy.check == NULL && policy.release == NULL && policy.retain == NULL && policy.context == NULL);
     goto cleanup;
   }
   if (strcmp(argv[8], "wrong-cert-id") == 0) certificate_id[0] = '!';
   if (strcmp(argv[8], "wrong-profile") == 0)
-    REQUIRE(cnet_tls_sm2_crl_peer_policy_create(&config, &policy) == SALTS_OK);
+    REQUIRE(create_tlcp_revocation_case(&config, ocsp, true, argv, &policy) == SALTS_OK);
   else
-    REQUIRE(cnet_tlcp_sm2_crl_peer_policy_create(&config, &policy) == SALTS_OK);
+    REQUIRE(create_tlcp_revocation_case(&config, ocsp, false, argv, &policy) == SALTS_OK);
   REQUIRE(policy.supported_profiles == (strcmp(argv[8], "wrong-profile") == 0 ?
       CRYPTO_TLS_PEER_POLICY_SHANGMI_TLS13 : CRYPTO_TLS_PEER_POLICY_TLCP11));
   REQUIRE(policy.supported_peer_roles == CRYPTO_TLS_PEER_POLICY_SERVER);

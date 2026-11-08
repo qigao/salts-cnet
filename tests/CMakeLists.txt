@@ -1,3 +1,5 @@
+find_package(Python3 COMPONENTS Interpreter REQUIRED)
+
 # TinyTest is required for native runtime tests; migrate source-owned suites in
 # batches while retaining all original behavior and CTest registrations.
 if(NOT TARGET Salts::TinyTest)
@@ -306,15 +308,23 @@ if(TARGET Salts::CNet)
   set_tests_properties(saltscore.cnet_tls_ca_san PROPERTIES TIMEOUT 65)
   if(NOT CMAKE_SYSTEM_NAME STREQUAL "Android")
     find_program(SALTS_CNET_TEST_GO go REQUIRED)
+    add_test(NAME saltscore.cnet_tls_session_resumption
+      COMMAND "${SALTS_CNET_TEST_GO}" test -mod=readonly -count=1 -timeout=60s
+        -run ^TestTLS13SessionResumption$
+        -args -native "$<TARGET_FILE:saltscore_cnet_tls_ca_san_test>")
+    set_tests_properties(saltscore.cnet_tls_session_resumption PROPERTIES
+      WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/independent/tls"
+      ENVIRONMENT "CGO_ENABLED=0;GOWORK=off" TIMEOUT 90)
     add_test(NAME saltscore.cnet_tls_client_identities
       COMMAND "${SALTS_CNET_TEST_GO}" test -mod=readonly -count=1 -timeout=150s
-        -args -native "$<TARGET_FILE:saltscore_cnet_tls_ca_san_test>")
+        -skip "^TestTLS13SessionResumption$"
+        -args -python "${Python3_EXECUTABLE}" -native "$<TARGET_FILE:saltscore_cnet_tls_ca_san_test>")
     set_tests_properties(saltscore.cnet_tls_client_identities PROPERTIES
       WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/independent/tls"
       ENVIRONMENT "CGO_ENABLED=0;GOWORK=off" TIMEOUT 180)
     add_test(NAME saltscore.cnet_tlcp_independent
       COMMAND "${SALTS_CNET_TEST_GO}" test -mod=readonly -count=1 -timeout=150s
-        -args -native "$<TARGET_FILE:saltscore_cnet_tls_ca_san_test>")
+        -args -python "${Python3_EXECUTABLE}" -native "$<TARGET_FILE:saltscore_cnet_tls_ca_san_test>")
     set_tests_properties(saltscore.cnet_tlcp_independent PROPERTIES
       WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/independent/tlcp"
       ENVIRONMENT "CGO_ENABLED=0;GOWORK=off" TIMEOUT 180)
@@ -324,6 +334,24 @@ if(TARGET Salts::CNet)
     set_tests_properties(saltscore.cnet_tlcp_crl_policy PROPERTIES
       WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/independent/tlcp"
       ENVIRONMENT "CGO_ENABLED=0;GOWORK=off" TIMEOUT 180)
+    add_test(NAME saltscore.cnet_tlcp_certificate_policy
+      COMMAND "${SALTS_CNET_TEST_GO}" test -mod=readonly -count=1 -timeout=150s -run "^TestTLCPCertificatePolicy$"
+        -args -native "$<TARGET_FILE:saltscore_cnet_tls_ca_san_test>")
+    set_tests_properties(saltscore.cnet_tlcp_certificate_policy PROPERTIES
+      WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/independent/tlcp"
+      ENVIRONMENT "CGO_ENABLED=0;GOWORK=off" TIMEOUT 180)
+    add_test(NAME saltscore.cnet_tlcp_ocsp_policy
+      COMMAND "${SALTS_CNET_TEST_GO}" test -mod=readonly -count=1 -timeout=150s -run "^TestTLCPOCSPPolicy$"
+        -args -native "$<TARGET_FILE:saltscore_cnet_tls_ca_san_test>")
+    set_tests_properties(saltscore.cnet_tlcp_ocsp_policy PROPERTIES
+      WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/independent/tlcp"
+      ENVIRONMENT "CGO_ENABLED=0;GOWORK=off" TIMEOUT 180)
+    add_test(NAME saltscore.cnet_shangmi_session_resumption
+      COMMAND "${SALTS_CNET_TEST_GO}" test -mod=readonly -count=1 -timeout=90s -run "^TestShangMiSessionResumption$"
+        -args -native "$<TARGET_FILE:saltscore_cnet_tls_ca_san_test>")
+    set_tests_properties(saltscore.cnet_shangmi_session_resumption PROPERTIES
+      WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/independent/shangmi"
+      ENVIRONMENT "CGO_ENABLED=0;GOWORK=off" TIMEOUT 120)
     add_test(NAME saltscore.cnet_shangmi_tls13_independent
       COMMAND "${SALTS_CNET_TEST_GO}" test -mod=readonly -count=1 -timeout=150s -run "^TestShangMi$"
         -args -native "$<TARGET_FILE:saltscore_cnet_tls_ca_san_test>")
@@ -332,7 +360,7 @@ if(TARGET Salts::CNet)
       ENVIRONMENT "CGO_ENABLED=0;GOWORK=off" TIMEOUT 180)
     add_test(NAME saltscore.cnet_shangmi_required_mtls
       COMMAND "${SALTS_CNET_TEST_GO}" test -mod=readonly -count=1 -timeout=150s -run "^TestShangMiMutual$"
-        -args -native "$<TARGET_FILE:saltscore_cnet_tls_ca_san_test>")
+        -args -python "${Python3_EXECUTABLE}" -native "$<TARGET_FILE:saltscore_cnet_tls_ca_san_test>")
     set_tests_properties(saltscore.cnet_shangmi_required_mtls PROPERTIES
       WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/independent/shangmi"
       ENVIRONMENT "CGO_ENABLED=0;GOWORK=off" TIMEOUT 180)
@@ -369,6 +397,12 @@ if(TARGET Salts::CNet)
       COMMAND "${SALTS_CNET_TEST_GO}" test -mod=readonly -count=1 -timeout=150s -run "^TestShangMiCNetCRLPolicy$"
         -args -native "$<TARGET_FILE:saltscore_cnet_tls_ca_san_test>")
     set_tests_properties(saltscore.cnet_shangmi_crl_policy PROPERTIES
+      WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/independent/shangmi"
+      ENVIRONMENT "CGO_ENABLED=0;GOWORK=off" TIMEOUT 180)
+    add_test(NAME saltscore.cnet_shangmi_ocsp_policy
+      COMMAND "${SALTS_CNET_TEST_GO}" test -mod=readonly -count=1 -timeout=150s -run "^TestShangMiCNetOCSPPolicy$"
+        -args -native "$<TARGET_FILE:saltscore_cnet_tls_ca_san_test>")
+    set_tests_properties(saltscore.cnet_shangmi_ocsp_policy PROPERTIES
       WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/independent/shangmi"
       ENVIRONMENT "CGO_ENABLED=0;GOWORK=off" TIMEOUT 180)
   endif()
@@ -426,7 +460,6 @@ if(TARGET Salts::CNet)
   # This is the exact production Salts::CNet target, never the retired
   # second test-only CNet Owner / Crypto adapter.
   if(SALTSCORE_CNET_PRODUCTION_REQUIRED_MTLS_TEST)
-    find_package(Python3 COMPONENTS Interpreter REQUIRED)
     add_test(NAME saltscore.cnet_production_required_mtls
       COMMAND "${Python3_EXECUTABLE}" -B
         "${PROJECT_SOURCE_DIR}/tests/test_cnet_tls_required_mtls.py"
@@ -745,7 +778,6 @@ set_tests_properties(saltscore.original_re_25_case_contract
 
 # Downstream CMeta uses the pinned Core auditor to verify physical shared-image
 # ownership. Keep its cross-platform parser behavior in the formal CTest graph.
-find_package(Python3 COMPONENTS Interpreter REQUIRED)
 add_test(NAME saltscore.audit_runtime_owner_parser
   COMMAND "${Python3_EXECUTABLE}" -B -m unittest discover
     -s tests -p test_audit_runtime_owner.py)

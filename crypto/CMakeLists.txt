@@ -39,11 +39,19 @@ add_subdirectory(vendor/libecc)
 # SHA256 is the pinned local native implementation, not a duplicate libecc SHA.
 # Generic ASN.1 BER/DER now comes solely from imported Salts::ASN1.
 # Crypto retains only ECDSA DER and RFC 8410 key-format functions.
+file(GLOB _crypto_dtls_sources CONFIGURE_DEPENDS
+  "${CMAKE_CURRENT_SOURCE_DIR}/src/crypto_dtls_*.c"
+  "${CMAKE_CURRENT_SOURCE_DIR}/src/crypto_dtls_*.h")
+source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}/src" PREFIX "src" FILES ${_crypto_dtls_sources})
 add_library(salts_crypto STATIC
   src/crypto_tls_gmssl.c
   src/crypto_tls_stream.c
+  src/crypto_tls_session_cache.c
+  ${_crypto_dtls_sources}
   src/crypto_tls_credentials.c
+  src/crypto_tls_pkcs12.c
   src/crypto_tls_sm2_crl_policy.c
+  src/crypto_tls_sm2_ocsp_policy.c
   src/crypto_tls_cipher_bio.c
   src/crypto_ed448.c
   src/crypto_sha256.c
@@ -51,8 +59,11 @@ add_library(salts_crypto STATIC
   src/crypto_sm2_exchange.c
   src/crypto_sm2_keys.c
   src/crypto_sm2_x509.c
+  src/crypto_sm2_cms.c
+  src/crypto_sm2_cms_envelope.c
   src/crypto_sm2_trust.c
   src/crypto_sm2_crl.c
+  src/crypto_sm2_ocsp.c
   src/crypto_x509_policy.c
   src/crypto_sm3.c
   src/crypto_sm4.c

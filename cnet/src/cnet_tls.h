@@ -88,6 +88,7 @@ int cnet_tls_shutdown(cnet_tls_state *state, bool *out_notify_generated,
                       bool *out_peer_notify_received);
 int cnet_tls_get_negotiated_alpn(const cnet_tls_state *state, const unsigned char **out_data,
                                  size_t *out_size);
+int cnet_tls_state_session_reused(const cnet_tls_state *state, bool *out_reused);
 int cnet_tls_state_negotiated_version(const cnet_tls_state *state, char *buffer, size_t capacity,
                                       size_t *out_size);
 int cnet_tls_state_negotiated_cipher(const cnet_tls_state *state, char *buffer, size_t capacity,

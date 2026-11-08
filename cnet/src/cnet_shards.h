@@ -162,6 +162,7 @@ int cnet_shards_tcp_option_set(cnet_shards *shards, cnet_shard_connection connec
 int cnet_shards_tcp_shutdown(cnet_shards *shards, cnet_shard_connection connection,
                              cnet_tcp_shutdown how);
 int cnet_shards_preserve_send_on_eof(cnet_shards *shards, cnet_shard_connection connection);
+int cnet_shards_tls_session_reused(cnet_shards *shards, cnet_shard_connection connection, bool *out_reused);
 int cnet_shards_tls_negotiated_version(cnet_shards *shards, cnet_shard_connection connection,
                                        char *buffer, size_t capacity, size_t *out_size);
 int cnet_shards_tls_negotiated_cipher(cnet_shards *shards, cnet_shard_connection connection,

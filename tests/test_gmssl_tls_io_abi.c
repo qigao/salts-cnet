@@ -105,6 +105,9 @@ static void establish_stream_pair(crypto_tls_stream_protocol_version protocol) {
   bool complete[2] = {false, false};
   crypto_tls_cipher_suite suites[] = {CRYPTO_TLS_CIPHER_ECDHE_RSA_AES_128_GCM_SHA256,
       CRYPTO_TLS_CIPHER_AES_128_GCM_SHA256};
+  crypto_tls_group group = CRYPTO_TLS_GROUP_SECP256R1;
+  client.supported_groups = server.supported_groups = &group;
+  client.supported_group_count = server.supported_group_count = 1u;
   client.cipher_suites = server.cipher_suites = suites;
   client.cipher_suite_count = server.cipher_suite_count = 2u;
   crypto_tls_signature_scheme signatures[] = {CRYPTO_TLS_SIGNATURE_RSA_PKCS1_SHA256,
@@ -118,6 +121,7 @@ static void establish_stream_pair(crypto_tls_stream_protocol_version protocol) {
   check_equal(crypto_tls_stream_server_context_create(&server, &stream_context[1]), CRYPTO_TLS_STREAM_OK);
   memset(suites, 0, sizeof(suites));
   memset(signatures, 0, sizeof(signatures));
+  group = (crypto_tls_group)0;
   for (unsigned i = 0u; i < 2u; ++i) {
     check_equal(crypto_tls_stream_create(stream_context[i], i != 0u,
                   i == 0u ? "localhost" : NULL, 32768u, &stream_pair[i]), CRYPTO_TLS_STREAM_OK);
@@ -130,6 +134,208 @@ static void establish_stream_pair(crypto_tls_stream_protocol_version protocol) {
     }
   }
   check(complete[0] && complete[1]);
+}
+
+typedef struct tls_object_worker {
+  crypto_tls_credential_object *object;
+  int status;
+} tls_object_worker;
+static void tls_object_on_worker(void *user) {
+  tls_object_worker *worker = user;
+  const crypto_tls_credentials view = {.size = sizeof(view), .object = worker->object};
+  const crypto_tls_stream_server_config config = {.size = sizeof(config), .credentials = &view};
+  worker->status = CRYPTO_TLS_STREAM_OK;
+  for (unsigned i = 0u; i < 16u && worker->status == CRYPTO_TLS_STREAM_OK; ++i) {
+    crypto_tls_stream_context *context = NULL;
+    worker->status = crypto_tls_stream_server_context_create(&config, &context);
+    crypto_tls_stream_context_release(context);
+  }
+  crypto_tls_credential_object_release(worker->object);
+  worker->object = NULL;
+}
+
+spec("Reusable immutable TLS credential objects") {
+  static crypto_tls_credential_object *object;
+  static cmeta_thread_t threads[4];
+  static tls_object_worker workers[4];
+  before_each() { object = NULL; memset(stream_context, 0, sizeof(stream_context)); }
+  after_each() {
+    for (unsigned i = 0u; i < 4u; ++i) {
+      if (threads[i]) { (void)cmeta_thread_join(&threads[i]); }
+      crypto_tls_credential_object_release(workers[i].object); workers[i].object = NULL;
+    }
+    for (unsigned i = 0u; i < 2u; ++i) { crypto_tls_stream_context_release(stream_context[i]); stream_context[i] = NULL; }
+    crypto_tls_credential_object_release(object); object = NULL;
+  }
+  for (unsigned encoding = 1u; encoding <= 2u; ++encoding) {
+    for (unsigned encrypted = 0u; encrypted < 2u; ++encrypted) {
+      it("encoding %u encrypted %u binds once and outlives erased inputs", encoding, encrypted) {
+        unsigned char cert[16384], key[16384], password[] = {'p',0,'w'};
+        crypto_tls_credentials input = {.size = sizeof(input),
+            .certificate_chain = {cert, tls_memory_fixture(CRYPTO_CLOSE_TEST_SERVER_CERT, "CERTIFICATE", encoding, cert, sizeof(cert)), encoding},
+            .private_key = {key, tls_memory_fixture(CRYPTO_CLOSE_TEST_SERVER_KEY, "PRIVATE KEY", encoding, key, sizeof(key)), encoding}};
+        check(input.certificate_chain.size && input.private_key.size);
+        if (encrypted) {
+          input.private_key.size = tls_memory_encrypt(encoding, 0u, key, password, sizeof(password));
+          input.private_key_password = (crypto_tls_password){password, sizeof(password)};
+        }
+        check_equal(crypto_tls_credential_object_create(&input, CRYPTO_TLS_CREDENTIAL_SINGLE, &object), CRYPTO_TLS_STREAM_OK);
+        check_equal(crypto_tls_credential_object_retain(object), CRYPTO_TLS_STREAM_OK);
+        crypto_tls_credential_object_release(object);
+        memset(cert, 0xa5, sizeof(cert)); memset(key, 0xa5, sizeof(key)); memset(password, 0xa5, sizeof(password));
+        crypto_tls_credentials view = {.size = sizeof(view), .object = object};
+        crypto_tls_stream_client_config client = {.size = sizeof(client), .ca_file = CRYPTO_CLOSE_TEST_CA, .credentials = &view};
+        crypto_tls_stream_server_config server = {.size = sizeof(server), .credentials = &view};
+        check_equal(crypto_tls_stream_client_context_create(&client, &stream_context[0]), CRYPTO_TLS_STREAM_OK);
+        check_equal(crypto_tls_stream_server_context_create(&server, &stream_context[1]), CRYPTO_TLS_STREAM_OK);
+        crypto_tls_credential_object_release(object); object = NULL;
+        view.object = NULL;
+      }
+    }
+  }
+  it("imports the same immutable identity concurrently on independent context owners") {
+    unsigned char cert[16384], key[16384];
+    crypto_tls_credentials input = {.size = sizeof(input),
+        .certificate_chain = {cert, tls_memory_fixture(CRYPTO_CLOSE_TEST_SERVER_CERT, "CERTIFICATE", 1u, cert, sizeof(cert)), 1u},
+        .private_key = {key, tls_memory_fixture(CRYPTO_CLOSE_TEST_SERVER_KEY, "PRIVATE KEY", 1u, key, sizeof(key)), 1u}};
+    check_equal(crypto_tls_credential_object_create(&input, CRYPTO_TLS_CREDENTIAL_SINGLE, &object), CRYPTO_TLS_STREAM_OK);
+    memset(cert, 0xa5, sizeof(cert)); memset(key, 0xa5, sizeof(key));
+    for (unsigned i = 0u; i < 4u; ++i) {
+      check_equal(crypto_tls_credential_object_retain(object), CRYPTO_TLS_STREAM_OK);
+      workers[i].object = object;
+      check_equal(cmeta_thread_create(&threads[i], tls_object_on_worker, &workers[i]), SALTS_OK);
+    }
+    crypto_tls_credential_object_release(object); object = NULL;
+    for (unsigned i = 0u; i < 4u; ++i) {
+      check_equal(cmeta_thread_join(&threads[i]), SALTS_OK);
+      check_equal(workers[i].status, CRYPTO_TLS_STREAM_OK);
+    }
+  }
+  for (unsigned bad = 0u; bad < 3u; ++bad) {
+    it("never publishes an object for invalid private material, case %u", bad) {
+      unsigned char cert[16384], key[16384], password[] = {'p', 0, 'w'};
+      crypto_tls_credentials input = {.size = sizeof(input),
+          .certificate_chain = {cert, tls_memory_fixture(bad == 0u ? CRYPTO_CLOSE_TEST_CA : CRYPTO_CLOSE_TEST_SERVER_CERT,
+              "CERTIFICATE", 1u, cert, sizeof(cert)), 1u},
+          .private_key = {key, tls_memory_fixture(CRYPTO_CLOSE_TEST_SERVER_KEY, "PRIVATE KEY", 1u, key, sizeof(key)), 1u}};
+      if (bad == 1u) {
+        input.private_key.size = tls_memory_encrypt(1u, 0u, key, password, sizeof(password));
+        input.private_key_password = (crypto_tls_password){password, sizeof(password)};
+        password[0] ^= 1u;
+      } else if (bad == 2u) --input.private_key.size;
+      check_equal(crypto_tls_credential_object_create(&input, CRYPTO_TLS_CREDENTIAL_SINGLE, &object), CRYPTO_TLS_STREAM_EIO);
+      check_null(object);
+    }
+  }
+  it("rejects absent input, unknown kind and raw/object conflicts before trust IO") {
+    check_equal(crypto_tls_credential_object_retain(NULL), CRYPTO_TLS_STREAM_EINVAL);
+    crypto_tls_credential_object_release(NULL);
+    check_equal(crypto_tls_credential_object_create(NULL, CRYPTO_TLS_CREDENTIAL_SINGLE, &object), CRYPTO_TLS_STREAM_EINVAL);
+    check_null(object);
+    unsigned char cert[16384], key[16384];
+    crypto_tls_credentials input = {.size = sizeof(input),
+        .certificate_chain = {cert, tls_memory_fixture(CRYPTO_CLOSE_TEST_SERVER_CERT, "CERTIFICATE", 1u, cert, sizeof(cert)), 1u},
+        .private_key = {key, tls_memory_fixture(CRYPTO_CLOSE_TEST_SERVER_KEY, "PRIVATE KEY", 1u, key, sizeof(key)), 1u}};
+    check_equal(crypto_tls_credential_object_create(&input, (crypto_tls_credential_kind)99, &object), CRYPTO_TLS_STREAM_EINVAL);
+    check_equal(crypto_tls_credential_object_create(&input, CRYPTO_TLS_CREDENTIAL_SINGLE, &object), CRYPTO_TLS_STREAM_OK);
+    crypto_tls_credentials view = {.size = sizeof(view), .object = object, .private_key = {.size = 1u}};
+    crypto_tls_stream_client_config client = {.size = sizeof(client), .ca_file = "absent-object-ca.pem", .credentials = &view};
+    check_equal(crypto_tls_stream_client_context_create(&client, &stream_context[0]), CRYPTO_TLS_STREAM_EINVAL);
+    check_null(stream_context[0]);
+    view.private_key.size = 0u;
+    crypto_tls_stream_server_config server = {.size = sizeof(server), .credentials = &view,
+        .security_profile = CRYPTO_TLS_STREAM_SECURITY_PROFILE_TLCP11};
+    check_equal(crypto_tls_stream_server_context_create(&server, &stream_context[1]), CRYPTO_TLS_STREAM_ENOTSUP);
+    check_null(stream_context[1]);
+  }
+}
+
+spec("Credential-object output never overwrites borrowed input") {
+  it("rejects descriptor, key, certificate and password aliases before clearing output") {
+    union { void *align; uint8_t bytes[128]; } input;
+    memset(input.bytes,0xa5,sizeof(input.bytes));
+    for (unsigned i = 0u; i < 5u; ++i) {
+      crypto_tls_credentials c = {.size = sizeof(c)};
+      if (i == 0u) c.certificate_chain = (crypto_tls_data){input.bytes,sizeof(input.bytes),CRYPTO_TLS_ENCODING_DER};
+      if (i == 1u) c.private_key = (crypto_tls_data){input.bytes,sizeof(input.bytes),CRYPTO_TLS_ENCODING_DER};
+      if (i == 2u) c.encryption_key = (crypto_tls_data){input.bytes,sizeof(input.bytes),CRYPTO_TLS_ENCODING_DER};
+      if (i == 3u) c.private_key_password = (crypto_tls_password){input.bytes,sizeof(input.bytes)};
+      if (i == 4u) c.encryption_key_password = (crypto_tls_password){input.bytes,sizeof(input.bytes)};
+      check_equal(crypto_tls_credential_object_create(&c,CRYPTO_TLS_CREDENTIAL_SINGLE,
+          (crypto_tls_credential_object **)(void *)input.bytes),CRYPTO_TLS_STREAM_EINVAL);
+      for (size_t j = 0u; j < sizeof(input.bytes); ++j) check_equal(input.bytes[j],0xa5);
+    }
+    crypto_tls_credentials c = {.size = sizeof(c)};
+    crypto_tls_credentials saved = c;
+    check_equal(crypto_tls_credential_object_create(&c,CRYPTO_TLS_CREDENTIAL_SINGLE,
+        (crypto_tls_credential_object **)(void *)&c.object),CRYPTO_TLS_STREAM_EINVAL);
+    check_equal(memcmp(&c,&saved,sizeof(c)),0);
+    crypto_tls_data data = {input.bytes,sizeof(input.bytes),CRYPTO_TLS_ENCODING_DER};
+    crypto_tls_password password = {input.bytes,sizeof(input.bytes)};
+    check_equal(crypto_tls_credential_object_from_pkcs12(&data,&password,CRYPTO_TLS_CREDENTIAL_SINGLE,
+        (crypto_tls_credential_object **)(void *)input.bytes),CRYPTO_TLS_STREAM_EINVAL);
+    check_equal(crypto_tls_credential_object_from_pkcs12(&data,&password,CRYPTO_TLS_CREDENTIAL_SINGLE,
+        (crypto_tls_credential_object **)(void *)&data.data),CRYPTO_TLS_STREAM_EINVAL);
+    check_equal(crypto_tls_credential_object_from_pkcs12(&data,&password,CRYPTO_TLS_CREDENTIAL_SINGLE,
+        (crypto_tls_credential_object **)(void *)&password.data),CRYPTO_TLS_STREAM_EINVAL);
+    for (size_t j = 0u; j < sizeof(input.bytes); ++j) check_equal(input.bytes[j],0xa5);
+    check(data.data == input.bytes && password.data == input.bytes);
+  }
+}
+
+spec("Explicit TLS key exchange group admission") {
+  static crypto_tls_stream_context *context;
+  after_each() { crypto_tls_stream_context_release(context); context = NULL; }
+  for (unsigned scenario = 0u; scenario < 7u; ++scenario) {
+    it("rejects invalid group selection before trust input, case %u", scenario) {
+      crypto_tls_group groups[] = {CRYPTO_TLS_GROUP_SECP256R1, CRYPTO_TLS_GROUP_SECP256R1};
+      crypto_tls_stream_client_config config = {.size = sizeof(config), .ca_file = "absent-group-ca.pem",
+          .supported_groups = groups, .supported_group_count = 1u};
+      int expected = CRYPTO_TLS_STREAM_EINVAL;
+      switch (scenario) {
+      case 0u: config.supported_groups = NULL; break;
+      case 1u: config.supported_group_count = 0u; break;
+      case 2u: config.supported_group_count = CRYPTO_TLS_GROUP_MAX_COUNT + 1u; break;
+      case 3u: config.supported_group_count = 2u; break;
+      case 4u: groups[0] = (crypto_tls_group)0x001d; expected = CRYPTO_TLS_STREAM_ENOTSUP; break;
+      case 5u: groups[0] = CRYPTO_TLS_GROUP_SM2P256V1; expected = CRYPTO_TLS_STREAM_ENOTSUP; break;
+      case 6u: config.security_profile = CRYPTO_TLS_STREAM_SECURITY_PROFILE_TLCP11;
+          expected = CRYPTO_TLS_STREAM_ENOTSUP; break;
+      }
+      check_equal(crypto_tls_stream_client_context_create(&config, &context), expected);
+      check_null(context);
+    }
+  }
+}
+
+spec("TLCP independent certificate-policy admission") {
+  static crypto_tls_stream_context *context;
+  after_each() { crypto_tls_stream_context_release(context); context = NULL; }
+  for (unsigned scenario = 0u; scenario < 6u; ++scenario) {
+    it("rejects malformed/unsupported certificate policy before trust IO, case %u",scenario) {
+      crypto_tls_signature_scheme list[] = {CRYPTO_TLS_SIGNATURE_SM2_SM3,CRYPTO_TLS_SIGNATURE_SM2_SM3};
+      crypto_tls_stream_client_config c = {.size = sizeof(c),.security_profile = CRYPTO_TLS_STREAM_SECURITY_PROFILE_TLCP11,
+          .ca_file = "absent-tlcp-certificate-policy.pem",.certificate_signature_algorithms = list,
+          .certificate_signature_algorithm_count = 1u};
+      int expected = CRYPTO_TLS_STREAM_EINVAL;
+      if (scenario == 0u) c.certificate_signature_algorithms = NULL;
+      if (scenario == 1u) c.certificate_signature_algorithm_count = 0u;
+      if (scenario == 2u) c.certificate_signature_algorithm_count = CRYPTO_TLS_SIGNATURE_MAX_COUNT+1u;
+      if (scenario == 3u) c.certificate_signature_algorithm_count = 2u;
+      if (scenario == 4u) { list[0] = CRYPTO_TLS_SIGNATURE_RSA_PSS_RSAE_SHA256; expected = CRYPTO_TLS_STREAM_ENOTSUP; }
+      if (scenario == 5u) { list[0] = CRYPTO_TLS_SIGNATURE_ECDSA_SECP256R1_SHA256; expected = CRYPTO_TLS_STREAM_ENOTSUP; }
+      check_equal(crypto_tls_stream_client_context_create(&c,&context),expected);
+      check_null(context);
+    }
+  }
+  it("rejects server policy while TLCP client authentication is unsupported") {
+    const crypto_tls_signature_scheme sm2 = CRYPTO_TLS_SIGNATURE_SM2_SM3;
+    crypto_tls_stream_server_config c = {.size = sizeof(c),.security_profile = CRYPTO_TLS_STREAM_SECURITY_PROFILE_TLCP11,
+        .cert_file = "absent-cert.pem",.key_file = "absent-key.pem",
+        .certificate_signature_algorithms = &sm2,.certificate_signature_algorithm_count = 1u};
+    check_equal(crypto_tls_stream_server_context_create(&c,&context),CRYPTO_TLS_STREAM_ENOTSUP);
+    check_null(context);
+  }
 }
 
 spec("Opaque Crypto streams retain policy and bounded storage") {
@@ -1553,9 +1759,24 @@ spec("GmSSL post-handshake interruption and key boundaries") {
   }
 }
 
+typedef struct session_callback_probe {
+  int decision, calls, cipher;
+  uint32_t lifetime, age_add;
+  size_t ticket_size;
+  uint8_t first_ticket_byte, psk[32];
+} session_callback_probe;
+static int receive_session_probe(void *user, int cipher, const uint8_t psk[32],
+    uint32_t lifetime, uint32_t age_add, const uint8_t *ticket, size_t ticket_size) {
+  session_callback_probe *p = user;
+  ++p->calls; p->cipher = cipher; p->lifetime = lifetime; p->age_add = age_add;
+  p->ticket_size = ticket_size; p->first_ticket_byte = ticket[0];
+  memcpy(p->psk,psk,sizeof(p->psk));
+  return p->decision;
+}
+
 spec("GmSSL bounded ticket assembly and serialization") {
   for (unsigned suite_index = 0u; suite_index < 2u; ++suite_index) {
-    for (unsigned mode = 0u; mode < 11u; ++mode) {
+    for (unsigned mode = 0u; mode < 15u; ++mode) {
       it("suite %u ticket boundary %u has checked assembly and encoding", suite_index, mode) {
         TLS_CTX ctx[2];
         TLS_CONNECT conn[2];
@@ -1590,18 +1811,111 @@ spec("GmSSL bounded ticket assembly and serialization") {
         if (mode == 6u) conn[1].new_session_ticket = INT_MAX;
         if (mode == 7u) conn[1].digest = NULL; /* Expansion must fail, never serialize an invalid PSK. */
         if (mode == 8u) conn[1].session_out = ""; /* Guaranteed failing open, no user file touched. */
+        session_callback_probe notice = {.decision = mode == 11u ? 0 : mode == 12u ? -1 : mode == 13u ? 2 : 1};
+        if (mode >= 11u) {
+          conn[1].session_received = receive_session_probe;
+          conn[1].session_received_user = &notice;
+        }
         const uint8_t payload = 0x46;
         post_handshake_seal(&conn[0], &wire.incoming, 23u, &payload, 1u);
         wire.incoming.read_budget = wire.incoming.size;
         uint8_t byte = 0x5a;
         size_t received = 99u;
-        const bool valid = mode < 5u;
+        const bool valid = mode < 5u || mode == 14u;
         check_equal(tls13_recv(&conn[1], &byte, 1u, &received), valid ? 1 : -1);
         check_equal(received, valid ? (size_t)1u : (size_t)0u);
         check_equal(byte, valid ? payload : (uint8_t)0x5a);
         check_equal(conn[1].new_session_ticket, mode == 6u ? INT_MAX : !valid ? 0 : mode == 2u ? 2 : 1);
         if (valid) check_equal(conn[1].key_update, mode == 3u || mode == 4u ? 1 : 0);
+        if (mode >= 11u) {
+          check_equal(notice.calls,1); check_equal(notice.cipher,conn[1].cipher_suite);
+          check_equal(notice.lifetime,3600u); check_equal(notice.age_add,0x42u);
+          check_equal(notice.ticket_size,459u); check_equal(notice.first_ticket_byte,0x53u);
+          uint8_t master[48] = {0}, expected[32] = {0}; const uint8_t nonce = 0xa5;
+          check_equal(tls13_derive_secret(conn[1].master_secret,"res master",&conn[1].dgst_ctx,master),1);
+          check_equal(tls13_hkdf_expand_label(conn[1].digest,master,"resumption",&nonce,1u,32u,expected),1);
+          check_equal(notice.psk,expected,sizeof(expected));
+          memset(master,0,sizeof(master)); memset(expected,0,sizeof(expected)); memset(&notice,0,sizeof(notice));
+        }
       }
+    }
+  }
+}
+
+typedef struct owned_ticket_probe {
+  int calls, mode;
+  uint32_t age;
+  uint8_t psk[32];
+} owned_ticket_probe;
+static int issue_owned_ticket(void *user, const uint8_t psk[32], uint32_t age,
+    uint32_t *lifetime, uint8_t *ticket, size_t capacity, size_t *size) {
+  owned_ticket_probe *p=user; ++p->calls; p->age=age; memcpy(p->psk,psk,32u);
+  if (capacity < 32u) return -1;
+  memset(ticket,0x77,32u); *size=p->mode==2 ? capacity+1u : 32u;
+  *lifetime=p->mode==3 ? 0u : 300u;
+  return p->mode==1 ? 0 : 1;
+}
+spec("GmSSL stateful server ticket output") {
+  for (unsigned suite=0u; suite<2u; ++suite) for (unsigned mode=0u; mode<4u; ++mode) {
+    it("suite %u mode %u drains pending NST before handshake completion",suite,mode) {
+      TLS_CTX ctx[2]; TLS_CONNECT conn[2]; key_update_wire wire,unused; key_update_clock clock={0};
+      timed_key_prepare(&ctx[0],&conn[0],&wire,&clock,0u,suite,0u);
+      timed_key_prepare(&ctx[1],&conn[1],&unused,&clock,1u,suite,0u);
+      for (size_t i=0; i<2u; ++i) {
+        check_equal(digest_init(&conn[i].dgst_ctx,conn[i].digest),1);
+        check_equal(digest_update(&conn[i].dgst_ctx,(const uint8_t *)"transcript",10u),1);
+      }
+      owned_ticket_probe issue={.mode=(int)mode};
+      conn[0].session_issue=issue_owned_ticket; conn[0].session_server_user=&issue;
+      conn[0].new_session_ticket=1; conn[0].handshake_state=TLS_state_new_session_ticket;
+      wire.budget=1u;
+      int status=tls13_do_accept(&conn[0]);
+      check_equal(issue.calls,1);
+      if (mode) {
+        check_equal(status,-1); check_equal(wire.size,0u); check_equal(conn[0].new_session_ticket,1);
+      } else {
+        check_equal(status,TLS_ERROR_SEND_AGAIN); check_equal(wire.size,1u); check_equal(conn[0].new_session_ticket,0);
+        for (size_t i=0u; status==TLS_ERROR_SEND_AGAIN && i<sizeof(wire.bytes); ++i) {
+          int complete=1; check_equal(tls_get_handshake_complete(&conn[0],&complete),1); check_equal(complete,0);
+          wire.budget=1u; status=tls13_do_accept(&conn[0]);
+        }
+        check_equal(status,1); check_true(wire.size>1u); check_equal(issue.calls,1);
+        session_callback_probe receive={.decision=1}; conn[1].session_received=receive_session_probe;
+        conn[1].session_received_user=&receive;
+        TLS_IO io={.user=&wire,.send=key_update_capture,.recv=key_update_fragmented_receive};
+        check_equal(tls_set_io(&conn[1],&io),1); wire.read_budget=wire.size;
+        uint8_t byte=0x5a; size_t size=99u;
+        check_equal(tls13_recv(&conn[1],&byte,1u,&size),TLS_ERROR_RECV_AGAIN);
+        check_equal(size,0u); check_equal(byte,0x5au); check_equal(receive.calls,1);
+        check_equal(receive.lifetime,300u); check_equal(receive.age_add,issue.age);
+        check_equal(receive.ticket_size,32u); check_equal(receive.first_ticket_byte,0x77u);
+        check_equal(receive.psk,issue.psk,32u); check_equal(conn[1].new_session_ticket,1);
+        memset(&receive,0,sizeof(receive));
+      }
+      memset(&issue,0,sizeof(issue));
+    }
+  }
+}
+
+spec("GmSSL RFC6066 status_request framing") {
+  it("uses the direct OCSP request struct, including independently empty vectors") {
+    const uint8_t responder[]={0,1,0xaa}, extensions[]={0x30,0};
+    const uint8_t empty[]={0,5,0,5,1,0,0,0,0};
+    for (unsigned mode=0u; mode<4u; ++mode) {
+      uint8_t wire[32],*out=wire; size_t size=0u,length=0u;
+      const uint8_t *ids=mode&1u ? responder : NULL,*ext=mode&2u ? extensions : NULL;
+      size_t ids_size=ids ? sizeof(responder) : 0u,ext_size=ext ? sizeof(extensions) : 0u;
+      check_equal(tls_client_status_request_ext_to_bytes(1,ids,ids_size,ext,ext_size,NULL,&length),1);
+      check_equal(tls_client_status_request_ext_to_bytes(1,ids,ids_size,ext,ext_size,&out,&size),1);
+      check_equal(size,length); check_equal(size,9u+ids_size+ext_size);
+      if (!mode) check_equal(wire,empty,sizeof(empty));
+      int status=0; const uint8_t *a=NULL,*b=NULL; size_t an=0u,bn=0u;
+      check_equal(tls_client_status_request_from_bytes(&status,&a,&an,&b,&bn,wire+4,size-4u),1);
+      check_equal(status,1); check_equal(an,ids_size); check_equal(bn,ext_size);
+      if (an) check_equal(a,ids,an); if (bn) check_equal(b,ext,bn);
+      check_equal(tls_client_status_request_from_bytes(&status,&a,&an,&b,&bn,wire+4,size-5u),-1);
+      wire[size]=0;
+      check_equal(tls_client_status_request_from_bytes(&status,&a,&an,&b,&bn,wire+4,size-3u),-1);
     }
   }
 }

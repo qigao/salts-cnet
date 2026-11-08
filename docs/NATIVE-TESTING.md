@@ -109,7 +109,8 @@ The pre-existing standalone drivers are reconciled in the root test graph:
 | --- | --- |
 | `crypto/tests/x509/standalone` | The two existing TinyTest executables compile the actual `crypto_x509_der.c` and link only ASN1/TinyTest. Real P-256/P-384, malformed DER, concatenated chains and the SaltsNet fixture retain the provider-free link boundary. |
 | `media/capture/tests/native_tsan` | The root TSan preset builds five TinyTest cases against the one instrumented `Salts::Media` archive, including miniaudio. A private PulseAudio null monitor supplies synthetic PCM. Fresh cycles, same-device restart, blocked-callback stop/destroy and invalid device/format rejection remain tested. |
-| `sctp/tests/independent/dtls` | Removed under the explicit no-OpenSSL/BoringSSL-link policy. Its encrypted-record, fingerprint/exporter and DTLS-bound generation evidence is retired, not relabeled as plaintext coverage. Production replacement remains #188. |
+| `sctp/tests/independent/dtls` | Removed under the explicit no-OpenSSL/BoringSSL-link policy. Its historical evidence is retired. The module-owned replacement below uses the production CNet/GmSSL owner. |
+| `sctp/tests/secure` | Formal `saltscore.sctp_dtls_native` uses `Salts::SCTPDTLS` and an independent Pion peer, both native roles, ordinary/external progress, up to eight concurrent peers, actual cumulative receipts and shared-backend teardown. Local Windows IOCP/IPv4 evidence; browser, other OS and sanitizer qualification remain open. |
 | Pion SCTP peer | The OpenSSL DTLS mode was removed; original UDP I-DATA/I-FORWARD loss/recovery cases run as two CTests in Linux x64 CI. Unsupported legacy DTLS arguments fail. |
 
 Capture's fixture script owns only the private virtual audio service and PCM

@@ -190,9 +190,9 @@ jobs:
 
       - name: Set up shared dependency contract
         id: vcpkg
-        # GmSSL #43 decodes the complete explicit SHA-2 PBKDF2 credential PRF family.
+        # GmSSL #44 adds bounded TLS sessions and certificate-policy fixes.
         # Includes native Windows pkg-config; avoid MSYS2 for pkg-config.
-        uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-curl-cache@5c4eb708fe29752f43da9b4464ed00e11bcb30c8
+        uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-curl-cache@3c9cb8cbcc6b3645d47e02585e987b708406cd98
         with:
           mode: read
           triplet: ${{ matrix.triplet }}
@@ -225,10 +225,13 @@ jobs:
         with:
           go-version-file: tests/independent/shangmi/go.mod
           cache-dependency-path: |
+            cnet/tests/tickets/go.sum
+            crypto/tests/algorithms/independent/go.sum
             crypto/tests/x509/independent/go.sum
             tests/independent/tlcp/go.sum
             tests/independent/shangmi/go.sum
             sctp/tests/independent/pion/go.sum
+            sctp/tests/secure/go.sum
 
       - name: Install private virtual audio test runtime
         if: matrix.preset == 'ci-tsan'
