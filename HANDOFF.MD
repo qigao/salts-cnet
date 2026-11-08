@@ -1803,3 +1803,17 @@
   correctly stopped at HTTP 401. The verification selected the already active
   GitHub login before importing project environment settings. Credentials and
   TLS handling were unchanged, and the user's .env was not edited.
+
+### TLS context session-cache cleanup (2026-11-09)
+
+- ASan in run 42519288128 reported a direct 10408-byte leak in five formal
+  ticket/PKIX/session-resumption cases. The cache destructor had been placed in
+  ALPN allocation-error cleanup instead of the owning context destructor.
+- Move cache cleanup to final context disposal. Streams retain that context;
+  the last release is the quiescent boundary that destroys its mutex, securely
+  wipes cached tickets/PSKs and frees storage. ALPN cleanup only owns ALPN.
+- Complete native-release-user build passed; CTest regex selecting
+  crypto.algorithms.tls_session_cache and the five affected cnet cases passed
+  all six (25.09 seconds). Existing server-ticket tests already drop the public
+  TLS context while the final accepted stream remains alive. Windows execution
+  checks lifetime behavior; leak detection still requires the unchanged ASan CI.
