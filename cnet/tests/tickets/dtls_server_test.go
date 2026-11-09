@@ -348,7 +348,12 @@ func TestDTLSNativeServer(t *testing.T) {
 					t.Fatal("listener destroy", st, n.refs)
 				}
 				if mode == "external" {
-					before := n.neighborSent
+					// Count admitted probes: a preceding failure probe may still
+					// have its independent send/receive completions in flight.
+					before := uint32(1) // The initial external-backend probe.
+					if neighborFailed {
+						before++
+					}
 					if st, _ := n.rpc('N', nil); st != 0 {
 						t.Fatal(st)
 					}

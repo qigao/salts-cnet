@@ -2010,3 +2010,10 @@
   with patched Go on Windows x64 (3/3, 12.68s), via native-release-user.
   Log: TEMP/salts-219-dtls-terminal-regression.log. Exact-head macOS matrix is
   still required; do not mark the earlier #414 failure as passed.
+- Final target counts derive from admitted probes (initial plus optional
+  terminal-failure probe), not the current send-completion snapshot. The
+  failure probe may still be in flight when the final teardown probe is
+  admitted, so completion-derived targets can stop early or reject correctly
+  batched completions. Keep the existing 20-poll bound and exact final counts.
+  The affected CNet DTLS CTest passed in 7.26s; rebuilding the parent branch
+  graph before final validation is recorded in TEMP/salts-219-dtls-admission-parent.log.
