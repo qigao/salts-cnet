@@ -13,16 +13,8 @@
 #include <stdlib.h>
 #include <string.h>
 
-#if defined(_WIN32)
-  #include <winsock2.h>
-typedef WSAPOLLFD cnet_resolver_pollfd;
-#else
-  #include <arpa/inet.h>
-  #include <netinet/in.h>
-  #include <poll.h>
-  #include <sys/socket.h>
-typedef struct pollfd cnet_resolver_pollfd;
-#endif
+#include <native_io_socket.h>
+typedef native_io_socket_pollfd cnet_resolver_pollfd;
 
 typedef enum cnet_resolver_slot_state {
   CNET_RESOLVER_SLOT_FREE = 0,
@@ -123,22 +115,12 @@ static int cnet_resolver_map_status(int status) {
  * Byte copy avoids misaligned sockaddr aliases in the result byte array.
  * This is one canonical endpoint, not a retry or alternate DNS provider.
  */
-static int cnet_resolver_apply_requested_port(void *address, size_t address_length,
-                                               int family, uint16_t port) {
-  size_t offset;
-  const uint16_t network_port = htons(port);
-  if (address == NULL || port == 0u) return SALTS_EINVAL;
-  if (family == AF_INET) {
-    if (address_length < sizeof(struct sockaddr_in)) return SALTS_EINVAL;
-    offset = offsetof(struct sockaddr_in, sin_port);
-  } else if (family == AF_INET6) {
-    if (address_length < sizeof(struct sockaddr_in6)) return SALTS_EINVAL;
-    offset = offsetof(struct sockaddr_in6, sin6_port);
-  } else {
-    return SALTS_EAI_FAMILY;
-  }
-  memcpy((unsigned char *)address + offset, &network_port, sizeof(network_port));
-  return SALTS_OK;
+static int cnet_resolver_apply_requested_port(void *address, size_t length,
+    int family, uint16_t port) {
+  if (!address || !port) return SALTS_EINVAL;
+  if (family != native_io_socket_domain(NATIVE_IO_SOCKET_IPV4) &&
+      family != native_io_socket_domain(NATIVE_IO_SOCKET_IPV6)) return SALTS_EAI_FAMILY;
+  return native_io_socket_address_port(address, length, family, port);
 }
 
 #if defined(CNET_INTERNAL_TESTING)
@@ -187,6 +169,14 @@ static void cnet_resolver_socket_state(void *context, ares_socket_t descriptor, 
   impl->sockets[impl->socket_count++] = (cnet_resolver_socket){descriptor, events};
 }
 
+static bool cnet_resolver_node_ip(const struct ares_addrinfo_node *node) {
+  native_io_stream_endpoint endpoint;
+  return node->ai_addr &&
+    (node->ai_family == native_io_socket_domain(NATIVE_IO_SOCKET_IPV4) ||
+     node->ai_family == native_io_socket_domain(NATIVE_IO_SOCKET_IPV6)) &&
+    native_io_socket_decode_endpoint(node->ai_addr, node->ai_addrlen, &endpoint, false) == SALTS_OK;
+}
+
 static void cnet_resolver_callback(void *argument, int status, int timeouts,
                                    struct ares_addrinfo *addresses) {
   cnet_resolver_slot *slot = (cnet_resolver_slot *)argument;
@@ -197,10 +187,7 @@ static void cnet_resolver_callback(void *argument, int status, int timeouts,
     for (node = addresses != NULL ? addresses->nodes : NULL; node != NULL; node = node->ai_next) {
       if (node->ai_socktype == slot->socket_type && node->ai_addr != NULL &&
           node->ai_addrlen <= CNET_RESOLVER_ADDRESS_CAPACITY &&
-          ((node->ai_family == AF_INET &&
-            node->ai_addrlen >= sizeof(struct sockaddr_in)) ||
-           (node->ai_family == AF_INET6 &&
-            node->ai_addrlen >= sizeof(struct sockaddr_in6))))
+          cnet_resolver_node_ip(node))
         break;
     }
     if (node == NULL) status = ARES_ENODATA;
@@ -233,14 +220,15 @@ static void cnet_resolver_callback(void *argument, int status, int timeouts,
       for (node = addresses ? addresses->nodes : NULL; node; node = node->ai_next) {
         cnet_ip_address a = {0}; bool duplicate = false;
         if (!node->ai_addr) continue;
-        if (node->ai_family == AF_INET && node->ai_addrlen >= sizeof(struct sockaddr_in)) {
-          a.family = CNET_DATAGRAM_ADDRESS_IPV4;
-          memcpy(a.address, &((const struct sockaddr_in *)node->ai_addr)->sin_addr, 4);
-        } else if (node->ai_family == AF_INET6 && node->ai_addrlen >= sizeof(struct sockaddr_in6)) {
-          const struct sockaddr_in6 *ip = (const struct sockaddr_in6 *)node->ai_addr;
-          if (IN6_IS_ADDR_V4MAPPED(&ip->sin6_addr)) continue;
-          a.family = CNET_DATAGRAM_ADDRESS_IPV6; memcpy(a.address, &ip->sin6_addr, 16);
-        } else continue;
+        native_io_stream_endpoint endpoint = {0};
+        if (!cnet_resolver_node_ip(node) ||
+            native_io_socket_decode_endpoint(node->ai_addr, node->ai_addrlen, &endpoint, false) != SALTS_OK)
+          continue;
+        static const uint8_t mapped_prefix[12] = {0,0,0,0,0,0,0,0,0,0,0xff,0xff};
+        if (endpoint.family == NATIVE_IO_DATAGRAM_ADDRESS_IPV6 &&
+            memcmp(endpoint.address, mapped_prefix, sizeof(mapped_prefix)) == 0) continue;
+        a.family = (cnet_datagram_address_family)endpoint.family;
+        memcpy(a.address, endpoint.address, sizeof(a.address));
         for (size_t i = 0; i < slot->address_count; ++i)
           if (slot->addresses[i].family == a.family && !memcmp(slot->addresses[i].address, a.address, 16)) duplicate = true;
         if (duplicate) continue;
@@ -359,35 +347,31 @@ int cnet_resolver_poll(cnet_resolver *resolver) {
     return SALTS_ENOBUFS;
   }
   while (offset < impl->socket_count) {
-    const size_t batch = impl->socket_count - offset > ARES_GETSOCK_MAXNUM
-                             ? ARES_GETSOCK_MAXNUM
+    const size_t batch = impl->socket_count - offset > NATIVE_IO_SOCKET_POLL_MAX
+                             ? NATIVE_IO_SOCKET_POLL_MAX
                              : impl->socket_count - offset;
     size_t index;
     for (index = 0u; index < batch; ++index) {
       const cnet_resolver_socket *socket = &impl->sockets[offset + index];
       cnet_resolver_pollfd *poll_fd = &impl->poll_fds[index];
-      poll_fd->fd = socket->descriptor;
+      poll_fd->handle = (uintptr_t)socket->descriptor;
       poll_fd->events = 0;
       poll_fd->revents = 0;
-      if ((socket->events & ARES_FD_EVENT_READ) != 0u) poll_fd->events |= POLLIN;
-      if ((socket->events & ARES_FD_EVENT_WRITE) != 0u) poll_fd->events |= POLLOUT;
+      if ((socket->events & ARES_FD_EVENT_READ) != 0u) poll_fd->events |= NATIVE_IO_SOCKET_POLL_READ;
+      if ((socket->events & ARES_FD_EVENT_WRITE) != 0u) poll_fd->events |= NATIVE_IO_SOCKET_POLL_WRITE;
     }
-#if defined(_WIN32)
-    polled = WSAPoll(impl->poll_fds, (ULONG)batch, 0);
-#else
-    polled = poll(impl->poll_fds, (nfds_t)batch, 0);
-#endif
-    if (polled < 0) {
+    int poll_status = native_io_socket_poll(impl->poll_fds, batch, &polled).status;
+    if (poll_status != SALTS_OK) {
       sync_mutex_unlock(&impl->control_lock);
       return SALTS_EAI_FAIL;
     }
     for (index = 0u; polled > 0 && index < batch; ++index) {
-      const short revents = impl->poll_fds[index].revents;
+      const unsigned int revents = impl->poll_fds[index].revents;
       unsigned int events = 0u;
-      if ((revents & (POLLIN | POLLERR | POLLHUP | POLLNVAL)) != 0) events |= ARES_FD_EVENT_READ;
-      if ((revents & POLLOUT) != 0) events |= ARES_FD_EVENT_WRITE;
+      if ((revents & (NATIVE_IO_SOCKET_POLL_READ | NATIVE_IO_SOCKET_POLL_ERROR | NATIVE_IO_SOCKET_POLL_HANGUP | NATIVE_IO_SOCKET_POLL_INVALID)) != 0) events |= ARES_FD_EVENT_READ;
+      if ((revents & NATIVE_IO_SOCKET_POLL_WRITE) != 0) events |= ARES_FD_EVENT_WRITE;
       if (events != 0u) {
-        impl->ready_events[ready_count++] = (ares_fd_events_t){impl->poll_fds[index].fd, events};
+        impl->ready_events[ready_count++] = (ares_fd_events_t){(ares_socket_t)impl->poll_fds[index].handle, events};
       }
     }
     offset += batch;
@@ -420,7 +404,7 @@ int cnet_resolver_submit(cnet_resolver *resolver, const char *host, uint16_t por
   if (out_query == NULL) return SALTS_EINVAL;
   memset(out_query, 0, sizeof(*out_query));
   if (impl == NULL || host == NULL || port == 0u) return SALTS_EINVAL;
-  if (socket_type != SOCK_STREAM && socket_type != SOCK_DGRAM) return SALTS_EAI_SOCKTYPE;
+  if (socket_type != native_io_socket_type(false) && socket_type != native_io_socket_type(true)) return SALTS_EAI_SOCKTYPE;
   for (host_length = 0u; host_length < CNET_RESOLVER_HOST_CAPACITY; ++host_length) {
     if (host[host_length] == '\0') break;
   }
@@ -457,9 +441,9 @@ int cnet_resolver_submit(cnet_resolver *resolver, const char *host, uint16_t por
   sync_mutex_unlock(&impl->state_lock);
 
   memset(&hints, 0, sizeof(hints));
-  hints.ai_family = AF_UNSPEC;
+  hints.ai_family = native_io_socket_domain(NATIVE_IO_SOCKET_ANY);
   hints.ai_socktype = socket_type;
-  hints.ai_protocol = socket_type == SOCK_STREAM ? IPPROTO_TCP : IPPROTO_UDP;
+  hints.ai_protocol = socket_type == native_io_socket_type(false) ? native_io_socket_protocol(false) : native_io_socket_protocol(true);
   ares_getaddrinfo(impl->channel, slot->host, slot->service, &hints, cnet_resolver_callback, slot);
   sync_mutex_unlock(&impl->control_lock);
   return SALTS_OK;
@@ -659,15 +643,14 @@ int cnet_name_lookup_normalize(cnet_name_lookup *lookup, const char *name, size_
       memchr(name, 0, size)) return SALTS_EINVAL;
   memcpy(numeric, name, size);
   numeric[size] = '\0';
-  if (inet_pton(AF_INET, numeric, address.address) == 1) {
-    address.family = CNET_DATAGRAM_ADDRESS_IPV4;
+  native_io_stream_peer parsed = {0};
+  if (native_io_socket_parse_ip(numeric, &parsed) == SALTS_OK) {
+    address.family = (cnet_datagram_address_family)parsed.family;
+    memcpy(address.address, parsed.address, sizeof(address.address));
     is_numeric = true;
-  } else if (inet_pton(AF_INET6, numeric, address.address) == 1) {
-    address.family = CNET_DATAGRAM_ADDRESS_IPV6;
-    is_numeric = true;
-    struct in6_addr ip;
-    memcpy(&ip, address.address, 16);
-    if (IN6_IS_ADDR_V4MAPPED(&ip)) {
+    static const uint8_t mapped_prefix[12] = {0,0,0,0,0,0,0,0,0,0,0xff,0xff};
+    if (parsed.family == NATIVE_IO_DATAGRAM_ADDRESS_IPV6 &&
+        memcmp(address.address, mapped_prefix, sizeof(mapped_prefix)) == 0) {
       memmove(address.address, address.address + 12, 4);
       memset(address.address + 4, 0, 12);
       address.family = CNET_DATAGRAM_ADDRESS_IPV4;
@@ -694,7 +677,7 @@ int cnet_name_lookup_submit(cnet_name_lookup *lookup, const char *name, size_t s
   rc = cnet_name_lookup_normalize(lookup, name, size, ascii, sizeof(ascii), &count, &numeric, &address);
   if (rc != SALTS_OK) return rc;
   if (!numeric) {
-    rc = cnet_resolver_submit(&carrier, ascii, 1, SOCK_STREAM, 0, &query);
+    rc = cnet_resolver_submit(&carrier, ascii, 1, native_io_socket_type(false), 0, &query);
     if (rc != SALTS_OK) return rc;
   } else {
     if (!p->free_count) return SALTS_ENOBUFS;

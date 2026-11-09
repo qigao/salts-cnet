@@ -5,7 +5,7 @@ if("$ENV{SALTS_BASE_ROOT}" STREQUAL "")
   message(FATAL_ERROR "SALTS_BASE_ROOT must name the matching installed SaltsBase SDK")
 endif()
 unset(SaltsBase_DIR CACHE)
-find_dependency(SaltsBase 0.1.0 CONFIG REQUIRED PATHS "$ENV{SALTS_BASE_ROOT}"
+find_dependency(SaltsBase @SALTS_BASE_REQUIRED_VERSION@ CONFIG REQUIRED PATHS "$ENV{SALTS_BASE_ROOT}"
   NO_DEFAULT_PATH NO_CMAKE_FIND_ROOT_PATH)
 find_dependency(GmSSL CONFIG REQUIRED)
 include("${CMAKE_CURRENT_LIST_DIR}/SaltsCoreTargets.cmake")

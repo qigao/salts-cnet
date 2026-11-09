@@ -1187,6 +1187,15 @@ static void pool_selection_contract(void) {
 }
 
 spec("CNet native policy and channel admission") {
+  it("rejects a size-only socket policy before reading unavailable fields") {
+    size_t *descriptor = (size_t *)malloc(sizeof(*descriptor));
+    check_not_null(descriptor);
+    *descriptor = sizeof(*descriptor);
+    const int status = cnet_client_set_stream_socket_options(NULL,
+        (const cnet_stream_socket_options *)descriptor);
+    free(descriptor);
+    check_equal(status, SALTS_EINVAL);
+  }
   it("validates custom destination and Owner choices against authoritative eligibility") { custom_selection_contract(); }
   it("replaces recovery backoff without bypassing bounds or security sealing") { replaceable_backoff_contract(); }
   for (size_t i = 0u; i < sizeof(backoff_boundaries) / sizeof(backoff_boundaries[0]); ++i) {

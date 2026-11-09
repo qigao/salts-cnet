@@ -1,5 +1,6 @@
 #include "cnet_owner.h"
 #include "cnet_resources.h"
+#include <native_io_socket.h>
 
 #include <core/clock.h>
 #include <queue/deadline_queue.h>
@@ -13,11 +14,6 @@
   #include <stdio.h>
 #endif
 
-#if defined(_WIN32)
-  #include <winsock2.h>
-#else
-  #include <sys/socket.h>
-#endif
 
 #define CNET_OWNER_SESSION_DEADLINE_TOKEN (UINT64_C(1) << 63u)
 
@@ -162,24 +158,22 @@ static void cnet_owner_issue64_trace_connect(
     const void *address, size_t address_length,
     int status, int native_status, native_io_request request,
     native_io_endpoint endpoint) {
-  struct sockaddr_in ipv4 = {0};
+  native_io_stream_endpoint decoded = {0};
   unsigned family = 0u;
   unsigned port = 0u;
   unsigned long ip = 0ul;
   if (session == NULL || session->peer.scheme != CNET_URI_TCP ||
       strcmp(session->peer.host, "127.0.0.1") != 0)
     return;
-  if (address != NULL && address_length >= sizeof(ipv4)) {
-    memcpy(&ipv4, address, sizeof(ipv4));
-    family = (unsigned)ipv4.sin_family;
-    if (ipv4.sin_family == AF_INET) {
-      port = (unsigned)ntohs(ipv4.sin_port);
-      ip = (unsigned long)ntohl(ipv4.sin_addr.s_addr);
+  if (address != NULL) {
+    const int raw_family = native_io_socket_address_family(address, address_length);
+    if (raw_family >= 0) family = (unsigned)raw_family;
+    if (native_io_socket_decode_endpoint(address, address_length, &decoded, false) == SALTS_OK &&
+        decoded.family == NATIVE_IO_DATAGRAM_ADDRESS_IPV4) {
+      port = decoded.port;
+      ip = ((unsigned long)decoded.address[0] << 24u) | ((unsigned long)decoded.address[1] << 16u) |
+           ((unsigned long)decoded.address[2] << 8u) | decoded.address[3];
     }
-  } else if (address != NULL && address_length >= sizeof(ADDRESS_FAMILY)) {
-    ADDRESS_FAMILY raw_family = 0;
-    memcpy(&raw_family, address, sizeof(raw_family));
-    family = (unsigned)raw_family;
   }
   fprintf(stderr,
           "CNET_ISSUE64 phase=%s session=%u:%u query=%u:%u"
@@ -2139,8 +2133,8 @@ static int cnet_owner_connect(cnet_owner_impl *impl, cnet_command_view *command)
   if (has_host) {
     status = cnet_resolver_submit(
         &impl->resolver, session->peer.host, session->peer.port,
-        (session->peer.scheme == CNET_URI_TCP || session->peer.scheme == CNET_URI_TLS) ? SOCK_STREAM
-                                                                                       : SOCK_DGRAM,
+        (session->peer.scheme == CNET_URI_TCP || session->peer.scheme == CNET_URI_TLS) ? native_io_socket_type(false)
+                                                                                       : native_io_socket_type(true),
         (uintptr_t)(session->handle.slot - 1u), &session->resolve_query);
     if (status != SALTS_OK)
       return cnet_owner_fail_accepted_command(impl, session, command, status,

@@ -22,11 +22,22 @@ are built only with their module's tests. The SCTP public headers are
 
 ## Dependencies and ownership
 
-Set `SALTS_BASE_ROOT` to a matching released SaltsBase SDK (0.1.0 or newer). Configuration
+Set `SALTS_BASE_ROOT` to a matching released SaltsBase SDK (0.1.1 or newer). Configuration
 uses only that root and fails if the package or its required components are
 missing. Core thread, memory and IPC calls use SaltsBase's current public names
 and headers; no compatibility aliases or private source paths are added.
 CNet listener composition uses SaltsBase's installed `<native_io_accept.h>`.
+Socket creation, bind/listen, accept, readiness, address codecs, options,
+shutdown and close use `<native_io_socket.h>` / `<native_io_transport.h>`.
+CNet retains connection/protocol policy and adapts its existing public values;
+it contains no first-party native socket I/O implementation. The c-ares provider
+continues to own DNS protocol execution on the same progress owner.
+
+This boundary requires the new SaltsBase 0.1.1 SDK. Version 0.1.0 lacks these
+headers/symbols and fails the package version check. Until 0.1.1 is published,
+local validation uses the installed producer candidate in a separate prefix;
+CI continues to consume immutable published releases and must wait for that
+release. Do not replace 0.1.0 assets or build a second NativeIO inside CNet.
 
 Crypto links the required vcpkg `GmSSL::GmSSL` provider (`3.2.0#44`), including
 the reviewed extensions pinned by `crypto/gmssl-extensions/source-lock.json`.
