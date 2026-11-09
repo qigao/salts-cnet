@@ -363,7 +363,7 @@ func TestSCTPOverNativeDTLS(t *testing.T) {
 							done <- i
 							return
 						}
-						for _, size := range sizes {
+						for message, size := range sizes {
 							if size == 24576 {
 								transport.arm()
 							}
@@ -373,11 +373,31 @@ func TestSCTPOverNativeDTLS(t *testing.T) {
 								payload = []byte{0}
 								kind = sctp.PayloadTypeWebRTCBinaryEmpty
 							}
+							expectedByte := byte(31 + i)
+							if size == 0 {
+								expectedByte = 0
+							}
+							checkSource := func(phase string) bool {
+								if err := auditEchoSource(payload, expectedByte, phase); err != nil {
+									fail(fmt.Errorf("message %d size=%d: %w", message, size, err))
+									return false
+								}
+								return true
+							}
+							if !checkSource("before write") {
+								return
+							}
 							if _, e = stream.WriteSCTP(payload, kind); e != nil {
 								fail(e)
 								return
 							}
+							if !checkSource("after write") {
+								return
+							}
 							n, ppi, e = stream.ReadSCTP(buffer)
+							if !checkSource("after read") {
+								return
+							}
 							if e != nil || ppi != kind || !bytes.Equal(buffer[:n], payload) {
 								offset := 0
 								for offset < n && offset < len(payload) && buffer[offset] == payload[offset] {

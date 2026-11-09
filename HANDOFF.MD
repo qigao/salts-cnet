@@ -1929,3 +1929,32 @@
   DATA 0.01s, real SCTP/DTLS 9.88s). Log:
   TEMP/salts-219-sctp-sustained.log. New Windows ARM64 evidence is required;
   neither this coverage nor the earlier full matrix is a corruption fix.
+
+### ARM64 echo failure concerns the expected source (2026-11-09)
+
+- CI #413/run 42558702292 on 11137e770dbcd3ba09004d6b60aa55f0006a00a0
+  reproduced the assertion in external/eight-peer/non-mixed/sustained_16,
+  client 3, first difference 14364. Pure SCTP copy/loss passed. The authenticated
+  packet CRC/byte audit did not fail. Actual byte window contains only 0x22.
+- Independently calculated Python hashlib SHA256(bytes([34]) * 24576) is
+  7cd62cffd40dcfa8472f1c5e51d338191bd6f8464a9c25dfa1339fd1e81d8f4e,
+  exactly the received digest. The expected-slice digest in the failure was
+  eb2374808e949472c1d849ce0e87c19c3391a64297c291a561104a8ccb09788a.
+  The same calculation for CI #411 client 4 (byte 35) matches its received
+  digest 24310c1c40514fa9479bd176b5f3115e90eb214722e7a5149ae8ce508831ace5.
+  These two observations establish correct received constant messages and an
+  inconsistent test source/oracle, not a demonstrated production echo mutation.
+  Earlier entries record the original interpretation; do not repeat that
+  interpretation as a proven production fault or claim the source cause fixed.
+- Preserve the original equality assertion and fail-fast source immutability
+  checks before WriteSCTP, after WriteSCTP and after ReadSCTP. Compare with the
+  independently known per-peer byte formula, log the source window/hash/phase
+  and message index. The caller owns this slice, Pion packetize copies it,
+  and the test performs no writes after initialization. Checkers only borrow
+  synchronously and never retain/mutate it. Keep all original wire/deadline
+  behavior; no toolchain/dependency workaround or assertion bypass.
+- Add a formal Go source-audit case through the existing SCTP/DTLS CTest entry.
+  Complete native-release-user Windows x64 Release graph passed; affected
+  saltscore.sctp_dtls_native passed in 10.13s. Log:
+  TEMP/salts-219-source-audit.log. New ARM64 evidence is still needed to locate
+  the first source mutation boundary; the runtime/provider cause is unproven.

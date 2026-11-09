@@ -1,10 +1,12 @@
 package secure
 
 import (
+	"crypto/sha256"
 	"encoding/binary"
 	"fmt"
 	"hash/crc32"
 	"net"
+	"strings"
 	"testing"
 )
 
@@ -14,6 +16,35 @@ import (
 type echoPacketAudit struct {
 	net.Conn
 	expected byte
+}
+
+// Keep the test oracle tied to the peer's byte formula, rather than trusting
+// the caller-owned write slice to remain an accurate expected result. The
+// slice must still remain unchanged; fail at the first boundary that loses it.
+func auditEchoSource(payload []byte, expected byte, phase string) error {
+	for i, b := range payload {
+		if b != expected {
+			end := min(i+32, len(payload))
+			return fmt.Errorf("echo source changed %s: offset=%d expected=%02x actual=%x sha256=%x",
+				phase, i, expected, payload[i:end], sha256.Sum256(payload))
+		}
+	}
+	return nil
+}
+
+func TestEchoSourceAudit(t *testing.T) {
+	payload := []byte{34, 34, 34}
+	if err := auditEchoSource(payload, 34, "before write"); err != nil {
+		t.Fatal(err)
+	}
+	payload[1] = 0xa5
+	if err := auditEchoSource(payload, 34, "after read"); err == nil ||
+		!strings.Contains(err.Error(), "after read: offset=1 expected=22 actual=a522") {
+		t.Fatalf("missing source mutation evidence: %v", err)
+	}
+	if payload[1] != 0xa5 {
+		t.Fatal("source audit changed caller storage")
+	}
 }
 
 func (c *echoPacketAudit) Read(out []byte) (int, error) {
