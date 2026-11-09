@@ -152,6 +152,15 @@ reports hits/misses after build, and saves successful compilations before tests.
 
 ## Merge gate
 
+The standard TLS independent-peer package has separate formal CTest entries:
+`saltscore.cnet_tls_client_identities`, `saltscore.cnet_tls_encrypted_credentials`,
+`saltscore.cnet_tls_certificate_signature_positions`,
+`saltscore.cnet_tls_purpose_diagnostics`, `saltscore.cnet_tls_validity_diagnostics`,
+`saltscore.cnet_tls_verification_time` and `saltscore.cnet_tls_server_verification_time`.
+Each selects its exact Go test and retains the 150-second Go / 180-second CTest
+limit. Session resumption retains its own existing entry. Run the whole graph
+in CI; these entries provide capability-level failure locations and budgets.
+
 Require the **exact PR HEAD**, not an earlier green commit: Linux/macOS/
 Windows x64/ARM64 native test execution, Linux ASan/UBSan and TSan tests,
 and Android build coverage. Do not count a green compile-only job as a runtime

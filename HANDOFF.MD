@@ -1842,3 +1842,21 @@
   sampler admission assertion, the complete build and three cache/independent
   DTLS peer tests passed again (1.93 seconds). Cross-platform and sanitizer
   results belong to the subsequent CI, not this local validation.
+
+### PR #273 macOS x64 TLS aggregate timeout (2026-11-09)
+
+- Run 42546894775/job 128933718060 completed the full graph build, then failed
+  saltscore.cnet_tls_client_identities at the Go package's aggregate 150-second
+  deadline. TestServerVerificationTime had run for only one second and its
+  active child case for less than one second. All nine other matrix jobs passed.
+- The entry selected every standard-TLS Go test except session resumption;
+  unrelated credential, diagnostic and time matrices shared the identity budget.
+  Register the seven existing capabilities separately with exact top-level Go
+  selectors. Session resumption keeps its existing eighth entry. Preserve all
+  scenarios and the existing 150s Go / 180s CTest capability limits; no retry,
+  skip, new feature switch or independent validation project was added.
+- Actual native-release-user CMake regeneration and complete build passed under
+  VsDevCmd/Windows x64 LLVM-MinGW. The eight TLS CTest entries passed in 89.57s;
+  encrypted credentials was the slowest local entry at 34.79s. CTest's generated
+  JSON confirms all eight exact Go selectors and unchanged timeouts. macOS x64
+  must still execute the corrected registration in the subsequent CI.
