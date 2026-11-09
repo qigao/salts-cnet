@@ -149,6 +149,26 @@ class NativeCryptoOwnerAudit(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     audit.validate_runtime_map("", system)
 
+    def test_unused_session_fingerprint_can_be_dead_stripped_but_not_reowned(self):
+        optional = "tls_get_peer_certificate_sha256"
+        text = "\n".join(
+            f" 0001:00000010 {name} 0000000140001000 f gmssl:tls.c.obj"
+            for name in audit.NATIVE_SYMBOLS if name != optional)
+        audit.validate_runtime_map(text, "Windows")
+        for owner in ("gmssl:tls.c.obj", "salts_crypto:fake.c.obj"):
+            retained = text + f"\n 0001:00000020 {optional} 0000000140001020 f {owner}"
+            if owner.startswith("gmssl:"):
+                audit.validate_runtime_map(retained, "Windows")
+                with self.assertRaisesRegex(ValueError, "not supplied once"):
+                    audit.validate_runtime_map(retained + "\n" + retained.splitlines()[-1], "Windows")
+            else:
+                with self.assertRaisesRegex(ValueError, "not supplied once"):
+                    audit.validate_runtime_map(retained, "Windows")
+        gmssl = Counter({name: 1 for name in audit.NATIVE_SYMBOLS if name != optional})
+        crypto = Counter({name: 1 for name in audit.FACADE_SYMBOLS})
+        with self.assertRaisesRegex(ValueError, "missing or duplicated"):
+            audit.validate_archives(gmssl, crypto)
+
     def test_llvm_mingw_map_member_must_match_gmssl_archive(self):
         symbols = "\n".join(
             f"00001000 00000000 0                 {name}"

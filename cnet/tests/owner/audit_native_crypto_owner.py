@@ -261,6 +261,12 @@ def validate_runtime_map(text, system, gmssl_members=None, crypto_members=None):
     invalid_native = {}
     for name in NATIVE_SYMBOLS:
         owners = definitions[name]
+        # CNet's stream facade hashes the parsed peer certificate itself; the
+        # separate session-inspection helper is unused and MSVC /OPT:REF drops
+        # it. validate_archives still requires its one physical GmSSL definition.
+        # If retained by a linker, it must satisfy the same owner check below.
+        if not owners and name == "tls_get_peer_certificate_sha256":
+            continue
         valid = len(owners) == 1
         if valid and lld_mingw:
             valid = gmssl_members is not None and gmssl_members.get(name) == {owners[0]}

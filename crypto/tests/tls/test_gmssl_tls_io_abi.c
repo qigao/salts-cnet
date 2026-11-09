@@ -1268,6 +1268,9 @@ static void timed_key_expect_update(TLS_CONNECT *conn, key_update_wire *wire,
 }
 
 spec("GmSSL local sending-key monotonic intervals") {
+  /* Cases run serially and timed_key_prepare resets the synthetic connection.
+   * Keep its large record/transcript buffers outside the suite's stack frame. */
+  static TLS_CONNECT conn;
   it("admits intervals without enabling record rotation or retaining a disabled clock") {
     TLS_CTX ctx = {0};
     key_update_clock clock = {0};
@@ -1291,7 +1294,6 @@ spec("GmSSL local sending-key monotonic intervals") {
     for (unsigned suite_index = 0u; suite_index < 2u; ++suite_index) {
       it("role %u suite %u starts once and expires exactly between new records", role, suite_index) {
         TLS_CTX ctx;
-        TLS_CONNECT conn;
         key_update_wire wire;
         key_update_clock clock = {.now = 100u};
         timed_key_prepare(&ctx, &conn, &wire, &clock, role, suite_index, 10u);
@@ -1335,7 +1337,6 @@ spec("GmSSL local sending-key monotonic intervals") {
       }
       it("role %u suite %u resets age on mandatory responses and preserves byte policy", role, suite_index) {
         TLS_CTX ctx;
-        TLS_CONNECT conn;
         key_update_wire wire;
         key_update_clock clock = {.now = 0u};
         timed_key_prepare(&ctx, &conn, &wire, &clock, role, suite_index, 10u);
@@ -1360,7 +1361,6 @@ spec("GmSSL local sending-key monotonic intervals") {
       }
       it("role %u suite %u rejects the initial clock failure before timer publication", role, suite_index) {
         TLS_CTX ctx;
-        TLS_CONNECT conn;
         key_update_wire wire;
         key_update_clock clock = {.now = 100u, .fail_call = 1u};
         timed_key_prepare(&ctx, &conn, &wire, &clock, role, suite_index, 10u);
@@ -1372,50 +1372,49 @@ spec("GmSSL local sending-key monotonic intervals") {
       for (unsigned coalesced = 0u; coalesced < 2u; ++coalesced) {
       it("role %u suite %u peer update/coalesced %u preserves independent local age", role, suite_index, coalesced) {
         TLS_CTX ctx[2];
-        TLS_CONNECT conn[2];
+        static TLS_CONNECT pair_conn[2];
         key_update_wire unused, wire;
         key_update_clock clock = {.now = 100u};
-        timed_key_prepare(&ctx[0], &conn[0], &wire, &clock, !role, suite_index, 0u);
-        timed_key_prepare(&ctx[1], &conn[1], &unused, &clock, role, suite_index, 10u);
-        check_equal(tls_do_handshake(&conn[1]), 1);
+        timed_key_prepare(&ctx[0], &pair_conn[0], &wire, &clock, !role, suite_index, 0u);
+        timed_key_prepare(&ctx[1], &pair_conn[1], &unused, &clock, role, suite_index, 10u);
+        check_equal(tls_do_handshake(&pair_conn[1]), 1);
         TLS_IO io = {.user = &wire, .send = key_update_capture, .recv = key_update_fragmented_receive};
-        check_equal(tls_set_io(&conn[1], &io), 1);
+        check_equal(tls_set_io(&pair_conn[1], &io), 1);
         wire.budget = sizeof(wire.bytes);
-        check_equal(role ? tls13_send_server_key_update(&conn[0], 0) :
-            tls13_send_client_key_update(&conn[0], 0), 1);
+        check_equal(role ? tls13_send_server_key_update(&pair_conn[0], 0) :
+            tls13_send_client_key_update(&pair_conn[0], 0), 1);
         const uint8_t payload = 0x46;
         size_t sent = 0u;
         if (coalesced) {
-          check_equal(tls13_send(&conn[0], &payload, 1u, &sent), 1);
+          check_equal(tls13_send(&pair_conn[0], &payload, 1u, &sent), 1);
           check_equal(sent, (size_t)1u);
         }
         uint8_t before[32];
-        memcpy(before, role ? conn[1].server_application_traffic_secret : conn[1].client_application_traffic_secret, sizeof(before));
+        memcpy(before, role ? pair_conn[1].server_application_traffic_secret : pair_conn[1].client_application_traffic_secret, sizeof(before));
         clock.now = 105u;
         wire.read_budget = wire.size;
         uint8_t byte = 0x5a;
         size_t received = 99u;
-        check_equal(tls13_recv(&conn[1], &byte, 1u, &received), coalesced ? 1 : TLS_ERROR_RECV_AGAIN);
+        check_equal(tls13_recv(&pair_conn[1], &byte, 1u, &received), coalesced ? 1 : TLS_ERROR_RECV_AGAIN);
         check_equal(received, coalesced ? (size_t)1u : (size_t)0u);
         check_equal(byte, coalesced ? payload : (uint8_t)0x5a);
         check_equal(wire.read_offset, wire.size);
-        check_not_equal(before, role ? conn[1].server_application_traffic_secret : conn[1].client_application_traffic_secret, sizeof(before));
-        check_equal(conn[1].local_key_started_ms, UINT64_C(100));
-        check_equal(conn[1].key_update_last_clock_ms, UINT64_C(100));
+        check_not_equal(before, role ? pair_conn[1].server_application_traffic_secret : pair_conn[1].client_application_traffic_secret, sizeof(before));
+        check_equal(pair_conn[1].local_key_started_ms, UINT64_C(100));
+        check_equal(pair_conn[1].key_update_last_clock_ms, UINT64_C(100));
         check_equal(clock.calls, 1u);
         clock.now = 110u;
         wire.size = wire.read_offset = 0u;
-        BLOCK_CIPHER_KEY old_key = role ? conn[1].client_write_key : conn[1].server_write_key;
+        BLOCK_CIPHER_KEY old_key = role ? pair_conn[1].client_write_key : pair_conn[1].server_write_key;
         uint8_t old_iv[12], seq[8] = {0};
-        memcpy(old_iv, role ? conn[1].client_write_iv : conn[1].server_write_iv, sizeof(old_iv));
-        timed_key_send(&conn[1], &wire, 0x49);
-        timed_key_expect_update(&conn[1], &wire, &old_key, old_iv, seq, 1u, 0x49);
+        memcpy(old_iv, role ? pair_conn[1].client_write_iv : pair_conn[1].server_write_iv, sizeof(old_iv));
+        timed_key_send(&pair_conn[1], &wire, 0x49);
+        timed_key_expect_update(&pair_conn[1], &wire, &old_key, old_iv, seq, 1u, 0x49);
       }
       }
       for (unsigned failure = 0u; failure < 6u; ++failure) {
         it("role %u suite %u rejects clock failure %u before ciphertext or key change", role, suite_index, failure) {
           TLS_CTX ctx;
-          TLS_CONNECT conn;
           key_update_wire wire;
           key_update_clock clock = {.now = 100u};
           timed_key_prepare(&ctx, &conn, &wire, &clock, role, suite_index, 10u);
@@ -1445,7 +1444,6 @@ spec("GmSSL local sending-key monotonic intervals") {
       }
       it("role %u suite %u uses subtraction at maximum interval and clock value", role, suite_index) {
         TLS_CTX ctx;
-        TLS_CONNECT conn;
         key_update_wire wire;
         key_update_clock clock = {.now = UINT64_MAX - UINT32_MAX};
         timed_key_prepare(&ctx, &conn, &wire, &clock, role, suite_index, UINT32_MAX);
@@ -2001,6 +1999,9 @@ static void peer_spacing_data(peer_spacing_fixture *f, size_t size) {
 }
 
 spec("GmSSL peer KeyUpdate minimum time and byte spacing") {
+  /* One suite-owned fixture serves serial cases; peer_spacing_prepare clears
+   * every field before each use, including borrowed clock/I/O callback users. */
+  static peer_spacing_fixture f;
   it("rejects missing clocks and preserves rejected configuration") {
     TLS_CTX ctx = {0};
     key_update_clock clock = {0};
@@ -2047,7 +2048,6 @@ spec("GmSSL peer KeyUpdate minimum time and byte spacing") {
           "maximum byte credit", "corrupt credit", "clock regression", "clock failure", "burst precedence",
           "disabled", "not-requested time early"};
         it("role %u suite %u %s admits once or fails before peer derivation", role, suite_index, names[mode]) {
-          peer_spacing_fixture f;
           bool time_limit = mode < 2u || (mode >= 4u && mode <= 8u) || (mode >= 11u && mode <= 13u) || mode == 15u;
           bool byte_limit = (mode >= 2u && mode <= 7u) || mode == 9u || mode == 10u;
           uint32_t milliseconds = mode == 8u ? UINT32_MAX : time_limit ? 10u : 0u;
@@ -2091,7 +2091,6 @@ spec("GmSSL peer KeyUpdate minimum time and byte spacing") {
         }
       }
       it("role %u suite %u credits a decrypted record once across partial application reads", role, suite_index) {
-        peer_spacing_fixture f;
         peer_spacing_prepare(&f, role, suite_index, 0u, 4u, 0u, 0u);
         check_equal(tls_do_handshake(&f.conn[1]), 1);
         peer_spacing_update(&f, 0u, TLS_ERROR_RECV_AGAIN);
@@ -2111,7 +2110,6 @@ spec("GmSSL peer KeyUpdate minimum time and byte spacing") {
         peer_spacing_update(&f, 1u, TLS_ERROR_RECV_AGAIN);
       }
       it("role %u suite %u initializes a peer-only clock before readiness", role, suite_index) {
-        peer_spacing_fixture f;
         peer_spacing_prepare(&f, role, suite_index, 1u, 0u, 0u, 0u);
         f.clock.fail_call = 1u;
         check_equal(tls_do_handshake(&f.conn[1]), -1);
@@ -2119,7 +2117,6 @@ spec("GmSSL peer KeyUpdate minimum time and byte spacing") {
         check_equal(f.conn[1].peer_key_update_seen, 0);
       }
       it("role %u suite %u treats epoch zero as an admitted update rather than an unused timestamp", role, suite_index) {
-        peer_spacing_fixture f;
         peer_spacing_prepare(&f, role, suite_index, 10u, 0u, 0u, 0u);
         f.clock.now = 0u;
         check_equal(tls_do_handshake(&f.conn[1]), 1);
@@ -2130,7 +2127,6 @@ spec("GmSSL peer KeyUpdate minimum time and byte spacing") {
         peer_spacing_update(&f, 1u, -1);
       }
       it("role %u suite %u preserves spacing credit when receiving-key derivation fails", role, suite_index) {
-        peer_spacing_fixture f;
         peer_spacing_prepare(&f, role, suite_index, 10u, 4u, 0u, 0u);
         check_equal(tls_do_handshake(&f.conn[1]), 1);
         peer_spacing_update(&f, 0u, TLS_ERROR_RECV_AGAIN);
@@ -2143,7 +2139,6 @@ spec("GmSSL peer KeyUpdate minimum time and byte spacing") {
         check_equal(f.wire.incoming.read_offset, f.wire.incoming.size);
       }
       it("role %u suite %u excludes padding and unauthenticated ciphertext from byte credit", role, suite_index) {
-        peer_spacing_fixture f;
         peer_spacing_prepare(&f, role, suite_index, 0u, 4u, 0u, 0u);
         check_equal(tls_do_handshake(&f.conn[1]), 1);
         peer_spacing_update(&f, 0u, TLS_ERROR_RECV_AGAIN);

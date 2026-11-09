@@ -53,6 +53,10 @@ It enforces:
 - The CNet production link-map attributes native members to GmSSL and any
   selected facade members to Crypto; Windows LLVM-MinGW uses matching physical
   COFF member metadata as well as the linker map.
+- MSVC may discard the unused session-level `tls_get_peer_certificate_sha256`
+  helper: CNet's stream facade hashes its parsed peer certificate directly.
+  The archive audit still requires one physical definition in GmSSL; when the
+  linker retains it, the runtime audit still requires that same GmSSL ownership.
 - Two real CNet plugins import the production CNet DSO; neither plugin nor
   its native loader may extract independent Crypto/GmSSL static copies.
 - No extra dynamic GmSSL/OpenSSL/Crypto runtime dependency is accepted.
