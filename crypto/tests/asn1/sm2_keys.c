@@ -197,4 +197,81 @@ spec("SM2 strict key containers and password protection") {
     der[n] = 0;
     check_equal(salts_crypto_sm2_pkcs8_decrypt(der, n+1, password, sizeof(password), 10000, raw), SALTS_CRYPTO_EVERIFY);
   }
+  it("round trips AES256 binary and maximum passwords without cross-profile admission") {
+    uint8_t der[321], raw[33], long_password[1024]; size_t n;
+    memset(long_password, 0x5a, sizeof(long_password));
+    for (unsigned i = 0; i < 2u; ++i) {
+      const void *pw = i ? (const void *)long_password : (const void *)password;
+      size_t pn = i ? sizeof(long_password) : sizeof(password);
+      memset(der, 0xa5, sizeof(der)); memset(raw, 0xa5, sizeof(raw));
+      check_equal(salts_crypto_sm2_pkcs8_aes256_encrypt(key_one, pw, pn, 10000, der, sizeof(der), &n), SALTS_CRYPTO_OK);
+      check_equal(der[320], 0xa5);
+      check_equal(salts_crypto_sm2_pkcs8_aes256_decrypt(der, n, pw, pn, 10000, raw), SALTS_CRYPTO_OK);
+      check_equal(raw, key_one, 32); check_equal(raw[32], 0xa5);
+      check_equal(salts_crypto_sm2_pkcs8_decrypt(der, n, pw, pn, 10000, raw), SALTS_CRYPTO_EVERIFY);
+      check_true(filled(raw, 32u, 0)); check_equal(raw[32], 0xa5);
+      check_equal(salts_crypto_sm2_pkcs8_aes256_decrypt(der, n, "wrong", 5u, 10000, raw), SALTS_CRYPTO_EVERIFY);
+      check_true(filled(raw, 32u, 0));
+      der[n-1u] ^= 0xffu;
+      check_equal(salts_crypto_sm2_pkcs8_aes256_decrypt(der, n, pw, pn, 10000, raw), SALTS_CRYPTO_EVERIFY);
+      check_true(filled(raw, 32u, 0));
+      check_equal(salts_crypto_sm2_pkcs8_encrypt(key_one, pw, pn, 10000, der, sizeof(der), &n), SALTS_CRYPTO_OK);
+      check_equal(salts_crypto_sm2_pkcs8_aes256_decrypt(der, n, pw, pn, 10000, raw), SALTS_CRYPTO_EVERIFY);
+      check_true(filled(raw, 32u, 0));
+    }
+  }
+  it("preserves AES256 outputs for invalid pointers, capacities, overlaps and work policies") {
+    uint8_t der[321], raw[32]; size_t n = 99u;
+    memset(der, 0xa5, sizeof(der)); memset(raw, 0xa5, sizeof(raw));
+    check_equal(salts_crypto_sm2_pkcs8_aes256_encrypt(NULL, password, 5, 10000, der, 320, &n), SALTS_CRYPTO_EINVAL);
+    check_equal(salts_crypto_sm2_pkcs8_aes256_encrypt(key_one, NULL, 5, 10000, der, 320, &n), SALTS_CRYPTO_EINVAL);
+    check_equal(salts_crypto_sm2_pkcs8_aes256_encrypt(key_one, password, 0, 10000, der, 320, &n), SALTS_CRYPTO_EINVAL);
+    check_equal(salts_crypto_sm2_pkcs8_aes256_encrypt(key_one, password, 1025, 10000, der, 320, &n), SALTS_CRYPTO_EINVAL);
+    check_equal(salts_crypto_sm2_pkcs8_aes256_encrypt(key_one, password, 5, 9999, der, 320, &n), SALTS_CRYPTO_EINVAL);
+    check_equal(salts_crypto_sm2_pkcs8_aes256_encrypt(key_one, password, 5, 16777216, der, 320, &n), SALTS_CRYPTO_EINVAL);
+    check_equal(salts_crypto_sm2_pkcs8_aes256_encrypt(key_one, password, 5, 10000, der, 319, &n), SALTS_CRYPTO_EINVAL);
+    check_equal(salts_crypto_sm2_pkcs8_aes256_encrypt(der, password, 5, 10000, der, 320, &n), SALTS_CRYPTO_EINVAL);
+    check_equal(salts_crypto_sm2_pkcs8_aes256_encrypt(key_one, der, 5, 10000, der, 320, &n), SALTS_CRYPTO_EINVAL);
+    check_equal(salts_crypto_sm2_pkcs8_aes256_encrypt(key_one, password, 5, 10000, der, 320, (size_t *)(void *)der), SALTS_CRYPTO_EINVAL);
+    check_equal(salts_crypto_sm2_pkcs8_aes256_decrypt(der, 321, password, 5, 10000, raw), SALTS_CRYPTO_EINVAL);
+    check_equal(salts_crypto_sm2_pkcs8_aes256_decrypt(der, 320, raw, 5, 10000, raw), SALTS_CRYPTO_EINVAL);
+    check_equal(salts_crypto_sm2_pkcs8_aes256_decrypt(der, 320, password, 5, 9999, raw), SALTS_CRYPTO_EINVAL);
+    check_equal(salts_crypto_sm2_pkcs8_aes256_decrypt(der, 320, password, 5, 10000, der+20), SALTS_CRYPTO_EINVAL);
+    check_true(filled(der, sizeof(der), 0xa5)); check_true(filled(raw, sizeof(raw), 0xa5));
+    check_equal(n, (size_t)99u); check_equal(rng_calls, 0u);
+  }
+  it("erases AES256 exports on invalid keys or either failed random draw") {
+    uint8_t der[321], zero[32] = {0}; size_t n = 99u;
+    memset(der, 0xa5, sizeof(der));
+    check_equal(salts_crypto_sm2_pkcs8_aes256_encrypt(zero, password, 5, 10000, der, 320, &n), SALTS_CRYPTO_EVERIFY);
+    check_true(filled(der, 320u, 0)); check_equal(der[320], 0xa5); check_equal(n, (size_t)0u);
+    check_equal(rng_calls, 0u);
+    for (unsigned i = 1u; i <= 2u; ++i) {
+      rng_calls = 0u; rng_fail_at = i; n = 99u; memset(der, 0xa5, sizeof(der));
+      check_equal(salts_crypto_sm2_pkcs8_aes256_encrypt(key_one, password, 5, 10000, der, 320, &n), SALTS_CRYPTO_ERANDOM);
+      check_equal(rng_calls, i); check_equal(n, (size_t)0u);
+      check_true(filled(der, 320u, 0)); check_equal(der[320], 0xa5);
+    }
+  }
+  it("rejects every truncated AES256 envelope and preserves the output guard") {
+    uint8_t der[321], raw[33]; size_t n;
+    check_equal(salts_crypto_sm2_pkcs8_aes256_encrypt(key_one, password, 5, 10000, der, 320, &n), SALTS_CRYPTO_OK);
+    for (size_t i = 1u; i < n; ++i) {
+      memset(raw, 0xa5, sizeof(raw));
+      check_equal(salts_crypto_sm2_pkcs8_aes256_decrypt(der, i, password, 5, 10000, raw), SALTS_CRYPTO_EVERIFY);
+      check_true(filled(raw, 32u, 0)); check_equal(raw[32], 0xa5);
+    }
+    der[n] = 0u;
+    check_equal(salts_crypto_sm2_pkcs8_aes256_decrypt(der, n+1u, password, 5, 10000, raw), SALTS_CRYPTO_EVERIFY);
+    check_true(filled(raw, 32u, 0));
+  }
+  it("enforces the AES256 import work budget before admitting a valid higher-cost key") {
+    uint8_t der[320], raw[33]; size_t n;
+    check_equal(salts_crypto_sm2_pkcs8_aes256_encrypt(key_one, password, 5, 10001, der, sizeof(der), &n), SALTS_CRYPTO_OK);
+    memset(raw, 0xa5, sizeof(raw));
+    check_equal(salts_crypto_sm2_pkcs8_aes256_decrypt(der, n, password, 5, 10000, raw), SALTS_CRYPTO_EVERIFY);
+    check_true(filled(raw, 32u, 0)); check_equal(raw[32], 0xa5);
+    check_equal(salts_crypto_sm2_pkcs8_aes256_decrypt(der, n, password, 5, 10001, raw), SALTS_CRYPTO_OK);
+    check_equal(raw, key_one, 32u); check_equal(raw[32], 0xa5);
+  }
 }

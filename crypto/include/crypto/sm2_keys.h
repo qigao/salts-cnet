@@ -64,6 +64,24 @@ int salts_crypto_sm2_pkcs8_decrypt(const void *der, size_t size,
     const void *password, size_t password_size, uint32_t max_iterations,
     uint8_t private_key[32]);
 
+/* Explicit PBES2/PBKDF2-HMAC-SHA256/AES-256-CBC profile (RFC 8018).
+ * Same bounds, ownership, errors and CBC storage limitations as above.
+ * Export uses fresh 16-byte salt/IV, explicit keyLength=32 and NULL PRF
+ * parameters. Import accepts salt 16..64, absent or 32-byte keyLength,
+ * absent or NULL PRF parameters, and only this exact PRF/cipher pair.
+ * Neither profile tries the other on failure; the SM3/SM4 APIs stay strict.
+ * Example with a SALTS_CRYPTO_SM2_ENCRYPTED_PKCS8_MAX_SIZE DER buffer:
+ * status = salts_crypto_sm2_pkcs8_aes256_encrypt(key, password, password_size,
+ *     10000, der, sizeof(der), &written);
+ * Check SALTS_CRYPTO_OK before using der[0..written).
+ */
+int salts_crypto_sm2_pkcs8_aes256_encrypt(const uint8_t private_key[32],
+    const void *password, size_t password_size, uint32_t iterations,
+    void *der, size_t capacity, size_t *written);
+int salts_crypto_sm2_pkcs8_aes256_decrypt(const void *der, size_t size,
+    const void *password, size_t password_size, uint32_t max_iterations,
+    uint8_t private_key[32]);
+
 #ifdef __cplusplus
 }
 #endif
