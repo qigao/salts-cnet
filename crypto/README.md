@@ -44,6 +44,13 @@ They use caller-owned buffers and private provider state, with explicit
 identity/nonce, capacity, overlap, authentication and secret-erasure contracts.
 Applications do not need native GmSSL headers.
 
+`<crypto/sm2_keys.h>` provides canonical SPKI/PKCS#8 and two explicitly selected
+password-protection profiles: the existing PBKDF2-HMAC-SM3/SM4-CBC operations
+and `salts_crypto_sm2_pkcs8_aes256_encrypt`/`_decrypt` for
+PBKDF2-HMAC-SHA256/AES-256-CBC. Both enforce bounded work and failure erasure;
+CBC does not authenticate stored keys. See
+[key containers and ownership](docs/SHANGMI-COVERAGE.md#sm2-key-containers).
+
 Reusable immutable identities and authenticated PKCS#12/PFX inputs are exposed in
 `<crypto/tls_credentials.h>`. Contexts import independent provider state, so input
 bytes, passwords and the caller's object reference can be released before stream

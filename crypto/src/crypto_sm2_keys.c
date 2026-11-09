@@ -5,6 +5,8 @@
 #include <asn1.h>
 #include <gmssl/sm2.h>
 #include <gmssl/rand.h>
+#include <gmssl/aes.h>
+#include <gmssl/pbkdf2.h>
 #include "crypto_internal.h"
 #include <string.h>
 
@@ -14,6 +16,8 @@ static const uint8_t pbes2_oid[] = {0x2a,0x86,0x48,0x86,0xf7,0x0d,1,5,13};
 static const uint8_t pbkdf2_oid[] = {0x2a,0x86,0x48,0x86,0xf7,0x0d,1,5,12};
 static const uint8_t hmac_sm3_oid[] = {0x2a,0x81,0x1c,0xcf,0x55,1,0x83,0x11,2};
 static const uint8_t sm4_cbc_oid[] = {0x2a,0x81,0x1c,0xcf,0x55,1,0x68,2};
+static const uint8_t hmac_sha256_oid[] = {0x2a,0x86,0x48,0x86,0xf7,0x0d,2,9};
+static const uint8_t aes256_cbc_oid[] = {0x60,0x86,0x48,1,0x65,3,4,1,42};
 
 /* Format composition only; all tag/length/DER validation has one ASN1 owner. */
 typedef struct der_writer { uint8_t data[320]; size_t size; int failed; } der_writer;
@@ -185,12 +189,16 @@ static int password_valid(const void *password, size_t n, uint32_t iterations) {
       iterations >= SALTS_CRYPTO_SM2_KEY_ITERATIONS_MIN && iterations <= SALTS_CRYPTO_SM2_KEY_ITERATIONS_MAX;
 }
 static void write_encrypted(der_writer *result, const uint8_t salt[16], uint32_t iterations,
-    const uint8_t iv[16], const uint8_t ciphertext[160]) {
+    const uint8_t iv[16], const uint8_t ciphertext[160], int aes) {
   der_writer prf = {0}, params = {0}, kdf = {0}, scheme = {0}, pair = {0}, alg = {0}, body = {0};
-  put(&params, 0, 0, 4, salt, 16); integer(&params, iterations); integer(&params, 16);
-  oid(&prf, hmac_sm3_oid); sequence(&params, &prf);
+  put(&params, 0, 0, 4, salt, 16); integer(&params, iterations); integer(&params, aes ? 32u : 16u);
+  if (aes) { oid(&prf, hmac_sha256_oid); put(&prf, 0, 0, 5, NULL, 0); }
+  else oid(&prf, hmac_sm3_oid);
+  sequence(&params, &prf);
   oid(&kdf, pbkdf2_oid); sequence(&kdf, &params);
-  oid(&scheme, sm4_cbc_oid); put(&scheme, 0, 0, 4, iv, 16);
+  if (aes) oid(&scheme, aes256_cbc_oid);
+  else oid(&scheme, sm4_cbc_oid);
+  put(&scheme, 0, 0, 4, iv, 16);
   sequence(&pair, &kdf); sequence(&pair, &scheme);
   oid(&alg, pbes2_oid); sequence(&alg, &pair);
   sequence(&body, &alg); put(&body, 0, 0, 4, ciphertext, 160);
@@ -201,7 +209,7 @@ typedef struct encrypted_view {
   size_t salt_size, ciphertext_size;
   uint32_t iterations;
 } encrypted_view;
-static int read_encrypted(const void *der, size_t n, uint32_t max, encrypted_view *out) {
+static int read_encrypted(const void *der, size_t n, uint32_t max, int aes, encrypted_view *out) {
   salts_asn1_reader r, alg, pair, kdf, params, prf, scheme; salts_asn1_tlv v; uint32_t key_size;
   if (!root(der, n, &r) || !enter(&r, &alg) || !match(&alg, pbes2_oid) ||
       !enter(&alg, &pair) || !end(&alg) || !enter(&pair, &kdf) || !match(&kdf, pbkdf2_oid) ||
@@ -212,13 +220,15 @@ static int read_encrypted(const void *der, size_t n, uint32_t max, encrypted_vie
       out->iterations > max) return 0;
   salts_asn1_reader probe = params;
   if (number(&probe, &key_size)) {
-    if (key_size != 16u) return 0;
+    if (key_size != (aes ? 32u : 16u)) return 0;
     params = probe;
   }
-  /* Absent PRF is HMAC-SHA1, never implicitly HMAC-SM3. */
-  if (!enter(&params, &prf) || !match(&prf, hmac_sm3_oid) || !end(&params)) return 0;
+  /* Absent PRF is HMAC-SHA1, never one of our explicitly selected profiles. */
+  if (!enter(&params, &prf) ||
+      !(aes ? match(&prf, hmac_sha256_oid) : match(&prf, hmac_sm3_oid)) || !end(&params)) return 0;
   if (!end(&prf) && (!take(&prf, 0, 0, 5, &v) || v.content_size)) return 0;
-  if (!end(&prf) || !enter(&pair, &scheme) || !end(&pair) || !match(&scheme, sm4_cbc_oid) ||
+  if (!end(&prf) || !enter(&pair, &scheme) || !end(&pair) ||
+      !(aes ? match(&scheme, aes256_cbc_oid) : match(&scheme, sm4_cbc_oid)) ||
       !take(&scheme, 0, 0, 4, &v) || v.content_size != 16u || !end(&scheme)) return 0;
   out->iv = v.content;
   if (!take(&r, 0, 0, 4, &v) || !end(&r) || v.content_size < 16u ||
@@ -226,10 +236,33 @@ static int read_encrypted(const void *der, size_t n, uint32_t max, encrypted_vie
   out->ciphertext = v.content; out->ciphertext_size = v.content_size;
   return 1;
 }
-int salts_crypto_sm2_pkcs8_encrypt(const uint8_t key[32], const void *password, size_t pn,
-    uint32_t iterations, void *out, size_t cap, size_t *written) {
+static int derive_password(const void *password, size_t pn, const uint8_t *salt, size_t sn,
+    uint32_t iterations, int aes, uint8_t derived[32]) {
+  if (aes) return pbkdf2_hmac_genkey(DIGEST_sha256(), password, pn, salt, sn,
+      iterations, 32u, derived) == 1 ? SALTS_CRYPTO_OK : SALTS_CRYPTO_ECRYPTO;
+  return salts_crypto_pbkdf2_sm3(password, pn, salt, sn, iterations, derived, 16u);
+}
+/* Both finite profiles share admission, canonical DER, padding and secret
+ * cleanup. Only the selected KDF/cipher changes; there is no trial dispatch. */
+static int crypt_blocks(int aes, int decrypt, const uint8_t derived[32], const uint8_t iv[16],
+    const uint8_t *in, size_t n, uint8_t *out) {
+  if (!aes) return salts_crypto_sm4_crypt(SALTS_CRYPTO_SM4_CBC, decrypt, derived, 16u,
+      iv, in, n, out, n);
+  AES_KEY key = {0};
+  int status = SALTS_CRYPTO_ECRYPTO;
+  if (decrypt ? aes_set_decrypt_key(&key, derived, 32u) == 1 :
+      aes_set_encrypt_key(&key, derived, 32u) == 1) {
+    if (decrypt) aes_cbc_decrypt_blocks(&key, iv, in, n / 16u, out);
+    else aes_cbc_encrypt_blocks(&key, iv, in, n / 16u, out);
+    status = SALTS_CRYPTO_OK;
+  }
+  salts_crypto_secure_zero(&key, sizeof(key));
+  return status;
+}
+static int encrypt_private(const uint8_t key[32], const void *password, size_t pn,
+    uint32_t iterations, void *out, size_t cap, size_t *written, int aes) {
   der_writer plain = {0}, result = {0};
-  uint8_t salt[16] = {0}, iv[16] = {0}, derived[16] = {0}, ciphertext[160] = {0};
+  uint8_t salt[16] = {0}, iv[16] = {0}, derived[32] = {0}, ciphertext[160] = {0};
   if (!export_args(key, 32, out, cap, 320, written) || !password_valid(password, pn, iterations) ||
       salts_crypto_overlap(password, pn, out, 320) || salts_crypto_overlap(password, pn, written, sizeof(*written)))
     return SALTS_CRYPTO_EINVAL;
@@ -239,27 +272,26 @@ int salts_crypto_sm2_pkcs8_encrypt(const uint8_t key[32], const void *password, 
   if (rand_bytes(salt, sizeof(salt)) != 1 || rand_bytes(iv, sizeof(iv)) != 1) {
     status = SALTS_CRYPTO_ERANDOM; goto done;
   }
-  status = salts_crypto_pbkdf2_sm3(password, pn, salt, sizeof(salt), iterations, derived, sizeof(derived));
+  status = derive_password(password, pn, salt, sizeof(salt), iterations, aes, derived);
   if (status != SALTS_CRYPTO_OK) goto done;
   memset(plain.data+plain.size, 10, 10); /* 150-byte key, full PKCS#7 block padding. */
-  status = salts_crypto_sm4_crypt(SALTS_CRYPTO_SM4_CBC, 0, derived, 16, iv, plain.data, 160, ciphertext, 160);
-  if (status == SALTS_CRYPTO_OK) write_encrypted(&result, salt, iterations, iv, ciphertext);
+  status = crypt_blocks(aes, 0, derived, iv, plain.data, 160u, ciphertext);
+  if (status == SALTS_CRYPTO_OK) write_encrypted(&result, salt, iterations, iv, ciphertext, aes);
 done:
   status = finish_export(status, &result, out, 320, written);
   salts_crypto_secure_zero(&plain, sizeof(plain)); salts_crypto_secure_zero(derived, sizeof(derived));
   return status;
 }
-int salts_crypto_sm2_pkcs8_decrypt(const void *der, size_t n, const void *password, size_t pn,
-    uint32_t max_iterations, uint8_t key[32]) {
-  encrypted_view view = {0}; uint8_t derived[16] = {0}, plain[160] = {0};
+static int decrypt_private(const void *der, size_t n, const void *password, size_t pn,
+    uint32_t max_iterations, uint8_t key[32], int aes) {
+  encrypted_view view = {0}; uint8_t derived[32] = {0}, plain[160] = {0};
   int status = SALTS_CRYPTO_EVERIFY;
   if (!import_args(der, n, 320, key, 32) || !password_valid(password, pn, max_iterations) ||
       salts_crypto_overlap(password, pn, key, 32)) return SALTS_CRYPTO_EINVAL;
-  if (!read_encrypted(der, n, max_iterations, &view)) goto done;
-  status = salts_crypto_pbkdf2_sm3(password, pn, view.salt, view.salt_size, view.iterations, derived, sizeof(derived));
+  if (!read_encrypted(der, n, max_iterations, aes, &view)) goto done;
+  status = derive_password(password, pn, view.salt, view.salt_size, view.iterations, aes, derived);
   if (status != SALTS_CRYPTO_OK) goto done;
-  status = salts_crypto_sm4_crypt(SALTS_CRYPTO_SM4_CBC, 1, derived, 16, view.iv,
-      view.ciphertext, view.ciphertext_size, plain, sizeof(plain));
+  status = crypt_blocks(aes, 1, derived, view.iv, view.ciphertext, view.ciphertext_size, plain);
   if (status != SALTS_CRYPTO_OK) goto done;
   unsigned padding = plain[view.ciphertext_size-1u], bad = (padding == 0u || padding > 16u);
   for (size_t i = 0; i < 16u; ++i)
@@ -271,4 +303,21 @@ done:
   salts_crypto_secure_zero(derived, sizeof(derived)); salts_crypto_secure_zero(plain, sizeof(plain));
   if (status != SALTS_CRYPTO_OK) salts_crypto_secure_zero(key, 32);
   return status;
+}
+
+int salts_crypto_sm2_pkcs8_encrypt(const uint8_t key[32], const void *password, size_t pn,
+    uint32_t iterations, void *out, size_t cap, size_t *written) {
+  return encrypt_private(key, password, pn, iterations, out, cap, written, 0);
+}
+int salts_crypto_sm2_pkcs8_decrypt(const void *der, size_t n, const void *password, size_t pn,
+    uint32_t max_iterations, uint8_t key[32]) {
+  return decrypt_private(der, n, password, pn, max_iterations, key, 0);
+}
+int salts_crypto_sm2_pkcs8_aes256_encrypt(const uint8_t key[32], const void *password, size_t pn,
+    uint32_t iterations, void *out, size_t cap, size_t *written) {
+  return encrypt_private(key, password, pn, iterations, out, cap, written, 1);
+}
+int salts_crypto_sm2_pkcs8_aes256_decrypt(const void *der, size_t n, const void *password, size_t pn,
+    uint32_t max_iterations, uint8_t key[32]) {
+  return decrypt_private(der, n, password, pn, max_iterations, key, 1);
 }

@@ -2042,3 +2042,50 @@
   base modules now also live in C:/projects/cpp/turbonet/salts-base. Preserve
   the existing dirty housekeeping tree and transfer this module-owned patch to
   the new owner during integration; do not restore deleted base modules there.
+
+### Issue #219 standalone SM2 SHA256/AES256 key containers (2026-11-09)
+
+- After the closure review, the user selected implementation and validation of
+  one remaining gap. Branch `feat/crypto-sm2-pkcs8-aes256` adds explicit
+  `salts_crypto_sm2_pkcs8_aes256_encrypt`/`_decrypt` for standalone PBES2
+  PBKDF2-HMAC-SHA256/AES256-CBC. The old SM3/SM4 entrypoints remain strict.
+  Reuse installed GmSSL #44 and canonical ASN1; no dependency/preset change.
+- Common private helpers preserve work/size bounds, DER/key binding, output
+  guards and failure erasure. Independent Python checks both directions,
+  optional fields, salt bounds, algorithm/padding/password negatives and no
+  cross-profile fallback. Native cases cover RNG failures, maximum/binary
+  passwords, every DER truncation and an actual 10001-iteration key rejected
+  at budget 10000 then accepted at 10001.
+- This checkout's C++ TinyTest `check_equal` has only two arguments and its
+  container helper requires container members, unlike the C byte-count form.
+  Use `check_equal(std::memcmp(actual, expected, sizeof(expected)), 0)` for
+  these C ABI byte arrays. Both initial compile failures stopped the build;
+  the corrected C++ test performs the real AES256 round trip.
+- Under VsDevCmd/Windows x64 LLVM-MinGW Release, complete
+  `cmake --build --preset native-release-user --parallel 8` passed, then
+  `ctest --preset native-release-user -R
+  "^crypto\.(asn1\.(sm2_keys|sm2_keys_independent|header_cpp17)|algorithms\.cpp17_header|x509\.sm2_signatures)$"
+  --output-on-failure` passed all five tests (0.93s), PYTHONOPTIMIZE=1.
+  Log: TEMP/salts-219-sm2-aes256-final.log. This records initial local
+  validation; cross-platform/sanitizer qualification belongs to subsequent CI,
+  and issue closure is not claimed. CBC storage integrity and private-arithmetic side channels remain
+  separate gates. Root's unrelated housekeeping edits were untouched.
+
+### TLS resumed-certificate expiry failure observation, issue #276 (2026-11-09)
+
+- Combined CI #419 on 8af42629c62c5844ff31d1ac2dc01c7a01ffab9d passed
+  Windows ARM64/macOS x64 204/204 and all new AES/SCTP/DTLS tests. Windows
+  x64 failed TLS13 session resumption/expired at terminal_count == 1; the
+  peer reported no error. Root cause is unproven, not a demonstrated expiry
+  bypass: this assertion alone does not distinguish missing/duplicate terminal
+  notifications from an unexpected CONNECTED state.
+- Preserve the rejection assertion and add failure-only native connected,
+  terminal, failure, state/error/diagnostic counts plus UTC/elapsed samples.
+  The existing Go expiry peer records its NotAfter and actual handshake
+  start/end on failure. No keys, plaintext, validity relaxation, retry or
+  timeout change. Production validation already checks the cached chain at
+  resumed handshake completion; do not assume it is missing.
+- Complete native-release-user Windows x64 graph and the affected existing
+  CTest passed with observations (9.54s). TEMP/salts-276-observation.log.
+  This one successful run does not reproduce or repair #276. Keep the issue
+  open until the failing boundary and correction have formal evidence.
