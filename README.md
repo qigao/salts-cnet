@@ -33,11 +33,10 @@ CNet retains connection/protocol policy and adapts its existing public values;
 it contains no first-party native socket I/O implementation. The c-ares provider
 continues to own DNS protocol execution on the same progress owner.
 
-This boundary requires the new SaltsBase 0.1.1 SDK. Version 0.1.0 lacks these
-headers/symbols and fails the package version check. Until 0.1.1 is published,
-local validation uses the installed producer candidate in a separate prefix;
-CI continues to consume immutable published releases and must wait for that
-release. Do not replace 0.1.0 assets or build a second NativeIO inside CNet.
+This boundary requires the released [SaltsBase 0.1.1 SDK](https://github.com/qigao/salts-base/releases/tag/v0.1.1).
+Version 0.1.0 lacks these headers/symbols and fails the package version check.
+CI consumes immutable published SDKs; local builds can extract the same archives
+into separate installation prefixes.
 
 Crypto links the required vcpkg `GmSSL::GmSSL` provider (`3.2.0#44`), including
 the reviewed extensions pinned by `crypto/gmssl-extensions/source-lock.json`.
@@ -117,17 +116,17 @@ installation steps. This reduces duplicate source requests without adding
 workflow/job retries or alternate-source recovery. The released downloader's
 existing bounded transfer policy remains in effect; terminal failures stop preparation.
 
-Release 0.1.0 provides Windows x64 MSVC/LLVM-MinGW, Linux x64 Clang/GCC,
-macOS ARM64, and Android arm64/x64 SDKs. It includes the public accept header
-and the retained startup repairs. Its Core headers use `<core/...>`, ASN1 uses
+Release 0.1.1 provides Windows x64 MSVC/LLVM-MinGW, Linux x64 and ARM64
+Clang/GCC, macOS ARM64, and Android arm64/x64 SDKs. It includes the public
+NativeIO socket/transport/accept headers and the retained startup repairs. Its Core headers use `<core/...>`, ASN1 uses
 `<asn1.h>` and `<asn1_value.h>`, and coroutine headers use `<salts/coro_*.h>`.
 Consumers use these public headers directly without draft-layout aliases.
 
-CI matches those seven published platform/compiler SDKs explicitly in its
-matrix: Windows x64 MSVC and LLVM-MinGW, Linux x64 GCC and Clang, macOS ARM64
+Core CI explicitly selects seven of those published platform/compiler SDKs: Windows x64 MSVC and LLVM-MinGW, Linux x64 GCC and Clang, macOS ARM64
 Clang, and Android arm64/x64 NDK. Each lane selects its exact manifest entry;
-no architecture or compiler substitution is performed. Windows ARM64, Linux
-ARM64 and macOS x64 require new producer SDKs before joining this matrix.
+no architecture or compiler substitution is performed. The two Linux ARM64 SDKs
+passed producer CI; consumer ARM64 qualification is not yet in this matrix.
+Windows ARM64 and macOS x64 still require producer SDKs.
 The existing ASan/UBSan and TSan lanes additionally use the Linux x64 Clang
 foundation and instrument this network graph; that does not qualify the
 prebuilt foundation itself under sanitizers. There are nine qualification
