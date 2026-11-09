@@ -88,10 +88,22 @@ it without target filtering, and runs the formal tests through CTest. Android
 is build-only unless an explicit device runner is provided.
 
 CI resolves the latest stable [SaltsBase release](https://github.com/qigao/salts-base/releases/latest).
-It checks the release API's manifest digest, selects the exact platform/compiler
-entry, checks the archive SHA-256 and extracts the SDK with Python's safe data
-filter. The manifest records source and producer-CI provenance. It does not
-require a build of moving master or consume expiring workflow artifacts.
+The independent `prepare` job resolves it once, checks the release API's
+manifest digest, and downloads the required SDKs from the canonical public
+release asset URLs. The matrix lives in `.github/ci/sdk-matrix.json` and is
+also the download plan: shared SDKs and dependency triplets are downloaded
+once through the vcpkg-cache helper and addressed by SHA-256. The compiler
+archive and exact infrastructure snapshot join the same prepared inputs.
+
+An Actions artifact distributes these original archives to all nine jobs.
+Qualification verifies the SaltsBase archive size/hash and safely extracts it;
+dependency/compiler restores use `QIGAO_PREPARED_INPUTS` for offline restoration.
+A missing or corrupt prepared blob fails rather than downloading another copy.
+The source release manifest retains producer-CI and commit provenance. This
+workflow-local distribution artifact carries released SDKs, not a build of
+moving SaltsBase master. Host tools and test-oracle setup keep their existing
+installation steps. This reduces duplicate source requests without retries or
+alternate sources; external service failures still stop preparation.
 
 Release 0.1.0 provides Windows x64 MSVC/LLVM-MinGW, Linux x64 Clang/GCC,
 macOS ARM64, and Android arm64/x64 SDKs. It includes the public accept header

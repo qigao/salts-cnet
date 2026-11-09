@@ -26,7 +26,57 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  prepare:
+    name: Download shared SDK inputs once
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    outputs:
+      matrix: ${{ steps.release.outputs.matrix }}
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Check out released dependency infrastructure
+        uses: actions/checkout@v4
+        with:
+          repository: qigao/vcpkg-cache
+          ref: v0.1.2
+          path: build/ci-infrastructure/vcpkg-cache
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Resolve one release and the qualification matrix
+        id: release
+        env:
+          GH_TOKEN: ${{ secrets.VCPKG_CACHE_READ_TOKEN || github.token }}
+        run: .github/ci/prepare-sdk-inputs.ps1 -Resolve
+      - name: Reuse verified native download blobs
+        uses: actions/cache@v4
+        with:
+          path: build/ci-inputs/blobs
+          key: sdk-inputs-v1-${{ steps.release.outputs.manifest_sha256 }}-${{ hashFiles('.github/ci/sdk-matrix.json', 'cmake/dependencies/*.lock.json', 'build/ci-infrastructure/vcpkg-cache/compiler-contracts/release-obfuscation.json') }}
+      - name: Download the locked SDK and compiler inputs
+        run: .github/ci/prepare-sdk-inputs.ps1
+      - name: Archive the same infrastructure sources for every runner
+        run: |
+          $archive = [IO.Path]::GetFullPath('build/ci-inputs/infrastructure.tar')
+          & git -C build/ci-infrastructure/vcpkg-cache archive --format=tar HEAD --output $archive
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Distribute prepared inputs
+        uses: actions/upload-artifact@v4
+        with:
+          name: shared-sdk-inputs-${{ github.run_id }}-${{ github.run_attempt }}
+          path: build/ci-inputs/
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 14
+
   qualify:
+    needs: prepare
     name: ${{ matrix.compiler }} / ${{ matrix.rid }} / ${{ matrix.preset }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 120
@@ -36,77 +86,55 @@ jobs:
       CCACHE_COMPILERCHECK: content
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          # Seven published SaltsBase SDKs, plus network-only sanitizer profiles.
-          - {rid: linux-x64, runner: ubuntu-24.04, compiler: clang, sdk: linux-clang-x64, target: x64, triplet: x64-linux, preset: llvm-native-release-user, android_abi: "", package: true}
-          - {rid: linux-gcc-x64, runner: ubuntu-24.04, compiler: gcc, sdk: linux-gcc-x64, target: x64, triplet: x64-linux, preset: gcc-release-user, android_abi: "", package: false}
-          - {rid: macos-arm64, runner: macos-15, compiler: clang, sdk: macos-clang-arm64, target: arm64, triplet: arm64-osx, preset: llvm-native-release-user, android_abi: "", package: true}
-          - {rid: windows-x64, runner: windows-2025, compiler: llvm-mingw, sdk: windows-llvm-mingw-x64, target: x64, triplet: qigao-x64-windows-llvm-mingw, preset: native-release-user, android_abi: "", package: true}
-          - {rid: windows-msvc-x64, runner: windows-2025, compiler: msvc, sdk: windows-msvc-x64, target: x64, triplet: x64-windows, preset: msvc-release-user, android_abi: "", package: false}
-          - {rid: android-x64, runner: ubuntu-24.04, compiler: ndk, sdk: android-x64, target: x64, triplet: x64-android, preset: android-release-user, android_abi: x86_64, package: true}
-          - {rid: android-arm64, runner: ubuntu-24.04, compiler: ndk, sdk: android-arm64, target: arm64, triplet: arm64-android, preset: android-release-user, android_abi: arm64-v8a, package: true}
-          - {rid: linux-x64-asan-ubsan, runner: ubuntu-24.04, compiler: clang, sdk: linux-clang-x64, target: x64, triplet: x64-linux, preset: llvm-native-asan-ubsan-user, android_abi: "", package: false}
-          - {rid: linux-x64-tsan, runner: ubuntu-24.04, compiler: clang, sdk: linux-clang-x64, target: x64, triplet: x64-linux, preset: llvm-native-tsan-user, android_abi: "", package: false}
+      matrix: ${{ fromJSON(needs.prepare.outputs.matrix) }}
     steps:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
 
-      - name: Check out released dependency infrastructure
-        uses: actions/checkout@v4
+      - name: Receive prepared SDK inputs
+        uses: actions/download-artifact@v4
         with:
-          repository: qigao/vcpkg-cache
-          ref: v0.1.2
-          path: build/ci-infrastructure/vcpkg-cache
-          persist-credentials: false
+          name: shared-sdk-inputs-${{ github.run_id }}-${{ github.run_attempt }}
+          path: build/ci-inputs
+
+      - name: Restore the released infrastructure snapshot
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Path build/ci-infrastructure/vcpkg-cache -Force | Out-Null
+          $archive = [IO.Path]::GetFullPath('build/ci-inputs/infrastructure.tar')
+          Push-Location build/ci-infrastructure/vcpkg-cache
+          try {
+            & cmake -E tar xf $archive
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          } finally { Pop-Location }
 
       - uses: actions/setup-python@v5
         id: test-python
         with:
           python-version: '3.12'
 
-      - name: Restore the latest released SaltsBase SDK
+      - name: Restore the prepared SaltsBase SDK
         shell: pwsh
         env:
-          GH_TOKEN: ${{ secrets.VCPKG_CACHE_READ_TOKEN || github.token }}
           RID: ${{ matrix.rid }}
           SDK_PLATFORM: ${{ matrix.sdk }}
         run: |
           $ErrorActionPreference = 'Stop'
-          $reply = & gh api repos/qigao/salts-base/releases/latest
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          $release = $reply | ConvertFrom-Json
-          $stableTag = $release.tag_name -match '^v(\d+\.\d+\.\d+)$'
-          if ($release.draft -or $release.prerelease -or -not $stableTag) {
-            throw 'A stable SaltsBase semantic-version release is required'
-          }
-          $version = $Matches[1]
-          $manifestName = "salts-base-$version-manifest.json"
-          $manifestAsset = @($release.assets | Where-Object name -eq $manifestName)
-          if ($manifestAsset.Count -ne 1) { throw "Release $($release.tag_name) must provide one $manifestName" }
-          $download = Join-Path $env:RUNNER_TEMP "salts-base-download-$env:RID"
-          & gh release download $release.tag_name --repo qigao/salts-base --pattern $manifestName --dir $download
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          $manifestFile = Join-Path $download $manifestName
-          $manifestHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $manifestFile).Hash.ToLowerInvariant()
-          if ("sha256:$manifestHash" -cne $manifestAsset[0].digest) { throw 'SaltsBase release manifest digest mismatch' }
-          $manifest = Get-Content -LiteralPath $manifestFile -Raw | ConvertFrom-Json
-          if ($manifest.schemaVersion -ne 1 -or $manifest.name -cne 'SaltsBase' -or
-              $manifest.repository -cne 'https://github.com/qigao/salts-base' -or
-              $manifest.version -cne $version -or $manifest.tag -cne $release.tag_name -or
-              $manifest.ci.conclusion -cne 'success') { throw 'Invalid or unqualified SaltsBase release manifest' }
+          $release = Get-Content build/ci-inputs/salts-base-release.json -Raw | ConvertFrom-Json
+          $manifestFile = 'build/ci-inputs/salts-base-manifest.json'
+          $digest = (Get-FileHash -Algorithm SHA256 -LiteralPath $manifestFile).Hash.ToLowerInvariant()
+          if ("sha256:$digest" -cne $release.manifest.digest) { throw 'Prepared SaltsBase manifest digest mismatch' }
+          $manifest = Get-Content $manifestFile -Raw | ConvertFrom-Json
           $profile = $env:SDK_PLATFORM
           $sdk = @($manifest.sdks | Where-Object platform -eq $profile)
-          if ($sdk.Count -ne 1) { throw "SaltsBase $version has no SDK for $profile; this platform remains unqualified" }
+          if ($sdk.Count -ne 1) { throw "Prepared SaltsBase release has no SDK for $profile" }
           $sdk = $sdk[0]
-          if ($sdk.file -cne "salts-base-$version-$profile.tar") { throw 'Unexpected SaltsBase archive name' }
-          & gh release download $release.tag_name --repo qigao/salts-base --pattern $sdk.file --dir $download
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          $archive = Join-Path $download $sdk.file
+          $archive = "build/ci-inputs/blobs/$($sdk.sha256)"
           if ((Get-Item -LiteralPath $archive).Length -ne $sdk.sizeBytes -or
               (Get-FileHash -Algorithm SHA256 -LiteralPath $archive).Hash.ToLowerInvariant() -cne $sdk.sha256) {
-            throw 'SaltsBase SDK archive size or SHA-256 mismatch'
+            throw 'Prepared SaltsBase SDK archive size or SHA-256 mismatch'
           }
           $sdkRoot = Join-Path $env:RUNNER_TEMP "salts-base-sdk-$env:RID"
           New-Item -ItemType Directory -Path $sdkRoot | Out-Null
@@ -118,11 +146,13 @@ jobs:
           $extract | python - $archive $sdkRoot
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           "SALTS_BASE_ROOT=$($sdkRoot.Replace('\', '/'))" >> $env:GITHUB_ENV
-          "SaltsBase release: $version; source: $($manifest.commit); producer CI: $($manifest.ci.runId); SDK: $profile; SHA-256: $($sdk.sha256)" >> $env:GITHUB_STEP_SUMMARY
+          "SaltsBase $($manifest.version); source $($manifest.commit); SDK $profile; SHA-256 $($sdk.sha256)" >> $env:GITHUB_STEP_SUMMARY
 
       - name: Restore the preinstalled vcpkg-cache SDK
         id: dependencies
         shell: pwsh
+        env:
+          QIGAO_PREPARED_INPUTS: ${{ github.workspace }}/build/ci-inputs
         run: |
           & python build/ci-infrastructure/vcpkg-cache/scripts/restore-native-dependency.py `
             locked "cmake/dependencies/${{ matrix.triplet }}.lock.json" `
@@ -137,24 +167,21 @@ jobs:
         run: |
           "VCPKG_INSTALLED_DIR=$env:SDK_ROOT" >> $env:GITHUB_ENV
 
-      - name: Restore locked Windows LLVM-MinGW compiler
+      - name: Restore prepared Windows LLVM-MinGW compiler
         id: windows-llvm
         if: matrix.compiler == 'llvm-mingw'
         shell: pwsh
+        env:
+          QIGAO_PREPARED_INPUTS: ${{ github.workspace }}/build/ci-inputs
         run: |
           $ErrorActionPreference = 'Stop'
-          $contract = Get-Content build/ci-infrastructure/vcpkg-cache/compiler-contracts/release-obfuscation.json -Raw | ConvertFrom-Json
-          $compiler = $contract.sources.'llvm-mingw'
-          $hostId = "windows-$('${{ runner.arch }}'.ToLowerInvariant())"
-          $asset = @($compiler.assets | Where-Object host -eq $hostId)
-          if ($asset.Count -ne 1) { throw "No locked LLVM-MinGW compiler for $hostId" }
-          $asset = $asset[0]
-          $target = if ('${{ matrix.target }}' -eq 'arm64') { 'aarch64-w64-mingw32' } else { 'x86_64-w64-mingw32' }
-          $url = "https://github.com/$($compiler.repository)/releases/download/$($compiler.release_tag)/$($asset.name)"
+          $lockFile = 'build/ci-inputs/locks/windows-compiler.lock.json'
+          $lock = Get-Content $lockFile -Raw | ConvertFrom-Json
+          $payload = [IO.Path]::GetFileNameWithoutExtension(([Uri]$lock.source.url).AbsolutePath)
           & python build/ci-infrastructure/vcpkg-cache/scripts/restore-native-dependency.py `
-            url $url --sha256 $asset.sha256 --destination build/ci-llvm-mingw `
-            --payload ([IO.Path]::GetFileNameWithoutExtension($asset.name)) `
-            --executable "bin/$target-clang.exe" --executable "bin/$target-clang++.exe" --github-output
+            locked $lockFile --destination build/ci-llvm-mingw --payload $payload `
+            --executable bin/x86_64-w64-mingw32-clang.exe `
+            --executable bin/x86_64-w64-mingw32-clang++.exe --github-output
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Select Windows compiler SDK
@@ -402,12 +429,13 @@ jobs:
   result:
     name: CI result
     if: ${{ always() }}
-    needs: [qualify, package]
+    needs: [prepare, qualify, package]
     runs-on: ubuntu-24.04
     steps:
       - name: Require every SDK qualification job
         shell: bash
         run: |
+          test '${{ needs.prepare.result }}' = success
           test '${{ needs.qualify.result }}' = success
           if [[ '${{ github.ref }}' == refs/tags/v0.1.002 ]]; then
             test '${{ needs.package.result }}' = success

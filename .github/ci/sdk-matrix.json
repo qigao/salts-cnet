@@ -1,0 +1,103 @@
+{
+  "include": [
+    {
+      "rid": "linux-x64",
+      "runner": "ubuntu-24.04",
+      "compiler": "clang",
+      "sdk": "linux-clang-x64",
+      "target": "x64",
+      "triplet": "x64-linux",
+      "preset": "llvm-native-release-user",
+      "android_abi": "",
+      "package": true
+    },
+    {
+      "rid": "linux-gcc-x64",
+      "runner": "ubuntu-24.04",
+      "compiler": "gcc",
+      "sdk": "linux-gcc-x64",
+      "target": "x64",
+      "triplet": "x64-linux",
+      "preset": "gcc-release-user",
+      "android_abi": "",
+      "package": false
+    },
+    {
+      "rid": "macos-arm64",
+      "runner": "macos-15",
+      "compiler": "clang",
+      "sdk": "macos-clang-arm64",
+      "target": "arm64",
+      "triplet": "arm64-osx",
+      "preset": "llvm-native-release-user",
+      "android_abi": "",
+      "package": true
+    },
+    {
+      "rid": "windows-x64",
+      "runner": "windows-2025",
+      "compiler": "llvm-mingw",
+      "sdk": "windows-llvm-mingw-x64",
+      "target": "x64",
+      "triplet": "qigao-x64-windows-llvm-mingw",
+      "preset": "native-release-user",
+      "android_abi": "",
+      "package": true
+    },
+    {
+      "rid": "windows-msvc-x64",
+      "runner": "windows-2025",
+      "compiler": "msvc",
+      "sdk": "windows-msvc-x64",
+      "target": "x64",
+      "triplet": "x64-windows",
+      "preset": "msvc-release-user",
+      "android_abi": "",
+      "package": false
+    },
+    {
+      "rid": "android-x64",
+      "runner": "ubuntu-24.04",
+      "compiler": "ndk",
+      "sdk": "android-x64",
+      "target": "x64",
+      "triplet": "x64-android",
+      "preset": "android-release-user",
+      "android_abi": "x86_64",
+      "package": true
+    },
+    {
+      "rid": "android-arm64",
+      "runner": "ubuntu-24.04",
+      "compiler": "ndk",
+      "sdk": "android-arm64",
+      "target": "arm64",
+      "triplet": "arm64-android",
+      "preset": "android-release-user",
+      "android_abi": "arm64-v8a",
+      "package": true
+    },
+    {
+      "rid": "linux-x64-asan-ubsan",
+      "runner": "ubuntu-24.04",
+      "compiler": "clang",
+      "sdk": "linux-clang-x64",
+      "target": "x64",
+      "triplet": "x64-linux",
+      "preset": "llvm-native-asan-ubsan-user",
+      "android_abi": "",
+      "package": false
+    },
+    {
+      "rid": "linux-x64-tsan",
+      "runner": "ubuntu-24.04",
+      "compiler": "clang",
+      "sdk": "linux-clang-x64",
+      "target": "x64",
+      "triplet": "x64-linux",
+      "preset": "llvm-native-tsan-user",
+      "android_abi": "",
+      "package": false
+    }
+  ]
+}
