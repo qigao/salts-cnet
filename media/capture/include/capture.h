@@ -167,6 +167,70 @@ typedef void (*salts_video_capture_cb)(salts_capture_t *capture,
                                         int width, int height,
                                         uint64_t timestamp, void *user_data);
 
+/* Additive CPU camera-frame interface (#197); existing enums/layouts above
+ * remain unchanged. UNKNOWN means the native producer has no qualified value. */
+typedef enum {
+    SALTS_VIDEO_FRAME_I420 = 0, SALTS_VIDEO_FRAME_NV12,
+    SALTS_VIDEO_FRAME_RGB24, SALTS_VIDEO_FRAME_BGRA,
+    SALTS_VIDEO_FRAME_MJPEG, SALTS_VIDEO_FRAME_BGR24,
+    SALTS_VIDEO_FRAME_YV12 /* Planes: Y, V, U. */
+} salts_video_frame_format_t;
+typedef enum {
+    SALTS_VIDEO_FRAME_CLOCK_UNKNOWN = 0,
+    SALTS_VIDEO_FRAME_CLOCK_MONOTONIC,
+    SALTS_VIDEO_FRAME_CLOCK_UNIX,
+    SALTS_VIDEO_FRAME_CLOCK_ANDROID_SENSOR,
+    SALTS_VIDEO_FRAME_CLOCK_MF_PRESENTATION
+} salts_video_frame_clock_t;
+typedef enum {
+    SALTS_VIDEO_FRAME_MATRIX_UNKNOWN = 0, SALTS_VIDEO_FRAME_MATRIX_RGB,
+    SALTS_VIDEO_FRAME_MATRIX_BT601, SALTS_VIDEO_FRAME_MATRIX_BT709,
+    SALTS_VIDEO_FRAME_MATRIX_BT2020
+} salts_video_frame_matrix_t;
+typedef enum {
+    SALTS_VIDEO_FRAME_RANGE_UNKNOWN = 0,
+    SALTS_VIDEO_FRAME_RANGE_FULL, SALTS_VIDEO_FRAME_RANGE_LIMITED
+} salts_video_frame_range_t;
+typedef struct {
+    const uint8_t *data;
+    size_t size;          /* Accessible span, including any row padding. */
+    size_t row_stride;    /* Positive storage-row pitch; bottom_up describes order. */
+    size_t pixel_stride;  /* MJPEG: 0 (one complete compressed image). */
+} salts_video_frame_plane_t;
+typedef struct {
+    size_t struct_size;
+    uint32_t version;     /* 2. */
+    salts_video_frame_format_t format;
+    int width, height;
+    uint32_t plane_count;
+    salts_video_frame_plane_t planes[4];
+    uint64_t timestamp;
+    uint32_t timebase_numerator, timebase_denominator; /* 1/1000000 seconds. */
+    salts_video_frame_clock_t clock;
+    salts_video_frame_matrix_t color_matrix;
+    salts_video_frame_range_t color_range;
+    int rotation_degrees; /* -1 unknown, otherwise 0/90/180/270. */
+    int mirrored;         /* -1 unknown, 0 no, 1 yes. */
+    int bottom_up;        /* Rows in storage run bottom to top, independent of rotation. */
+} salts_video_frame_v2_t;
+typedef void (*salts_video_capture_cb_v2)(salts_capture_t *,
+    const salts_video_frame_v2_t *, void *user_data);
+
+/* Register the sole CPU-camera frame consumer while STOPPED; NULL clears it
+ * and restores the previously configured legacy callback/user data. Only VIDEO
+ * captures are supported. Returns OK, ERR_FORMAT for invalid owner arguments,
+ * ERR_BUSY unless stopped, or ERR_UNSUPPORTED for an unsupported native layout.
+ * Registration/context belong to the existing producer until stop/drain and
+ * destroy. Single lifecycle owner; no concurrent start/stop/reconfiguration.
+ * Descriptor/planes are immutable borrows valid only during the callback;
+ * copy before retaining/dispatching. Do not destroy/reconfigure the producer
+ * from this callback. Unknown metadata must not be inferred by consumers.
+ * Example: check salts_video_capture_set_callback_v2(capture, on_frame, user)
+ * == SALTS_CAPTURE_OK before salts_capture_start(capture).
+ */
+SALTS_CAPTURE_API int salts_video_capture_set_callback_v2(salts_capture_t *,
+    salts_video_capture_cb_v2, void *user_data);
+
 /**
  * Called when capture state changes
  */

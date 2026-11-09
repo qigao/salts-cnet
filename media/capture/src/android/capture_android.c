@@ -6,6 +6,7 @@
  */
 
 #include "capture_video_backend.h"
+#include "capture_video_frame.h"
 #include "capture.h"
 #include "capture_android.h"
 
@@ -79,7 +80,13 @@ typedef struct {
 
 typedef struct {
     android_camera_ctx_t *native;
+    salts_video_frame_sink frame_sink;
 } android_video_platform_t;
+
+salts_video_frame_sink *salts_video_platform_frame_sink(salts_capture_t *capture) {
+    if (!capture || capture->type != SALTS_CAPTURE_TYPE_VIDEO || !capture->platform_ctx) return NULL;
+    return &((android_video_platform_t *)capture->platform_ctx)->frame_sink;
+}
 
 typedef struct {
     char camera_id[128];
@@ -113,9 +120,11 @@ static void android_video_callback(void *user_data,
                                    int height,
                                    int64_t timestamp_us) {
     salts_capture_t *capture = (salts_capture_t *)user_data;
-    if (!capture || !capture->video_cb) return;
-    capture->video_cb(capture, data, len, width, height,
-                      (uint64_t)timestamp_us, capture->user_data);
+    if (!salts_video_frame_has_callback(capture)) return;
+    salts_video_frame_deliver(capture, data, len, width, height,
+        SALTS_VIDEO_FRAME_I420, (size_t)width, 0, (uint64_t)timestamp_us,
+        SALTS_VIDEO_FRAME_CLOCK_ANDROID_SENSOR, SALTS_VIDEO_FRAME_MATRIX_UNKNOWN,
+        SALTS_VIDEO_FRAME_RANGE_UNKNOWN);
 }
 
 int salts_capture_list_audio_devices(salts_capture_device_t *devices, int max_count) {

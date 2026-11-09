@@ -8,6 +8,14 @@ function(salts_capture_original_test target source)
   set_tests_properties(${target} PROPERTIES TIMEOUT 60)
 endfunction()
 
+salts_capture_original_test(capture_video_frame_test test_video_frame.c)
+add_executable(capture_video_frame_cpp_test test_video_frame_cpp.cpp)
+target_compile_features(capture_video_frame_cpp_test PRIVATE cxx_std_17)
+target_link_libraries(capture_video_frame_cpp_test PRIVATE Salts::Media Salts::TinyTest)
+set_target_properties(capture_video_frame_cpp_test PROPERTIES FOLDER "media/capture/tests")
+add_test(NAME capture_video_frame_cpp_test COMMAND capture_video_frame_cpp_test)
+set_tests_properties(capture_video_frame_cpp_test PROPERTIES TIMEOUT 60)
+
 if(WIN32)
   # Original fake-COM control test compiles the exact Windows backend body.
   # This is an isolated regression, not a replacement production provider.

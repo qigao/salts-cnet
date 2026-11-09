@@ -5,6 +5,7 @@
  */
 #import "capture.h"
 #import "capture_video_backend.h"
+#include "capture_video_frame.h"
 
 #if defined(__APPLE__) && defined(__MACH__)
 
@@ -13,6 +14,7 @@
 #import <mach/mach_time.h>
 #import <stdlib.h>
 #import <string.h>
+#include <limits.h>
 
 /* =============================================================================
  * Helper
@@ -47,7 +49,7 @@ static uint64_t get_timestamp_us(void) {
     (void)output;
     (void)connection;
 
-    if (!self.capture || !self.capture->video_cb) return;
+    if (!salts_video_frame_has_callback(self.capture)) return;
 
     CVImageBufferRef imageBuffer = CMSampleBufferGetImageBuffer(sampleBuffer);
     if (!imageBuffer) return;
@@ -58,6 +60,14 @@ static uint64_t get_timestamp_us(void) {
     size_t height = CVPixelBufferGetHeight(imageBuffer);
     size_t bytesPerRow = CVPixelBufferGetBytesPerRow(imageBuffer);
     void *baseAddress = CVPixelBufferGetBaseAddress(imageBuffer);
+
+    if (!baseAddress || !width || !height || width > INT_MAX || height > INT_MAX ||
+        width > SIZE_MAX / 4u || width * 4u > SIZE_MAX / height || bytesPerRow < width * 4u) {
+        self.capture->state = SALTS_CAPTURE_STATE_ERROR;
+        if (self.capture->state_cb) self.capture->state_cb(self.capture, self.capture->state, self.capture->user_data);
+        CVPixelBufferUnlockBaseAddress(imageBuffer, kCVPixelBufferLock_ReadOnly);
+        return;
+    }
 
     self.width = (int)width;
     self.height = (int)height;
@@ -72,7 +82,14 @@ static uint64_t get_timestamp_us(void) {
     } else {
         /* Need to copy with stride handling */
         if (self.convertBufferSize < frameSize) {
-            self.convertBuffer = realloc(self.convertBuffer, frameSize);
+            uint8_t *replacement = realloc(self.convertBuffer, frameSize);
+            if (!replacement) {
+                self.capture->state = SALTS_CAPTURE_STATE_ERROR;
+                if (self.capture->state_cb) self.capture->state_cb(self.capture, self.capture->state, self.capture->user_data);
+                CVPixelBufferUnlockBaseAddress(imageBuffer, kCVPixelBufferLock_ReadOnly);
+                return;
+            }
+            self.convertBuffer = replacement;
             self.convertBufferSize = frameSize;
         }
         uint8_t *src = (uint8_t *)baseAddress;
@@ -87,9 +104,10 @@ static uint64_t get_timestamp_us(void) {
 
     uint64_t timestamp = get_timestamp_us();
 
-    self.capture->video_cb(self.capture, frameData, frameSize,
-                           (int)width, (int)height,
-                           timestamp, self.capture->user_data);
+    salts_video_frame_deliver(self.capture, frameData, frameSize,
+        (int)width, (int)height, SALTS_VIDEO_FRAME_BGRA, expectedBytesPerRow,
+        0, timestamp, SALTS_VIDEO_FRAME_CLOCK_MONOTONIC,
+        SALTS_VIDEO_FRAME_MATRIX_RGB, SALTS_VIDEO_FRAME_RANGE_FULL);
 
     CVPixelBufferUnlockBaseAddress(imageBuffer, kCVPixelBufferLock_ReadOnly);
 }
@@ -116,7 +134,13 @@ typedef struct {
     int width;
     int height;
     int framerate;
+    salts_video_frame_sink frame_sink;
 } avf_video_ctx_t;
+
+salts_video_frame_sink *salts_video_platform_frame_sink(salts_capture_t *capture) {
+    if (!capture || capture->type != SALTS_CAPTURE_TYPE_VIDEO || !capture->platform_ctx) return NULL;
+    return &((avf_video_ctx_t *)capture->platform_ctx)->frame_sink;
+}
 
 typedef struct {
     char device_id[128];

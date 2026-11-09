@@ -2018,6 +2018,31 @@
   The affected CNet DTLS CTest passed in 7.26s; rebuilding the parent branch
   graph before final validation is recorded in TEMP/salts-219-dtls-admission-parent.log.
 
+### Additive CPU camera Frame V2, issue #197 (2026-11-09)
+
+- The user requested fixing the triaged issues and explicitly pushing #197.
+  Native owner remains Salts::Media; original salts_capture_t layout, enum and
+  legacy callback symbols remain unchanged. One stopped-only optional callback
+  registration belongs to each native camera context; no global map/queue,
+  worker or retained external bytes. The common descriptor validates odd chroma,
+  row padding, plane spans and overflow before publishing a synchronous borrow.
+- Windows reports actual BGR/YV12 layout and presentation clock; Linux keeps
+  driver row pitch; Android labels the sensor clock, macOS host monotonic and
+  iOS its existing Unix timestamp. Unknown orientation/color stays unknown.
+  Existing per-backend copies are not a claimed GPU or zero-copy capability.
+  Unsupported Windows native conversion layouts fail V2 registration; legacy
+  registration/user data remain available when V2 is cleared.
+- Formal module-owned tests cover odd/padded/compressed/reversed layouts,
+  short/overflow rejection without output publication, C++ C ABI linking and
+  actual Windows backend dispatch, registration, legacy restoration and errors.
+  Source review/diff checks completed; build/runtime results are pending CI.
+  The user stopped local device validation after identifying a USB camera and
+  Wi-Fi Android: no local hardware/device/permission/GPU qualification claimed.
+- User's target integration branch is chore-housing-keeping in salts-core;
+  base modules now also live in C:/projects/cpp/turbonet/salts-base. Preserve
+  the existing dirty housekeeping tree and transfer this module-owned patch to
+  the new owner during integration; do not restore deleted base modules there.
+
 ### Issue #219 standalone SM2 SHA256/AES256 key containers (2026-11-09)
 
 - After the closure review, the user selected implementation and validation of

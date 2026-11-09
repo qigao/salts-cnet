@@ -32,6 +32,7 @@
 #endif /* _WIN32 */
 #include "capture.h"
 #include "capture_video_backend.h"
+#include "capture_video_frame.h"
 
 #ifdef _WIN32
 
@@ -122,6 +123,9 @@ typedef struct {
     int format;         /* salts_video_capture_format_t */
     int source_format;          /* Turbo format of the native media type */
     mf_native_format_t native_source; /* Actual reader output subtype */
+    LONG source_stride;
+    int source_yv12;
+    salts_video_frame_sink frame_sink;
     salts_video_native_mode_t native_mode;
     unsigned int read_error_logs;
 
@@ -139,6 +143,26 @@ typedef struct {
     size_t control_buf_size;
     int com_initialized;
 } mf_video_capture_ctx_t;
+
+salts_video_frame_sink *salts_video_platform_frame_sink(salts_capture_t *capture) {
+    if (!capture || capture->type != SALTS_CAPTURE_TYPE_VIDEO || !capture->platform_ctx) return NULL;
+    return &((mf_video_capture_ctx_t *)capture->platform_ctx)->frame_sink;
+}
+
+static int mf_frame_deliver(salts_capture_t *capture, mf_video_capture_ctx_t *ctx,
+    const uint8_t *data, size_t size, uint64_t timestamp) {
+    salts_video_frame_format_t format = (salts_video_frame_format_t)ctx->format;
+    const int converted = data == ctx->convert_buf || data == ctx->control_buf;
+    LONG stride = converted ? 0 : ctx->source_stride;
+    if (format == SALTS_VIDEO_FRAME_RGB24) format = SALTS_VIDEO_FRAME_BGR24;
+    if (format == SALTS_VIDEO_FRAME_I420 && ctx->source_yv12) format = SALTS_VIDEO_FRAME_YV12;
+    const size_t pitch = stride < 0 ? (size_t)(-(int64_t)stride) : (size_t)stride;
+    return salts_video_frame_deliver(capture, data, size, ctx->width, ctx->height,
+        format, pitch, stride < 0, timestamp, SALTS_VIDEO_FRAME_CLOCK_MF_PRESENTATION,
+        format == SALTS_VIDEO_FRAME_BGR24 || format == SALTS_VIDEO_FRAME_BGRA
+            ? SALTS_VIDEO_FRAME_MATRIX_RGB : SALTS_VIDEO_FRAME_MATRIX_UNKNOWN,
+        SALTS_VIDEO_FRAME_RANGE_UNKNOWN);
+}
 
 typedef struct {
     char device_id[128];
@@ -304,6 +328,20 @@ static HRESULT mf_configure_video_output(mf_video_capture_ctx_t *ctx) {
     if (FAILED(hr) || !current_type) return MF_E_INVALIDMEDIATYPE;
     memset(&subtype, 0, sizeof(subtype));
     hr = IMFMediaType_GetGUID(current_type, &MF_MT_SUBTYPE, &subtype);
+    if (SUCCEEDED(hr)) {
+        UINT32 stride = 0u;
+        LONG computed_stride = 0;
+        HRESULT layout = IMFMediaType_GetUINT32(current_type, &MF_MT_DEFAULT_STRIDE, &stride);
+        if (ctx->format == SALTS_VIDEO_CAPTURE_FORMAT_MJPEG) layout = S_OK;
+        else if (SUCCEEDED(layout)) computed_stride = (LONG)stride;
+        else if (layout == MF_E_ATTRIBUTENOTFOUND)
+            layout = MFGetStrideForBitmapInfoHeader(subtype.Data1, (DWORD)ctx->width, &computed_stride);
+        if (SUCCEEDED(layout)) ctx->source_stride = computed_stride;
+        ctx->source_yv12 = IsEqualGUID(&subtype, &MFVideoFormat_YV12);
+        ctx->frame_sink.unsupported = FAILED(layout) && ctx->format != SALTS_VIDEO_CAPTURE_FORMAT_MJPEG;
+        if (ctx->source_stride < 0 && ctx->format != SALTS_VIDEO_CAPTURE_FORMAT_RGB24 &&
+            ctx->format != SALTS_VIDEO_CAPTURE_FORMAT_BGRA) ctx->frame_sink.unsupported = 1;
+    }
     IMFMediaType_Release(current_type);
     if (FAILED(hr)) return MF_E_INVALIDMEDIATYPE;
 
@@ -320,6 +358,10 @@ static HRESULT mf_configure_video_output(mf_video_capture_ctx_t *ctx) {
         return MF_E_INVALIDMEDIATYPE;
     }
     ctx->native_source = native_format;
+    if ((ctx->width & 1 || ctx->height & 1) &&
+        (ctx->format == SALTS_VIDEO_CAPTURE_FORMAT_NV12 ||
+         (ctx->format == SALTS_VIDEO_CAPTURE_FORMAT_I420 && native_format != MF_NATIVE_I420)))
+        ctx->frame_sink.unsupported = 1;
     return S_OK;
 }
 
@@ -585,10 +627,8 @@ static int deliver_i420_frame(salts_capture_t *capture,
     if (data_len < frame_size) return -1;
 
     if (!get_effective_crop(ctx, &crop)) {
-        capture->video_cb(capture, data, frame_size,
-                          ctx->width, ctx->height,
-                          timestamp, capture->user_data);
-        return 0;
+        return mf_frame_deliver(capture, ctx, data,
+            ctx->frame_sink.callback ? data_len : frame_size, timestamp);
     }
 
     if (ensure_control_buffer(ctx, frame_size) != 0) return -1;
@@ -612,10 +652,7 @@ static int deliver_i420_frame(salts_capture_t *capture,
                        kFilterBox);
     if (result != 0) return -1;
 
-    capture->video_cb(capture, ctx->control_buf, frame_size,
-                      ctx->width, ctx->height,
-                      timestamp, capture->user_data);
-    return 0;
+    return mf_frame_deliver(capture, ctx, ctx->control_buf, frame_size, timestamp);
 }
 
 static int deliver_nv12_frame(salts_capture_t *capture,
@@ -635,10 +672,8 @@ static int deliver_nv12_frame(salts_capture_t *capture,
     if (data_len < frame_size) return -1;
 
     if (!get_effective_crop(ctx, &crop)) {
-        capture->video_cb(capture, data, frame_size,
-                          ctx->width, ctx->height,
-                          timestamp, capture->user_data);
-        return 0;
+        return mf_frame_deliver(capture, ctx, data,
+            ctx->frame_sink.callback ? data_len : frame_size, timestamp);
     }
 
     if (ensure_control_buffer(ctx, frame_size) != 0) return -1;
@@ -658,10 +693,7 @@ static int deliver_nv12_frame(salts_capture_t *capture,
                        kFilterBox);
     if (result != 0) return -1;
 
-    capture->video_cb(capture, ctx->control_buf, frame_size,
-                      ctx->width, ctx->height,
-                      timestamp, capture->user_data);
-    return 0;
+    return mf_frame_deliver(capture, ctx, ctx->control_buf, frame_size, timestamp);
 }
 
 static int deliver_video_frame(salts_capture_t *capture,
@@ -677,7 +709,7 @@ static int deliver_video_frame(salts_capture_t *capture,
     uint8_t *dst_v;
     int result;
 
-    if (!capture->video_cb) return 0;
+    if (!salts_video_frame_has_callback(capture)) return 0;
 
     if (ctx->format == SALTS_VIDEO_CAPTURE_FORMAT_NV12) {
         return deliver_nv12_frame(capture, ctx, data, data_len, timestamp);
@@ -685,17 +717,11 @@ static int deliver_video_frame(salts_capture_t *capture,
 
     if (ctx->format != SALTS_VIDEO_CAPTURE_FORMAT_I420) {
         /* MJPEG / RGB24 / BGRA passthrough */
-        capture->video_cb(capture, data, data_len,
-                          ctx->width, ctx->height,
-                          timestamp, capture->user_data);
-        return 0;
+        return mf_frame_deliver(capture, ctx, data, data_len, timestamp);
     }
 
     if (ctx->native_source == MF_NATIVE_I420) {
-        capture->video_cb(capture, data, data_len,
-                          ctx->width, ctx->height,
-                          timestamp, capture->user_data);
-        return 0;
+        return mf_frame_deliver(capture, ctx, data, data_len, timestamp);
     }
 
     y_size = (size_t)ctx->width * (size_t)ctx->height;
@@ -760,8 +786,9 @@ static void mf_video_report_read_error(salts_capture_t *capture,
     }
 
     InterlockedExchange(&ctx->running, 0);
+    const int first_error = capture->state != SALTS_CAPTURE_STATE_ERROR;
     capture->state = SALTS_CAPTURE_STATE_ERROR;
-    if (capture->state_cb) {
+    if (first_error && capture->state_cb) {
         capture->state_cb(capture, capture->state, capture->user_data);
     }
 }
@@ -841,8 +868,9 @@ static HRESULT STDMETHODCALLTYPE mf_reader_callback_on_read_sample(
 
             hr = IMFMediaBuffer_Lock(buffer, &data, NULL, &data_len);
             if (SUCCEEDED(hr)) {
-                deliver_video_frame(capture, ctx, data, data_len,
-                                    (uint64_t)timestamp / 10u);
+                if (deliver_video_frame(capture, ctx, data, data_len,
+                                    (uint64_t)timestamp / 10u) != 0)
+                    hr = MF_E_INVALIDMEDIATYPE;
                 IMFMediaBuffer_Unlock(buffer);
             }
             IMFMediaBuffer_Release(buffer);
