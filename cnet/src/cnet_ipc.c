@@ -262,7 +262,7 @@ int cnet_ipc_listener_advance(cnet_ipc_listener *listener, size_t max_events, si
       break;
     }
     accepted = (cnet_ipc_accepted){(uintptr_t)descriptor, CNET_IPC_RESOURCE_SOCKET};
-    status = cnet_ipc_socket_status(native_io_socket_close_on_exec(descriptor));
+    status = cnet_ipc_nonblocking(descriptor);
     if (status == SALTS_OK) status = cnet_ipc_queue_push(&impl->ready, &accepted);
     if (status != SALTS_OK) {
       (void)cnet_ipc_accepted_close(&accepted);

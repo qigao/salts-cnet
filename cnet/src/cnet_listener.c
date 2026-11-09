@@ -828,7 +828,11 @@ int cnet_listener_accept_detached(cnet_listener *listener,
     do {
       result = native_io_socket_accept(impl->socket_value, &accepted,
           &native_peer, sizeof(native_peer), &native_peer_size);
+#if defined(_WIN32)
+    } while (false);
+#else
     } while (result.status == SALTS_EINTR);
+#endif
     if (result.status != SALTS_OK) return result.status;
     status = cnet_listener_stream_peer(&native_peer, (size_t)native_peer_size,
                                        &peer);
@@ -843,6 +847,14 @@ int cnet_listener_accept_detached(cnet_listener *listener,
     cnet_transport_close_socket((uintptr_t)accepted);
     return status;
   }
+
+#if !defined(_WIN32)
+  status = native_io_socket_nonblocking(accepted).status;
+  if (status != SALTS_OK) {
+    cnet_transport_close_socket(accepted);
+    return status;
+  }
+#endif
 
   out_accepted->internal_socket = (uintptr_t)accepted;
   out_accepted->peer = peer;
@@ -912,6 +924,12 @@ int cnet_listener_accept_vsock_peer(cnet_listener *listener, cnet_client *client
   if (result.status != SALTS_OK) return result.status;
   int status = native_io_socket_decode_vsock(&peer, length, &out_peer->cid, &out_peer->port);
   if (status != SALTS_OK) { cnet_transport_close_socket(accepted); return status; }
+  status = native_io_socket_nonblocking(accepted).status;
+  if (status != SALTS_OK) {
+    cnet_transport_close_socket(accepted);
+    *out_peer = (cnet_vsock_peer){0};
+    return status;
+  }
   status = cnet_client_adopt_vsock(client, accepted, observer, out_connection);
   if (status != SALTS_OK) *out_peer = (cnet_vsock_peer){0};
   return status;
