@@ -19,9 +19,9 @@ suite("CPU video frame descriptors") {
         check_equal(build(&frame, data, 17u, 3, 3, SALTS_VIDEO_FRAME_I420, 0u, 0), SALTS_CAPTURE_OK);
         check_equal(frame.struct_size, sizeof(frame)); check_equal(frame.version, 2u);
         check_equal(frame.plane_count, 3u);
-        check_equal(frame.planes[0].data, data); check_equal(frame.planes[0].size, 9u);
-        check_equal(frame.planes[1].data, data + 9u); check_equal(frame.planes[1].size, 4u);
-        check_equal(frame.planes[2].data, data + 13u); check_equal(frame.planes[2].row_stride, 2u);
+        check(frame.planes[0].data == data); check_equal(frame.planes[0].size, 9u);
+        check(frame.planes[1].data == data + 9u); check_equal(frame.planes[1].size, 4u);
+        check(frame.planes[2].data == data + 13u); check_equal(frame.planes[2].row_stride, 2u);
         check_equal(frame.timestamp, 123456u); check_equal(frame.timebase_denominator, 1000000u);
         check_equal(frame.clock, SALTS_VIDEO_FRAME_CLOCK_MONOTONIC);
         check_equal(frame.rotation_degrees, -1); check_equal(frame.mirrored, -1);
@@ -33,7 +33,7 @@ suite("CPU video frame descriptors") {
         check_equal(build(&frame, data, 20u, 3, 3, SALTS_VIDEO_FRAME_YV12, 4u, 0), SALTS_CAPTURE_OK);
         check_equal(frame.format, SALTS_VIDEO_FRAME_YV12);
         check_equal(frame.planes[0].size, 11u);
-        check_equal(frame.planes[1].data, data + 12u); check_equal(frame.planes[2].data, data + 16u);
+        check(frame.planes[1].data == data + 12u); check(frame.planes[2].data == data + 16u);
     }
     it("preserves packed row padding and bottom-up order") {
         check_equal(build(&frame, data, 21u, 3, 2, SALTS_VIDEO_FRAME_BGR24, 12u, 1), SALTS_CAPTURE_OK);

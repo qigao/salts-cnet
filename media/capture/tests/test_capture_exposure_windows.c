@@ -15,7 +15,7 @@ static void legacy_frame(salts_capture_t *capture, const uint8_t *data, size_t s
 static void described_frame(salts_capture_t *capture, const salts_video_frame_v2_t *frame, void *user) {
     (void)capture;
     ++*(unsigned *)user;
-    check_equal(frame->planes[0].data, frame_expected_data);
+    check(frame->planes[0].data == frame_expected_data);
     check_equal(frame->planes[0].size, 16u);
     check_equal(frame->format, SALTS_VIDEO_FRAME_BGRA);
     check_equal(frame->clock, SALTS_VIDEO_FRAME_CLOCK_MF_PRESENTATION);
