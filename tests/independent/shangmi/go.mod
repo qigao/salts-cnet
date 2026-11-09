@@ -1,6 +1,6 @@
 module github.com/qigao/salts-core/tests/independent/shangmi
 
-go 1.26.0
+go 1.26.10
 
 require (
 	github.com/emmansun/gmsm v0.44.0

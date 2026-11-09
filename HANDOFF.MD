@@ -1958,3 +1958,38 @@
   saltscore.sctp_dtls_native passed in 10.13s. Log:
   TEMP/salts-219-source-audit.log. New ARM64 evidence is still needed to locate
   the first source mutation boundary; the runtime/provider cause is unproven.
+
+### Windows Go overlapped UDP source-length lifetime (2026-11-09)
+
+- CI #414/run 42559893793 on 47c7f48299df391bea9c15c616ee3330f512f108
+  fails the new after-read source audit, external/eight-peer/sustained_16,
+  client 3, message index 2. Before/after WriteSCTP checks pass; after ReadSCTP,
+  exactly four bytes at 14364 become little-endian 16 (10 00 00 00).
+  Replacing only those four bytes in the correct source reproduces both
+  CI #413's expected digest and CI #411's client-4 expected digest exactly.
+  Packet CRC/payload and native ingress checks pass; pure SCTP copy/loss passes.
+- CI reports go1.26.0 windows/arm64. Its actual cached upstream source
+  internal/poll/fd_windows.go ReadFromInet4 places rsan on the callback stack
+  and gives &rsan to WSARecvFrom, although completion occurs after the call.
+  Go #77975 confirms this regression and CL 753040 moves the address length
+  into the heap-owned pooled address; backport #78041/CL 753480 shipped in
+  Go 1.26.2. IPv4 sockaddr length is precisely the observed 16. This is a
+  concrete upstream lifetime defect in the exercised test-runtime path;
+  exact-head patched-runtime CI remains necessary to qualify the correction.
+  Sources: https://github.com/golang/go/issues/77975 and
+  https://github.com/golang/go/issues/78041 and https://go.dev/doc/devel/release.
+- Require Go 1.26.10 in the five peer modules previously requiring 1.26.0
+  (secure SCTP, CNet tickets, Crypto algorithms, ShangMi and standard TLS).
+  The existing CI version-file owner remains tests/independent/shangmi/go.mod.
+  Stay on the same 1.26 series with its
+  current maintenance fixes; no workflow override, alternate executable,
+  fallback, GODEBUG workaround, dependency graph or production C change.
+  Existing setup-go reads that version-file directly. Go's normal module
+  minimum rejects an older local-only runtime instead of using unsafe I/O.
+  All source/packet/final assertions and original timeouts remain intact.
+- Complete native-release-user Windows x64 Release graph passed. The existing
+  SCTP data/secure CTests passed (17.75s), and all ten CNet/ShangMi formal CTests
+  passed (55.47s), through the existing user test preset with readonly modules.
+  Go 1.26.10 source confirms heap-owned wsaRsa.name/namelen in ReadFromInet4.
+  Logs: TEMP/salts-219-go-udp-fix.log and
+  TEMP/salts-219-go-peer-regression.log. Windows ARM64 qualification pending.

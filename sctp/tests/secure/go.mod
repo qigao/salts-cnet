@@ -1,6 +1,6 @@
 module github.com/qigao/salts-core/sctp/tests/secure
 
-go 1.26.0
+go 1.26.10
 
 require (
 	github.com/pion/dtls/v3 v3.1.15

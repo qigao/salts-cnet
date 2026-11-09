@@ -23,6 +23,20 @@ missing tools fail configuration. CI enables these cases on Linux x64.
 The Go peer uses the pinned module graph with `-mod=readonly` and disables
 cgo. No installed-consumer project is required.
 
+The secure DTLS peer requires Go 1.26.10 or newer; the existing CI Go setup
+reads the same patch floor from `tests/independent/shangmi/go.mod`. Go
+1.26.0/1 has a Windows overlapped UDP receive lifetime regression
+([Go #77975](https://github.com/golang/go/issues/77975),
+[1.26 backport #78041](https://github.com/golang/go/issues/78041)): the
+kernel can write the four-byte source-address length through an obsolete
+stack pointer. The SCTP/DTLS test reproduced a source-slice overwrite with
+IPv4 address length 16 while the received echo remained correct. The fix
+first shipped in 1.26.2; 1.26.10 retains it and the current 1.26 patch fixes.
+This changes only the independent test runtime requirement, with no Go
+module-dependency or production C ABI/provider change. Keep the packet,
+source-immutability and final echo assertions enabled; rolling back below
+the fixed runtime reintroduces the invalid overlapped-I/O lifetime.
+
 ## Independent RFC8260 coverage
 
 Pion SCTP v1.10.0 verifies I-DATA/I-FORWARD-TSN negotiation, DCEP PPID50,
