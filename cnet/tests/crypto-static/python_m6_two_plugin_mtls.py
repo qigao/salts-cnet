@@ -16,6 +16,10 @@ import sys
 import tempfile
 
 
+# Retain the first complete sanitizer stacks while bounding failure output.
+FAILURE_DIAGNOSTIC_CHARS = 64 * 1024
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--loader", type=Path, required=True)
@@ -63,7 +67,7 @@ def main() -> int:
                 print(
                     f"FAIL two-plugin NativeIO TLS12/13 mTLS case={case}, "
                     f"exit={done.returncode}, stdout={done.stdout[-750:]}, "
-                    f"stderr={done.stderr[-1400:]}",
+                    f"stderr={done.stderr[:FAILURE_DIAGNOSTIC_CHARS]}",
                     file=sys.stderr,
                 )
                 return 1

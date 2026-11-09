@@ -4567,7 +4567,9 @@ typedef struct fixed_owner {
   mixed_result measured;
   uint64_t start_ns, stop_ns, close_start_ns, close_end_ns;
   size_t role, exchanges, physical_bytes;
-  int command, failure;
+  atomic_int command;
+  atomic_bool task_complete;
+  int failure;
   bool host_active;
 } fixed_owner;
 
@@ -4875,12 +4877,13 @@ static int fixed_close(native_io_sharded_context *context, fixed_owner *owner, b
 }
 static void fixed_task(native_io_sharded_context *context, void *user) {
   fixed_owner *owner = user;
+  const int command = atomic_load_explicit(&owner->command, memory_order_acquire);
   int status = 0;
   if (owner->thread == NULL) owner->thread = sync_thread_current_token();
   if (owner->thread != sync_thread_current_token() || native_io_sharded_context_shard(context) != owner->role) status = __LINE__;
-  else if (owner->command == FIXED_START) status = fixed_setup(context, owner);
-  else if (owner->command == FIXED_RUN) status = fixed_phase(context, owner);
-  else status = fixed_close(context, owner, owner->command == FIXED_CLOSE);
+  else if (command == FIXED_START) status = fixed_setup(context, owner);
+  else if (command == FIXED_RUN) status = fixed_phase(context, owner);
+  else status = fixed_close(context, owner, command == FIXED_CLOSE);
   if (status != 0) {
     if (owner->failure == 0) owner->failure = status;
     (void)atomic32_store(&owner->shared->abort, 1u, SALTS_MEMORY_RELEASE);
@@ -4888,22 +4891,32 @@ static void fixed_task(native_io_sharded_context *context, void *user) {
 }
 static void fixed_cancel(void *user, int status) {
   fixed_owner *owner = user;
+  (void)atomic_load_explicit(&owner->command, memory_order_acquire);
   owner->failure = status;
   (void)atomic32_store(&owner->shared->abort, 1u, SALTS_MEMORY_RELEASE);
+}
+static void fixed_task_finalize(void *user) {
+  fixed_owner *owner = user;
+  atomic_store_explicit(&owner->task_complete, true, memory_order_release);
 }
 static int fixed_run(native_io_sharded *runtime, fixed_owner *owners, int command) {
   int first = SALTS_OK;
   for (size_t i = 0u; i < 2u; ++i) {
-    owners[i].command = command;
-    const native_io_sharded_task task = {fixed_task, fixed_cancel, NULL, &owners[i]};
+    atomic_store_explicit(&owners[i].task_complete, false, memory_order_relaxed);
+    atomic_store_explicit(&owners[i].command, command, memory_order_release);
+    const native_io_sharded_task task = {fixed_task, fixed_cancel, fixed_task_finalize, &owners[i]};
     const int status = native_io_sharded_submit_to(runtime, i, &task);
     if (status != SALTS_OK) {
+      atomic_store_explicit(&owners[i].task_complete, true, memory_order_relaxed);
       if (first == SALTS_OK) first = status;
       (void)atomic32_store(&owners[i].shared->abort, 1u, SALTS_MEMORY_RELEASE);
     }
   }
   const int waited = native_io_sharded_wait(runtime);
   if (first == SALTS_OK) first = waited;
+  for (size_t i = 0u; i < 2u; ++i)
+    if (!atomic_load_explicit(&owners[i].task_complete, memory_order_acquire))
+      return first != SALTS_OK ? first : SALTS_EPROTO;
   for (size_t i = 0u; i < 2u; ++i) if (owners[i].failure != 0 && command != FIXED_CLEANUP) {
     fprintf(stderr, "Fixed Owner %zu failed at %d\n", i, owners[i].failure);
     if (first == SALTS_OK) first = SALTS_EIO;
@@ -4937,6 +4950,8 @@ static int fixed_sample(matched_mode mode, size_t window, size_t exchanges, bool
   VERIFY(atomic64_init(&pair->shared.stop_ns, 0u) == SALTS_OK);
   for (size_t i = 0u; i < 2u; ++i) {
     fixed_owner *owner = &pair->owners[i];
+    atomic_init(&owner->command, FIXED_START);
+    atomic_init(&owner->task_complete, true);
     owner->role = i;
     owner->shared = &pair->shared;
     owner->io.mode = mode;
