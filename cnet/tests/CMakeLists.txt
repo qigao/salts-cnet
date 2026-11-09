@@ -1,5 +1,9 @@
 find_package(Python3 COMPONENTS Interpreter REQUIRED)
 
+cmake_add_test(saltscore_cnet_resources_test SOURCES test_cnet_resources.c
+  INCLUDES "${PROJECT_SOURCE_DIR}/cnet/src"
+  LIBS Salts::CNet Salts::TinyTest FOLDER "cnet/tests")
+
 # Parser-only C11 gate with no TLS, CNet, re2c, CMeta or CFlow provider.
 cmake_add_executable(saltscore_wsparser_test SOURCES test_wsparser.c
   FOLDER "cnet/tests")
