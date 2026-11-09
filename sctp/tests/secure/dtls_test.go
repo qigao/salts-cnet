@@ -302,10 +302,11 @@ func TestSCTPOverNativeDTLS(t *testing.T) {
 						}
 						var association *sctp.Association
 						var e error
+						audited := &echoPacketAudit{Conn: c, expected: byte(31 + i)}
 						if nativeClient {
-							association, e = sctp.ServerWithOptions(sctp.WithNetConn(c), sctp.WithMaxMessageSize(24576), sctp.WithEnableInterleaving(true))
+							association, e = sctp.ServerWithOptions(sctp.WithNetConn(audited), sctp.WithMaxMessageSize(24576), sctp.WithEnableInterleaving(true))
 						} else {
-							association, e = sctp.ClientWithOptions(sctp.WithNetConn(c), sctp.WithMaxMessageSize(24576), sctp.WithEnableInterleaving(true))
+							association, e = sctp.ClientWithOptions(sctp.WithNetConn(audited), sctp.WithMaxMessageSize(24576), sctp.WithEnableInterleaving(true))
 						}
 						if e != nil {
 							fail(e)
@@ -368,7 +369,11 @@ func TestSCTPOverNativeDTLS(t *testing.T) {
 								for offset < n && offset < len(payload) && buffer[offset] == payload[offset] {
 									offset++
 								}
-								fail(fmt.Errorf("message size=%d received=%d ppid=%d err=%v first_difference=%d received_sha256=%x expected_sha256=%x", size, n, ppi, e, offset, sha256.Sum256(buffer[:n]), sha256.Sum256(payload)))
+								end := offset + 32
+								if end > n {
+									end = n
+								}
+								fail(fmt.Errorf("message size=%d received=%d ppid=%d err=%v first_difference=%d actual=%x received_sha256=%x expected_sha256=%x", size, n, ppi, e, offset, buffer[offset:end], sha256.Sum256(buffer[:n]), sha256.Sum256(payload)))
 								return
 							}
 						}

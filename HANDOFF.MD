@@ -1876,3 +1876,29 @@
 - Cleanup previously closed one DTLS peer, then waited for every worker before
   closing the other peers. Close all connections before one bounded group join,
   so one primary content failure does not add repeated sibling-drain failures.
+
+### Recurrent Windows ARM64 SCTP echo integrity failure (2026-11-09)
+
+- PR #274 exact-head CI #411/run 42553750600 passed nine matrix jobs, including
+  macOS x64 and both sanitizers, but Windows ARM64 failed the existing
+  `saltscore.sctp_dtls_native` owned/eight-peer/non-mixed case. Client 4 received
+  24576 bytes/PPID 53 without a read error; first difference was 14364. All new
+  SM2 AES256 container tests passed on that lane. This repeats the pre-#274
+  symptom recorded above; #409's successful run does not establish its repair.
+- Native ingress assertions did not fail. Add a read-only formal peer audit
+  after DTLS authentication and before Pion SCTP reassembly: verify packet CRC
+  and each nonempty-binary I-DATA payload byte, reporting TSN/SID/MID/FSN and
+  the first wrong byte window. The final end-to-end content assertion remains,
+  now with a byte window too. No wire rewrite, retry, skip, timeout change,
+  provider modification or standalone validation project is introduced.
+- Protocol: each Association's one reader borrows the caller buffer until Read
+  returns; the audit neither retains nor mutates it. It adds bounded packet
+  inspection only. Error propagation stops that Association with the original
+  audit evidence; sibling progress/cleanup retains its existing ownership.
+- Complete native-release-user build and the enhanced existing formal SCTP/DTLS
+  CTest passed on Windows x64 (5.97s); after the final continuation/CRC cases,
+  the affected CTest passed again in 5.33s. The seven in-entry audit cases cover
+  binary/control/empty packets, CRC-valid bad first/continuation payloads,
+  invalid CRC and a truncated header, including input immutability. Subsequent
+  Windows ARM64 execution is required to locate the failing boundary; this
+  instrumentation is not a claimed fix for the observed corruption.
