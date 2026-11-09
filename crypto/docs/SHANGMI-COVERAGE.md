@@ -2803,3 +2803,39 @@ and sole-Crypto-owner/original-owner audits. Subsequent empty-delivery and
 Session-query edges passed their two CTests in 8.65 seconds after a complete
 graph build. Executables run only through CTest, with `PYTHONOPTIMIZE=1`.
 No Linux/macOS/IPv6 runtime, sanitizer, hardware or performance result is claimed.
+
+## TLS1.3 cached-chain expiry qualification (2026-11-10)
+
+The existing module-owned `saltscore.cnet_tls_session_resumption` now covers
+expiry of the cached leaf, an intermediate CA and the configured trust anchor.
+Each profile first completes an authenticated full handshake, exchanges data
+and closes with the same immutable client context/server ticket keys retained.
+Only the selected certificate has a short validity window. Go independently
+verifies the supplied chain before expiry and verifies that the selected
+certificate fails with `x509.Expired` after the boundary. The second handshake
+starts after that boundary and must actually select resumption.
+
+Native rejection requires the EXPIRED diagnostic at the exact supplied-chain
+index (0 for leaf, 1 for the intermediate, SIZE_MAX for the local trust anchor),
+one FAILED terminal, no CONNECTED or application send/receive, and no second
+terminal or READY after another nonblocking poll. The retained peer policy is
+called only for the first authenticated connection. Existing positive reuse,
+disabled cache, ticket refusal, changed policy and changed ALPN controls remain.
+No timeout, trust policy, public API, provider or production implementation is
+changed. The formal Go timeout remains 60 seconds and its CTest timeout remains
+90 seconds; these are distinct expiry inputs, not retries of the original fault.
+
+This extends the supplied-chain session qualification in #219. It does not
+reproduce or repair #276's original Windows x64 terminal-counter failure, whose
+cause remains unproven. A successful matrix alone must not close that issue.
+
+In an isolated checkout based on merged `abbcb02`, both Windows x64 user
+presets (`native-release-user` LLVM-MinGW and `msvc-release-user`) built the
+existing `saltscore_cnet_tls_ca_san_test` target against released SaltsBase
+v0.1.1 and vcpkg-cache v0.1.2. The three selected formal CTests (standard
+resumption, ShangMi resumption and TLS CA/SAN) passed on each compiler. After
+the final expiry-gate/terminal-state assertions, the two affected resumption
+CTests passed in 29.78 seconds and 29.99 seconds respectively. Reproduce with
+the corresponding build preset and `ctest --preset <preset> -R
+'session_resumption$' --output-on-failure`. Hosted cross-platform/sanitizer
+qualification is separate from these local results.
