@@ -7,8 +7,7 @@
       "description": "MSVC compiler and SDK from the active VsDevCmd environment",
       "cacheVariables": {
         "CMAKE_C_COMPILER": "cl",
-        "CMAKE_CXX_COMPILER": "cl",
-        "VCPKG_CHAINLOAD_TOOLCHAIN_FILE": ""
+        "CMAKE_CXX_COMPILER": "cl"
       }
     },
     {

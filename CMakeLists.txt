@@ -27,13 +27,19 @@ endif()
 include(cmake/CmakeUtils.cmake)
 include(cmake/Sanitizers.cmake)
 set_property(GLOBAL PROPERTY USE_FOLDERS ON)
+set(SALTS_DEPENDENCY_PREFIX "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}")
+list(PREPEND CMAKE_PREFIX_PATH
+  "${SALTS_DEPENDENCY_PREFIX}/$ENV{VCPKG_CONFIGURATION_SUBDIR}"
+  "${SALTS_DEPENDENCY_PREFIX}")
 find_package(Threads REQUIRED)
 if("$ENV{SALTS_BASE_ROOT}" STREQUAL "")
   message(FATAL_ERROR "SALTS_BASE_ROOT must name the matching installed SaltsBase SDK")
 endif()
 unset(SaltsBase_DIR CACHE)
-find_package(SaltsBase 0.1.0 CONFIG REQUIRED PATHS "$ENV{SALTS_BASE_ROOT}" NO_DEFAULT_PATH)
-find_package(GmSSL CONFIG REQUIRED)
+find_package(SaltsBase 0.1.0 CONFIG REQUIRED PATHS "$ENV{SALTS_BASE_ROOT}"
+  NO_DEFAULT_PATH NO_CMAKE_FIND_ROOT_PATH)
+find_package(GmSSL CONFIG REQUIRED PATHS "${SALTS_DEPENDENCY_PREFIX}/share/gmssl"
+  NO_DEFAULT_PATH NO_CMAKE_FIND_ROOT_PATH)
 
 add_subdirectory(vendor)
 add_subdirectory(crypto)

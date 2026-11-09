@@ -1,8 +1,5 @@
 {
   "version": 6,
-  "include": [
-    "Toolchain.json"
-  ],
   "configurePresets": [
     {
       "name": "toolkit-android-ndk",
@@ -10,9 +7,9 @@
       "description": "Android NDK Clang owns compiler discovery, sysroot, target and C++ runtime",
       "cacheVariables": {
         "CMAKE_SYSTEM_NAME": "Android",
-        "ANDROID_STL": "c++_shared"
-      },
-      "inherits": "selected-toolchain"
+        "CMAKE_ANDROID_NDK": "$env{ANDROID_NDK_HOME}",
+        "CMAKE_ANDROID_STL_TYPE": "c++_shared"
+      }
     },
     {
       "name": "flags-android",

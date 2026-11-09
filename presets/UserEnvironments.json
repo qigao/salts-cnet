@@ -8,42 +8,26 @@
       "name": "vcpkg-cache",
       "hidden": true,
       "environment": {
-        "VCPKG_INSTALLED_DIR": "${sourceDir}/build/${presetName}/vcpkg_installed",
-        "VCPKG_BINARY_SOURCES": "$penv{VCPKG_BINARY_SOURCES}",
-        "VCPKG_CACHE_REPOSITORY_ROOT": "$penv{VCPKG_CACHE_REPOSITORY_ROOT}",
-        "VCPKG_ROOT": "$penv{VCPKG_ROOT}",
-        "VCPKG_OVERLAY_PORTS": "$env{VCPKG_CACHE_REPOSITORY_ROOT}/ports",
-        "VCPKG_OVERLAY_TRIPLETS": "$env{VCPKG_CACHE_REPOSITORY_ROOT}/triplets",
+        "VCPKG_INSTALLED_DIR": "$penv{VCPKG_INSTALLED_DIR}",
+        "VCPKG_TARGET_TRIPLET": "$penv{VCPKG_TARGET_TRIPLET}",
         "SALTS_BASE_ROOT": "$penv{SALTS_BASE_ROOT}"
       },
       "cacheVariables": {
         "VCPKG_INSTALLED_DIR": "$env{VCPKG_INSTALLED_DIR}",
         "VCPKG_TARGET_TRIPLET": "$env{VCPKG_TARGET_TRIPLET}",
-        "VCPKG_HOST_TRIPLET": "$env{VCPKG_HOST_TRIPLET}",
-        "CMAKE_PREFIX_PATH": "$env{VCPKG_INSTALLED_DIR}/$env{VCPKG_TARGET_TRIPLET}/$env{VCPKG_CONFIGURATION_SUBDIR}",
-        "CMAKE_TOOLCHAIN_FILE": "$env{VCPKG_CACHE_REPOSITORY_ROOT}/cmake/QigaoVcpkgToolchain.cmake",
         "CMAKE_INSTALL_PREFIX": "$env{INSTALL_PREFIX}"
-      }
-    },
-    {
-      "name": "host-environment",
-      "hidden": true,
-      "description": "Host identity and llvm-mingw host-tool path are shared independently of the target",
-      "environment": {
-        "VCPKG_HOST_TRIPLET": "$penv{VCPKG_HOST_TRIPLET}",
-        "LLVM_MINGW_HOST_DEPENDENCY_TOOLCHAIN_FILE": "$penv{LLVM_MINGW_HOST_DEPENDENCY_TOOLCHAIN_FILE}"
-      }
+      },
+      "description": "Consume the explicit preinstalled vcpkg-cache SDK; configure runs no resolver or port build"
     },
     {
       "name": "llvm-mingw-native-environment",
       "hidden": true,
       "inherits": [
         "vcpkg-cache",
-        "host-environment",
         "llvm-mingw-runtime"
       ],
       "environment": {
-        "TARGET_TOOLCHAIN_FILE": "$env{LLVM_MINGW_PROJECT_TOOLCHAIN_FILE}"
+        "LLVM_MINGW_TARGET": "$penv{LLVM_MINGW_TARGET}"
       }
     },
     {
@@ -55,7 +39,6 @@
       ],
       "environment": {
         "VCPKG_TARGET_TRIPLET": "$env{MSVC_TARGET_TRIPLET}",
-        "VCPKG_HOST_TRIPLET": "$env{MSVC_HOST_TRIPLET}",
         "INSTALL_PREFIX": "$env{MSVC_INSTALL_PREFIX}"
       }
     },
@@ -68,9 +51,7 @@
       ],
       "environment": {
         "VCPKG_TARGET_TRIPLET": "$env{LLVM_NATIVE_TARGET_TRIPLET}",
-        "VCPKG_HOST_TRIPLET": "$env{LLVM_NATIVE_HOST_TRIPLET}",
-        "INSTALL_PREFIX": "$env{LLVM_NATIVE_INSTALL_PREFIX}",
-        "TARGET_TOOLCHAIN_FILE": "$env{LLVM_NATIVE_TOOLCHAIN_FILE}"
+        "INSTALL_PREFIX": "$env{LLVM_NATIVE_INSTALL_PREFIX}"
       }
     },
     {
@@ -82,7 +63,6 @@
       ],
       "environment": {
         "VCPKG_TARGET_TRIPLET": "$env{GCC_TARGET_TRIPLET}",
-        "VCPKG_HOST_TRIPLET": "$env{GCC_HOST_TRIPLET}",
         "INSTALL_PREFIX": "$env{GCC_INSTALL_PREFIX}"
       },
       "cacheVariables": {
@@ -95,12 +75,9 @@
       "hidden": true,
       "inherits": [
         "vcpkg-cache",
-        "host-environment",
         "llvm-mingw-runtime"
       ],
       "environment": {
-        "TARGET_TOOLCHAIN_FILE": "$env{LLVM_MINGW_X64_PROJECT_TOOLCHAIN_FILE}",
-        "LLVM_MINGW_DEPENDENCY_TOOLCHAIN_FILE": "$env{LLVM_MINGW_HOST_DEPENDENCY_TOOLCHAIN_FILE}",
         "INSTALL_PREFIX": "$env{LLVM_MINGW_X64_INSTALL_PREFIX}"
       }
     },
@@ -109,22 +86,16 @@
       "hidden": true,
       "inherits": [
         "vcpkg-cache",
-        "host-environment",
         "llvm-mingw-runtime"
       ],
       "environment": {
-        "TARGET_TOOLCHAIN_FILE": "$env{LLVM_MINGW_ARM64_PROJECT_TOOLCHAIN_FILE}",
-        "LLVM_MINGW_DEPENDENCY_TOOLCHAIN_FILE": "$env{LLVM_MINGW_ARM64_DEPENDENCY_TOOLCHAIN_FILE}",
         "INSTALL_PREFIX": "$env{LLVM_MINGW_ARM64_INSTALL_PREFIX}"
       }
     },
     {
       "name": "android-toolchain-environment",
       "hidden": true,
-      "inherits": "vcpkg-cache",
-      "environment": {
-        "TARGET_TOOLCHAIN_FILE": "$env{ANDROID_NDK_HOME}/build/cmake/android.toolchain.cmake"
-      }
+      "inherits": "vcpkg-cache"
     },
     {
       "name": "android-environment",
@@ -132,7 +103,6 @@
       "inherits": "android-toolchain-environment",
       "environment": {
         "VCPKG_TARGET_TRIPLET": "$env{ANDROID_TARGET_TRIPLET}",
-        "VCPKG_HOST_TRIPLET": "$env{ANDROID_HOST_TRIPLET}",
         "INSTALL_PREFIX": "$env{ANDROID_INSTALL_PREFIX}"
       }
     },
@@ -140,8 +110,7 @@
       "name": "android-arm64-environment",
       "hidden": true,
       "inherits": [
-        "android-toolchain-environment",
-        "host-environment"
+        "android-toolchain-environment"
       ],
       "environment": {
         "INSTALL_PREFIX": "$env{ANDROID_ARM64_INSTALL_PREFIX}"
@@ -151,8 +120,7 @@
       "name": "android-x64-environment",
       "hidden": true,
       "inherits": [
-        "android-toolchain-environment",
-        "host-environment"
+        "android-toolchain-environment"
       ],
       "environment": {
         "INSTALL_PREFIX": "$env{ANDROID_X64_INSTALL_PREFIX}"
@@ -164,7 +132,7 @@
       "inherits": "native-runtime",
       "environment": {
         "LLVM_MINGW_ROOT": "$penv{LLVM_MINGW_ROOT}",
-        "PATH": "${sourceDir}/build/${presetName}/bin${pathListSep}$env{VCPKG_INSTALLED_DIR}/$env{VCPKG_TARGET_TRIPLET}/$env{VCPKG_CONFIGURATION_SUBDIR}bin${pathListSep}$env{VCPKG_INSTALLED_DIR}/$env{VCPKG_TARGET_TRIPLET}/bin${pathListSep}$env{SALTS_BASE_ROOT}/bin${pathListSep}$env{LLVM_MINGW_ROOT}/bin${pathListSep}$penv{PATH}"
+        "PATH": "${sourceDir}/build/${presetName}/bin${pathListSep}$env{VCPKG_INSTALLED_DIR}/$env{VCPKG_TARGET_TRIPLET}/$env{VCPKG_CONFIGURATION_SUBDIR}bin${pathListSep}$env{VCPKG_INSTALLED_DIR}/$env{VCPKG_TARGET_TRIPLET}/bin${pathListSep}$env{SALTS_BASE_ROOT}/bin${pathListSep}$env{LLVM_MINGW_ROOT}/$env{LLVM_MINGW_TARGET}/bin${pathListSep}$env{LLVM_MINGW_ROOT}/bin${pathListSep}$penv{PATH}"
       }
     }
   ]

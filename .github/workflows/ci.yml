@@ -47,7 +47,6 @@ jobs:
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 120
     env:
-      VCPKG_DOWNLOADS: ${{ github.workspace }}/build/vcpkg-downloads
       CCACHE_DIR: ${{ github.workspace }}/build/ccache
       CCACHE_MAXSIZE: 256MiB
       CCACHE_COMPILERCHECK: content
@@ -70,39 +69,13 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Prepare vcpkg download cache
-        id: cache-paths
-        shell: pwsh
-        run: |
-          New-Item -ItemType Directory -Force -Path $env:VCPKG_DOWNLOADS | Out-Null
-          "runner-image=$env:ImageOS-$env:ImageVersion" >> $env:GITHUB_OUTPUT
-
-      - name: Set up native LLVM
-        if: runner.os != 'Windows'
-        uses: qigao/vcpkg-cache/.github/actions/setup-llvm-native@v0.1.5
+      - name: Check out released dependency infrastructure
+        uses: actions/checkout@v4
         with:
-          build-type: toolchain-only
-          obfuscator: "false"
-
-      - name: Set up Windows llvm-mingw
-        id: windows-llvm
-        if: runner.os == 'Windows'
-        uses: qigao/vcpkg-cache/.github/actions/setup-llvm-mingw@v0.1.5
-        with:
-          target: ${{ matrix.target }}
-          build-type: toolchain-only
-          obfuscator: "false"
-
-      - name: Set up shared dependency contract
-        id: vcpkg
-        # Includes the pinned native Windows pkg-config; avoid MSYS2 for pkg-config.
-        uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-curl-cache@v0.1.1
-        with:
-          mode: read
-          triplet: ${{ matrix.triplet }}
-          host-triplet: ${{ matrix.host }}
-          restore-packages: "false"
-          token: ${{ github.token }}
+          repository: qigao/vcpkg-cache
+          ref: v0.1.2
+          path: build/ci-infrastructure/vcpkg-cache
+          persist-credentials: false
 
       - uses: actions/setup-python@v5
         id: test-python
@@ -169,6 +142,51 @@ jobs:
           "SALTS_BASE_ROOT=$($sdkRoot.Replace('\', '/'))" >> $env:GITHUB_ENV
           "SaltsBase release: $version; source: $($manifest.commit); producer CI: $($manifest.ci.runId); SDK: $profile; SHA-256: $($sdk.sha256)" >> $env:GITHUB_STEP_SUMMARY
 
+      - name: Restore the preinstalled vcpkg-cache SDK
+        id: dependencies
+        shell: pwsh
+        run: |
+          & python build/ci-infrastructure/vcpkg-cache/scripts/restore-native-dependency.py `
+            locked "cmake/dependencies/${{ matrix.triplet }}.lock.json" `
+            --destination "build/dependencies/vcpkg-${{ matrix.rid }}" `
+            --payload vcpkg_installed --github-output
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Select restored dependency prefix
+        shell: pwsh
+        env:
+          SDK_ROOT: ${{ steps.dependencies.outputs.root }}
+        run: |
+          "VCPKG_INSTALLED_DIR=$env:SDK_ROOT" >> $env:GITHUB_ENV
+
+      - name: Restore locked Windows LLVM-MinGW compiler
+        id: windows-llvm
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $contract = Get-Content build/ci-infrastructure/vcpkg-cache/compiler-contracts/release-obfuscation.json -Raw | ConvertFrom-Json
+          $compiler = $contract.sources.'llvm-mingw'
+          $hostId = "windows-$('${{ runner.arch }}'.ToLowerInvariant())"
+          $asset = @($compiler.assets | Where-Object host -eq $hostId)
+          if ($asset.Count -ne 1) { throw "No locked LLVM-MinGW compiler for $hostId" }
+          $asset = $asset[0]
+          $target = if ('${{ matrix.target }}' -eq 'arm64') { 'aarch64-w64-mingw32' } else { 'x86_64-w64-mingw32' }
+          $url = "https://github.com/$($compiler.repository)/releases/download/$($compiler.release_tag)/$($asset.name)"
+          & python build/ci-infrastructure/vcpkg-cache/scripts/restore-native-dependency.py `
+            url $url --sha256 $asset.sha256 --destination build/ci-llvm-mingw `
+            --payload ([IO.Path]::GetFileNameWithoutExtension($asset.name)) `
+            --executable "bin/$target-clang.exe" --executable "bin/$target-clang++.exe" --github-output
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Select Windows compiler SDK
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          COMPILER_ROOT: ${{ steps.windows-llvm.outputs.root }}
+        run: |
+          "LLVM_MINGW_ROOT=$env:COMPILER_ROOT" >> $env:GITHUB_ENV
+
       - name: Locate Visual Studio developer environment
         if: runner.os == 'Windows'
         shell: pwsh
@@ -190,61 +208,29 @@ jobs:
         run: |
           python -m pip install --only-binary=:all: cryptography==46.0.3
 
-      - name: Install macOS native autotools
-        if: runner.os == 'macOS'
-        shell: bash
-        env:
-          HOMEBREW_NO_AUTO_UPDATE: "1"
-        run: brew install autoconf autoconf-archive automake libtool
-
-      - name: Install Linux autotools (native and Android host)
-        if: runner.os == 'Linux'
-        shell: bash
-        run: |
-          set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            autoconf autoconf-archive automake libtool
-
       # Local launchers and other CI systems supply these same preset inputs.
       - name: Set platform preset inputs
         shell: bash
         env:
           RID: ${{ matrix.rid }}
           TARGET_TRIPLET: ${{ matrix.triplet }}
-          HOST_TRIPLET: ${{ matrix.host }}
           ANDROID_ABI: ${{ matrix.android_abi }}
         run: |
           set -euo pipefail
           {
             if [[ "$RID" == android-* ]]; then
               echo "ANDROID_TARGET_TRIPLET=$TARGET_TRIPLET"
-              echo "ANDROID_HOST_TRIPLET=$HOST_TRIPLET"
               echo "SALTSCORE_ANDROID_ABI=$ANDROID_ABI"
               echo "ANDROID_INSTALL_PREFIX=$GITHUB_WORKSPACE/package/sdk/$RID"
             elif [[ "$RID" == windows-* ]]; then
-              echo "LLVM_MINGW_PROJECT_TOOLCHAIN_FILE=$QIGAO_COMPILER_TOOLCHAIN_FILE"
+              echo "LLVM_MINGW_TARGET=${{ matrix.target == 'arm64' && 'aarch64-w64-mingw32' || 'x86_64-w64-mingw32' }}"
               echo "VCPKG_TARGET_TRIPLET=$TARGET_TRIPLET"
-              echo "VCPKG_HOST_TRIPLET=$HOST_TRIPLET"
               echo "INSTALL_PREFIX=$GITHUB_WORKSPACE/package/sdk/$RID"
             else
-              echo "LLVM_NATIVE_TOOLCHAIN_FILE=$QIGAO_COMPILER_TOOLCHAIN_FILE"
               echo "LLVM_NATIVE_TARGET_TRIPLET=$TARGET_TRIPLET"
-              echo "LLVM_NATIVE_HOST_TRIPLET=$HOST_TRIPLET"
               echo "LLVM_NATIVE_INSTALL_PREFIX=$GITHUB_WORKSPACE/package/sdk/$RID"
             fi
           } >> "$GITHUB_ENV"
-
-      - name: Restore vcpkg binaries and downloads
-        id: vcpkg-cache
-        uses: actions/cache/restore@v4
-        with:
-          path: |
-            ${{ env.VCPKG_BINARY_CACHE }}
-            ${{ env.VCPKG_DOWNLOADS }}
-          key: vcpkg-v1-${{ runner.os }}-${{ runner.arch }}-${{ matrix.rid }}-${{ matrix.preset }}-${{ steps.vcpkg.outputs.cache_revision }}-${{ steps.cache-paths.outputs.runner-image }}-${{ steps.windows-llvm.outputs.version }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', 'CMakeOptions.cmake', 'CMakePresets.json', 'CMakeUserPresets.json', 'presets/**', '.github/workflows/ci.yml') }}
-          restore-keys: |
-            vcpkg-v1-${{ runner.os }}-${{ runner.arch }}-${{ matrix.rid }}-${{ matrix.preset }}-${{ steps.vcpkg.outputs.cache_revision }}-
 
       - name: Install native ccache
         id: ccache
@@ -255,10 +241,9 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: ${{ env.CCACHE_DIR }}
-          key: ccache-${{ steps.ccache.outputs.version }}-${{ steps.vcpkg-cache.outputs.cache-primary-key }}-${{ github.sha }}
+          key: ccache-v2-${{ runner.os }}-${{ runner.arch }}-${{ matrix.rid }}-${{ matrix.preset }}-${{ hashFiles('cmake/dependencies/*.json', 'presets/**/*.json') }}-${{ github.sha }}
           restore-keys: |
-            ccache-${{ steps.ccache.outputs.version }}-${{ steps.vcpkg-cache.outputs.cache-primary-key }}-
-            ccache-${{ steps.ccache.outputs.version }}-vcpkg-v1-${{ runner.os }}-${{ runner.arch }}-${{ matrix.rid }}-${{ matrix.preset }}-${{ steps.vcpkg.outputs.cache_revision }}-
+            ccache-v2-${{ runner.os }}-${{ runner.arch }}-${{ matrix.rid }}-${{ matrix.preset }}-${{ hashFiles('cmake/dependencies/*.json', 'presets/**/*.json') }}-
 
       - name: Start compiler cache statistics
         shell: bash
@@ -278,17 +263,6 @@ jobs:
             & cmake --preset "${{ matrix.preset }}"
           }
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-
-      # Configure completes vcpkg installation and local binary-cache writes.
-      # Save now so a later project build/test failure does not discard them.
-      - name: Save vcpkg binaries and downloads
-        if: steps.vcpkg-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
-        with:
-          path: |
-            ${{ env.VCPKG_BINARY_CACHE }}
-            ${{ env.VCPKG_DOWNLOADS }}
-          key: ${{ steps.vcpkg-cache.outputs.cache-primary-key }}
 
       - name: Build full graph
         id: build

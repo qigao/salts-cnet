@@ -7,8 +7,7 @@
       "description": "GNU GCC on Linux/macOS; public profiles select compiler paths from the user environment",
       "cacheVariables": {
         "CMAKE_C_COMPILER": "gcc",
-        "CMAKE_CXX_COMPILER": "g++",
-        "VCPKG_CHAINLOAD_TOOLCHAIN_FILE": ""
+        "CMAKE_CXX_COMPILER": "g++"
       },
       "inherits": "ISPosix"
     },

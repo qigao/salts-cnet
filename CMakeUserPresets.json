@@ -109,6 +109,14 @@
         "macos-gcc",
         "full-native"
       ]
+    },
+    {
+      "name": "native-benchmark-user",
+      "displayName": "Windows Release benchmark graph",
+      "inherits": "native-release-user",
+      "cacheVariables": {
+        "BUILD_BENCHMARK": "ON"
+      }
     }
   ],
   "buildPresets": [
@@ -285,6 +293,22 @@
         "build-macos"
       ],
       "configurePreset": "macos-gcc-release-user"
+    },
+    {
+      "name": "native-benchmark-user",
+      "inherits": [
+        "base-build",
+        "build-windows"
+      ],
+      "configurePreset": "native-benchmark-user"
+    },
+    {
+      "name": "install-native-benchmark-user",
+      "inherits": [
+        "base-install",
+        "build-windows"
+      ],
+      "configurePreset": "native-benchmark-user"
     }
   ],
   "testPresets": [
@@ -343,6 +367,14 @@
         "test-macos"
       ],
       "configurePreset": "macos-gcc-release-user"
+    },
+    {
+      "name": "native-benchmark-user",
+      "inherits": [
+        "base-test",
+        "test-windows"
+      ],
+      "configurePreset": "native-benchmark-user"
     }
   ]
 }

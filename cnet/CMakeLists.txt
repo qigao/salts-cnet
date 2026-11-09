@@ -48,6 +48,7 @@ target_link_libraries(saltscore_cnet
     Salts::Core
   PRIVATE
     Salts::URI
+    Salts::SIMD
     Salts::Core
     saltscore_cnet_monocypher
     saltscore_cnet_reed

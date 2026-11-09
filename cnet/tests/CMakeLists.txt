@@ -353,3 +353,15 @@ if(NOT CMAKE_SYSTEM_NAME STREQUAL "Android")
     WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}/cnet/tests/independent/shangmi"
     ENVIRONMENT "CGO_ENABLED=0;GOWORK=off" TIMEOUT 90)
 endif()
+
+cmake_add_test(saltscore_websocket_utf8_test
+  SOURCES websocket_utf8_test.c
+  LIBS Salts::CNet Salts::TinyTest FOLDER "cnet/tests")
+
+if(BUILD_BENCHMARK)
+  cmake_add_test(saltscore_websocket_utf8_benchmark
+    SOURCES websocket_utf8_benchmark.c
+    LIBS Salts::CNet Salts::TinyTest FOLDER "cnet/tests")
+  set_tests_properties(saltscore_websocket_utf8_benchmark PROPERTIES
+    LABELS benchmark TIMEOUT 120)
+endif()

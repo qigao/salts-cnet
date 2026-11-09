@@ -7,7 +7,7 @@ option(SALTSCORE_ENABLE_TSAN "Enable ThreadSanitizer" OFF)
 # Presets require explicit profile identities; empty values must not select a
 # default host ABI or install into CMake's default system prefix.
 foreach(_saltscore_profile_input IN ITEMS
-    CMAKE_INSTALL_PREFIX VCPKG_TARGET_TRIPLET VCPKG_HOST_TRIPLET)
+    CMAKE_INSTALL_PREFIX VCPKG_TARGET_TRIPLET VCPKG_INSTALLED_DIR)
   if(NOT DEFINED ${_saltscore_profile_input} OR
      "${${_saltscore_profile_input}}" STREQUAL "")
     message(FATAL_ERROR "Required preset input is empty: ${_saltscore_profile_input}")
@@ -15,8 +15,8 @@ foreach(_saltscore_profile_input IN ITEMS
 endforeach()
 unset(_saltscore_profile_input)
 if("${CMAKE_C_COMPILER}" STREQUAL "" AND
-   "${VCPKG_CHAINLOAD_TOOLCHAIN_FILE}" STREQUAL "")
-  message(FATAL_ERROR "The selected toolkit must provide a compiler or TARGET_TOOLCHAIN_FILE")
+   "${CMAKE_ANDROID_NDK}" STREQUAL "")
+  message(FATAL_ERROR "The selected preset must provide a compiler or Android NDK")
 endif()
 
 if(BUILD_BENCHMARK AND NOT BUILD_TESTS)

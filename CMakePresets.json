@@ -25,8 +25,7 @@
       "inherits": [
         "ISNative",
         "base",
-        "release-mode",
-        "selected-toolchain"
+        "release-mode"
       ],
       "cacheVariables": {
         "BUILD_TESTS": "ON"
@@ -58,7 +57,7 @@
         "release-mode"
       ],
       "cacheVariables": {
-        "ANDROID_ABI": "$env{SALTSCORE_ANDROID_ABI}"
+        "CMAKE_ANDROID_ARCH_ABI": "$env{SALTSCORE_ANDROID_ABI}"
       }
     }
   ]

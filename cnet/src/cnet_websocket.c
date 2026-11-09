@@ -4,6 +4,7 @@
 
 #include <core/error_codes.h>
 #include <core/platform.h>
+#include <simd.h>
 
 #include <limits.h>
 #include <stdlib.h>
@@ -14,6 +15,8 @@ typedef struct cnet_websocket_utf8_state {
   uint8_t next_min;
   uint8_t next_max;
 } cnet_websocket_utf8_state;
+
+_Static_assert(sizeof(v128) == 16u, "UTF-8 bit masks require the SIMD 16-byte carrier");
 
 typedef struct cnet_websocket_impl {
   cnet_websocket *public_value;
@@ -92,6 +95,26 @@ static bool cnet_websocket_utf8_update(cnet_websocket_utf8_state *state, const u
       continue;
     }
     if (first < 0x80u) {
+      /* Read only complete borrowed blocks, with no pending continuation.
+       * Non-ASCII bytes still pass through the strict state machine below. */
+      if (size - index >= sizeof(v128)) {
+        v128 block;
+        uint32_t high_bits;
+        /* The public carrier is neutral byte storage; copying it avoids a
+         * second cross-library call for this small, bounded load. */
+        memcpy(block.bytes, data + index, sizeof(block.bytes));
+        if (!simd_reduce(&simd_u8x16, SALTS_SIMD_REDUCE_BITMASK, &block, &high_bits))
+          return false;
+        if (high_bits == 0u) {
+          index += sizeof(v128);
+        } else {
+          do {
+            ++index;
+            high_bits >>= 1u;
+          } while ((high_bits & 1u) == 0u);
+        }
+        continue;
+      }
       ++index;
       continue;
     }

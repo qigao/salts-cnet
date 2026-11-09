@@ -30,10 +30,32 @@ CNet listener composition uses SaltsBase's installed `<native_io_accept.h>`.
 
 Crypto links the required vcpkg `GmSSL::GmSSL` provider (`3.2.0#44`), including
 the reviewed extensions pinned by `crypto/gmssl-extensions/source-lock.json`.
-The GmSSL registry baseline is recorded in `vcpkg-configuration.json`; the
-remaining dependency registry keeps its own baseline. The configured cache
-checkout's overlay ports must agree with these requirements. An older local
-GmSSL overlay cannot supply the merged DTLS/TLS/ShangMi APIs.
+Like SaltsBase, this checkout consumes the preinstalled SDK published by
+[qigao/vcpkg-cache v0.1.2](https://github.com/qigao/vcpkg-cache/releases/tag/v0.1.2).
+Each supported triplet has a URL/SHA-256 lock in `cmake/dependencies/`.
+Restore that lock with the release's `scripts/restore-native-dependency.py`;
+set `VCPKG_INSTALLED_DIR` to the reported payload root and select its exact
+`VCPKG_TARGET_TRIPLET`. For example, from this checkout:
+
+```powershell
+python "$env:VCPKG_CACHE_REPOSITORY_ROOT/scripts/restore-native-dependency.py" locked cmake/dependencies/qigao-x64-windows-llvm-mingw.lock.json --destination build/dependencies/vcpkg-windows-x64 --payload vcpkg_installed
+```
+
+Use the printed `root` value as `VCPKG_INSTALLED_DIR`. The restore validates
+SHA-256, safely extracts the archive and records its provenance. This prefix
+contains GmSSL 3.2.0#44, c-ares, KCP, zstd, SIMDe and SaltsBase's JPEG/libyuv
+imports. `vcpkg.json` and `vcpkg-configuration.json` retain the dependency and
+source inventory; configure no longer runs a vcpkg resolver or builds ports.
+Missing packages fail configuration. Refreshing dependencies means reviewing
+and updating the locks; there is no port-build fallback.
+
+This uses the same prebuilt dependency owner as SaltsBase instead of rebuilding
+an overlapping graph or depending on cache hits. It trades automatic manifest
+resolution for explicit SDK updates and requires matching compiler/ABI assets.
+Use a fresh configure when migrating from the previous toolchain model; do not
+reuse a cache that still selects `vcpkg.cmake`. Compiler selection is independent:
+LLVM-MinGW uses explicit target drivers, native LLVM uses `clang` from PATH,
+and Android uses CMake's NDK support.
 
 CNet remains the shared runtime owner of its linked Crypto/GmSSL implementation.
 SCTP stays provider-independent; the explicit `SCTPDTLS` target composes it with
@@ -42,7 +64,7 @@ and exact mode semantics are preserved. See [Crypto coverage](crypto/docs/SHANGM
 for the finite supported profiles and remaining qualification gates.
 
 SaltsBase's package also resolves its Media archive's JPEG/libyuv dependencies;
-the manifest supplies those imports without adding a Media implementation here.
+the preinstalled dependency prefix supplies those imports without adding a Media implementation here.
 Runtime paths include the selected vcpkg prefix, SaltsBase's runtime and, for
 Windows llvm-mingw, the selected compiler's runtime directory.
 
@@ -54,7 +76,7 @@ On Windows, enter the configured Visual Studio developer environment, or use
 `cmake/WithVs.cmd` after setting `VSDEVCMD_BAT`.
 
 ```powershell
-cmake/WithVs.cmd cmake --preset native-release-user
+cmake/WithVs.cmd cmake --fresh --preset native-release-user
 cmake/WithVs.cmd cmake --build --preset native-release-user
 cmake/WithVs.cmd ctest --preset native-release-user --output-on-failure
 cmake/WithVs.cmd cmake --build --preset install-native-release-user
@@ -82,6 +104,48 @@ no matching SDK in 0.1.0. They fail with an explicit missing-platform error;
 they do not select another architecture or skip tests. The sanitizer lanes use
 the released Linux x64 Clang foundation and instrument this network graph;
 that does not qualify the prebuilt foundation itself under sanitizers.
+
+## WebSocket SIMD measurements
+
+CNet uses SaltsBase's public `<simd.h>` / `Salts::SIMD` to scan complete
+16-byte ASCII runs during strict UTF-8 validation. Pending continuation bytes,
+non-ASCII sequences and short tails retain the strict state machine. Loads stay
+inside the borrowed payload; no padding, ownership change, allocation, new ISA
+requirement or public API is introduced. Reed-Solomon's existing SIMDe kernel
+is retained rather than replaced with per-operation abstraction calls.
+
+The formal `cnet/tests/websocket_utf8_test.c` covers alignment, block boundaries,
+invalid scalar values, incomplete sequences, fragment state and protected page
+ends. The optional `websocket_utf8_benchmark.c` measures the public send path
+with a synchronous memory sink. It includes validation, framing and copy;
+binary sends provide a same-copy control. It does not measure network throughput.
+
+```powershell
+cmake/WithVs.cmd cmake --preset native-benchmark-user
+cmake/WithVs.cmd cmake --build --preset native-benchmark-user
+cmake/WithVs.cmd ctest --preset native-benchmark-user -R ^saltscore_websocket_utf8_benchmark$ -V
+```
+
+Measured on Windows x64 (AMD Ryzen 9 7940HX), LLVM-MinGW Clang 23.1.4 Release,
+SaltsBase 0.1.0 and
+the locked v0.1.2 dependencies. Each case uses seven samples of approximately
+16 MiB, with initialization and assertions outside timing. Baseline is the
+scalar validator from `5f330f7`, with the same benchmark and dependencies.
+
+| Payload | Scalar MiB/s | SIMD MiB/s | Change |
+| --- | ---: | ---: | ---: |
+| ASCII, 64 bytes | 1547.06 | 1832.26 | +18.4% |
+| ASCII, 2048 bytes | 2740.83 | 3564.30 | +30.0% |
+| ASCII, 65536 bytes | 2782.69 | 3557.09 | +27.8% |
+| Mixed ASCII / three-byte UTF-8, 65536 bytes | 2055.83 | 2708.02 | +31.7% |
+| Three-byte UTF-8 only, 65535 bytes | 1120.66 | 1053.90 | -6.0% |
+
+The pure multi-byte case does not use the fast path and showed a decrease;
+sample ranges overlap (scalar 13.956–15.090 ms, SIMD 14.204–16.076 ms).
+The 64 KiB binary control measured 61198.84 / 59350.33 MiB/s. These observations
+support ASCII-heavy workloads on this host, not a universal speedup or a claim
+for other CPUs/platforms. Revert the ASCII block alone to roll back this
+optimization; the dependency and public API contracts remain unchanged.
 
 ## Integration and rollback
 

@@ -30,7 +30,7 @@ target_include_directories(saltscore_cnet_original_test_owner
     "${PROJECT_SOURCE_DIR}/crypto/src")
 target_link_libraries(saltscore_cnet_original_test_owner
   PUBLIC Salts::Core Salts::NativeIO
-  PRIVATE Salts::URI saltscore_cnet_monocypher
+  PRIVATE Salts::URI Salts::SIMD saltscore_cnet_monocypher
     saltscore_cnet_reed c-ares::cares kcp::kcp Salts::Crypto)
 
 cmake_add_executable(saltscore_cnet_owner_original_test SOURCES cnet_owner_test.c
