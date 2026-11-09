@@ -1876,3 +1876,144 @@
 - Cleanup previously closed one DTLS peer, then waited for every worker before
   closing the other peers. Close all connections before one bounded group join,
   so one primary content failure does not add repeated sibling-drain failures.
+
+### Recurrent Windows ARM64 SCTP echo integrity failure (2026-11-09)
+
+- PR #274 exact-head CI #411/run 42553750600 passed nine matrix jobs, including
+  macOS x64 and both sanitizers, but Windows ARM64 failed the existing
+  `saltscore.sctp_dtls_native` owned/eight-peer/non-mixed case. Client 4 received
+  24576 bytes/PPID 53 without a read error; first difference was 14364. All new
+  SM2 AES256 container tests passed on that lane. This repeats the pre-#274
+  symptom recorded above; #409's successful run does not establish its repair.
+- Native ingress assertions did not fail. Add a read-only formal peer audit
+  after DTLS authentication and before Pion SCTP reassembly: verify packet CRC
+  and each nonempty-binary I-DATA payload byte, reporting TSN/SID/MID/FSN and
+  the first wrong byte window. The final end-to-end content assertion remains,
+  now with a byte window too. No wire rewrite, retry, skip, timeout change,
+  provider modification or standalone validation project is introduced.
+- Protocol: each Association's one reader borrows the caller buffer until Read
+  returns; the audit neither retains nor mutates it. It adds bounded packet
+  inspection only. Error propagation stops that Association with the original
+  audit evidence; sibling progress/cleanup retains its existing ownership.
+- Complete native-release-user build and the enhanced existing formal SCTP/DTLS
+  CTest passed on Windows x64 (5.97s); after the final continuation/CRC cases,
+  the affected CTest passed again in 5.33s. The seven in-entry audit cases cover
+  binary/control/empty packets, CRC-valid bad first/continuation payloads,
+  invalid CRC and a truncated header, including input immutability. Subsequent
+  Windows ARM64 execution is required to locate the failing boundary; this
+  instrumentation is not a claimed fix for the observed corruption.
+
+### SCTP copy/loss and sustained-association isolation (2026-11-09)
+
+- The first read-only audit candidate passed full CI #412 on exact head
+  00f815aaa1fefa155780f54b928e98f259caf094, including 204/204 Windows ARM64
+  CTests. The intermittent #411 corruption did not reproduce; no repair is
+  established by that passing run.
+- Add a deterministic case to existing `cnet_sctp_data_test`: eight independent
+  sender/receiver pairs queue 24 KiB nonuniform copies from one reused producer
+  buffer, poison it immediately, and round-robin protocol progress. Drop each
+  sixth I-DATA fragment once, require exactly one repair from an owned TX
+  ticket, poison each delivered wire buffer, and compare every serialized
+  fragment and the complete reassembled message. Gap SACKs transact over live
+  pending copies; all 25 emitted packets per sender and final TX drain are
+  checked. The pure SCTP owner has no TLS/socket/Go dependency in this case.
+- Extend the real `saltscore.sctp_dtls_native` entry with owned/external
+  eight-peer sustained scenarios: 16 large messages per live authenticated
+  association plus the original small/empty boundaries. Require all 19 native
+  message receipts and cumulative ACKs per peer and all 16 coalesced encrypted
+  flights. Original cases remain unchanged; process/test deadlines and feature
+  configuration are unchanged. This exercises slot/MID/TSN reuse within live
+  connections rather than retrying failed or completed handshakes.
+- Windows x64 LLVM-MinGW Release under VsDevCmd: complete native-release-user
+  graph passed, then the two affected existing CTests passed in 9.90s (pure
+  DATA 0.01s, real SCTP/DTLS 9.88s). Log:
+  TEMP/salts-219-sctp-sustained.log. New Windows ARM64 evidence is required;
+  neither this coverage nor the earlier full matrix is a corruption fix.
+
+### ARM64 echo failure concerns the expected source (2026-11-09)
+
+- CI #413/run 42558702292 on 11137e770dbcd3ba09004d6b60aa55f0006a00a0
+  reproduced the assertion in external/eight-peer/non-mixed/sustained_16,
+  client 3, first difference 14364. Pure SCTP copy/loss passed. The authenticated
+  packet CRC/byte audit did not fail. Actual byte window contains only 0x22.
+- Independently calculated Python hashlib SHA256(bytes([34]) * 24576) is
+  7cd62cffd40dcfa8472f1c5e51d338191bd6f8464a9c25dfa1339fd1e81d8f4e,
+  exactly the received digest. The expected-slice digest in the failure was
+  eb2374808e949472c1d849ce0e87c19c3391a64297c291a561104a8ccb09788a.
+  The same calculation for CI #411 client 4 (byte 35) matches its received
+  digest 24310c1c40514fa9479bd176b5f3115e90eb214722e7a5149ae8ce508831ace5.
+  These two observations establish correct received constant messages and an
+  inconsistent test source/oracle, not a demonstrated production echo mutation.
+  Earlier entries record the original interpretation; do not repeat that
+  interpretation as a proven production fault or claim the source cause fixed.
+- Preserve the original equality assertion and fail-fast source immutability
+  checks before WriteSCTP, after WriteSCTP and after ReadSCTP. Compare with the
+  independently known per-peer byte formula, log the source window/hash/phase
+  and message index. The caller owns this slice, Pion packetize copies it,
+  and the test performs no writes after initialization. Checkers only borrow
+  synchronously and never retain/mutate it. Keep all original wire/deadline
+  behavior; no toolchain/dependency workaround or assertion bypass.
+- Add a formal Go source-audit case through the existing SCTP/DTLS CTest entry.
+  Complete native-release-user Windows x64 Release graph passed; affected
+  saltscore.sctp_dtls_native passed in 10.13s. Log:
+  TEMP/salts-219-source-audit.log. New ARM64 evidence is still needed to locate
+  the first source mutation boundary; the runtime/provider cause is unproven.
+
+### Windows Go overlapped UDP source-length lifetime (2026-11-09)
+
+- CI #414/run 42559893793 on 47c7f48299df391bea9c15c616ee3330f512f108
+  fails the new after-read source audit, external/eight-peer/sustained_16,
+  client 3, message index 2. Before/after WriteSCTP checks pass; after ReadSCTP,
+  exactly four bytes at 14364 become little-endian 16 (10 00 00 00).
+  Replacing only those four bytes in the correct source reproduces both
+  CI #413's expected digest and CI #411's client-4 expected digest exactly.
+  Packet CRC/payload and native ingress checks pass; pure SCTP copy/loss passes.
+- CI reports go1.26.0 windows/arm64. Its actual cached upstream source
+  internal/poll/fd_windows.go ReadFromInet4 places rsan on the callback stack
+  and gives &rsan to WSARecvFrom, although completion occurs after the call.
+  Go #77975 confirms this regression and CL 753040 moves the address length
+  into the heap-owned pooled address; backport #78041/CL 753480 shipped in
+  Go 1.26.2. IPv4 sockaddr length is precisely the observed 16. This is a
+  concrete upstream lifetime defect in the exercised test-runtime path;
+  exact-head patched-runtime CI remains necessary to qualify the correction.
+  Sources: https://github.com/golang/go/issues/77975 and
+  https://github.com/golang/go/issues/78041 and https://go.dev/doc/devel/release.
+- Require Go 1.26.10 in the five peer modules previously requiring 1.26.0
+  (secure SCTP, CNet tickets, Crypto algorithms, ShangMi and standard TLS).
+  The existing CI version-file owner remains tests/independent/shangmi/go.mod.
+  Stay on the same 1.26 series with its
+  current maintenance fixes; no workflow override, alternate executable,
+  fallback, GODEBUG workaround, dependency graph or production C change.
+  Existing setup-go reads that version-file directly. Go's normal module
+  minimum rejects an older local-only runtime instead of using unsafe I/O.
+  All source/packet/final assertions and original timeouts remain intact.
+- Complete native-release-user Windows x64 Release graph passed. The existing
+  SCTP data/secure CTests passed (17.75s), and all ten CNet/ShangMi formal CTests
+  passed (55.47s), through the existing user test preset with readonly modules.
+  Go 1.26.10 source confirms heap-owned wsaRsa.name/namelen in ReadFromInet4.
+  Logs: TEMP/salts-219-go-udp-fix.log and
+  TEMP/salts-219-go-peer-regression.log. Windows ARM64 qualification pending.
+
+### DTLS teardown neighbor requires both native terminals (2026-11-09)
+
+- CI #414 also failed macOS x64 saltscore.cnet_dtls_native in
+  TestDTLSNativeServer/external/missing: listener teardown stopped shared
+  backend. The test's progress loop stopped as soon as neighborSent advanced,
+  then asserted neighborReceived already equaled it. Native fixture receive()
+  and sent() independently increment those counters, and observe() may route
+  them in separate completion batches; local send never proves peer receipt.
+- Continue the existing bounded progress loop until both counters advance.
+  Require exactly one additional send and receive; report before/sent/received
+  values on failure. No poll-count increase, timeout change, sleep, production
+  routing change or dropped assertion. All bytes/backends retain their owners.
+- Existing CNet DTLS native plus Crypto DTLS client/server Pion CTests pass
+  with patched Go on Windows x64 (3/3, 12.68s), via native-release-user.
+  Log: TEMP/salts-219-dtls-terminal-regression.log. Exact-head macOS matrix is
+  still required; do not mark the earlier #414 failure as passed.
+- Final target counts derive from admitted probes (initial plus optional
+  terminal-failure probe), not the current send-completion snapshot. The
+  failure probe may still be in flight when the final teardown probe is
+  admitted, so completion-derived targets can stop early or reject correctly
+  batched completions. Keep the existing 20-poll bound and exact final counts.
+  The affected CNet DTLS CTest passed in 7.26s; rebuilding the parent branch
+  graph before final validation is recorded in TEMP/salts-219-dtls-admission-parent.log.

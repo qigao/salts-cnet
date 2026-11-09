@@ -196,15 +196,29 @@ func TestSCTPOverNativeDTLS(t *testing.T) {
 		nativeClient := strings.HasSuffix(mode, "-client")
 		external := strings.HasPrefix(mode, "external")
 		cases := []struct {
-			count int
-			mixed bool
-		}{{1, false}, {4, true}, {8, true}, {8, false}}
+			count         int
+			mixed         bool
+			largeMessages int
+		}{{1, false, 1}, {4, true, 1}, {8, true, 1}, {8, false, 1}, {8, false, 16}}
 		if nativeClient {
 			cases = cases[:1]
 		}
 		for _, scenario := range cases {
 			count, mixed := scenario.count, scenario.mixed
-			t.Run(fmt.Sprintf("%s/%d/mixed_%t", mode, count, mixed), func(t *testing.T) {
+			name := fmt.Sprintf("%s/%d/mixed_%t", mode, count, mixed)
+			if scenario.largeMessages > 1 {
+				name += fmt.Sprintf("/sustained_%d", scenario.largeMessages)
+			}
+			t.Run(name, func(t *testing.T) {
+				// Keep each authenticated association alive while copied queues,
+				// TX tickets, receive slots and I-DATA identifiers cycle repeatedly.
+				// This is one sustained workload, not a retry of failed handshakes.
+				sizes := []int{1, 1024}
+				for i := 0; i < scenario.largeMessages; i++ {
+					sizes = append(sizes, 24576)
+				}
+				sizes = append(sizes, 0)
+				expectedMessages := uint32(len(sizes))
 				server, client, bad := credentials(t), credentials(t), credentials(t)
 				sockets := make([]*net.UDPConn, count)
 				ports := make([]int, count)
@@ -302,10 +316,11 @@ func TestSCTPOverNativeDTLS(t *testing.T) {
 						}
 						var association *sctp.Association
 						var e error
+						audited := &echoPacketAudit{Conn: c, expected: byte(31 + i)}
 						if nativeClient {
-							association, e = sctp.ServerWithOptions(sctp.WithNetConn(c), sctp.WithMaxMessageSize(24576), sctp.WithEnableInterleaving(true))
+							association, e = sctp.ServerWithOptions(sctp.WithNetConn(audited), sctp.WithMaxMessageSize(24576), sctp.WithEnableInterleaving(true))
 						} else {
-							association, e = sctp.ClientWithOptions(sctp.WithNetConn(c), sctp.WithMaxMessageSize(24576), sctp.WithEnableInterleaving(true))
+							association, e = sctp.ClientWithOptions(sctp.WithNetConn(audited), sctp.WithMaxMessageSize(24576), sctp.WithEnableInterleaving(true))
 						}
 						if e != nil {
 							fail(e)
@@ -348,7 +363,7 @@ func TestSCTPOverNativeDTLS(t *testing.T) {
 							done <- i
 							return
 						}
-						for _, size := range []int{1, 1024, 24576, 0} {
+						for message, size := range sizes {
 							if size == 24576 {
 								transport.arm()
 							}
@@ -358,21 +373,45 @@ func TestSCTPOverNativeDTLS(t *testing.T) {
 								payload = []byte{0}
 								kind = sctp.PayloadTypeWebRTCBinaryEmpty
 							}
+							expectedByte := byte(31 + i)
+							if size == 0 {
+								expectedByte = 0
+							}
+							checkSource := func(phase string) bool {
+								if err := auditEchoSource(payload, expectedByte, phase); err != nil {
+									fail(fmt.Errorf("message %d size=%d: %w", message, size, err))
+									return false
+								}
+								return true
+							}
+							if !checkSource("before write") {
+								return
+							}
 							if _, e = stream.WriteSCTP(payload, kind); e != nil {
 								fail(e)
 								return
 							}
+							if !checkSource("after write") {
+								return
+							}
 							n, ppi, e = stream.ReadSCTP(buffer)
+							if !checkSource("after read") {
+								return
+							}
 							if e != nil || ppi != kind || !bytes.Equal(buffer[:n], payload) {
 								offset := 0
 								for offset < n && offset < len(payload) && buffer[offset] == payload[offset] {
 									offset++
 								}
-								fail(fmt.Errorf("message size=%d received=%d ppid=%d err=%v first_difference=%d received_sha256=%x expected_sha256=%x", size, n, ppi, e, offset, sha256.Sum256(buffer[:n]), sha256.Sum256(payload)))
+								end := offset + 32
+								if end > n {
+									end = n
+								}
+								fail(fmt.Errorf("message size=%d received=%d ppid=%d err=%v first_difference=%d actual=%x received_sha256=%x expected_sha256=%x", size, n, ppi, e, offset, buffer[offset:end], sha256.Sum256(buffer[:n]), sha256.Sum256(payload)))
 								return
 							}
 						}
-						if transport.combined.Load() != 1 {
+						if transport.combined.Load() != uint32(scenario.largeMessages) {
 							fail(fmt.Errorf("coalesced record tail was not exercised"))
 							return
 						}
@@ -477,7 +516,7 @@ func TestSCTPOverNativeDTLS(t *testing.T) {
 						if mixed && i < 2 {
 							continue
 						}
-						if s.messages != 4 || s.acks != 4 {
+						if s.messages != expectedMessages || s.acks != expectedMessages {
 							complete = false
 						}
 					}
@@ -492,7 +531,7 @@ func TestSCTPOverNativeDTLS(t *testing.T) {
 					if mixed && i < 2 {
 						continue
 					}
-					if s.messages != 4 || s.acks != 4 {
+					if s.messages != expectedMessages || s.acks != expectedMessages {
 						t.Fatalf("peer %d message/ACK mismatch %d/%d err=%d flags=%x", i, s.messages, s.acks, s.err, s.flags)
 					}
 				}

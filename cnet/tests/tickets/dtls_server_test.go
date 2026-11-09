@@ -348,17 +348,24 @@ func TestDTLSNativeServer(t *testing.T) {
 					t.Fatal("listener destroy", st, n.refs)
 				}
 				if mode == "external" {
-					before := n.neighborSent
+					// Count admitted probes: a preceding failure probe may still
+					// have its independent send/receive completions in flight.
+					before := uint32(1) // The initial external-backend probe.
+					if neighborFailed {
+						before++
+					}
 					if st, _ := n.rpc('N', nil); st != 0 {
 						t.Fatal(st)
 					}
-					for i := 0; i < 20 && n.neighborSent <= before; i++ {
+					// Send and loopback receive are independent native terminals.
+					// A send completion alone does not establish receive progress.
+					for i := 0; i < 20 && (n.neighborSent <= before || n.neighborReceived <= before); i++ {
 						if st, _ := n.rpc('P', nil); st < 0 {
 							t.Fatal(st)
 						}
 					}
-					if n.neighborSent <= before || n.neighborReceived != n.neighborSent {
-						t.Fatal("listener teardown stopped shared backend")
+					if n.neighborSent != before+1 || n.neighborReceived != before+1 {
+						t.Fatalf("listener teardown neighbor incomplete: before=%d sent=%d received=%d", before, n.neighborSent, n.neighborReceived)
 					}
 				}
 			})
