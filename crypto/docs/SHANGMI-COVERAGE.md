@@ -30,7 +30,7 @@ and hot update remain outside the authorized implementation scope.
 | SM9 signature/encryption/KEM | Public identity-based signing, XOR encryption and KEM; fixed canonical key points and DER messages | Published signature/KEM/encryption vectors, scripted nonce/failure paths, finite prime-order subgroup admission, DER/tamper/identity negatives and output erasure; cross-platform CI required |
 | SM9 key exchange | First-party bounded exchange over existing GmSSL primitives, with mandatory mutual key confirmation and distinct exchange keys | Published session-key and both confirmation vectors; identity/master/purpose binding, wrong phase, forged/replayed confirmations, RNG failure, cancellation and erasure; cross-platform CI required |
 | SM2 full authenticated key exchange | GB/T 32918.3 curveSM2 agreement with explicit static peer trust, Z bindings and mandatory mutual confirmation | GB/T 32918.5 Annex B shares/key/confirmation vectors; independent gmsm key vector; identity/static-key mismatch, invalid points, infinity sum, zero combined scalar, RNG/phase/replay/erasure; cross-platform CI required |
-| SM2 key containers | Canonical SPKI and PKCS#8 import/export; PBES2 PBKDF2-HMAC-SM3 / SM4-CBC password protection | Public API negatives, RNG failure, GmSSL key-file interop and independent Python bidirectional interop; cross-platform CI required |
+| SM2 key containers | Canonical SPKI and PKCS#8 import/export; explicit PBES2 PBKDF2-HMAC-SM3/SM4-CBC or HMAC-SHA256/AES-256-CBC password protection | Public API negatives, RNG failure, GmSSL SM3/SM4 key-file interop and independent Python bidirectional interop for both profiles; new AES256 profile requires cross-platform CI |
 | SM2 certificate primitives | SM2 public-key extraction, local private-key binding and explicit-issuer signature verification | Native and independent gmsm certificates; ID/issuer/DER/algorithm/tamper negatives; these operations do not validate certificate trust |
 | SM2 pinned-peer trust | Explicit bounded chain/anchor, leaf-key identity, validation time, signing purpose and revocation policy | Independently signed paths, CA/pathLen/KU/EKU/time/constraint negatives, callback gating and failure erasure; cross-platform CI required |
 | SM2 complete direct CRL | Explicit issuer/SM2 signing ID, full-CRL scope, time/age/number policy and serial checking | Independent gmsm CRLs, real pinned-trust callback, revoked/stale/rollback/scope/DER negatives; cross-platform CI required |
@@ -1136,7 +1136,14 @@ unknown fields, compressed points, other curves or noncanonical encodings are
 accepted. Public-key import is structural/curve validation, not identity trust.
 Private scalars through N-1 are admitted for exchange; signing excludes N-1.
 
-EncryptedPrivateKeyInfo uses PBES2 with explicit PBKDF2-HMAC-SM3 and SM4-CBC.
+EncryptedPrivateKeyInfo uses PBES2. Existing `salts_crypto_sm2_pkcs8_encrypt`
+and `salts_crypto_sm2_pkcs8_decrypt` select PBKDF2-HMAC-SM3/SM4-CBC exclusively.
+The separate `salts_crypto_sm2_pkcs8_aes256_encrypt` and
+`salts_crypto_sm2_pkcs8_aes256_decrypt` select PBKDF2-HMAC-SHA256/AES-256-CBC.
+No algorithm inference or retry crosses those two profiles. AES256 export
+encodes explicit keyLength=32 and NULL HMAC-SHA256 parameters; import permits
+omitted keyLength or PRF parameters, but requires the explicit SHA256 PRF OID
+and the AES256-CBC cipher OID. Both accept salt 16..64 and exactly 16-byte IVs.
 Export draws a fresh 16-byte salt and IV. Passwords are explicit opaque bytes
 (1..1024), so embedded NUL is preserved. The caller selects iterations within
 10000..16777215; import additionally requires an explicit maximum work factor
@@ -1167,6 +1174,43 @@ cover native GmSSL interoperation and independent Python hashlib/cryptography
 encryption/decryption, including optional inner fields, PRF NULL/absent
 parameters and omitted keyLength. Test-only Python providers introduce no
 explicit native OpenSSL/BoringSSL dependency.
+
+The AES256 addition fills the standalone key-container gap independently of
+the broader TLS memory loader. Reuse the installed GmSSL #44 digest/PBKDF2/AES
+primitives and the existing ASN1 owner: no provider revision or dependency is
+needed. Two explicit entrypoints preserve the established SM3/SM4 contract;
+widening its implicit whitelist would change format admission for current
+callers, while a general algorithm registry would expose unqualified choices.
+Common private helpers own DER admission, padding and cleanup. Work is linear
+in the configured PBKDF2 iterations with fixed bounded stack storage, no heap
+or retained caller data. Derived keys, AES schedules and decrypted PKCS#8 are
+cleared on every admitted exit. This does not establish constant-time SM2/AES
+or authenticated storage. Reverting the two new declarations/entrypoints and
+their finite profile branches restores the previous API; existing formats and
+stored SM3/SM4 keys require no migration.
+
+For example, with caller-owned `key[32]`, nonempty `password` and
+`der[SALTS_CRYPTO_SM2_ENCRYPTED_PKCS8_MAX_SIZE]`:
+
+```c
+size_t written = 0;
+int status = salts_crypto_sm2_pkcs8_aes256_encrypt(key, password, password_size,
+    10000, der, sizeof(der), &written);
+/* Check status == SALTS_CRYPTO_OK before using der[0..written). */
+/* With disjoint imported_key[32], cap KDF work explicitly on import: */
+if (status == SALTS_CRYPTO_OK)
+    status = salts_crypto_sm2_pkcs8_aes256_decrypt(der, written, password,
+        password_size, 10000, imported_key);
+```
+
+10000 is the admission minimum in this example, not password-strength advice.
+The existing formal `crypto.asn1.sm2_keys` and independent Python entry cover
+binary/maximum passwords, invalid keys, both random-draw failures, fixed output
+guards, iteration budgets, optional inner/algorithm fields, salt boundaries,
+wrong passwords, padding/algorithm/DER/key-binding rejection and strict
+cross-profile refusal. `crypto.asn1.header_cpp17` calls the new C ABI directly.
+Cross-platform/sanitizer qualification of this addition remains separate from
+local Windows Release results and from the earlier #273 matrix.
 
 ### SM2 certificate primitives
 

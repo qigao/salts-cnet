@@ -2017,3 +2017,31 @@
   batched completions. Keep the existing 20-poll bound and exact final counts.
   The affected CNet DTLS CTest passed in 7.26s; rebuilding the parent branch
   graph before final validation is recorded in TEMP/salts-219-dtls-admission-parent.log.
+
+### Issue #219 standalone SM2 SHA256/AES256 key containers (2026-11-09)
+
+- After the closure review, the user selected implementation and validation of
+  one remaining gap. Branch `feat/crypto-sm2-pkcs8-aes256` adds explicit
+  `salts_crypto_sm2_pkcs8_aes256_encrypt`/`_decrypt` for standalone PBES2
+  PBKDF2-HMAC-SHA256/AES256-CBC. The old SM3/SM4 entrypoints remain strict.
+  Reuse installed GmSSL #44 and canonical ASN1; no dependency/preset change.
+- Common private helpers preserve work/size bounds, DER/key binding, output
+  guards and failure erasure. Independent Python checks both directions,
+  optional fields, salt bounds, algorithm/padding/password negatives and no
+  cross-profile fallback. Native cases cover RNG failures, maximum/binary
+  passwords, every DER truncation and an actual 10001-iteration key rejected
+  at budget 10000 then accepted at 10001.
+- This checkout's C++ TinyTest `check_equal` has only two arguments and its
+  container helper requires container members, unlike the C byte-count form.
+  Use `check_equal(std::memcmp(actual, expected, sizeof(expected)), 0)` for
+  these C ABI byte arrays. Both initial compile failures stopped the build;
+  the corrected C++ test performs the real AES256 round trip.
+- Under VsDevCmd/Windows x64 LLVM-MinGW Release, complete
+  `cmake --build --preset native-release-user --parallel 8` passed, then
+  `ctest --preset native-release-user -R
+  "^crypto\.(asn1\.(sm2_keys|sm2_keys_independent|header_cpp17)|algorithms\.cpp17_header|x509\.sm2_signatures)$"
+  --output-on-failure` passed all five tests (0.93s), PYTHONOPTIMIZE=1.
+  Log: TEMP/salts-219-sm2-aes256-final.log. This records initial local
+  validation; cross-platform/sanitizer qualification belongs to subsequent CI,
+  and issue closure is not claimed. CBC storage integrity and private-arithmetic side channels remain
+  separate gates. Root's unrelated housekeeping edits were untouched.

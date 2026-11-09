@@ -4,9 +4,11 @@
 #include <crypto/tls_credentials.h>
 #include <crypto/tls_group.h>
 #include <crypto/tls_stream.h>
+#include <crypto/sm2_keys.h>
 #include <tinytest.hpp>
 #include <cstdint>
 #include <cstddef>
+#include <cstring>
 #include <type_traits>
 
 static_assert(std::is_standard_layout<salts_asn1_tlv>::value, "TLV ABI");
@@ -14,6 +16,17 @@ static_assert(std::is_standard_layout<salts_asn1_reader>::value, "reader ABI");
 static_assert(SALTS_ASN1_ABI_VERSION == 1u, "ASN.1 ABI version");
 
 spec("Crypto ASN.1 C++17 public header") {
+    it("round trips the explicit SM2 AES256 key container through the C ABI") {
+        std::uint8_t key[32]{}, imported[32]{}, der[SALTS_CRYPTO_SM2_ENCRYPTED_PKCS8_MAX_SIZE]{};
+        const std::uint8_t password[] = {'p', 0, 'w'};
+        std::size_t written = 0u;
+        key[31] = 1u;
+        check_equal(salts_crypto_sm2_pkcs8_aes256_encrypt(key, password, sizeof(password), 10000u,
+            der, sizeof(der), &written), SALTS_CRYPTO_OK);
+        check_equal(salts_crypto_sm2_pkcs8_aes256_decrypt(der, written, password, sizeof(password),
+            10000u, imported), SALTS_CRYPTO_OK);
+        check_equal(std::memcmp(imported, key, sizeof(key)), 0);
+    }
     it("links immutable credential lifetime operations through the C ABI") {
         crypto_tls_credential_object *object = nullptr;
         check_equal(crypto_tls_credential_object_retain(object), static_cast<int>(CRYPTO_TLS_STREAM_EINVAL));
