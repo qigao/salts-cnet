@@ -1,5 +1,4 @@
 #include "../../src/crypto_dtls_client.h"
-#define TINYTEST_NO_MAIN
 #include <tinytest.h>
 #include <stdio.h>
 #include <stdlib.h>

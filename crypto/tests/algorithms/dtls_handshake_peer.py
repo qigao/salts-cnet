@@ -1,4 +1,5 @@
 """Formal wire oracle for private DTLS preparation, not a network handshake."""
+import argparse
 import hashlib
 import hmac
 import datetime
@@ -6,7 +7,6 @@ import os
 from pathlib import Path
 import struct
 import subprocess
-import sys
 import tempfile
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography import x509
@@ -106,6 +106,10 @@ def verify_exchange(ephemeral, native):
 
 
 def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("executables", nargs=5,
+                        metavar="suite", help="handshake, secrets, exchange, client and server suite executables")
+    args = parser.parse_args()
     first = packet(hello(), 0)
     issued = (100).to_bytes(8, "big")
     cookie = issued + mac(issued, hello())
@@ -128,7 +132,8 @@ def main():
                    SALTS_DTLS_EC_KEY=str(root / "ec-key"), SALTS_DTLS_RSA_KEY=str(root / "rsa-key"),
                    SALTS_DTLS_RSA_CERT=str(root / "rsa-cert"), SALTS_DTLS_EC_EXCHANGE=str(root / "ec-exchange"),
                    SALTS_DTLS_RSA_EXCHANGE=str(root / "rsa-exchange"), SALTS_DTLS_EXCHANGE_OUTPUT=str(root / "exchange-output"))
-        subprocess.run([sys.argv[1]], check=True, env=env, timeout=30)
+        for executable in args.executables:
+            subprocess.run([executable], check=True, env=env, timeout=30)
         reply = (root / "reply").read_bytes()
         if len(reply) != 60 or len(reply) > len(first) or reply[5:11] != first[5:11]:
             raise AssertionError("invalid response length or mirrored record sequence")
