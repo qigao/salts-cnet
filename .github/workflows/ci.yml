@@ -234,7 +234,7 @@ jobs:
 
       - name: Install native ccache
         id: ccache
-        uses: qigao/vcpkg-cache/.github/actions/setup-ccache@v0.1.5
+        uses: qigao/vcpkg-cache/.github/actions/setup-ccache@v0.1.2
 
       - name: Restore compiler cache
         id: compiler-cache
