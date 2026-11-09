@@ -102,8 +102,9 @@ A missing or corrupt prepared blob fails rather than downloading another copy.
 The source release manifest retains producer-CI and commit provenance. This
 workflow-local distribution artifact carries released SDKs, not a build of
 moving SaltsBase master. Host tools and test-oracle setup keep their existing
-installation steps. This reduces duplicate source requests without retries or
-alternate sources; external service failures still stop preparation.
+installation steps. This reduces duplicate source requests without adding
+workflow/job retries or alternate-source recovery. The released downloader's
+existing bounded transfer policy remains in effect; terminal failures stop preparation.
 
 Release 0.1.0 provides Windows x64 MSVC/LLVM-MinGW, Linux x64 Clang/GCC,
 macOS ARM64, and Android arm64/x64 SDKs. It includes the public accept header

@@ -38,10 +38,17 @@ function Get-LockedArchive([string]$Name, [string]$Url, [string]$Hash) {
   if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 }
 
+function Get-ReleaseAsset($Asset) {
+  $hash = $Asset.digest.Substring('sha256:'.Length)
+  & python .github/ci/download-release-asset.py $Asset.browser_download_url `
+    $hash $Asset.size "$root/blobs"
+  if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+}
+
 # These are the release API's canonical public asset URLs, not a second source
 # attempted after failure. Every blob is addressed and verified by SHA-256.
 $manifestHash = $release.manifest.digest.Substring('sha256:'.Length)
-Get-LockedArchive 'salts-base-manifest' $release.manifest.browser_download_url $manifestHash
+Get-ReleaseAsset $release.manifest
 Copy-Item -LiteralPath "$root/blobs/$manifestHash" -Destination "$root/salts-base-manifest.json"
 $manifest = Get-Content "$root/salts-base-manifest.json" -Raw | ConvertFrom-Json
 if ($manifest.schemaVersion -ne 1 -or $manifest.name -cne 'SaltsBase' -or
@@ -63,7 +70,7 @@ foreach ($profile in ($matrix.include.sdk | Sort-Object -Unique)) {
       $asset[0].size -ne $sdk.sizeBytes) {
     throw "SaltsBase manifest does not match release asset $($sdk.file)"
   }
-  Get-LockedArchive "salts-base-$profile" $asset[0].browser_download_url $sdk.sha256
+  Get-ReleaseAsset $asset[0]
   if ((Get-Item -LiteralPath "$root/blobs/$($sdk.sha256)").Length -ne $sdk.sizeBytes) {
     throw "SaltsBase archive size mismatch: $($sdk.file)"
   }
