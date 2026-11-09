@@ -443,6 +443,9 @@ int crypto_dtls_server_receive(crypto_dtls_server *s,uint64_t now,const void *wi
     crypto_dtls_record_view v; if (!crypto_dtls_wire_record(data+at,size-at,&v)) return fail(s,SALTS_CRYPTO_ESTATE);
     const uint8_t *record=data+at; at+=v.record_size;
     if (!v.epoch) {
+      /* A verified client Finished ends plaintext admission, including while
+       * our final flight is pending. Authenticated retransmissions use epoch 1. */
+      if (s->phase>=CRYPTO_DTLS_SERVER_SEND_FINAL) continue;
       if (record[2]!=0xfd) continue;
       if (v.type==22u) status=fragments(s,v.payload,v.payload_size,false);
       else if (v.type==20u && s->phase<CRYPTO_DTLS_SERVER_SEND_FINAL) {

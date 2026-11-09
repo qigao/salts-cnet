@@ -1817,3 +1817,28 @@
   all six (25.09 seconds). Existing server-ticket tests already drop the public
   TLS context while the final accepted stream remains alive. Windows execution
   checks lifetime behavior; leak detection still requires the unchanged ASan CI.
+
+### Issue #219 review corrections (2026-11-09)
+
+- A malformed epoch-zero handshake could reach fragment parsing after READY,
+  fail the authenticated session and erase its traffic keys without a valid
+  MAC. Both private endpoint formal peers reproduced it. Discard old plaintext
+  before parsing after client READY / server verified-Finished final flight;
+  authenticated malformed handshakes remain terminal. The regressions verify
+  normal authenticated data still arrives after each ignored plaintext probe.
+- Shared session-cache lookup sampled time outside its mutex. A concurrent
+  later receipt could therefore appear to be a backwards clock and abort an
+  unrelated handshake. The private cache now owns a bounded internal OS clock
+  sampler and samples after locking; client ticket age uses that exact sample.
+  No public clock setting/API or new provider is introduced. Clock failure and
+  a sample preceding a published receipt still fail without consuming tickets.
+  Tests use an atomic deterministic internal clock; existing eight-contender
+  client consume/server lookup checks remain, with publication-interleaving,
+  sampled-age, genuine regression and clock-failure cases added.
+- Windows x64 LLVM-MinGW, under VsDevCmd: complete native-release-user build
+  passed. ctest --preset native-release-user -R
+  "(dtls|session_cache|session_resumption|server_tickets|pkix_name_constraints)"
+  --output-on-failure passed all 15 tests (45.93 seconds). After the final null
+  sampler admission assertion, the complete build and three cache/independent
+  DTLS peer tests passed again (1.93 seconds). Cross-platform and sanitizer
+  results belong to the subsequent CI, not this local validation.

@@ -193,6 +193,18 @@ class StrictServerTests(unittest.TestCase):
                 self.assertEqual(peer.rpc("Q"),(0,b"\0\x28"+bytes(4)))
                 self.assertEqual(peer.rpc("N"),(status,b""))
 
+    def test_old_plaintext_handshakes_cannot_terminate_ready(self):
+        for payload in (b"\x01", message(0, 0, b""), message(16, 2, b"")):
+            with self.subTest(payload=payload), Server(self, self.credentials) as peer:
+                self.assertEqual(peer.connect(), 0)
+                peer.initial()
+                peer.admit()
+                self.assertGreaterEqual(peer.send_plain(22, payload)[0], 0)
+                self.assertEqual(peer.phase, 6)
+                self.assertEqual(peer.ingest(peer.protect_client(23, b"alive", 2)), (0, b"\0\x05alive"))
+                self.assertLess(peer.ingest(peer.protect_client(22, b"\x01", 3))[0], 0)
+                self.assertEqual(peer.phase, 9)
+
     def test_exporter_requires_ready_and_explicit_retention_then_erases_at_close(self):
         for enabled in (False,True):
             with self.subTest(enabled=enabled),Server(self,self.credentials,exporter=enabled) as peer:

@@ -1331,7 +1331,8 @@ int crypto_tls_stream_client_context_create(const crypto_tls_stream_client_confi
       config->supported_groups, config->supported_group_count, &context);
   if (status != CRYPTO_TLS_STREAM_OK) return status;
   if (config->session_cache_capacity) {
-    status = crypto_tls_session_cache_create(config->session_cache_capacity,&context->session_cache);
+    status = crypto_tls_session_cache_create(config->session_cache_capacity,
+        crypto_tls_stream_key_update_clock,NULL,&context->session_cache);
     if (status != CRYPTO_TLS_STREAM_OK) { crypto_tls_stream_context_release(context); return status; }
   }
   status = crypto_tls_stream_identities_append(context, config->identities, config->identity_count);
@@ -1422,7 +1423,8 @@ int crypto_tls_stream_server_context_create(const crypto_tls_stream_server_confi
     return status;
   }
   if (config->session_ticket_capacity) {
-    status = crypto_tls_session_cache_create(config->session_ticket_capacity,&context->session_cache);
+    status = crypto_tls_session_cache_create(config->session_ticket_capacity,
+        crypto_tls_stream_key_update_clock,NULL,&context->session_cache);
     if (status != CRYPTO_TLS_STREAM_OK) { crypto_tls_stream_context_release(context); return status; }
     context->session_ticket_lifetime = config->session_ticket_lifetime_seconds;
   }
@@ -1706,8 +1708,7 @@ static int crypto_tls_stream_find_session(void *user, int cipher, const uint8_t 
   if (!state->server || !r) return -1;
   salts_crypto_secure_zero(r,sizeof(*r));
   if (ticket_size != 32u) return 0;
-  if (crypto_tls_stream_key_update_clock(NULL,&now) != 1) return -1;
-  int result = crypto_tls_session_cache_find(state->context->session_cache,ticket,ticket_size,now,r);
+  int result = crypto_tls_session_cache_find(state->context->session_cache,ticket,ticket_size,&now,r);
   if (result == CRYPTO_TLS_STREAM_ENOENT) return 0;
   if (result != CRYPTO_TLS_STREAM_OK) return -1;
   const size_t alpn_size = c->alpn_selected ? strlen(c->alpn_selected) : 0u;
@@ -1750,8 +1751,7 @@ static int crypto_tls_stream_offer_session(crypto_tls_stream *state) {
    * issue tickets. The PSK identity extension is offered only on a hit. */
   e->connection.key_exchange_modes = TLS_KE_PSK_DHE|TLS_KE_CERT_DHE;
   uint64_t now;
-  if (crypto_tls_stream_key_update_clock(NULL,&now) != 1) return CRYPTO_TLS_STREAM_EIO;
-  int status = crypto_tls_session_cache_take(state->context->session_cache,e->server_name,now,e->resume);
+  int status = crypto_tls_session_cache_take(state->context->session_cache,e->server_name,&now,e->resume);
   if (status == CRYPTO_TLS_STREAM_ENOENT) return CRYPTO_TLS_STREAM_OK;
   if (status != CRYPTO_TLS_STREAM_OK) return status;
   const uint32_t age = (uint32_t)(now-e->resume->received_ms)+e->resume->age_add; /* RFC8446 modulo 2^32. */

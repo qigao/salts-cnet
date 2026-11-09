@@ -445,6 +445,9 @@ int crypto_dtls_client_receive(crypto_dtls_client *s,uint64_t now,const void *wi
     if (!crypto_dtls_wire_record(bytes+at,size-at,&v)) return fail(s,SALTS_CRYPTO_ESTATE);
     const uint8_t *record=bytes+at; at+=v.record_size;
     if (!v.epoch) {
+      /* Old plaintext cannot authenticate an error in an established session.
+       * Discard it before parsing attacker-controlled handshake fragments. */
+      if (s->phase>=CRYPTO_DTLS_CLIENT_READY) continue;
       if (v.type==22u) {
         if (v.payload_size && v.payload[0]==3u &&
             (s->phase==CRYPTO_DTLS_CLIENT_COOKIE || s->phase==CRYPTO_DTLS_CLIENT_HELLO)) {
