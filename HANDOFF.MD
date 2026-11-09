@@ -1817,3 +1817,62 @@
   all six (25.09 seconds). Existing server-ticket tests already drop the public
   TLS context while the final accepted stream remains alive. Windows execution
   checks lifetime behavior; leak detection still requires the unchanged ASan CI.
+
+### Issue #219 review corrections (2026-11-09)
+
+- A malformed epoch-zero handshake could reach fragment parsing after READY,
+  fail the authenticated session and erase its traffic keys without a valid
+  MAC. Both private endpoint formal peers reproduced it. Discard old plaintext
+  before parsing after client READY / server verified-Finished final flight;
+  authenticated malformed handshakes remain terminal. The regressions verify
+  normal authenticated data still arrives after each ignored plaintext probe.
+- Shared session-cache lookup sampled time outside its mutex. A concurrent
+  later receipt could therefore appear to be a backwards clock and abort an
+  unrelated handshake. The private cache now owns a bounded internal OS clock
+  sampler and samples after locking; client ticket age uses that exact sample.
+  No public clock setting/API or new provider is introduced. Clock failure and
+  a sample preceding a published receipt still fail without consuming tickets.
+  Tests use an atomic deterministic internal clock; existing eight-contender
+  client consume/server lookup checks remain, with publication-interleaving,
+  sampled-age, genuine regression and clock-failure cases added.
+- Windows x64 LLVM-MinGW, under VsDevCmd: complete native-release-user build
+  passed. ctest --preset native-release-user -R
+  "(dtls|session_cache|session_resumption|server_tickets|pkix_name_constraints)"
+  --output-on-failure passed all 15 tests (45.93 seconds). After the final null
+  sampler admission assertion, the complete build and three cache/independent
+  DTLS peer tests passed again (1.93 seconds). Cross-platform and sanitizer
+  results belong to the subsequent CI, not this local validation.
+
+### PR #273 macOS x64 TLS aggregate timeout (2026-11-09)
+
+- Run 42546894775/job 128933718060 completed the full graph build, then failed
+  saltscore.cnet_tls_client_identities at the Go package's aggregate 150-second
+  deadline. TestServerVerificationTime had run for only one second and its
+  active child case for less than one second. All nine other matrix jobs passed.
+- The entry selected every standard-TLS Go test except session resumption;
+  unrelated credential, diagnostic and time matrices shared the identity budget.
+  Register the seven existing capabilities separately with exact top-level Go
+  selectors. Session resumption keeps its existing eighth entry. Preserve all
+  scenarios and the existing 150s Go / 180s CTest capability limits; no retry,
+  skip, new feature switch or independent validation project was added.
+- Actual native-release-user CMake regeneration and complete build passed under
+  VsDevCmd/Windows x64 LLVM-MinGW. The eight TLS CTest entries passed in 89.57s;
+  encrypted credentials was the slowest local entry at 34.79s. CTest's generated
+  JSON confirms all eight exact Go selectors and unchanged timeouts. macOS x64
+  must still execute the corrected registration in the subsequent CI.
+
+### PR #273 Windows ARM64 SCTP content failure investigation (2026-11-09)
+
+- Run 42548223680/job 128937770174 failed the eight-peer owned/non-mixed
+  SCTP/DTLS scenario: a 24576-byte PPID-53 echo had the right length and no
+  read error, but different bytes. macOS x64 and all other matrix lanes passed.
+  Thirty local Windows x64 formal repetitions passed (158.35s); that does not
+  establish a fix for the ARM64 content failure.
+- Strengthen the native formal host to validate each peer's known ingress
+  pattern and immediately poison caller storage after copied echo admission.
+  The Go failure includes first differing offset and both payload digests.
+  The enhanced formal test passed once locally (5.76s). Preserve the original
+  content assertion; the next ARM64 CI supplies the missing failure boundary.
+- Cleanup previously closed one DTLS peer, then waited for every worker before
+  closing the other peers. Close all connections before one bounded group join,
+  so one primary content failure does not add repeated sibling-drain failures.

@@ -479,6 +479,17 @@ class DTLSClientTests(unittest.TestCase):
                 self.assertEqual(peer.rpc("Q"),(0,b"\0\x28"+bytes(4)))
                 self.assertEqual(peer.rpc("N"),(status,b""))
 
+    def test_old_plaintext_handshakes_cannot_terminate_ready(self):
+        for payload in (b"\x01", message(0, 0, b""), message(14, 4, b"")):
+            with self.subTest(payload=payload), Peer(self, self.credentials) as peer:
+                self.complete(peer)
+                self.assertGreaterEqual(peer.receive(payload)[0], 0)
+                self.assertEqual(peer.phase, READY)
+                self.assertEqual(peer.rpc("R", peer.protect(23, b"alive")), (0, b"\0\x05alive"))
+                # The same malformed handshake is fatal when authenticated.
+                self.assertLess(peer.rpc("R", peer.protect(22, b"\x01"))[0], 0)
+                self.assertEqual(peer.phase, FAILED)
+
     def test_exporter_is_opt_in_authenticated_and_erased_at_close_or_failure(self):
         for enabled, terminal in ((False, "close"), (True, "close"), (True, "abort"), (True, "bad_finished"), (True, "policy")):
             with self.subTest(enabled=enabled, terminal=terminal), Peer(self, self.credentials, exporter=enabled,

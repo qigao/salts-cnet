@@ -15,6 +15,8 @@ struct crypto_tls_session_cache {
   pthread_mutex_t lock;
 #endif
   size_t capacity, next;
+  crypto_tls_session_cache_clock clock;
+  void *clock_user;
   crypto_tls_cached_session entries[];
 };
 static void lock_cache(crypto_tls_session_cache *c) {
@@ -31,10 +33,11 @@ static void unlock_cache(crypto_tls_session_cache *c) {
   if (pthread_mutex_unlock(&c->lock) != 0) abort();
 #endif
 }
-int crypto_tls_session_cache_create(size_t capacity, crypto_tls_session_cache **out) {
+int crypto_tls_session_cache_create(size_t capacity, crypto_tls_session_cache_clock clock,
+    void *clock_user, crypto_tls_session_cache **out) {
   if (!out) return CRYPTO_TLS_STREAM_EINVAL;
   *out = NULL;
-  if (!capacity || capacity > CRYPTO_TLS_SESSION_CACHE_MAX) return CRYPTO_TLS_STREAM_EINVAL;
+  if (!capacity || capacity > CRYPTO_TLS_SESSION_CACHE_MAX || !clock) return CRYPTO_TLS_STREAM_EINVAL;
   /* Independently bounded count/entry size, including 32-bit size_t. */
   crypto_tls_session_cache *c = calloc(1u,sizeof(*c)+capacity*sizeof(c->entries[0]));
   if (!c) return CRYPTO_TLS_STREAM_ENOMEM;
@@ -44,6 +47,8 @@ int crypto_tls_session_cache_create(size_t capacity, crypto_tls_session_cache **
   if (pthread_mutex_init(&c->lock,NULL) != 0) { free(c); return CRYPTO_TLS_STREAM_EIO; }
 #endif
   c->capacity = capacity;
+  c->clock = clock;
+  c->clock_user = clock_user;
   *out = c;
   return CRYPTO_TLS_STREAM_OK;
 }
@@ -86,15 +91,26 @@ int crypto_tls_session_cache_put(crypto_tls_session_cache *c, const crypto_tls_c
   unlock_cache(c);
   return CRYPTO_TLS_STREAM_OK;
 }
-int crypto_tls_session_cache_take(crypto_tls_session_cache *c, const char *hostname,
-    uint64_t now, crypto_tls_cached_session *out) {
-  if (!c || !hostname || !out) return CRYPTO_TLS_STREAM_EINVAL;
-  int status = CRYPTO_TLS_STREAM_ENOENT;
-  lock_cache(c);
+/* Called only while holding the cache lock. Sampling before locking would
+ * mistake a concurrent newer publication for a backwards monotonic clock. */
+static int sample_cache(crypto_tls_session_cache *c, uint64_t *now) {
+  if (c->clock(c->clock_user,now) != 1) return CRYPTO_TLS_STREAM_EIO;
   for (size_t i = 0u; i < c->capacity; ++i)
-    if (c->entries[i].ticket_size && now < c->entries[i].received_ms) {
-      status = CRYPTO_TLS_STREAM_EIO; goto end;
-    }
+    if (c->entries[i].ticket_size && *now < c->entries[i].received_ms)
+      return CRYPTO_TLS_STREAM_EIO;
+  return CRYPTO_TLS_STREAM_OK;
+}
+int crypto_tls_session_cache_take(crypto_tls_session_cache *c, const char *hostname,
+    uint64_t *out_now, crypto_tls_cached_session *out) {
+  if (!c || !hostname || !out_now || !out) return CRYPTO_TLS_STREAM_EINVAL;
+  int status = CRYPTO_TLS_STREAM_ENOENT;
+  uint64_t now;
+  *out_now = 0u;
+  lock_cache(c);
+  status = sample_cache(c,&now);
+  if (status != CRYPTO_TLS_STREAM_OK) goto end;
+  *out_now = now;
+  status = CRYPTO_TLS_STREAM_ENOENT;
   for (size_t i = 0u; i < c->capacity; ++i) {
     const size_t slot = (c->next+c->capacity-1u-i)%c->capacity;
     crypto_tls_cached_session *s = &c->entries[slot];
@@ -112,14 +128,16 @@ end:
   return status;
 }
 int crypto_tls_session_cache_find(crypto_tls_session_cache *c, const uint8_t *ticket,
-    size_t size, uint64_t now, crypto_tls_cached_session *out) {
-  if (!c || !ticket || size != 32u || !out) return CRYPTO_TLS_STREAM_EINVAL;
+    size_t size, uint64_t *out_now, crypto_tls_cached_session *out) {
+  if (!c || !ticket || size != 32u || !out_now || !out) return CRYPTO_TLS_STREAM_EINVAL;
   int status = CRYPTO_TLS_STREAM_ENOENT;
+  uint64_t now;
+  *out_now = 0u;
   lock_cache(c);
-  for (size_t i = 0u; i < c->capacity; ++i)
-    if (c->entries[i].ticket_size && now < c->entries[i].received_ms) {
-      status = CRYPTO_TLS_STREAM_EIO; goto end;
-    }
+  status = sample_cache(c,&now);
+  if (status != CRYPTO_TLS_STREAM_OK) goto end;
+  *out_now = now;
+  status = CRYPTO_TLS_STREAM_ENOENT;
   for (size_t i = 0u; i < c->capacity; ++i) {
     crypto_tls_cached_session *s = &c->entries[i];
     if (!s->ticket_size) continue;

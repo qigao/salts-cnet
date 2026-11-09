@@ -315,13 +315,27 @@ if(TARGET Salts::CNet)
     set_tests_properties(saltscore.cnet_tls_session_resumption PROPERTIES
       WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/independent/tls"
       ENVIRONMENT "CGO_ENABLED=0;GOWORK=off" TIMEOUT 90)
-    add_test(NAME saltscore.cnet_tls_client_identities
-      COMMAND "${SALTS_CNET_TEST_GO}" test -mod=readonly -count=1 -timeout=150s
-        -skip "^TestTLS13SessionResumption$"
-        -args -python "${Python3_EXECUTABLE}" -native "$<TARGET_FILE:saltscore_cnet_tls_ca_san_test>")
-    set_tests_properties(saltscore.cnet_tls_client_identities PROPERTIES
-      WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/independent/tls"
-      ENVIRONMENT "CGO_ENABLED=0;GOWORK=off" TIMEOUT 180)
+    # Each capability owns its existing Go/CTest time budget. Running every
+    # unrelated TLS test under the client-identities budget made elapsed work
+    # from earlier capabilities time out a later, otherwise healthy handshake.
+    foreach(salts_tls_test IN ITEMS
+        "client_identities;TestClientIdentities"
+        "encrypted_credentials;TestEncryptedCredentials"
+        "certificate_signature_positions;TestCertificateSignaturePositions"
+        "purpose_diagnostics;TestPurposeDiagnostics"
+        "validity_diagnostics;TestValidityDiagnostics"
+        "verification_time;TestVerificationTime"
+        "server_verification_time;TestServerVerificationTime")
+      list(GET salts_tls_test 0 salts_tls_name)
+      list(GET salts_tls_test 1 salts_tls_case)
+      add_test(NAME saltscore.cnet_tls_${salts_tls_name}
+        COMMAND "${SALTS_CNET_TEST_GO}" test -mod=readonly -count=1 -timeout=150s
+          -run "^${salts_tls_case}$"
+          -args -python "${Python3_EXECUTABLE}" -native "$<TARGET_FILE:saltscore_cnet_tls_ca_san_test>")
+      set_tests_properties(saltscore.cnet_tls_${salts_tls_name} PROPERTIES
+        WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/independent/tls"
+        ENVIRONMENT "CGO_ENABLED=0;GOWORK=off" TIMEOUT 180)
+    endforeach()
     add_test(NAME saltscore.cnet_tlcp_independent
       COMMAND "${SALTS_CNET_TEST_GO}" test -mod=readonly -count=1 -timeout=150s
         -args -python "${Python3_EXECUTABLE}" -native "$<TARGET_FILE:saltscore_cnet_tls_ca_san_test>")

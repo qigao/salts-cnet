@@ -1892,7 +1892,11 @@ the normal full TLS handshake; server rejection of a PSK uses TLS's specified
 full-authentication path, never a weaker trust/profile or application replay.
 
 Ticket age uses the existing monotonic clock adapter, exact milliseconds plus
-age_add modulo 2^32 per RFC8446. Negative/backward clock behavior fails, lifetime
+age_add modulo 2^32 per RFC8446. Cache lookup samples this internal OS clock
+after acquiring the mutex, and returns the same sample for ticket-age encoding.
+A concurrent later publication therefore cannot make an earlier caller sample
+look like clock regression. Actual clock failure or a sample before a published
+receipt still fails without consuming a ticket. Lifetime
 is at most seven days, and expiry does not extend on selection. Only PSK_DHE is
 offered alongside full certificate authentication; pure PSK and early data remain
 disabled. On accepted PSK Finished, the original peer chain is revalidated using
@@ -2473,6 +2477,10 @@ An incoming well-formed fatal alert records its peer description, terminates and
 erases secrets without echo. Once peer CCS or authenticated epoch-one traffic has
 been observed, epoch-zero alerts are ignored; unauthenticated alerts cannot kill
 an established connection. Malformed authenticated alerts remain terminal.
+After READY (or the server's verified client Finished while its final flight is
+pending), all epoch-zero records are discarded before handshake parsing. A
+malformed or unknown plaintext handshake cannot erase established traffic keys;
+the same malformed handshake in an authenticated epoch-one record remains fatal.
 
 Python formal peers verify plaintext/encrypted alert bytes in both directions,
 actual write epoch, post-READY forged Finished, immediate secret erasure, stable
