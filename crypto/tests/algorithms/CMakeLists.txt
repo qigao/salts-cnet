@@ -1,4 +1,5 @@
-add_executable(salts_crypto_sha_ed448_vectors sha_ed448_vectors.c)
+cmake_add_executable(salts_crypto_sha_ed448_vectors SOURCES sha_ed448_vectors.c
+  FOLDER "crypto/tests/algorithms")
 target_compile_features(salts_crypto_sha_ed448_vectors PRIVATE c_std_11)
 # Source-tree tests use the pinned installed vcpkg GmSSL headers;
 # never access a locally copied native implementation.
@@ -7,12 +8,16 @@ target_link_libraries(salts_crypto_sha_ed448_vectors PRIVATE
 add_test(NAME crypto.algorithms.sha256_sm3_ed448_rfc8032 COMMAND salts_crypto_sha_ed448_vectors)
 set_tests_properties(crypto.algorithms.sha256_sm3_ed448_rfc8032 PROPERTIES TIMEOUT 120)
 
-add_executable(crypto_algorithms_cpp_header header_cpp.cpp)
+cmake_add_executable(crypto_algorithms_cpp_header SOURCES header_cpp.cpp
+  FOLDER "crypto/tests/algorithms")
 set_target_properties(crypto_algorithms_cpp_header PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON)
 target_link_libraries(crypto_algorithms_cpp_header PRIVATE Salts::Crypto Salts::TinyTest)
 add_test(NAME crypto.algorithms.cpp17_header COMMAND crypto_algorithms_cpp_header)
 
 add_executable(crypto_tls_session_cache_test tls_session_cache.c)
+if(MSVC)
+  target_compile_options(crypto_tls_session_cache_test PRIVATE /experimental:c11atomics)
+endif()
 target_link_libraries(crypto_tls_session_cache_test PRIVATE Salts::Crypto Salts::TinyTest)
 add_test(NAME crypto.algorithms.tls_session_cache COMMAND crypto_tls_session_cache_test)
 set_tests_properties(crypto.algorithms.tls_session_cache PROPERTIES TIMEOUT 30)
@@ -20,9 +25,16 @@ set_tests_properties(crypto.algorithms.tls_session_cache PROPERTIES TIMEOUT 30)
 add_executable(crypto_dtls_record_test dtls_record.c)
 target_link_libraries(crypto_dtls_record_test PRIVATE Salts::Crypto Salts::TinyTest GmSSL::GmSSL)
 set_target_properties(crypto_dtls_record_test PROPERTIES FOLDER "Crypto/tests/algorithms")
-add_executable(crypto_dtls_handshake_test dtls_handshake.c dtls_secrets.c dtls_exchange.c dtls_client_cases.c dtls_server_cases.c)
-target_link_libraries(crypto_dtls_handshake_test PRIVATE Salts::Crypto Salts::TinyTest GmSSL::GmSSL)
-set_target_properties(crypto_dtls_handshake_test PROPERTIES FOLDER "Crypto/tests/algorithms")
+# Each C suite owns its TinyTest main and constructor table. Keep the suites
+# separate so MSVC registration symbols cannot collide across translation units.
+foreach(_suite IN ITEMS handshake secrets exchange client_cases server_cases)
+  add_executable(crypto_dtls_${_suite}_test dtls_${_suite}.c)
+  target_link_libraries(crypto_dtls_${_suite}_test PRIVATE Salts::Crypto Salts::TinyTest GmSSL::GmSSL)
+  set_target_properties(crypto_dtls_${_suite}_test PROPERTIES FOLDER "Crypto/tests/algorithms")
+  if(MSVC)
+    target_compile_options(crypto_dtls_${_suite}_test PRIVATE /experimental:c11atomics)
+  endif()
+endforeach()
 add_executable(crypto_dtls_client_endpoint dtls_client_endpoint.c)
 target_link_libraries(crypto_dtls_client_endpoint PRIVATE Salts::Crypto GmSSL::GmSSL)
 set_target_properties(crypto_dtls_client_endpoint PROPERTIES FOLDER "Crypto/tests/algorithms")
@@ -32,7 +44,6 @@ set_target_properties(crypto_dtls_server_endpoint PROPERTIES FOLDER "Crypto/test
 if(MSVC)
   # These private C fixtures include the context's atomic lease counter, like
   # the Crypto implementation, and require MSVC's C11 atomics admission.
-  target_compile_options(crypto_dtls_handshake_test PRIVATE /experimental:c11atomics)
   target_compile_options(crypto_dtls_server_endpoint PRIVATE /experimental:c11atomics)
 endif()
 if(NOT CMAKE_SYSTEM_NAME STREQUAL "Android")
@@ -43,7 +54,11 @@ if(NOT CMAKE_SYSTEM_NAME STREQUAL "Android")
   set_tests_properties(crypto.algorithms.dtls_record PROPERTIES TIMEOUT 60)
   add_test(NAME crypto.algorithms.dtls_handshake
     COMMAND "${Python3_EXECUTABLE}" -B "${CMAKE_CURRENT_SOURCE_DIR}/dtls_handshake_peer.py"
-      "$<TARGET_FILE:crypto_dtls_handshake_test>")
+      "$<TARGET_FILE:crypto_dtls_handshake_test>"
+      "$<TARGET_FILE:crypto_dtls_secrets_test>"
+      "$<TARGET_FILE:crypto_dtls_exchange_test>"
+      "$<TARGET_FILE:crypto_dtls_client_cases_test>"
+      "$<TARGET_FILE:crypto_dtls_server_cases_test>")
   set_tests_properties(crypto.algorithms.dtls_handshake PROPERTIES TIMEOUT 60)
   add_test(NAME crypto.algorithms.dtls_client_independent
     COMMAND "${Python3_EXECUTABLE}" -B "${CMAKE_CURRENT_SOURCE_DIR}/dtls_client_peer.py"

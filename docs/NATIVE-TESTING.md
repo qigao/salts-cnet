@@ -7,8 +7,8 @@ unit-test assertion framework.
 
 ## Native test admission
 
-- `BUILD_TESTING=ON` requires `SALTSCORE_BUILD_TINYTEST=ON`; turning the
-  component off is a configuration error rather than silently deleting cases.
+- `BUILD_TESTS` controls native test registration. TinyTest is an unconditional
+  module; there is no separate framework or module-selection switch.
 - The project declares `Salts::TinyTest` before any first-party module's
   native source-owned tests. All registered C/C++ native behavior test
   executables in the default Core graph link this target.
@@ -19,6 +19,28 @@ unit-test assertion framework.
   Promela/formal tests use their original mechanisms under CTest.
 - Source/fixture/CMake changes trigger the existing unified LLVM CI. No extra
   installer/consumer test projects, probe CMake jobs or test runtimes.
+
+## Module-owned test layout
+
+Each module owns its test sources and CMake registration in `tests/` (or its
+existing `test/` directory). The module adds that directory under `BUILD_TESTS`;
+the package root assembles modules without a separate test aggregator.
+
+Core, Platform, Concurrency, Coroutine, NativeIO, FS and Process own their
+corresponding runtime suites. Crypto owns direct GmSSL/TLS tests and certificate
+fixtures in `crypto/tests/`. CNet owns transport integration and dynamic-owner
+tests in `cnet/tests/`, including `owner/` and `crypto-static/`; its URI parser
+tests live in `cnet/uri/tests/`. CSerde, Unicode, IDNA and TinyTest register their
+existing source-owned suites locally. Repository-wide build/migration policy
+tests live under `cmake/tests/migration/`.
+
+This replaces the root `tests/CMakeLists.txt` and `tests/native-modules`
+aggregators. Keeping those aggregators would leave registration, fixture paths
+and directory-scoped CTest properties detached from the code owner. Existing
+target names, CTest names, platform guards and assertions are retained; shared
+TLS workload support has one owner in `crypto/tests/tls/`. Reverting this layout
+requires moving both the files and their registrations together, rather than
+adding forwarding directories or duplicate tests.
 
 ## Ownership-sensitive integrations
 
@@ -38,6 +60,87 @@ External process modes (`--core-child` with exit code **19**, CNet Python
 semantics; they **bypass** TinyTest's reporter intentionally, because the
 external peer is an independent test process.
 
+FS and Process boundary regressions use the same `saltscore.fs_owner_and_root`
+and `saltscore.process_spawn_reap` CTest registrations. Run them from the prepared
+toolkit environment (use `llvm-native-release-user` on Linux/macOS):
+
+```sh
+ctest --preset native-release-user -R '^saltscore\.(fs_owner_and_root|process_spawn_reap)$'
+```
+
+FS covers independent directory scans spanning multiple
+native buffers, directory rename identity and rejection of non-regular files;
+its POSIX FIFO case must complete without a writer. Process covers stdin EOF
+with another child alive, all seven POSIX combinations of closed standard
+descriptors, exec-error reporting, and descendant pipe EOF after a non-shell
+root exits. Pipe EOF also works when a POSIX descendant is dead but has not yet
+been reaped by the system; PID existence alone cannot establish that boundary.
+
+Each spawn owns its process group/Windows Job Object. Remaining members are
+terminated when the root exits, before publishing its result. POSIX descendants
+that leave the owned process group are outside that ownership. POSIX retains
+the exited root with `WNOWAIT` until group cleanup, so cleanup never acts on a
+reaped/reused PGID. Linux uses
+atomic close-on-exec pipe creation; platforms without `pipe2` serialize this
+module's pipe setup and fork. Windows Process DLL naming follows the same ABI
+epoch as FS for both MSVC and llvm-mingw. Existing applications that imported
+the old unversioned llvm-mingw Process DLL must relink against the rebuilt SDK.
+
+On Windows, root-directory enumeration opens a fresh native directory object
+relative to the retained handle using an empty `NtCreateFile` name. This keeps
+the admitted identity after rename and separates scan state. `DuplicateHandle`
+shares the original object's scan; `ReOpenFile` returned access denied for this
+directory in the native regression. Guest relative paths still reject empty
+names. The 240-entry interleaved-scan and host-rename cases pass on Windows
+llvm-mingw; POSIX-specific regressions require Linux/macOS execution.
+
+The asynchronous FS/Process extraction has these additional formal CTest entries:
+
+| Test | Behavioral coverage |
+|---|---|
+| `saltscore_fs_async_test` | Copied paths, bounded metadata/directory operations, close/cancel, reentry and initialization failure |
+| `saltscore_fs_watch_test` | Real native events, rename, rescan/acknowledgment, overflow, shutdown and initialization failure |
+| `saltscore_fs_file_test` | Shared/private runtimes, positional binary I/O, EOF/short reads, capacity, scoped cancellation, completion races, MPSC producers and lifecycle |
+| `saltscore_fs_async_cpp_test` | C++ public FS service/watch/file handles and signatures |
+| `saltscore_process_async_test` | Binary standard streams, independent stderr, partial reads/EOF, queued/in-flight cancellation, bounded admission, shell mode and close/drain |
+| `saltscore_process_async_cpp_test` | C++ Process and Shell header contracts |
+| `saltscore_shell_test` | 256 KiB duplex input, binary capture, shared output quota, timeout, blocked stdin, cancellation, environment/cwd and nonzero exit |
+
+Use the prepared preset environment (including the configured compiler runtime
+on `PATH`):
+
+```sh
+cmake --build --preset native-release-user
+ctest --preset native-release-user -R '^(saltscore_fs_.*_test|saltscore_process_async(_cpp)?_test|saltscore_shell_test|saltscore[.](native_io|fs_owner_and_root|process_spawn_reap))$'
+ctest --preset native-release-user
+cmake --build --preset install-native-release-user
+```
+
+The Shell registration intentionally sets its working directory to
+`process/tests` and supplies a parent sentinel environment variable; its cwd
+and clean-environment regressions depend on both fixtures. The async Process
+test executable has a private child mode that bypasses the test reporter.
+Accepted buffers and callback probes live through failure cleanup as well as
+successful completion. Every owning test closes, drains and destroys its
+resources before releasing borrowed storage.
+
+Windows llvm-mingw runs cover IOCP files/pipes and the Windows directory watcher.
+POSIX source and CMake selection are reviewed here, but this Windows host has
+no Linux/macOS runtime; io_uring, Darwin AIO, inotify and FSEvents execution and
+Android/iOS cross-build qualification are unverified locally.
+
+Local result on 2026-11-08: `native-release-user` full build succeeded; all ten
+FS/Process/NativeIO registrations in the focused command passed. The retired
+runtime-owner auditor's parser test and CTest registration have been removed.
+After removal, the full `ctest --preset native-release-user` run passed 182/182.
+The normal `install-native-release-user` preset succeeded at the configured
+`C:/projects/cpp/external/pkg/salts-core/release` prefix, including the new
+public headers, libraries and SDK export set. No separate consumer project was
+created. Executable API examples, including failure cleanup, are the formal
+[file tests](../fs/tests/test_fs_file.c),
+[process stream tests](../process/tests/test_process_async.c) and
+[Shell tests](../process/tests/test_shell.c).
+
 SCTP real Owner handoff, Provider DSO and opaque Session DSO tests must join
 their actual POSIX worker threads and prove drained/destroyed/unloaded state
 from TinyTest's main test thread. Internal worker/callback invariants retain
@@ -49,7 +152,7 @@ original process-failure contract.
 
 ## Original CNet Crypto qualification
 
-The existing `tests/cnet-crypto-static` graph remains **test-only**. Its
+The existing `cnet/tests/crypto-static` graph remains **test-only**. Its
 independent M5 static Crypto Owner TLS1.2/1.3 and M6 two-plugin shared DSO
 cases do **not** establish that production CNet has fully switched to
 Crypto TLS/TLCP. The current architecture remains tracked in Issue #147;
@@ -66,23 +169,20 @@ A green M5/M6 test-only graph does not imply full public production CNet TLS
 provider cutover.
 
 For real source-tree acceptance inside the **existing** native project,
-after setting the required vcpkg/LLVM environment used by the CI presets:
+after setting the required vcpkg/LLVM environment for the shared public preset
+(the example below uses POSIX LLVM; Windows uses `native-release-user`):
 
 ```sh
-cmake --preset ci-native \
-  -DSALTSCORE_TEST_CNET_CRYPTO_QUALIFICATION=ON \
-  -DSALTSCORE_CNET_PRODUCTION_REQUIRED_MTLS_TEST=ON \
-  -DSALTSCORE_CNET_M6_SHARED_DSO_TEST=ON \
-  -DSALTSCORE_CRYPTO_TEST_FIXTURES="$PWD/crypto/tests/fixtures"
-cmake --build --preset ci-native
-ctest --preset ci-native --output-on-failure
+cmake --preset llvm-native-release-user
+cmake --build --preset llvm-native-release-user
+ctest --preset llvm-native-release-user --output-on-failure
 ```
 
 CI installs the complete autotools host prerequisites (autoconf,
 autoconf-archive, automake and libtool), including on Android's Linux hosts.
 The formal Python TLS tests use CPython 3.12 and cryptography 46.0.3 binary
 wheels, which cover Windows ARM64 and Intel macOS as well as the other native
-lanes. CMake receives that exact setup-python interpreter. Missing wheels
+lanes. The setup-python interpreter is selected through the runner's PATH. Missing wheels
 fail installation immediately; fixture setup never starts an OpenSSL/Rust
 source build. This Python dependency is test-only and is not part of the SDK.
 
@@ -103,24 +203,14 @@ dumps. All these cases remain inside the existing formal CMake/CTest graph.
 Issue #152 still requires exact-head platform CI acceptance; local success
 alone does not close it or qualify the complete production provider cutover.
 
-The pre-existing standalone drivers are reconciled in the root test graph:
-
-| Legacy driver | Preserved behavior and current owner |
-| --- | --- |
-| `crypto/tests/x509/standalone` | The two existing TinyTest executables compile the actual `crypto_x509_der.c` and link only ASN1/TinyTest. Real P-256/P-384, malformed DER, concatenated chains and the SaltsNet fixture retain the provider-free link boundary. |
-| `media/capture/tests/native_tsan` | The root TSan preset builds five TinyTest cases against the one instrumented `Salts::Media` archive, including miniaudio. A private PulseAudio null monitor supplies synthetic PCM. Fresh cycles, same-device restart, blocked-callback stop/destroy and invalid device/format rejection remain tested. |
-| `sctp/tests/independent/dtls` | Removed under the explicit no-OpenSSL/BoringSSL-link policy. Its historical evidence is retired. The module-owned replacement below uses the production CNet/GmSSL owner. |
-| `sctp/tests/secure` | Formal `saltscore.sctp_dtls_native` uses `Salts::SCTPDTLS` and an independent Pion peer, both native roles, ordinary/external progress, up to eight concurrent peers, actual cumulative receipts and shared-backend teardown. Local Windows IOCP/IPv4 evidence; browser, other OS and sanitizer qualification remain open. |
-| Pion SCTP peer | The OpenSSL DTLS mode was removed; original UDP I-DATA/I-FORWARD loss/recovery cases run as two CTests in Linux x64 CI. Unsupported legacy DTLS arguments fail. |
-
-Capture's fixture script owns only the private virtual audio service and PCM
-feeder; CTest owns the test invocation/status. It neither configures another
-project nor invokes nested CTest or installed SDK/linkage checks. Each Capture
-TinyTest case runs in a fresh copy of the formal executable, so a failure
-cannot return past stack storage still borrowed by a live native callback.
-No physical audio source is admitted. Missing requested tools fail configure.
-Python `ssl`/`cryptography` and separate CLI peers remain permitted independent
-test processes; no project target links OpenSSL/BoringSSL.
+The obsolete `crypto/tests/x509/standalone` project was removed with the
+independent ASN1 package. Its certificate inspection and migrated fixture cases
+remain in `crypto.x509.real_der_and_negative` and
+`crypto.x509.migrated_saltsnet_fixture` in the root-owned formal graph.
+The existing `sctp/tests/independent/dtls` driver remains outside that graph;
+it does not authorize adding a consumer project or another test framework.
+Its independent peer oracle and owner boundary remain distinct from package
+configuration checks.
 
 ## CI dependency and compiler caches
 
@@ -151,15 +241,6 @@ linking and formal tests still run. CI resets statistics before configure,
 reports hits/misses after build, and saves successful compilations before tests.
 
 ## Merge gate
-
-The standard TLS independent-peer package has separate formal CTest entries:
-`saltscore.cnet_tls_client_identities`, `saltscore.cnet_tls_encrypted_credentials`,
-`saltscore.cnet_tls_certificate_signature_positions`,
-`saltscore.cnet_tls_purpose_diagnostics`, `saltscore.cnet_tls_validity_diagnostics`,
-`saltscore.cnet_tls_verification_time` and `saltscore.cnet_tls_server_verification_time`.
-Each selects its exact Go test and retains the 150-second Go / 180-second CTest
-limit. Session resumption retains its own existing entry. Run the whole graph
-in CI; these entries provide capability-level failure locations and budgets.
 
 Require the **exact PR HEAD**, not an earlier green commit: Linux/macOS/
 Windows x64/ARM64 native test execution, Linux ASan/UBSan and TSan tests,

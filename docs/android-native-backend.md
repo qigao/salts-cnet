@@ -46,7 +46,7 @@ cmake -S . -B BUILD \
   -DCMAKE_TOOLCHAIN_FILE="$NDK/build/cmake/android.toolchain.cmake" \
   -DANDROID_ABI=arm64-v8a -DANDROID_PLATFORM=android-26 \
   -DANDROID_STL=c++_shared -DCMAKE_BUILD_TYPE=Release \
-  -DBUILD_TESTING=OFF -DSALTSCORE_ENABLE_EPOLL_READINESS=ON \
+  -DBUILD_TESTS=OFF -DSALTSCORE_ENABLE_EPOLL_READINESS=ON \
   -DSALTSCORE_BUILD_SERIAL=ON -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
   -DCMAKE_INSTALL_PREFIX="$SDK"
 cmake --build BUILD --parallel 2
@@ -63,16 +63,13 @@ The explicit `SaltsCore_DIR` is needed for the tested NDK find-root behavior;
 supplying only `CMAKE_PREFIX_PATH` did not locate the target SDK. This uses the
 target installation without allowing arbitrary host package discovery.
 
-Nested ASN1/Crypto discovery also needs an exact SDK owner. Four actual NDK
-configuration probes used the installed ASN1 archive: the original direct
-include followed by `find_dependency(ASN1)` failed to find its package; adding
-only `PATHS`, `NO_DEFAULT_PATH`, and `NO_CMAKE_FIND_ROOT_PATH` still selected a
-foreign cached `ASN1_DIR`; setting the normal `ASN1_DIR` variable to the real
-sibling package first selected the intended owner and allowed nested discovery;
-and an already loaded foreign owner remained rejected. The Core package applies
-this exact-directory rule to ASN1 and Crypto without forcing global cache
-values. These probes validate CMake package lookup and owner rejection, not a
-successful build or runtime qualification of the currently blocked Crypto owner.
+ASN1 and Crypto now belong to the same SaltsCore export set. Their former
+independent package lookup and `ASN1_DIR`/`Crypto_DIR` bindings are retired;
+the root package defines `Salts::ASN1` and `Salts::Crypto` together. The NDK
+still needs the exact SaltsCore SDK location and matching target dependencies.
+Earlier standalone-package lookup probes do not qualify the unified SDK;
+Android configure/build/runtime qualification must use the current user presets
+and formal module tests.
 
 The complete configured foundation and Serial graphs compiled and installed.
 The complete foundation installed graph compiled 40 registered test executables,

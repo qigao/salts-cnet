@@ -11,21 +11,21 @@ typedef struct cert_policy {
   unsigned ca, basic, basic_critical, ku, eku, purpose;
   uint32_t path_length;
 } cert_policy;
-static int tag(const salts_asn1_tlv *v, uint32_t number, unsigned constructed) {
+static int tag(const asn1_tlv *v, uint32_t number, unsigned constructed) {
   return !v->tag_class && v->tag_number == number && v->constructed == constructed;
 }
-static int next(salts_asn1_reader *r, salts_asn1_tlv *v, uint32_t number, unsigned constructed) {
-  return salts_asn1_reader_next(r, v) == SALTS_ASN1_OK && tag(v, number, constructed);
+static int next(asn1_reader *r, asn1_tlv *v, uint32_t number, unsigned constructed) {
+  return asn1_reader_next(r, v) == SALTS_ASN1_OK && tag(v, number, constructed);
 }
-static int end(const salts_asn1_reader *r) { return r->offset == r->size; }
-static int sequence(const void *data, size_t n, salts_asn1_reader *r) {
-  salts_asn1_reader top; salts_asn1_tlv v;
-  return salts_asn1_reader_init(&top, data, n, SALTS_ASN1_DER) == SALTS_ASN1_OK &&
+static int end(const asn1_reader *r) { return r->offset == r->size; }
+static int sequence(const void *data, size_t n, asn1_reader *r) {
+  asn1_reader top; asn1_tlv v;
+  return asn1_reader_init(&top, data, n, SALTS_ASN1_DER) == SALTS_ASN1_OK &&
       next(&top, &v, 16, 1) && end(&top) &&
-      salts_asn1_reader_open_children(&top, &v, r) == SALTS_ASN1_OK;
+      asn1_reader_open_children(&top, &v, r) == SALTS_ASN1_OK;
 }
-static int basic_constraints(cert_policy *p, const salts_asn1_tlv *value, unsigned critical) {
-  salts_asn1_reader r; salts_asn1_tlv v;
+static int basic_constraints(cert_policy *p, const asn1_tlv *value, unsigned critical) {
+  asn1_reader r; asn1_tlv v;
   p->basic = 1; p->basic_critical = critical;
   if (!sequence(value->content, value->content_size, &r)) return 0;
   if (end(&r)) return 1;
@@ -37,9 +37,9 @@ static int basic_constraints(cert_policy *p, const salts_asn1_tlv *value, unsign
   for (size_t i=0; i<v.content_size; ++i) p->path_length = (p->path_length << 8) | v.content[i];
   return 1;
 }
-static int key_usage(cert_policy *p, const salts_asn1_tlv *value) {
-  salts_asn1_reader r; salts_asn1_tlv v;
-  if (salts_asn1_reader_init(&r, value->content, value->content_size, SALTS_ASN1_DER) != SALTS_ASN1_OK ||
+static int key_usage(cert_policy *p, const asn1_tlv *value) {
+  asn1_reader r; asn1_tlv v;
+  if (asn1_reader_init(&r, value->content, value->content_size, SALTS_ASN1_DER) != SALTS_ASN1_OK ||
       !next(&r, &v, 3, 0) || !end(&r) || v.content_size < 2 || v.content_size > 3) return 0;
   unsigned bits = (unsigned)(v.content_size-1u)*8u-v.content[0];
   if (!bits || bits > 9 || !(v.content[v.content_size-1] & (1u << v.content[0]))) return 0;
@@ -48,9 +48,9 @@ static int key_usage(cert_policy *p, const salts_asn1_tlv *value) {
   /* encipherOnly/decipherOnly require keyAgreement. */
   return !(p->ku & ((1u << 7)|(1u << 8))) || (p->ku & (1u << 4));
 }
-static int extended_usage(cert_policy *p, const salts_asn1_tlv *value, unsigned purpose) {
+static int extended_usage(cert_policy *p, const asn1_tlv *value, unsigned purpose) {
   const uint8_t prefix[] = {0x2b,6,1,5,5,7,3};
-  salts_asn1_reader r; salts_asn1_tlv v;
+  asn1_reader r; asn1_tlv v;
   if (!sequence(value->content, value->content_size, &r) || end(&r)) return 0;
   p->eku = 1;
   while (!end(&r)) {
@@ -61,18 +61,18 @@ static int extended_usage(cert_policy *p, const salts_asn1_tlv *value, unsigned 
   return 1;
 }
 static int extensions(cert_policy *p, unsigned purpose) {
-  salts_asn1_reader r, fields; salts_asn1_tlv ext, oid, value;
+  asn1_reader r, fields; asn1_tlv ext, oid, value;
   p->path_length = UINT32_MAX;
   if (!p->view.extensions_der) return 1;
   if (!sequence(p->view.extensions_der, p->view.extensions_size, &r)) return 0;
   while (!end(&r)) {
     unsigned critical = 0;
-    if (!next(&r, &ext, 16, 1) || salts_asn1_reader_open_children(&r, &ext, &fields) != SALTS_ASN1_OK ||
-        !next(&fields, &oid, 6, 0) || salts_asn1_reader_next(&fields, &value) != SALTS_ASN1_OK) return 0;
+    if (!next(&r, &ext, 16, 1) || asn1_reader_open_children(&r, &ext, &fields) != SALTS_ASN1_OK ||
+        !next(&fields, &oid, 6, 0) || asn1_reader_next(&fields, &value) != SALTS_ASN1_OK) return 0;
     if (tag(&value, 1, 0)) {
       if (value.content_size != 1 || value.content[0] != 0xff) return 0;
       critical = 1;
-      if (salts_asn1_reader_next(&fields, &value) != SALTS_ASN1_OK) return 0;
+      if (asn1_reader_next(&fields, &value) != SALTS_ASN1_OK) return 0;
     }
     if (!tag(&value, 4, 0) || !end(&fields)) return 0;
     unsigned ce = oid.content_size == 3 && oid.content[0] == 0x55 && oid.content[1] == 0x1d ? oid.content[2] : 0;

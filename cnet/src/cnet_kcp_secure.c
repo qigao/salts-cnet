@@ -1,8 +1,7 @@
 #include "cnet_kcp_secure_internal.h"
 
-#include <random.h>
+#include <core/platform.h>
 
-#include "cnet_monocypher_namespace.h"
 #include <monocypher.h>
 
 #include <string.h>
@@ -157,7 +156,7 @@ int cnet_kcp_secure_build_client_hello(cnet_kcp_secure_state *state,
   if (state == NULL || output == NULL || state->role != CNET_SECURE_KCP_CLIENT)
     return SALTS_EINVAL;
   if (!state->hello_started) {
-    const int status = cmeta_platform_secure_random(state->client_nonce,
+    const int status = secure_random(state->client_nonce,
                                                     sizeof(state->client_nonce));
     if (status != SALTS_OK) return status;
     state->hello_started = true;
@@ -188,9 +187,9 @@ int cnet_kcp_secure_accept_client_hello(cnet_kcp_secure_state *state, const void
     return SALTS_EBUSY;
   memcpy(state->client_nonce, input + 8u, sizeof(state->client_nonce));
   if (!state->established) {
-    status = cmeta_platform_secure_random(state->server_nonce, sizeof(state->server_nonce));
+    status = secure_random(state->server_nonce, sizeof(state->server_nonce));
     if (status == SALTS_OK)
-      status = cmeta_platform_secure_random(&state->session_epoch, sizeof(state->session_epoch));
+      status = secure_random(&state->session_epoch, sizeof(state->session_epoch));
     if (status != SALTS_OK) return status;
     if (state->session_epoch == 0u) state->session_epoch = 1u;
     status = cnet_kcp_secure_derive(state);

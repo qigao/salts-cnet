@@ -1,4 +1,0 @@
-#ifndef SALTS_CAPTURE_EXPORT_H
-#define SALTS_CAPTURE_EXPORT_H
-#define SALTS_CAPTURE_API
-#endif

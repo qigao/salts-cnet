@@ -1,5 +1,10 @@
 # GmSSL explicit-copy measurements
 
+Historical protocol: the diagnostic preset, its project switches and the
+`gmssl_copy_profile` workflow input have been retired. The collected report
+below remains evidence for its recorded revision. Current CI uses the same
+ordinary public presets as local builds and does not perform this instrumentation.
+
 ## Protocol before collection
 
 Continue #189 with the same pinned GmSSL and the same formal TLS workloads.
@@ -33,21 +38,13 @@ new executable or validation project. A strong snapshot symbol and configuration
 guards reject a normal GmSSL archive paired with the diagnostic project option.
 Ordinary builds keep the option off and do not compile the provider counters.
 
-Run the complete graph with the versioned `gmssl-copy-user` configure/build/test
-presets. Manual LLVM CI input `gmssl_copy_profile=true` does this on Linux x64
-after the regular native suite. Preserve all 25 rotated fresh-process samples,
+The historical run used the now-retired diagnostic configure/build/test
+presets after the regular Linux x64 suite. Preserve all 25 rotated fresh-process samples,
 their six phase rows, full CTest output, source, compiler and host provenance.
 The initial diagnostic package build can miss the ordinary triplet's cache;
 its separate ABI must not replace normal package artifacts.
 
-```sh
-cmake --preset gmssl-copy-user
-cmake --build --preset gmssl-copy-user
-ctest --preset gmssl-copy-user
-```
-
-Use the normal Linux x64 shared toolchain/host/dependency environment. This
-diagnostic profile is for formal measurements, not SDK installation/release.
+That diagnostic profile was for formal measurements, not SDK installation/release.
 
 Correctness remains in the formal cases: forced TLS1.2/TLS1.3 payload delivery,
 short pending plaintext, overflow rejection and another owner thread. For

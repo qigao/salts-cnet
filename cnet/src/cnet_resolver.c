@@ -4,25 +4,17 @@
 
 #include <ares.h>
 #include <cnet/name_lookup.h>
-#include <clock.h>
+#include <core/clock.h>
 #include <stdatomic.h>
-#include <thread.h>
+#include <threads/threads.h>
 
 #include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
-#if defined(_WIN32)
-  #include <winsock2.h>
-typedef WSAPOLLFD cnet_resolver_pollfd;
-#else
-  #include <arpa/inet.h>
-  #include <netinet/in.h>
-  #include <poll.h>
-  #include <sys/socket.h>
-typedef struct pollfd cnet_resolver_pollfd;
-#endif
+#include <native_io_socket.h>
+typedef native_io_socket_pollfd cnet_resolver_pollfd;
 
 typedef enum cnet_resolver_slot_state {
   CNET_RESOLVER_SLOT_FREE = 0,
@@ -74,8 +66,8 @@ typedef struct cnet_resolver_impl {
   size_t ready_count;
   size_t active_count;
   bool admission_open;
-  cmeta_mutex_t control_lock;
-  cmeta_mutex_t state_lock;
+  sync_mutex_t control_lock;
+  sync_mutex_t state_lock;
   bool socket_overflow;
   uint64_t lookup_identity;
   size_t result_capacity, name_capacity;
@@ -123,22 +115,12 @@ static int cnet_resolver_map_status(int status) {
  * Byte copy avoids misaligned sockaddr aliases in the result byte array.
  * This is one canonical endpoint, not a retry or alternate DNS provider.
  */
-static int cnet_resolver_apply_requested_port(void *address, size_t address_length,
-                                               int family, uint16_t port) {
-  size_t offset;
-  const uint16_t network_port = htons(port);
-  if (address == NULL || port == 0u) return SALTS_EINVAL;
-  if (family == AF_INET) {
-    if (address_length < sizeof(struct sockaddr_in)) return SALTS_EINVAL;
-    offset = offsetof(struct sockaddr_in, sin_port);
-  } else if (family == AF_INET6) {
-    if (address_length < sizeof(struct sockaddr_in6)) return SALTS_EINVAL;
-    offset = offsetof(struct sockaddr_in6, sin6_port);
-  } else {
-    return SALTS_EAI_FAMILY;
-  }
-  memcpy((unsigned char *)address + offset, &network_port, sizeof(network_port));
-  return SALTS_OK;
+static int cnet_resolver_apply_requested_port(void *address, size_t length,
+    int family, uint16_t port) {
+  if (!address || !port) return SALTS_EINVAL;
+  if (family != native_io_socket_domain(NATIVE_IO_SOCKET_IPV4) &&
+      family != native_io_socket_domain(NATIVE_IO_SOCKET_IPV6)) return SALTS_EAI_FAMILY;
+  return native_io_socket_address_port(address, length, family, port);
 }
 
 #if defined(CNET_INTERNAL_TESTING)
@@ -187,6 +169,14 @@ static void cnet_resolver_socket_state(void *context, ares_socket_t descriptor, 
   impl->sockets[impl->socket_count++] = (cnet_resolver_socket){descriptor, events};
 }
 
+static bool cnet_resolver_node_ip(const struct ares_addrinfo_node *node) {
+  native_io_stream_endpoint endpoint;
+  return node->ai_addr &&
+    (node->ai_family == native_io_socket_domain(NATIVE_IO_SOCKET_IPV4) ||
+     node->ai_family == native_io_socket_domain(NATIVE_IO_SOCKET_IPV6)) &&
+    native_io_socket_decode_endpoint(node->ai_addr, node->ai_addrlen, &endpoint, false) == SALTS_OK;
+}
+
 static void cnet_resolver_callback(void *argument, int status, int timeouts,
                                    struct ares_addrinfo *addresses) {
   cnet_resolver_slot *slot = (cnet_resolver_slot *)argument;
@@ -197,16 +187,13 @@ static void cnet_resolver_callback(void *argument, int status, int timeouts,
     for (node = addresses != NULL ? addresses->nodes : NULL; node != NULL; node = node->ai_next) {
       if (node->ai_socktype == slot->socket_type && node->ai_addr != NULL &&
           node->ai_addrlen <= CNET_RESOLVER_ADDRESS_CAPACITY &&
-          ((node->ai_family == AF_INET &&
-            node->ai_addrlen >= sizeof(struct sockaddr_in)) ||
-           (node->ai_family == AF_INET6 &&
-            node->ai_addrlen >= sizeof(struct sockaddr_in6))))
+          cnet_resolver_node_ip(node))
         break;
     }
     if (node == NULL) status = ARES_ENODATA;
   }
 
-  cmeta_mutex_lock(&impl->state_lock);
+  sync_mutex_lock(&impl->state_lock);
   if (slot->state == CNET_RESOLVER_SLOT_ACTIVE) {
     memset(&slot->result, 0, sizeof(slot->result));
     slot->result.query.slot = (uint32_t)(slot - impl->slots) + 1u;
@@ -233,14 +220,15 @@ static void cnet_resolver_callback(void *argument, int status, int timeouts,
       for (node = addresses ? addresses->nodes : NULL; node; node = node->ai_next) {
         cnet_ip_address a = {0}; bool duplicate = false;
         if (!node->ai_addr) continue;
-        if (node->ai_family == AF_INET && node->ai_addrlen >= sizeof(struct sockaddr_in)) {
-          a.family = CNET_DATAGRAM_ADDRESS_IPV4;
-          memcpy(a.address, &((const struct sockaddr_in *)node->ai_addr)->sin_addr, 4);
-        } else if (node->ai_family == AF_INET6 && node->ai_addrlen >= sizeof(struct sockaddr_in6)) {
-          const struct sockaddr_in6 *ip = (const struct sockaddr_in6 *)node->ai_addr;
-          if (IN6_IS_ADDR_V4MAPPED(&ip->sin6_addr)) continue;
-          a.family = CNET_DATAGRAM_ADDRESS_IPV6; memcpy(a.address, &ip->sin6_addr, 16);
-        } else continue;
+        native_io_stream_endpoint endpoint = {0};
+        if (!cnet_resolver_node_ip(node) ||
+            native_io_socket_decode_endpoint(node->ai_addr, node->ai_addrlen, &endpoint, false) != SALTS_OK)
+          continue;
+        static const uint8_t mapped_prefix[12] = {0,0,0,0,0,0,0,0,0,0,0xff,0xff};
+        if (endpoint.family == NATIVE_IO_DATAGRAM_ADDRESS_IPV6 &&
+            memcmp(endpoint.address, mapped_prefix, sizeof(mapped_prefix)) == 0) continue;
+        a.family = (cnet_datagram_address_family)endpoint.family;
+        memcpy(a.address, endpoint.address, sizeof(a.address));
         for (size_t i = 0; i < slot->address_count; ++i)
           if (slot->addresses[i].family == a.family && !memcmp(slot->addresses[i].address, a.address, 16)) duplicate = true;
         if (duplicate) continue;
@@ -254,7 +242,7 @@ static void cnet_resolver_callback(void *argument, int status, int timeouts,
         slot->result.query.slot - 1u;
     ++impl->ready_count;
   }
-  cmeta_mutex_unlock(&impl->state_lock);
+  sync_mutex_unlock(&impl->state_lock);
 
   if (addresses != NULL) ares_freeaddrinfo(addresses);
 }
@@ -318,16 +306,16 @@ int cnet_resolver_init(cnet_resolver *resolver, const cnet_resolver_config *conf
     impl->slots[index].owner = impl;
     impl->free_slots[index] = (uint32_t)(impl->capacity - index - 1u);
   }
-  cmeta_mutex_init(&impl->control_lock);
-  cmeta_mutex_init(&impl->state_lock);
+  sync_mutex_init(&impl->control_lock);
+  sync_mutex_init(&impl->state_lock);
 
   memset(&options, 0, sizeof(options));
   options.sock_state_cb = cnet_resolver_socket_state;
   options.sock_state_cb_data = impl;
   status = ares_init_options(&impl->channel, &options, ARES_OPT_SOCK_STATE_CB);
   if (status != ARES_SUCCESS) {
-    cmeta_mutex_destroy(&impl->state_lock);
-    cmeta_mutex_destroy(&impl->control_lock);
+    sync_mutex_destroy(&impl->state_lock);
+    sync_mutex_destroy(&impl->control_lock);
     free(impl->ready_events);
     free(impl->poll_fds);
     free(impl->sockets);
@@ -351,50 +339,46 @@ int cnet_resolver_poll(cnet_resolver *resolver) {
   ares_status_t status;
   if (impl == NULL) return SALTS_EINVAL;
 
-  cmeta_mutex_lock(&impl->control_lock);
+  sync_mutex_lock(&impl->control_lock);
   if (impl->socket_overflow) {
     impl->socket_overflow = false;
     ares_cancel(impl->channel);
-    cmeta_mutex_unlock(&impl->control_lock);
+    sync_mutex_unlock(&impl->control_lock);
     return SALTS_ENOBUFS;
   }
   while (offset < impl->socket_count) {
-    const size_t batch = impl->socket_count - offset > ARES_GETSOCK_MAXNUM
-                             ? ARES_GETSOCK_MAXNUM
+    const size_t batch = impl->socket_count - offset > NATIVE_IO_SOCKET_POLL_MAX
+                             ? NATIVE_IO_SOCKET_POLL_MAX
                              : impl->socket_count - offset;
     size_t index;
     for (index = 0u; index < batch; ++index) {
       const cnet_resolver_socket *socket = &impl->sockets[offset + index];
       cnet_resolver_pollfd *poll_fd = &impl->poll_fds[index];
-      poll_fd->fd = socket->descriptor;
+      poll_fd->handle = (uintptr_t)socket->descriptor;
       poll_fd->events = 0;
       poll_fd->revents = 0;
-      if ((socket->events & ARES_FD_EVENT_READ) != 0u) poll_fd->events |= POLLIN;
-      if ((socket->events & ARES_FD_EVENT_WRITE) != 0u) poll_fd->events |= POLLOUT;
+      if ((socket->events & ARES_FD_EVENT_READ) != 0u) poll_fd->events |= NATIVE_IO_SOCKET_POLL_READ;
+      if ((socket->events & ARES_FD_EVENT_WRITE) != 0u) poll_fd->events |= NATIVE_IO_SOCKET_POLL_WRITE;
     }
-#if defined(_WIN32)
-    polled = WSAPoll(impl->poll_fds, (ULONG)batch, 0);
-#else
-    polled = poll(impl->poll_fds, (nfds_t)batch, 0);
-#endif
-    if (polled < 0) {
-      cmeta_mutex_unlock(&impl->control_lock);
+    int poll_status = native_io_socket_poll(impl->poll_fds, batch, &polled).status;
+    if (poll_status != SALTS_OK) {
+      sync_mutex_unlock(&impl->control_lock);
       return SALTS_EAI_FAIL;
     }
     for (index = 0u; polled > 0 && index < batch; ++index) {
-      const short revents = impl->poll_fds[index].revents;
+      const unsigned int revents = impl->poll_fds[index].revents;
       unsigned int events = 0u;
-      if ((revents & (POLLIN | POLLERR | POLLHUP | POLLNVAL)) != 0) events |= ARES_FD_EVENT_READ;
-      if ((revents & POLLOUT) != 0) events |= ARES_FD_EVENT_WRITE;
+      if ((revents & (NATIVE_IO_SOCKET_POLL_READ | NATIVE_IO_SOCKET_POLL_ERROR | NATIVE_IO_SOCKET_POLL_HANGUP | NATIVE_IO_SOCKET_POLL_INVALID)) != 0) events |= ARES_FD_EVENT_READ;
+      if ((revents & NATIVE_IO_SOCKET_POLL_WRITE) != 0) events |= ARES_FD_EVENT_WRITE;
       if (events != 0u) {
-        impl->ready_events[ready_count++] = (ares_fd_events_t){impl->poll_fds[index].fd, events};
+        impl->ready_events[ready_count++] = (ares_fd_events_t){(ares_socket_t)impl->poll_fds[index].handle, events};
       }
     }
     offset += batch;
   }
   status = ares_process_fds(impl->channel, ready_count != 0u ? impl->ready_events : NULL,
                             ready_count, ARES_PROCESS_FLAG_NONE);
-  cmeta_mutex_unlock(&impl->control_lock);
+  sync_mutex_unlock(&impl->control_lock);
   if (status == ARES_SUCCESS) return SALTS_OK;
   return status == ARES_ENOMEM ? SALTS_ENOMEM : SALTS_EAI_FAIL;
 }
@@ -403,9 +387,9 @@ bool cnet_resolver_has_pending(cnet_resolver *resolver) {
   cnet_resolver_impl *impl = cnet_resolver_get_impl(resolver);
   bool pending;
   if (impl == NULL) return false;
-  cmeta_mutex_lock(&impl->state_lock);
+  sync_mutex_lock(&impl->state_lock);
   pending = impl->active_count != 0u;
-  cmeta_mutex_unlock(&impl->state_lock);
+  sync_mutex_unlock(&impl->state_lock);
   return pending;
 }
 
@@ -420,20 +404,22 @@ int cnet_resolver_submit(cnet_resolver *resolver, const char *host, uint16_t por
   if (out_query == NULL) return SALTS_EINVAL;
   memset(out_query, 0, sizeof(*out_query));
   if (impl == NULL || host == NULL || port == 0u) return SALTS_EINVAL;
-  if (socket_type != SOCK_STREAM && socket_type != SOCK_DGRAM) return SALTS_EAI_SOCKTYPE;
-  host_length = strnlen(host, CNET_RESOLVER_HOST_CAPACITY);
+  if (socket_type != native_io_socket_type(false) && socket_type != native_io_socket_type(true)) return SALTS_EAI_SOCKTYPE;
+  for (host_length = 0u; host_length < CNET_RESOLVER_HOST_CAPACITY; ++host_length) {
+    if (host[host_length] == '\0') break;
+  }
   if (host_length == 0u || host_length == CNET_RESOLVER_HOST_CAPACITY) return SALTS_ENAMETOOLONG;
 
-  cmeta_mutex_lock(&impl->control_lock);
-  cmeta_mutex_lock(&impl->state_lock);
+  sync_mutex_lock(&impl->control_lock);
+  sync_mutex_lock(&impl->state_lock);
   if (!impl->admission_open) {
-    cmeta_mutex_unlock(&impl->state_lock);
-    cmeta_mutex_unlock(&impl->control_lock);
+    sync_mutex_unlock(&impl->state_lock);
+    sync_mutex_unlock(&impl->control_lock);
     return SALTS_ESHUTDOWN;
   }
   if (impl->free_count == 0u) {
-    cmeta_mutex_unlock(&impl->state_lock);
-    cmeta_mutex_unlock(&impl->control_lock);
+    sync_mutex_unlock(&impl->state_lock);
+    sync_mutex_unlock(&impl->control_lock);
     return SALTS_ENOBUFS;
   }
 
@@ -446,20 +432,20 @@ int cnet_resolver_submit(cnet_resolver *resolver, const char *host, uint16_t por
   slot->requested_port = port;
   slot->cancelled = false;
   slot->dropped = slot->expired = false; slot->address_count = slot->address_index = 0;
-  slot->deadline = cmeta_monotonic_ms() + impl->lookup_timeout;
+  slot->deadline = monotonic_ms() + impl->lookup_timeout;
   memcpy(slot->host, host, host_length + 1u);
   (void)snprintf(slot->service, sizeof(slot->service), "%u", (unsigned int)port);
   ++impl->active_count;
   out_query->slot = slot_index + 1u;
   out_query->generation = slot->generation;
-  cmeta_mutex_unlock(&impl->state_lock);
+  sync_mutex_unlock(&impl->state_lock);
 
   memset(&hints, 0, sizeof(hints));
-  hints.ai_family = AF_UNSPEC;
+  hints.ai_family = native_io_socket_domain(NATIVE_IO_SOCKET_ANY);
   hints.ai_socktype = socket_type;
-  hints.ai_protocol = socket_type == SOCK_STREAM ? IPPROTO_TCP : IPPROTO_UDP;
+  hints.ai_protocol = socket_type == native_io_socket_type(false) ? native_io_socket_protocol(false) : native_io_socket_protocol(true);
   ares_getaddrinfo(impl->channel, slot->host, slot->service, &hints, cnet_resolver_callback, slot);
-  cmeta_mutex_unlock(&impl->control_lock);
+  sync_mutex_unlock(&impl->control_lock);
   return SALTS_OK;
 }
 
@@ -468,10 +454,10 @@ int cnet_resolver_cancel(cnet_resolver *resolver, cnet_resolver_query query) {
   cnet_resolver_slot *slot;
 
   if (impl == NULL) return SALTS_EINVAL;
-  cmeta_mutex_lock(&impl->state_lock);
+  sync_mutex_lock(&impl->state_lock);
   slot = cnet_resolver_find_slot(impl, query);
   if (slot == NULL) {
-    cmeta_mutex_unlock(&impl->state_lock);
+    sync_mutex_unlock(&impl->state_lock);
     return SALTS_ENOENT;
   }
   slot->cancelled = true;
@@ -479,7 +465,7 @@ int cnet_resolver_cancel(cnet_resolver *resolver, cnet_resolver_query query) {
     slot->result.status = SALTS_EAI_CANCELED;
     slot->result.address_length = 0u;
   }
-  cmeta_mutex_unlock(&impl->state_lock);
+  sync_mutex_unlock(&impl->state_lock);
   return SALTS_OK;
 }
 
@@ -493,10 +479,10 @@ int cnet_resolver_take(cnet_resolver *resolver, cnet_resolver_result *out_result
   memset(out_result, 0, sizeof(*out_result));
   if (impl == NULL) return SALTS_EINVAL;
 
-  cmeta_mutex_lock(&impl->state_lock);
+  sync_mutex_lock(&impl->state_lock);
   if (impl->ready_count == 0u) {
     drained = !impl->admission_open && impl->active_count == 0u;
-    cmeta_mutex_unlock(&impl->state_lock);
+    sync_mutex_unlock(&impl->state_lock);
     return drained ? SALTS_EOF : SALTS_ETIMEDOUT;
   }
 
@@ -511,7 +497,7 @@ int cnet_resolver_take(cnet_resolver *resolver, cnet_resolver_result *out_result
   slot->cancelled = false;
   --impl->active_count;
   if (slot->state == CNET_RESOLVER_SLOT_FREE) impl->free_slots[impl->free_count++] = slot_index;
-  cmeta_mutex_unlock(&impl->state_lock);
+  sync_mutex_unlock(&impl->state_lock);
   return SALTS_OK;
 }
 
@@ -521,17 +507,17 @@ int cnet_resolver_close(cnet_resolver *resolver, uint32_t timeout_ms) {
   if (impl == NULL) return SALTS_EINVAL;
   (void)timeout_ms;
 
-  cmeta_mutex_lock(&impl->control_lock);
-  cmeta_mutex_lock(&impl->state_lock);
+  sync_mutex_lock(&impl->control_lock);
+  sync_mutex_lock(&impl->state_lock);
   if (!impl->admission_open) {
-    cmeta_mutex_unlock(&impl->state_lock);
-    cmeta_mutex_unlock(&impl->control_lock);
+    sync_mutex_unlock(&impl->state_lock);
+    sync_mutex_unlock(&impl->control_lock);
     return SALTS_EALREADY;
   }
   impl->admission_open = false;
-  cmeta_mutex_unlock(&impl->state_lock);
+  sync_mutex_unlock(&impl->state_lock);
   ares_cancel(impl->channel);
-  cmeta_mutex_unlock(&impl->control_lock);
+  sync_mutex_unlock(&impl->control_lock);
   return SALTS_OK;
 }
 
@@ -541,19 +527,19 @@ int cnet_resolver_destroy(cnet_resolver *resolver) {
   if (resolver == NULL) return SALTS_EINVAL;
   if (impl == NULL) return SALTS_OK;
 
-  cmeta_mutex_lock(&impl->control_lock);
-  cmeta_mutex_lock(&impl->state_lock);
+  sync_mutex_lock(&impl->control_lock);
+  sync_mutex_lock(&impl->state_lock);
   if (impl->admission_open || impl->active_count != 0u) {
-    cmeta_mutex_unlock(&impl->state_lock);
-    cmeta_mutex_unlock(&impl->control_lock);
+    sync_mutex_unlock(&impl->state_lock);
+    sync_mutex_unlock(&impl->control_lock);
     return SALTS_EBUSY;
   }
-  cmeta_mutex_unlock(&impl->state_lock);
+  sync_mutex_unlock(&impl->state_lock);
   ares_destroy(impl->channel);
-  cmeta_mutex_unlock(&impl->control_lock);
+  sync_mutex_unlock(&impl->control_lock);
 
-  cmeta_mutex_destroy(&impl->state_lock);
-  cmeta_mutex_destroy(&impl->control_lock);
+  sync_mutex_destroy(&impl->state_lock);
+  sync_mutex_destroy(&impl->control_lock);
   free(impl->lookup_storage);
   free(impl->ready_events);
   free(impl->poll_fds);
@@ -657,15 +643,14 @@ int cnet_name_lookup_normalize(cnet_name_lookup *lookup, const char *name, size_
       memchr(name, 0, size)) return SALTS_EINVAL;
   memcpy(numeric, name, size);
   numeric[size] = '\0';
-  if (inet_pton(AF_INET, numeric, address.address) == 1) {
-    address.family = CNET_DATAGRAM_ADDRESS_IPV4;
+  native_io_stream_peer parsed = {0};
+  if (native_io_socket_parse_ip(numeric, &parsed) == SALTS_OK) {
+    address.family = (cnet_datagram_address_family)parsed.family;
+    memcpy(address.address, parsed.address, sizeof(address.address));
     is_numeric = true;
-  } else if (inet_pton(AF_INET6, numeric, address.address) == 1) {
-    address.family = CNET_DATAGRAM_ADDRESS_IPV6;
-    is_numeric = true;
-    struct in6_addr ip;
-    memcpy(&ip, address.address, 16);
-    if (IN6_IS_ADDR_V4MAPPED(&ip)) {
+    static const uint8_t mapped_prefix[12] = {0,0,0,0,0,0,0,0,0,0,0xff,0xff};
+    if (parsed.family == NATIVE_IO_DATAGRAM_ADDRESS_IPV6 &&
+        memcmp(address.address, mapped_prefix, sizeof(mapped_prefix)) == 0) {
       memmove(address.address, address.address + 12, 4);
       memset(address.address + 4, 0, 12);
       address.family = CNET_DATAGRAM_ADDRESS_IPV4;
@@ -692,7 +677,7 @@ int cnet_name_lookup_submit(cnet_name_lookup *lookup, const char *name, size_t s
   rc = cnet_name_lookup_normalize(lookup, name, size, ascii, sizeof(ascii), &count, &numeric, &address);
   if (rc != SALTS_OK) return rc;
   if (!numeric) {
-    rc = cnet_resolver_submit(&carrier, ascii, 1, SOCK_STREAM, 0, &query);
+    rc = cnet_resolver_submit(&carrier, ascii, 1, native_io_socket_type(false), 0, &query);
     if (rc != SALTS_OK) return rc;
   } else {
     if (!p->free_count) return SALTS_ENOBUFS;
@@ -720,14 +705,14 @@ int cnet_name_lookup_advance(cnet_name_lookup *lookup) {
   cnet_resolver_impl *p = lookup_impl(lookup); cnet_resolver carrier = {p}; int rc;
   if (!p) return SALTS_EINVAL;
   for (size_t i = 0; i < p->capacity; ++i)
-    if (p->slots[i].state == CNET_RESOLVER_SLOT_ACTIVE && !p->slots[i].cancelled && cmeta_monotonic_ms() >= p->slots[i].deadline) p->slots[i].expired = true;
+    if (p->slots[i].state == CNET_RESOLVER_SLOT_ACTIVE && !p->slots[i].cancelled && monotonic_ms() >= p->slots[i].deadline) p->slots[i].expired = true;
   rc = cnet_resolver_poll(&carrier);
   for (size_t i = 0; i < p->capacity; ++i)
     if (p->slots[i].state == CNET_RESOLVER_SLOT_READY && p->slots[i].dropped) lookup_retire(p, &p->slots[i]);
   return rc;
 }
 int cnet_name_lookup_next_timeout(cnet_name_lookup *lookup, uint32_t max_wait, uint32_t *out) {
-  cnet_resolver_impl *p = lookup_impl(lookup); uint64_t now = cmeta_monotonic_ms(); struct timeval maximum, timeout;
+  cnet_resolver_impl *p = lookup_impl(lookup); uint64_t now = monotonic_ms(); struct timeval maximum, timeout;
   if (!p || !out) return SALTS_EINVAL;
   *out = max_wait;
   for (size_t i = 0; i < p->capacity; ++i) if (p->slots[i].state == CNET_RESOLVER_SLOT_ACTIVE && !p->slots[i].cancelled && !p->slots[i].expired) {
@@ -743,14 +728,14 @@ int cnet_name_lookup_next_timeout(cnet_name_lookup *lookup, uint32_t max_wait, u
 int cnet_name_lookup_ready(cnet_name_lookup *lookup, cnet_name_query query, bool *out) {
   cnet_resolver_slot *s = lookup_slot(lookup_impl(lookup), query);
   if (!s || !out) return SALTS_EINVAL;
-  *out = s->state == CNET_RESOLVER_SLOT_READY || s->cancelled || cmeta_monotonic_ms() >= s->deadline; return SALTS_OK;
+  *out = s->state == CNET_RESOLVER_SLOT_READY || s->cancelled || monotonic_ms() >= s->deadline; return SALTS_OK;
 }
 int cnet_name_lookup_next(cnet_name_lookup *lookup, cnet_name_query query, cnet_ip_address *out) {
   cnet_resolver_slot *s = lookup_slot(lookup_impl(lookup), query);
   if (!s || !out) return SALTS_EINVAL;
   if (s->state != CNET_RESOLVER_SLOT_READY) {
     if (s->cancelled) return SALTS_EAI_CANCELED;
-    if (cmeta_monotonic_ms() >= s->deadline) s->expired = true;
+    if (monotonic_ms() >= s->deadline) s->expired = true;
     return s->expired ? SALTS_EAI_AGAIN : SALTS_ETIMEDOUT;
   }
   if (s->result.status != SALTS_OK) return s->result.status;

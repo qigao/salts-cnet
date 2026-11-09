@@ -55,7 +55,7 @@ their platform OpenSSL implementation is not linked into Salts targets.
 
 ## CNet DTLS bridge
 
-Include `<cnet/sctp_dtls.h>` and link `Salts::SCTPDTLS` for the C11 bridge.
+Include `<sctp_dtls.h>` and link `Salts::SCTPDTLS` for the C11 bridge.
 Keep `Salts::SCTP` alone for a provider-independent Session. The bridge borrows
 one existing DTLS owner and one Session on the same fixed Owner. Initialize
 only after DTLS READY, using `cnet_dtls_get_info().binding` as Session's exact
@@ -78,7 +78,7 @@ wire or poison the association. An admitted output stays immutable through its
 real local send callback. For example, after Session `data_ready` succeeds:
 
 ```c
-#include <cnet/sctp_dtls.h>
+#include <sctp_dtls.h>
 
 /* Same Owner; event/message are caller-owned, disjoint output buffers.
  * Returns a Salts status; available is set only for a copied Session event. */

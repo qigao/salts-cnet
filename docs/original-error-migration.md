@@ -15,7 +15,7 @@ the original header, implementation, and TinyTest file with these Git blobs:
 | --- | --- | --- |
 | `utils/include/cmeta_error.h` | `1b1950be783a3a5bd6559a8f81df8131f189eba2` | `core/include/cmeta_error.h` |
 | `utils/src/cmeta_error.c` | `d489ef242ffea3612b32be896f229f6f2828b706` | `core/src/cmeta_error.c` |
-| `utils/tests/test_cmeta_error.c` | `b8b407a8bb5d0850c9e9645cf5e5fba3295d12ca` | `tests/test_cmeta_error.c` |
+| `utils/tests/test_cmeta_error.c` | `b8b407a8bb5d0850c9e9645cf5e5fba3295d12ca` | `core/tests/test_cmeta_error.c` |
 
 The exported functions retain their original signatures:
 

@@ -54,7 +54,7 @@ typedef struct crypto_x509_der_view {
  * AlgorithmIdentifier equality and bounded, ordered optional fields.
  * No BER, PEM, trailing bytes, heap allocation or partial output on error.
  * DER dates are syntax-checked; no clock or trust decision is performed. */
-SALTS_ASN1_PUBLIC salts_asn1_status crypto_x509_der_inspect(
+SALTS_ASN1_PUBLIC asn1_status crypto_x509_der_inspect(
     const void *certificate_der, size_t certificate_size,
     crypto_x509_der_view *out);
 
@@ -64,7 +64,7 @@ SALTS_ASN1_PUBLIC salts_asn1_status crypto_x509_der_inspect(
  * The view and offset are unchanged on any error or DONE. A complete
  * chain is accepted ONLY after iteration reaches DONE.
  */
-SALTS_ASN1_PUBLIC salts_asn1_status crypto_x509_der_chain_next(
+SALTS_ASN1_PUBLIC asn1_status crypto_x509_der_chain_next(
     const void *chain, size_t chain_size, size_t *offset,
     crypto_x509_der_view *out);
 
@@ -78,7 +78,7 @@ typedef enum crypto_x509_der_public_key_kind {
     CRYPTO_X509_DER_KEY_ED25519 = 3
 } crypto_x509_der_public_key_kind;
 
-SALTS_ASN1_PUBLIC salts_asn1_status crypto_x509_der_get_public_key_kind(
+SALTS_ASN1_PUBLIC asn1_status crypto_x509_der_get_public_key_kind(
     const crypto_x509_der_view *view,
     crypto_x509_der_public_key_kind *out);
 
@@ -87,7 +87,7 @@ SALTS_ASN1_PUBLIC salts_asn1_status crypto_x509_der_get_public_key_kind(
  * exists; rejects malformed or ambiguous multiple CN attributes.
  * The result is a length-bounded borrowed string, NOT NUL terminated and
  * NOT suitable for TLS hostname or identity authentication. */
-SALTS_ASN1_PUBLIC salts_asn1_status crypto_x509_der_common_name(
+SALTS_ASN1_PUBLIC asn1_status crypto_x509_der_common_name(
     const crypto_x509_der_view *view, uint8_t issuer,
     const uint8_t **out_data, size_t *out_size);
 

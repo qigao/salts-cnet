@@ -1,8 +1,8 @@
 #include "cnet_resources.h"
 #include "cnet_write_queue.h"
 
-#include <error_codes.h>
-#include <cmeta_buffer.h>
+#include <core/error_codes.h>
+#include <memory/buffer.h>
 
 #include <limits.h>
 #include <stdbool.h>

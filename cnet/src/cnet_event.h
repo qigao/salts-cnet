@@ -3,7 +3,7 @@
 
 #include "cnet_session.h"
 
-#include <cmeta_buffer.h>
+#include <memory/buffer.h>
 #include <crypto/tls_diagnostic.h>
 
 #include <stdatomic.h>

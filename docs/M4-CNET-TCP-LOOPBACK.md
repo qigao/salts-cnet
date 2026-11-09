@@ -6,7 +6,7 @@ continues to use exact pinned GmSSL, KCP, c-ares and SIMDe. This is a new,
 
 ## Source under test
 
-`tests/test_cnet_tcp_loopback.c` creates an OS TCP socket and a CNet
+`cnet/tests/test_cnet_tcp_loopback.c` creates an OS TCP socket and a CNet
 `cnet_listener` bound to ephemeral IPv4 loopback. It accepts the live peer
 into a separate, caller-driven CNet client with generation-checked connection
 identity and exact single-threaded callback ownership.

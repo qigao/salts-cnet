@@ -18,7 +18,7 @@ static inline void put(cms_writer *w, unsigned cls, unsigned constructed, unsign
     const void *data, size_t n) {
   size_t written = 0u;
   if (w->failed) return;
-  if (salts_asn1_encode_tlv((uint8_t)cls, (uint8_t)constructed, tag, data, n,
+  if (asn1_encode_tlv((uint8_t)cls, (uint8_t)constructed, tag, data, n,
       SALTS_ASN1_DER, 0u, w->data + w->size, w->capacity - w->size, &written) != SALTS_ASN1_OK)
     w->failed = 1;
   else w->size += written;
@@ -40,20 +40,20 @@ static inline int disjoint(const void *out, size_t bound, const size_t *written,
 static inline int output_valid(const void *out, size_t cap, size_t bound, const size_t *written) {
   return out && cap >= bound && written && !salts_crypto_overlap(out, bound, written, sizeof(*written));
 }
-static inline int done(const salts_asn1_reader *r) { return r->offset == r->size; }
-static inline int take(salts_asn1_reader *r, unsigned cls, unsigned constructed, unsigned tag, salts_asn1_tlv *v) {
-  return salts_asn1_reader_next(r,v) == SALTS_ASN1_OK && v->tag_class == cls &&
+static inline int done(const asn1_reader *r) { return r->offset == r->size; }
+static inline int take(asn1_reader *r, unsigned cls, unsigned constructed, unsigned tag, asn1_tlv *v) {
+  return asn1_reader_next(r,v) == SALTS_ASN1_OK && v->tag_class == cls &&
       v->constructed == constructed && v->tag_number == tag;
 }
-static inline int enter(salts_asn1_reader *r, unsigned cls, unsigned tag, salts_asn1_reader *out) {
-  salts_asn1_tlv v;
-  return take(r,cls,1u,tag,&v) && salts_asn1_reader_open_children(r,&v,out) == SALTS_ASN1_OK;
+static inline int enter(asn1_reader *r, unsigned cls, unsigned tag, asn1_reader *out) {
+  asn1_tlv v;
+  return take(r,cls,1u,tag,&v) && asn1_reader_open_children(r,&v,out) == SALTS_ASN1_OK;
 }
-static inline int root(const void *data, size_t size, salts_asn1_reader *out) {
-  salts_asn1_reader r;
-  return salts_asn1_reader_init(&r,data,size,SALTS_ASN1_DER) == SALTS_ASN1_OK && enter(&r,0u,16u,out) && done(&r);
+static inline int root(const void *data, size_t size, asn1_reader *out) {
+  asn1_reader r;
+  return asn1_reader_init(&r,data,size,SALTS_ASN1_DER) == SALTS_ASN1_OK && enter(&r,0u,16u,out) && done(&r);
 }
-static inline int is_oid(const salts_asn1_tlv *v, const void *data, size_t size) {
+static inline int is_oid(const asn1_tlv *v, const void *data, size_t size) {
   return v->content_size == size && !memcmp(v->content,data,size);
 }
 #endif

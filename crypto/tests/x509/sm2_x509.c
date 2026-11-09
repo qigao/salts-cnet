@@ -15,7 +15,7 @@ static int append(bytes *b, const void *data, size_t n) {
 }
 static int wrap(bytes *out, uint8_t tag, const void *data, size_t n) {
   size_t added;
-  if (salts_asn1_encode_tlv(tag >> 6, (tag >> 5) & 1, tag & 31,
+  if (asn1_encode_tlv(tag >> 6, (tag >> 5) & 1, tag & 31,
       data, n, SALTS_ASN1_DER, 0, out->data+out->size, sizeof(out->data)-out->size, &added) != SALTS_ASN1_OK) return 0;
   out->size += added; return 1;
 }

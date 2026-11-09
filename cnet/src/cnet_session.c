@@ -1,7 +1,7 @@
 #include "cnet_resources.h"
 #include "cnet_session.h"
 
-#include <thread.h>
+#include <threads/threads.h>
 
 #include <limits.h>
 #include <stdlib.h>
@@ -20,7 +20,7 @@ typedef struct cnet_session_table_impl {
   size_t capacity;
   size_t active;
   size_t free_count;
-  cmeta_mutex_t lock;
+  sync_mutex_t lock;
 } cnet_session_table_impl;
 
 static cnet_session_table_impl *cnet_session_impl(cnet_session_table *table) {
@@ -132,7 +132,7 @@ int cnet_session_table_init_with_storage(cnet_session_table *table, size_t capac
   impl->free_count = capacity;
   for (size_t index = 0u; index < capacity; ++index)
     impl->free_slots[index] = (uint32_t)(capacity - index - 1u);
-  cmeta_mutex_init(&impl->lock);
+  sync_mutex_init(&impl->lock);
   table->impl = impl;
   return SALTS_OK;
 }
@@ -142,13 +142,13 @@ int cnet_session_table_destroy(cnet_session_table *table) {
 
   if (table == NULL) return SALTS_EINVAL;
   if (impl == NULL) return SALTS_OK;
-  cmeta_mutex_lock(&impl->lock);
+  sync_mutex_lock(&impl->lock);
   if (impl->active != 0u) {
-    cmeta_mutex_unlock(&impl->lock);
+    sync_mutex_unlock(&impl->lock);
     return SALTS_EBUSY;
   }
-  cmeta_mutex_unlock(&impl->lock);
-  cmeta_mutex_destroy(&impl->lock);
+  sync_mutex_unlock(&impl->lock);
+  sync_mutex_destroy(&impl->lock);
   cnet_storage_free(impl->free_slots);
   cnet_storage_free(impl->entries);
   cnet_storage_free(impl);
@@ -165,14 +165,14 @@ int cnet_session_table_reserve(cnet_session_table *table, cnet_session_handle *o
   memset(out_handle, 0, sizeof(*out_handle));
   if (impl == NULL) return SALTS_EINVAL;
 
-  cmeta_mutex_lock(&impl->lock);
+  sync_mutex_lock(&impl->lock);
   if (impl->free_count == 0u) {
-    cmeta_mutex_unlock(&impl->lock);
+    sync_mutex_unlock(&impl->lock);
     return SALTS_ENOBUFS;
   }
   index = impl->free_slots[impl->free_count - 1u];
   if (index >= impl->capacity || impl->entries[index].state != CNET_SESSION_FREE) {
-    cmeta_mutex_unlock(&impl->lock);
+    sync_mutex_unlock(&impl->lock);
     return SALTS_EPROTO;
   }
   --impl->free_count;
@@ -184,7 +184,7 @@ int cnet_session_table_reserve(cnet_session_table *table, cnet_session_handle *o
   ++impl->active;
   out_handle->slot = (uint32_t)(index + 1u);
   out_handle->generation = entry->generation;
-  cmeta_mutex_unlock(&impl->lock);
+  sync_mutex_unlock(&impl->lock);
   return SALTS_OK;
 }
 
@@ -193,26 +193,26 @@ int cnet_session_table_release_reservation(cnet_session_table *table, cnet_sessi
   cnet_session_entry *entry;
 
   if (impl == NULL) return SALTS_ENOENT;
-  cmeta_mutex_lock(&impl->lock);
+  sync_mutex_lock(&impl->lock);
   entry = cnet_session_find(impl, handle);
   if (entry == NULL) {
-    cmeta_mutex_unlock(&impl->lock);
+    sync_mutex_unlock(&impl->lock);
     return SALTS_ENOENT;
   }
   if (entry->state != CNET_SESSION_RESERVED) {
-    cmeta_mutex_unlock(&impl->lock);
+    sync_mutex_unlock(&impl->lock);
     return SALTS_EBUSY;
   }
   {
     const int status = cnet_session_release_entry(impl, entry);
     if (status != SALTS_OK) {
-      cmeta_mutex_unlock(&impl->lock);
+      sync_mutex_unlock(&impl->lock);
       return status;
     }
   }
   memset(&entry->terminal, 0, sizeof(entry->terminal));
   entry->terminal_taken = false;
-  cmeta_mutex_unlock(&impl->lock);
+  sync_mutex_unlock(&impl->lock);
   return SALTS_OK;
 }
 
@@ -223,14 +223,14 @@ int cnet_session_table_state(const cnet_session_table *table, cnet_session_handl
   if (out_state == NULL) return SALTS_EINVAL;
   cnet_session_table_impl *impl = (cnet_session_table_impl *)cnet_session_const_impl(table);
   if (impl == NULL) return SALTS_ENOENT;
-  cmeta_mutex_lock(&impl->lock);
+  sync_mutex_lock(&impl->lock);
   entry = cnet_session_const_find(impl, handle);
   if (entry == NULL) {
-    cmeta_mutex_unlock(&impl->lock);
+    sync_mutex_unlock(&impl->lock);
     return SALTS_ENOENT;
   }
   *out_state = entry->state;
-  cmeta_mutex_unlock(&impl->lock);
+  sync_mutex_unlock(&impl->lock);
   return SALTS_OK;
 }
 
@@ -240,18 +240,18 @@ int cnet_session_table_transition(cnet_session_table *table, cnet_session_handle
   cnet_session_entry *entry;
 
   if (impl == NULL) return SALTS_ENOENT;
-  cmeta_mutex_lock(&impl->lock);
+  sync_mutex_lock(&impl->lock);
   entry = cnet_session_find(impl, handle);
   if (entry == NULL) {
-    cmeta_mutex_unlock(&impl->lock);
+    sync_mutex_unlock(&impl->lock);
     return SALTS_ENOENT;
   }
   if (!cnet_session_transition_allowed(entry->state, next)) {
-    cmeta_mutex_unlock(&impl->lock);
+    sync_mutex_unlock(&impl->lock);
     return SALTS_EPROTO;
   }
   entry->state = next;
-  cmeta_mutex_unlock(&impl->lock);
+  sync_mutex_unlock(&impl->lock);
   return SALTS_OK;
 }
 
@@ -260,22 +260,22 @@ int cnet_session_table_begin_close(cnet_session_table *table, cnet_session_handl
   cnet_session_entry *entry;
 
   if (impl == NULL) return SALTS_ENOENT;
-  cmeta_mutex_lock(&impl->lock);
+  sync_mutex_lock(&impl->lock);
   entry = cnet_session_find(impl, handle);
   if (entry == NULL) {
-    cmeta_mutex_unlock(&impl->lock);
+    sync_mutex_unlock(&impl->lock);
     return SALTS_ENOENT;
   }
   if (entry->state == CNET_SESSION_DRAINING || entry->state == CNET_SESSION_TERMINAL) {
-    cmeta_mutex_unlock(&impl->lock);
+    sync_mutex_unlock(&impl->lock);
     return SALTS_EALREADY;
   }
   if (!cnet_session_transition_allowed(entry->state, CNET_SESSION_DRAINING)) {
-    cmeta_mutex_unlock(&impl->lock);
+    sync_mutex_unlock(&impl->lock);
     return SALTS_EPROTO;
   }
   entry->state = CNET_SESSION_DRAINING;
-  cmeta_mutex_unlock(&impl->lock);
+  sync_mutex_unlock(&impl->lock);
   return SALTS_OK;
 }
 
@@ -284,22 +284,22 @@ int cnet_session_table_finish_close(cnet_session_table *table, cnet_session_hand
   cnet_session_entry *entry;
 
   if (impl == NULL) return SALTS_ENOENT;
-  cmeta_mutex_lock(&impl->lock);
+  sync_mutex_lock(&impl->lock);
   entry = cnet_session_find(impl, handle);
   if (entry == NULL) {
-    cmeta_mutex_unlock(&impl->lock);
+    sync_mutex_unlock(&impl->lock);
     return SALTS_ENOENT;
   }
   if (entry->state == CNET_SESSION_TERMINAL) {
-    cmeta_mutex_unlock(&impl->lock);
+    sync_mutex_unlock(&impl->lock);
     return SALTS_EALREADY;
   }
   if (entry->state != CNET_SESSION_DRAINING) {
-    cmeta_mutex_unlock(&impl->lock);
+    sync_mutex_unlock(&impl->lock);
     return SALTS_EPROTO;
   }
   cnet_session_set_terminal(entry, CNET_SESSION_TERMINAL_CLOSED, SALTS_OK, CNET_SESSION_STAGE_NONE);
-  cmeta_mutex_unlock(&impl->lock);
+  sync_mutex_unlock(&impl->lock);
   return SALTS_OK;
 }
 
@@ -312,18 +312,18 @@ int cnet_session_table_fail(cnet_session_table *table, cnet_session_handle handl
     return SALTS_EINVAL;
   impl = cnet_session_impl(table);
   if (impl == NULL) return SALTS_ENOENT;
-  cmeta_mutex_lock(&impl->lock);
+  sync_mutex_lock(&impl->lock);
   entry = cnet_session_find(impl, handle);
   if (entry == NULL) {
-    cmeta_mutex_unlock(&impl->lock);
+    sync_mutex_unlock(&impl->lock);
     return SALTS_ENOENT;
   }
   if (entry->state == CNET_SESSION_TERMINAL) {
-    cmeta_mutex_unlock(&impl->lock);
+    sync_mutex_unlock(&impl->lock);
     return SALTS_EALREADY;
   }
   cnet_session_set_terminal(entry, CNET_SESSION_TERMINAL_FAILED, status, stage);
-  cmeta_mutex_unlock(&impl->lock);
+  sync_mutex_unlock(&impl->lock);
   return SALTS_OK;
 }
 
@@ -336,23 +336,23 @@ int cnet_session_table_take_terminal(cnet_session_table *table, cnet_session_han
   memset(out_terminal, 0, sizeof(*out_terminal));
   impl = cnet_session_impl(table);
   if (impl == NULL) return SALTS_ENOENT;
-  cmeta_mutex_lock(&impl->lock);
+  sync_mutex_lock(&impl->lock);
   entry = cnet_session_find(impl, handle);
   if (entry == NULL) {
-    cmeta_mutex_unlock(&impl->lock);
+    sync_mutex_unlock(&impl->lock);
     return SALTS_ENOENT;
   }
   if (entry->state != CNET_SESSION_TERMINAL) {
-    cmeta_mutex_unlock(&impl->lock);
+    sync_mutex_unlock(&impl->lock);
     return SALTS_EBUSY;
   }
   if (entry->terminal_taken) {
-    cmeta_mutex_unlock(&impl->lock);
+    sync_mutex_unlock(&impl->lock);
     return SALTS_EALREADY;
   }
   *out_terminal = entry->terminal;
   entry->terminal_taken = true;
-  cmeta_mutex_unlock(&impl->lock);
+  sync_mutex_unlock(&impl->lock);
   return SALTS_OK;
 }
 
@@ -361,26 +361,26 @@ int cnet_session_table_recycle(cnet_session_table *table, cnet_session_handle ha
   cnet_session_entry *entry;
 
   if (impl == NULL) return SALTS_ENOENT;
-  cmeta_mutex_lock(&impl->lock);
+  sync_mutex_lock(&impl->lock);
   entry = cnet_session_find(impl, handle);
   if (entry == NULL) {
-    cmeta_mutex_unlock(&impl->lock);
+    sync_mutex_unlock(&impl->lock);
     return SALTS_ENOENT;
   }
   if (entry->state != CNET_SESSION_TERMINAL || !entry->terminal_taken) {
-    cmeta_mutex_unlock(&impl->lock);
+    sync_mutex_unlock(&impl->lock);
     return SALTS_EBUSY;
   }
 
   {
     const int status = cnet_session_release_entry(impl, entry);
     if (status != SALTS_OK) {
-      cmeta_mutex_unlock(&impl->lock);
+      sync_mutex_unlock(&impl->lock);
       return status;
     }
   }
   memset(&entry->terminal, 0, sizeof(entry->terminal));
   entry->terminal_taken = false;
-  cmeta_mutex_unlock(&impl->lock);
+  sync_mutex_unlock(&impl->lock);
   return SALTS_OK;
 }

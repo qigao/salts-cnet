@@ -1,8 +1,8 @@
 /* Formal SCTP-over-production-DTLS host. One bounded peer table, one socket,
  * one NativeIO observer; only public CNet/Crypto/SCTP APIs. */
-#include <clock.h>
-#include <cnet/sctp_dtls.h>
-#include <platform.h>
+#include <core/clock.h>
+#include <sctp_dtls.h>
+#include <core/platform.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -56,7 +56,7 @@ static int establish(peer *, uint64_t);
 static int owner(void *p) { return ((peer *)p)->owner; }
 static int entropy(void *p, uint8_t *out, size_t n) {
   (void)p;
-  return cmeta_platform_secure_random(out, n);
+  return secure_random(out, n);
 }
 static int mac(void *p, const uint8_t *data, size_t n, uint8_t out[32]) {
   const char label[] = "EXPERIMENTAL-SCTP-cookie";
@@ -92,7 +92,7 @@ static int policy(void *p,
 static int application(void *p, cnet_dtls *d, const cnet_receive_view *v) {
   peer *x = p;
   if (!x->session) {
-    int n = establish(x, cmeta_monotonic_ms());
+    int n = establish(x, monotonic_ms());
     if (n)
       return n;
   }
@@ -159,7 +159,7 @@ static void receive(void *p, cnet_datagram *d, const cnet_datagram_peer *a,
   uint8_t reply[60];
   size_t written = 0;
   bool verified = false;
-  int n = cnet_dtls_cookie_gate(h->listener, a, v, cmeta_monotonic_ms(), reply,
+  int n = cnet_dtls_cookie_gate(h->listener, a, v, monotonic_ms(), reply,
                                 sizeof(reply), &written, &verified);
   if (n) {
     error(h, n);
@@ -181,7 +181,7 @@ static void receive(void *p, cnet_datagram *d, const cnet_datagram_peer *a,
       d,           *a,
       h->listener, {application, application_sent, x},
       4u,          (uint32_t)(16u + (x - h->peers))};
-  n = cnet_dtls_accept(&x->dtls, &c, v, cmeta_monotonic_ms());
+  n = cnet_dtls_accept(&x->dtls, &c, v, monotonic_ms());
   if (n)
     error(h, n);
   else
@@ -210,7 +210,7 @@ static void sent(void *p, cnet_datagram *d, const cnet_datagram_peer *a,
   }
   bool matched = false;
   int n = cnet_dtls_send_complete(&x->dtls, d, a, size, status, tag,
-                                  cmeta_monotonic_ms(), &matched);
+                                  monotonic_ms(), &matched);
   if (n || !matched)
     error(h, n ? n : SALTS_EPROTO);
 }
@@ -221,7 +221,7 @@ static int establish(peer *x, uint64_t now) {
     return n;
   if (info.security.state != CRYPTO_DTLS_READY)
     return SALTS_OK;
-  if (cmeta_platform_secure_random(x->cookie_secret, sizeof(x->cookie_secret)))
+  if (secure_random(x->cookie_secret, sizeof(x->cookie_secret)))
     return SALTS_EIO;
   cnet_sctp_session_create_config c = {0};
   c.abi_version = CNET_SCTP_SESSION_ABI_VERSION;
@@ -380,7 +380,7 @@ static int advance_peer(peer *x, uint64_t now) {
 }
 static int step(host *h) {
   bool credits = true;
-  uint64_t now = cmeta_monotonic_ms();
+  uint64_t now = monotonic_ms();
   for (size_t k = 0; !h->draining && k < h->count; k++) {
     peer *x = &h->peers[(h->cursor + k) % h->count];
     if (x->cookie_size && !x->cookie_submitted) {
@@ -689,7 +689,7 @@ int main(int argc, char **argv) {
         break;
       }
       status =
-          cnet_sctp_dtls_advance(&x->bridge, cmeta_monotonic_ms(), &events);
+          cnet_sctp_dtls_advance(&x->bridge, monotonic_ms(), &events);
       if (status != SALTS_EPROTO || events != 0u)
         error(h, SALTS_EPROTO);
       break;
@@ -744,8 +744,8 @@ done:
   }
   if (h->external) {
     bool a = !h->datagram.impl, b = !h->neighbor.impl;
-    uint64_t start = cmeta_monotonic_ms();
-    while ((!a || !b) && cmeta_monotonic_ms() - start < 5000u) {
+    uint64_t start = monotonic_ms();
+    while ((!a || !b) && monotonic_ms() - start < 5000u) {
       int n = a ? 0 : cnet_datagram_stop_external(&h->datagram, &a);
       if (n && n != SALTS_EBUSY)
         result = 3;
@@ -762,7 +762,7 @@ done:
     peer *x = &h->peers[i];
     size_t events;
     if (x->registered)
-      (void)cnet_dtls_advance(&x->dtls, cmeta_monotonic_ms(), &events);
+      (void)cnet_dtls_advance(&x->dtls, monotonic_ms(), &events);
     if (x->bridge.impl && cnet_sctp_dtls_destroy(&x->bridge))
       result = 3;
     if (x->session && cnet_sctp_session_destroy(x->session))

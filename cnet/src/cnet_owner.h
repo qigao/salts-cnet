@@ -77,7 +77,7 @@ typedef struct cnet_owner_config {
   /** Optional poll-owner fast path; NULL publishes to events. */
   cnet_owner_event_publish_fn publish_event;
   void *event_context;
-  /** Optional single-owner monotonic clock seam; NULL uses cmeta_monotonic_ms(). */
+  /** Optional single-owner monotonic clock seam; NULL uses monotonic_ms(). */
   cnet_owner_now_ms_fn now_ms;
   void *clock_context;
   cnet_resources resources;

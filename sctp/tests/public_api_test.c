@@ -1,5 +1,5 @@
-#include <cnet/sctp_wire.h>
-#include <cnet/sctp_session.h>
+#include <sctp_wire.h>
+#include <sctp_session.h>
 #include <tinytest.h>
 
 #include <stddef.h>

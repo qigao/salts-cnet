@@ -1,4 +1,5 @@
 #include "cnet_module.h"
+#include <native_io_socket.h>
 
 #if defined(_WIN32)
 // clang-format off
@@ -21,7 +22,7 @@ typedef struct cnet_module_state {
 
 static cnet_module_state cnet_module_global;
 
-/* A dynamically allocated once-initialized cmeta_mutex_t leaks one heap lock
+/* A dynamically allocated once-initialized sync_mutex_t leaks one heap lock
  * per CNet DSO load/unload: there is no safe final-shutdown destroy while
  * another thread may already be entering init(). Instead use the native
  * process-local static mutex. No allocation, no destructor, no separate
@@ -47,9 +48,6 @@ static void cnet_module_unlock(void) {
 
 int cnet_module_init(void) {
   int status;
-#if defined(_WIN32)
-  WSADATA winsock_data;
-#endif
 
   cnet_module_lock();
   if (cnet_module_global.references != 0u) {
@@ -62,25 +60,19 @@ int cnet_module_init(void) {
     return SALTS_OK;
   }
 
-#if defined(_WIN32)
-  if (WSAStartup(MAKEWORD(2, 2), &winsock_data) != 0) {
+  if (native_io_network_init() != SALTS_OK) {
     cnet_module_unlock();
     return SALTS_EIO;
   }
-#endif
   status = ares_library_init(ARES_LIB_INIT_ALL);
   if (status != ARES_SUCCESS) {
-#if defined(_WIN32)
-    (void)WSACleanup();
-#endif
+    native_io_network_shutdown();
     cnet_module_unlock();
     return status == ARES_ENOMEM ? SALTS_ENOMEM : SALTS_EAI_FAIL;
   }
   if (ares_threadsafety() != ARES_TRUE) {
     ares_library_cleanup();
-#if defined(_WIN32)
-    (void)WSACleanup();
-#endif
+    native_io_network_shutdown();
     cnet_module_unlock();
     return SALTS_ENOTSUP;
   }
@@ -103,9 +95,7 @@ int cnet_module_shutdown(void) {
   --cnet_module_global.references;
   if (cnet_module_global.references == 0u) {
     ares_library_cleanup();
-#if defined(_WIN32)
-    (void)WSACleanup();
-#endif
+    native_io_network_shutdown();
   }
   cnet_module_unlock();
   return SALTS_OK;

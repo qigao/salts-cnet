@@ -1,6 +1,6 @@
 #include <cnet/recovery_policy.h>
-#include <error_codes.h>
-#include <thread.h>
+#include <core/error_codes.h>
+#include <threads/threads.h>
 #include <stdatomic.h>
 #include <string.h>
 
@@ -12,7 +12,7 @@ static int recovery_check(const cnet_reconnect_state *s) {
       s->config.version != CNET_RECOVERY_POLICY_VERSION ||
       s->incarnation == 0u) return SALTS_EINVAL;
   if (s->evaluating) return SALTS_EBUSY;
-  return s->owner_thread == cmeta_thread_current_token() ? SALTS_OK : SALTS_EPERM;
+  return s->owner_thread == sync_thread_current_token() ? SALTS_OK : SALTS_EPERM;
 }
 static int recovery_ticket(const cnet_reconnect_state *s, cnet_reconnect_ticket t) {
   int status = recovery_check(s);
@@ -83,7 +83,7 @@ int cnet_reconnect_init(cnet_reconnect_state *s, const cnet_reconnect_config *c)
       memory_order_relaxed, memory_order_relaxed));
   memset(s, 0, sizeof(*s));
   s->config = *c;
-  s->owner_thread = cmeta_thread_current_token();
+  s->owner_thread = sync_thread_current_token();
   s->owner_address = (uintptr_t)s;
   s->incarnation = (uint64_t)(current + 1u);
   s->random_state = c->jitter_seed;

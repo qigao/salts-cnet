@@ -1,7 +1,7 @@
 #include "cnet_resources.h"
 #include <cnet/handoff.h>
-#include <ring_buffer.h>
-#include <thread.h>
+#include <queue/ring_buffer.h>
+#include <threads/threads.h>
 #include <stdatomic.h>
 #include <stdlib.h>
 #include <string.h>
@@ -14,7 +14,7 @@ typedef struct handoff_record {
   unsigned state;
 } handoff_record;
 typedef struct handoff_impl {
-  cmeta_mutex_t mutex;
+  sync_mutex_t mutex;
   handoff_record *records;
   /* The non-atomic byte ring is accessed only under mutex, including its
    * acquire/release pairs. No ring view escapes the critical section. */
@@ -74,7 +74,7 @@ int cnet_handoff_init(cnet_handoff *handoff, const cnet_handoff_config *config) 
   impl->queue_capacity = config->queue_capacity;
   for (size_t i = 0u; i < impl->capacity; ++i) impl->records[i].next_free = i + 1u;
   ring_init(&impl->queue, impl->queue.data, (config->queue_capacity + 1u) * sizeof(size_t));
-  cmeta_mutex_init(&impl->mutex);
+  sync_mutex_init(&impl->mutex);
   if (impl->mutex == NULL) {
     cnet_storage_free(impl->queue.data);
     cnet_storage_free(impl->records);
@@ -91,7 +91,7 @@ int cnet_handoff_reserve(cnet_handoff *handoff, cnet_handoff_ticket *out) {
   *out = (cnet_handoff_ticket){0};
   if (handoff == NULL || handoff->impl == NULL) return SALTS_EINVAL;
   handoff_impl *impl = handoff->impl;
-  cmeta_mutex_lock(&impl->mutex);
+  sync_mutex_lock(&impl->mutex);
   if (impl->sealed) status = SALTS_ESHUTDOWN;
   else if (impl->free_head == impl->capacity) status = SALTS_ENOBUFS;
   else {
@@ -106,7 +106,7 @@ int cnet_handoff_reserve(cnet_handoff *handoff, cnet_handoff_ticket *out) {
       *out = (cnet_handoff_ticket){impl->incarnation, record->generation, slot + 1u};
     }
   }
-  cmeta_mutex_unlock(&impl->mutex);
+  sync_mutex_unlock(&impl->mutex);
   return status;
 }
 
@@ -116,7 +116,7 @@ int cnet_handoff_publish(cnet_handoff *handoff, cnet_handoff_ticket ticket,
   if (handoff == NULL || handoff->impl == NULL || accepted == NULL ||
       accepted->internal_active != 1u) return SALTS_EINVAL;
   handoff_impl *impl = handoff->impl;
-  cmeta_mutex_lock(&impl->mutex);
+  sync_mutex_lock(&impl->mutex);
   handoff_record *record = find_record(impl, ticket);
   if (record == NULL) status = SALTS_ENOENT;
   else if (record->state != HANDOFF_RESERVED) status = SALTS_EALREADY;
@@ -135,7 +135,7 @@ int cnet_handoff_publish(cnet_handoff *handoff, cnet_handoff_ticket ticket,
       ring_write_release(&impl->queue, sizeof(ticket.slot));
     }
   }
-  cmeta_mutex_unlock(&impl->mutex);
+  sync_mutex_unlock(&impl->mutex);
   return status;
 }
 
@@ -147,7 +147,7 @@ int cnet_handoff_take(cnet_handoff *handoff, cnet_handoff_ticket *out,
   if (handoff == NULL || handoff->impl == NULL || out == NULL || accepted == NULL)
     return SALTS_EINVAL;
   handoff_impl *impl = handoff->impl;
-  cmeta_mutex_lock(&impl->mutex);
+  sync_mutex_lock(&impl->mutex);
   if (impl->queued == 0u) status = SALTS_ENOENT;
   else {
     size_t bytes, slot;
@@ -165,7 +165,7 @@ int cnet_handoff_take(cnet_handoff *handoff, cnet_handoff_ticket *out,
       ring_read_release(&impl->queue, sizeof(slot));
     }
   }
-  cmeta_mutex_unlock(&impl->mutex);
+  sync_mutex_unlock(&impl->mutex);
   return status;
 }
 
@@ -173,7 +173,7 @@ int cnet_handoff_release(cnet_handoff *handoff, cnet_handoff_ticket ticket) {
   int status = SALTS_OK;
   if (handoff == NULL || handoff->impl == NULL) return SALTS_EINVAL;
   handoff_impl *impl = handoff->impl;
-  cmeta_mutex_lock(&impl->mutex);
+  sync_mutex_lock(&impl->mutex);
   handoff_record *record = find_record(impl, ticket);
   if (record == NULL) status = SALTS_ENOENT;
   else if (record->state == HANDOFF_QUEUED) status = SALTS_EBUSY;
@@ -184,16 +184,16 @@ int cnet_handoff_release(cnet_handoff *handoff, cnet_handoff_ticket ticket) {
     record->next_free = impl->free_head;
     impl->free_head = ticket.slot - 1u;
   }
-  cmeta_mutex_unlock(&impl->mutex);
+  sync_mutex_unlock(&impl->mutex);
   return status;
 }
 
 int cnet_handoff_seal(cnet_handoff *handoff) {
   if (handoff == NULL || handoff->impl == NULL) return SALTS_EINVAL;
   handoff_impl *impl = handoff->impl;
-  cmeta_mutex_lock(&impl->mutex);
+  sync_mutex_lock(&impl->mutex);
   impl->sealed = true;
-  cmeta_mutex_unlock(&impl->mutex);
+  sync_mutex_unlock(&impl->mutex);
   return SALTS_OK;
 }
 int cnet_handoff_get_snapshot(cnet_handoff *handoff, cnet_handoff_snapshot *out) {
@@ -201,11 +201,11 @@ int cnet_handoff_get_snapshot(cnet_handoff *handoff, cnet_handoff_snapshot *out)
   *out = (cnet_handoff_snapshot){0};
   if (handoff == NULL || handoff->impl == NULL) return SALTS_EINVAL;
   handoff_impl *impl = handoff->impl;
-  cmeta_mutex_lock(&impl->mutex);
+  sync_mutex_lock(&impl->mutex);
   *out = (cnet_handoff_snapshot){impl->capacity, impl->queue_capacity,
       impl->reserved, impl->queued, impl->taken, impl->sealed,
       impl->reserved == 0u && impl->queued == 0u && impl->taken == 0u};
-  cmeta_mutex_unlock(&impl->mutex);
+  sync_mutex_unlock(&impl->mutex);
   return SALTS_OK;
 }
 int cnet_handoff_destroy(cnet_handoff *handoff) {
@@ -215,7 +215,7 @@ int cnet_handoff_destroy(cnet_handoff *handoff) {
   /* Exclusive lifecycle access is a host precondition, not inferred from an
    * empty queue. In particular a producer may still be about to wake a backend. */
   if (impl->reserved != 0u || impl->queued != 0u || impl->taken != 0u) return SALTS_EBUSY;
-  cmeta_mutex_destroy(&impl->mutex);
+  sync_mutex_destroy(&impl->mutex);
   cnet_storage_free(impl->queue.data);
   cnet_storage_free(impl->records);
   cnet_storage_free(impl);

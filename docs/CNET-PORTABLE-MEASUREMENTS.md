@@ -1,5 +1,11 @@
 # Portable formal TLS measurements
 
+The profiler workflow below is historical. Its manual dispatch inputs and
+diagnostic CMake switches have been retired. Current CI runs the ordinary public
+presets and their full CTest suite. To select the registered measurement cases
+locally, use `ctest --preset <native-profile> -L '^cnet_tls_mixed_measurements$'
+--verbose`; no separate configure preset or measurement switch is required.
+
 This #189 follow-up reuses the existing direct NativeIO/Crypto and production
 CNet TLS TinyTest cases. It adds no executable, consumer/smoke project, CMake
 verification script or alternate TLS runtime. CMake registers the 25 actual
@@ -17,7 +23,7 @@ still let later repetitions run, preserving failures as evidence; the suite's
 exit status determines qualification.
 
 ```sh
-cmake --preset native-release-user -DSALTSCORE_CNET_TLS_MIXED_MEASUREMENTS=ON
+cmake --preset native-release-user
 cmake --build --preset native-release-user
 ctest --preset native-release-user -L '^cnet_tls_mixed_measurements$' --verbose
 ```

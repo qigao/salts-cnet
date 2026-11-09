@@ -1,4 +1,3 @@
-#include "cnet_monocypher_namespace.h"
 #include <cnet/dtls.h>
 #include <monocypher.h>
 #include <stdatomic.h>

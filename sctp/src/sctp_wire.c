@@ -1,4 +1,4 @@
-#include <cnet/sctp_wire.h>
+#include <sctp_wire.h>
 
 #include <limits.h>
 #include <string.h>

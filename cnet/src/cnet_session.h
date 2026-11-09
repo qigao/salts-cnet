@@ -2,7 +2,7 @@
 #define CNET_SESSION_H
 #include <cnet/resources.h>
 
-#include <error_codes.h>
+#include <core/error_codes.h>
 
 #include <stdbool.h>
 #include <stddef.h>

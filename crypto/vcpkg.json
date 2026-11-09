@@ -1,6 +1,0 @@
-{
-  "name": "salts-crypto",
-  "version": "0.1.0",
-  "description": "Source-owned static Salts::Crypto with local native algorithms and TLS",
-  "dependencies": []
-}

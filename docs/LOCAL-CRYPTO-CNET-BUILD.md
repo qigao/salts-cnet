@@ -83,7 +83,7 @@ the empty `cnet` feature is retained only for existing manifest callers.
 
 ```sh
 python3 -B crypto/tools/check_local_native_source.py
-cmake -S . -B build -DBUILD_TESTING=ON \
+cmake -S . -B build -DBUILD_TESTS=ON \
   -DCMAKE_TOOLCHAIN_FILE=/path/to/verified-vcpkg-toolchain.cmake
 cmake --build build --parallel
 ctest --test-dir build --output-on-failure --no-tests=error

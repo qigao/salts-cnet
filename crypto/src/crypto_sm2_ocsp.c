@@ -12,26 +12,26 @@ static const uint8_t nonce_oid[] = {0x2b,6,1,5,5,7,0x30,1,2};
 static const uint8_t sm3_oid[] = {0x2a,0x81,0x1c,0xcf,0x55,1,0x83,0x11};
 static const uint8_t sha256_oid[] = {0x60,0x86,0x48,1,0x65,3,4,2,1};
 static const uint8_t sha1_oid[] = {0x2b,0x0e,3,2,0x1a};
-static int done(const salts_asn1_reader *r) { return r->offset == r->size; }
-static int take(salts_asn1_reader *r, unsigned cls, unsigned constructed, unsigned tag, salts_asn1_tlv *v) {
-  return salts_asn1_reader_next(r,v) == SALTS_ASN1_OK && v->tag_class == cls &&
+static int done(const asn1_reader *r) { return r->offset == r->size; }
+static int take(asn1_reader *r, unsigned cls, unsigned constructed, unsigned tag, asn1_tlv *v) {
+  return asn1_reader_next(r,v) == SALTS_ASN1_OK && v->tag_class == cls &&
       v->constructed == constructed && v->tag_number == tag;
 }
-static int enter(salts_asn1_reader *r, unsigned cls, unsigned tag, salts_asn1_reader *out) {
-  salts_asn1_tlv v;
-  return take(r,cls,1u,tag,&v) && salts_asn1_reader_open_children(r,&v,out) == SALTS_ASN1_OK;
+static int enter(asn1_reader *r, unsigned cls, unsigned tag, asn1_reader *out) {
+  asn1_tlv v;
+  return take(r,cls,1u,tag,&v) && asn1_reader_open_children(r,&v,out) == SALTS_ASN1_OK;
 }
-static int root(ocsp_span s, salts_asn1_reader *out) {
-  salts_asn1_reader r;
-  return salts_asn1_reader_init(&r,s.data,s.size,SALTS_ASN1_DER) == SALTS_ASN1_OK && enter(&r,0u,16u,out) && done(&r);
+static int root(ocsp_span s, asn1_reader *out) {
+  asn1_reader r;
+  return asn1_reader_init(&r,s.data,s.size,SALTS_ASN1_DER) == SALTS_ASN1_OK && enter(&r,0u,16u,out) && done(&r);
 }
 static int same(ocsp_span a, ocsp_span b) {
   return a.size == b.size && (!a.size || !memcmp(a.data,b.data,a.size));
 }
-static ocsp_span encoded(const salts_asn1_tlv *v) {
+static ocsp_span encoded(const asn1_tlv *v) {
   return (ocsp_span){v->content-(v->encoded_size-v->content_size),v->encoded_size};
 }
-static int oid_is(const salts_asn1_tlv *v, const uint8_t *p, size_t n) {
+static int oid_is(const asn1_tlv *v, const uint8_t *p, size_t n) {
   return same((ocsp_span){v->content,v->content_size},(ocsp_span){p,n});
 }
 #define OID(v,name) oid_is(v,name,sizeof(name))
@@ -49,16 +49,16 @@ static int admitted(const salts_crypto_sm2_cert_span *cert, const salts_crypto_s
 }
 static int ca_profile(const crypto_x509_der_view *v) {
   if (!v->extensions_der) return 0;
-  salts_asn1_reader exts, ext, value; salts_asn1_tlv name, encoded_value, primitive;
+  asn1_reader exts, ext, value; asn1_tlv name, encoded_value, primitive;
   unsigned basic = 0u, key_usage = 0u;
   if (!root((ocsp_span){v->extensions_der,v->extensions_size},&exts)) return 0;
   while (!done(&exts)) {
     bool critical = false;
-    if (!enter(&exts,0u,16u,&ext) || !take(&ext,0u,0u,6u,&name) || salts_asn1_reader_next(&ext,&encoded_value) != SALTS_ASN1_OK) return 0;
+    if (!enter(&exts,0u,16u,&ext) || !take(&ext,0u,0u,6u,&name) || asn1_reader_next(&ext,&encoded_value) != SALTS_ASN1_OK) return 0;
     if (encoded_value.tag_class == 0u && !encoded_value.constructed && encoded_value.tag_number == 1u) {
       if (encoded_value.content_size != 1u || encoded_value.content[0] != 0xffu) return 0;
       critical = true;
-      if (salts_asn1_reader_next(&ext,&encoded_value) != SALTS_ASN1_OK) return 0;
+      if (asn1_reader_next(&ext,&encoded_value) != SALTS_ASN1_OK) return 0;
     }
     if (encoded_value.tag_class || encoded_value.constructed || encoded_value.tag_number != 4u || !done(&ext)) return 0;
     unsigned kind = name.content_size == 3u && name.content[0] == 0x55u && name.content[1] == 0x1du ? name.content[2] : 0u;
@@ -70,8 +70,8 @@ static int ca_profile(const crypto_x509_der_view *v) {
       if (!done(&value)) return 0;
       basic = 1u;
     } else if (kind == 15u) {
-      salts_asn1_reader bits;
-      if (salts_asn1_reader_init(&bits,encoded_value.content,encoded_value.content_size,SALTS_ASN1_DER) != SALTS_ASN1_OK ||
+      asn1_reader bits;
+      if (asn1_reader_init(&bits,encoded_value.content,encoded_value.content_size,SALTS_ASN1_DER) != SALTS_ASN1_OK ||
           !take(&bits,0u,0u,3u,&primitive) || !done(&bits) || primitive.content_size < 2u ||
           primitive.content_size > 3u || !(primitive.content[1] & 4u)) return 0;
       key_usage = 1u;
@@ -79,12 +79,12 @@ static int ca_profile(const crypto_x509_der_view *v) {
   }
   return basic && key_usage;
 }
-static int time_value(salts_asn1_reader *r, int64_t *out) {
-  salts_asn1_tlv v;
+static int time_value(asn1_reader *r, int64_t *out) {
+  asn1_tlv v;
   return take(r,0u,0u,24u,&v) && salts_crypto_generalized_time(&v,out) && *out >= 0;
 }
-static const DIGEST *identifier_digest(salts_asn1_reader *r) {
-  salts_asn1_reader a; salts_asn1_tlv value;
+static const DIGEST *identifier_digest(asn1_reader *r) {
+  asn1_reader a; asn1_tlv value;
   if (!enter(r,0u,16u,&a) || !take(&a,0u,0u,6u,&value)) return NULL;
   const DIGEST *md = OID(&value,sm3_oid) ? DIGEST_sm3() : OID(&value,sha256_oid) ? DIGEST_sha256() :
       OID(&value,sha1_oid) ? DIGEST_sha1() : NULL;
@@ -92,15 +92,15 @@ static const DIGEST *identifier_digest(salts_asn1_reader *r) {
   if (!done(&a) && (!take(&a,0u,0u,5u,&value) || value.content_size)) return NULL;
   return done(&a) ? md : NULL;
 }
-static int serial(const salts_asn1_tlv *v) {
+static int serial(const asn1_tlv *v) {
   if (!v->content_size || v->content_size > 20u || (v->content[0] & 128u)) return 0;
   unsigned nonzero = 0u;
   for (size_t i = 0u; i < v->content_size; ++i) nonzero |= v->content[i];
   return nonzero != 0u;
 }
-static int cert_id(salts_asn1_reader *r, const crypto_x509_der_view *cert,
+static int cert_id(asn1_reader *r, const crypto_x509_der_view *cert,
     const crypto_x509_der_view *issuer, const uint8_t pub[65], bool *matches) {
-  salts_asn1_reader id; salts_asn1_tlv name_hash, key_hash, serial_number;
+  asn1_reader id; asn1_tlv name_hash, key_hash, serial_number;
   if (!enter(r,0u,16u,&id)) return 0;
   const DIGEST *md = identifier_digest(&id);
   if (!md || !take(&id,0u,0u,4u,&name_hash) || name_hash.content_size != md->digest_size ||
@@ -114,29 +114,29 @@ static int cert_id(salts_asn1_reader *r, const crypto_x509_der_view *cert,
       (ocsp_span){serial_number.content,serial_number.content_size});
   return 1;
 }
-static int single_responses(salts_asn1_reader *r, const crypto_x509_der_view *cert,
+static int single_responses(asn1_reader *r, const crypto_x509_der_view *cert,
     const crypto_x509_der_view *issuer, const uint8_t pub[65], int64_t produced, int64_t now,
     const salts_crypto_sm2_ocsp_policy *policy) {
-  salts_asn1_reader list, response, child;
-  salts_asn1_tlv id, status, reason;
+  asn1_reader list, response, child;
+  asn1_tlv id, status, reason;
   ocsp_span ids[SALTS_CRYPTO_SM2_OCSP_MAX_RESPONSES]; size_t count = 0u, matches = 0u;
   bool good = false;
   if (!enter(r,0u,16u,&list)) return 0;
   while (!done(&list)) {
     bool match;
     if (count == SALTS_CRYPTO_SM2_OCSP_MAX_RESPONSES || !enter(&list,0u,16u,&response)) return 0;
-    salts_asn1_reader id_reader = response;
+    asn1_reader id_reader = response;
     if (!take(&id_reader,0u,1u,16u,&id) || !cert_id(&response,cert,issuer,pub,&match)) return 0;
     ocsp_span current = encoded(&id);
     for (size_t i = 0u; i < count; ++i) if (same(current,ids[i])) return 0;
     ids[count++] = current;
-    if (salts_asn1_reader_next(&response,&status) != SALTS_ASN1_OK || status.tag_class != 2u || status.tag_number > 2u) return 0;
+    if (asn1_reader_next(&response,&status) != SALTS_ASN1_OK || status.tag_class != 2u || status.tag_number > 2u) return 0;
     int64_t revocation_time = -1;
     if (status.tag_number == 1u) {
-      if (!status.constructed || salts_asn1_reader_open_children(&response,&status,&child) != SALTS_ASN1_OK ||
+      if (!status.constructed || asn1_reader_open_children(&response,&status,&child) != SALTS_ASN1_OK ||
           !time_value(&child,&revocation_time) || revocation_time > produced) return 0;
       if (!done(&child)) {
-        salts_asn1_reader explicit_reason;
+        asn1_reader explicit_reason;
         if (!enter(&child,2u,0u,&explicit_reason) || !take(&explicit_reason,0u,0u,10u,&reason) ||
             reason.content_size != 1u || reason.content[0] > 10u || reason.content[0] == 7u ||
             !done(&explicit_reason) || !done(&child)) return 0;
@@ -152,24 +152,24 @@ static int single_responses(salts_asn1_reader *r, const crypto_x509_der_view *ce
   }
   return count && (!cert || (matches == 1u && good));
 }
-static int response_nonce(salts_asn1_reader *r, const salts_crypto_sm2_ocsp_policy *p) {
+static int response_nonce(asn1_reader *r, const salts_crypto_sm2_ocsp_policy *p) {
   if (done(r)) return !p->nonce;
-  salts_asn1_reader explicit_value, exts, ext, value; salts_asn1_tlv name, field;
+  asn1_reader explicit_value, exts, ext, value; asn1_tlv name, field;
   if (!enter(r,2u,1u,&explicit_value) || !done(r) || !enter(&explicit_value,0u,16u,&exts) || !done(&explicit_value) ||
       !enter(&exts,0u,16u,&ext) || !done(&exts) || !take(&ext,0u,0u,6u,&name) || !OID(&name,nonce_oid) ||
-      salts_asn1_reader_next(&ext,&field) != SALTS_ASN1_OK) return 0;
+      asn1_reader_next(&ext,&field) != SALTS_ASN1_OK) return 0;
   if (field.tag_class == 0u && !field.constructed && field.tag_number == 1u) {
-    if (field.content_size != 1u || field.content[0] != 0xffu || salts_asn1_reader_next(&ext,&field) != SALTS_ASN1_OK) return 0;
+    if (field.content_size != 1u || field.content[0] != 0xffu || asn1_reader_next(&ext,&field) != SALTS_ASN1_OK) return 0;
   }
   if (field.tag_class || field.constructed || field.tag_number != 4u || !done(&ext) ||
-      salts_asn1_reader_init(&value,field.content,field.content_size,SALTS_ASN1_DER) != SALTS_ASN1_OK ||
+      asn1_reader_init(&value,field.content,field.content_size,SALTS_ASN1_DER) != SALTS_ASN1_OK ||
       !take(&value,0u,0u,4u,&field) || !done(&value) || !p->nonce || field.content_size != p->nonce_size) return 0;
   return gmssl_secure_memcmp(field.content,p->nonce,p->nonce_size) == 0;
 }
-static int responder_id(salts_asn1_reader *r, const crypto_x509_der_view *issuer, const uint8_t pub[65]) {
-  salts_asn1_tlv value; salts_asn1_reader inner;
-  if (salts_asn1_reader_next(r,&value) != SALTS_ASN1_OK || value.tag_class != 2u || !value.constructed ||
-      salts_asn1_reader_open_children(r,&value,&inner) != SALTS_ASN1_OK) return 0;
+static int responder_id(asn1_reader *r, const crypto_x509_der_view *issuer, const uint8_t pub[65]) {
+  asn1_tlv value; asn1_reader inner;
+  if (asn1_reader_next(r,&value) != SALTS_ASN1_OK || value.tag_class != 2u || !value.constructed ||
+      asn1_reader_open_children(r,&value,&inner) != SALTS_ASN1_OK) return 0;
   if (value.tag_number == 1u) {
     if (!take(&inner,0u,1u,16u,&value) || !done(&inner)) return 0;
     return same(encoded(&value),(ocsp_span){issuer->subject_der,issuer->subject_size});
@@ -188,7 +188,7 @@ static int delegated_profile(const salts_crypto_sm2_cert_span *issuer, int64_t n
   if (crypto_x509_der_inspect(d->responder_certificate.der,d->responder_certificate.size,signer) != SALTS_ASN1_OK ||
       salts_crypto_sm2_x509_public_key(d->responder_certificate.der,d->responder_certificate.size,pub) != SALTS_CRYPTO_OK ||
       !signer->extensions_der) return 0;
-  salts_asn1_reader list, ext; salts_asn1_tlv name, value;
+  asn1_reader list, ext; asn1_tlv name, value;
   static const uint8_t nocheck_oid[] = {0x2b,6,1,5,5,7,0x30,1,5};
   unsigned nocheck = 0u;
   if (!root((ocsp_span){signer->extensions_der,signer->extensions_size},&list)) return 0;
@@ -224,8 +224,8 @@ static int check_response(const salts_crypto_sm2_cert_span *certificate,
   crypto_x509_der_view signer = ca;
   uint8_t signer_key[65]; memcpy(signer_key,public_key,sizeof(signer_key));
   if (delegate && !delegated_profile(issuer,now,delegate,&signer,signer_key)) return SALTS_CRYPTO_EVERIFY;
-  salts_asn1_reader response, explicit_value, bytes, basic, data, certs, embedded;
-  salts_asn1_tlv field, signed_data, algorithm, signature;
+  asn1_reader response, explicit_value, bytes, basic, data, certs, embedded;
+  asn1_tlv field, signed_data, algorithm, signature;
   if (!root((ocsp_span){p->der,p->size},&response) || !take(&response,0u,0u,10u,&field) ||
       field.content_size != 1u || field.content[0] != 0u || !enter(&response,2u,0u,&explicit_value) || !done(&response) ||
       !enter(&explicit_value,0u,16u,&bytes) || !done(&explicit_value) || !take(&bytes,0u,0u,6u,&field) || !OID(&field,basic_oid) ||
@@ -241,7 +241,7 @@ static int check_response(const salts_crypto_sm2_cert_span *certificate,
         !same(encoded(&field),(ocsp_span){issuer->der,issuer->size}))) return SALTS_CRYPTO_EVERIFY;
     if (!done(&embedded)) return SALTS_CRYPTO_EVERIFY;
   }
-  if (salts_asn1_reader_open_children(&basic,&signed_data,&data) != SALTS_ASN1_OK ||
+  if (asn1_reader_open_children(&basic,&signed_data,&data) != SALTS_ASN1_OK ||
       !responder_id(&data,&signer,signer_key)) return SALTS_CRYPTO_EVERIFY;
   int64_t produced;
   if (!time_value(&data,&produced) || produced > now + p->maximum_clock_skew_seconds ||

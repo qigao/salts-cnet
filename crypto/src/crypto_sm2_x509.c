@@ -38,21 +38,21 @@ int salts_crypto_sm2_x509_matches_private_key(const void *cert, size_t n, const 
   salts_crypto_secure_zero(actual, sizeof(actual));
   return status;
 }
-static int signature_algorithm(const salts_asn1_tlv *alg) {
+static int signature_algorithm(const asn1_tlv *alg) {
   static const uint8_t sm2_sm3_oid[] = {0x2a,0x81,0x1c,0xcf,0x55,1,0x83,0x75};
-  salts_asn1_reader fields; salts_asn1_tlv value;
+  asn1_reader fields; asn1_tlv value;
   if (alg->tag_class || !alg->constructed || alg->tag_number != 16u ||
-      salts_asn1_reader_init(&fields, alg->content, alg->content_size, SALTS_ASN1_DER) != SALTS_ASN1_OK ||
-      salts_asn1_reader_next(&fields, &value) != SALTS_ASN1_OK ||
+      asn1_reader_init(&fields, alg->content, alg->content_size, SALTS_ASN1_DER) != SALTS_ASN1_OK ||
+      asn1_reader_next(&fields, &value) != SALTS_ASN1_OK ||
       value.tag_class || value.constructed || value.tag_number != 6u ||
       value.content_size != sizeof(sm2_sm3_oid) || memcmp(value.content, sm2_sm3_oid, sizeof(sm2_sm3_oid))) return 0;
-  salts_asn1_status status = salts_asn1_reader_next(&fields, &value);
+  asn1_status status = asn1_reader_next(&fields, &value);
   if (status == SALTS_ASN1_DONE) return 1;
   return status == SALTS_ASN1_OK && !value.tag_class && !value.constructed &&
       value.tag_number == 5u && value.content_size == 0u &&
-      salts_asn1_reader_next(&fields, &value) == SALTS_ASN1_DONE;
+      asn1_reader_next(&fields, &value) == SALTS_ASN1_DONE;
 }
-int salts_crypto_sm2_signed_der(const salts_asn1_tlv *algorithm,
+int salts_crypto_sm2_signed_der(const asn1_tlv *algorithm,
     const void *tbs, size_t tbs_size, const void *signature, size_t signature_size,
     const uint8_t issuer[65], const void *id, size_t idn) {
   const uint8_t *r, *s; size_t rn, sn; uint8_t raw[64] = {0};
@@ -65,14 +65,14 @@ int salts_crypto_sm2_signed_der(const salts_asn1_tlv *algorithm,
 }
 int salts_crypto_sm2_x509_verify_signature(const void *cert, size_t n,
     const uint8_t issuer[65], const void *id, size_t idn) {
-  crypto_x509_der_view view; salts_asn1_reader reader; salts_asn1_tlv algorithm;
+  crypto_x509_der_view view; asn1_reader reader; asn1_tlv algorithm;
   if (!valid_input(cert, n) || !issuer || !id || !idn || idn > 8191u) return SALTS_CRYPTO_EINVAL;
   if (inspect(cert, n, &view) != SALTS_CRYPTO_OK) return SALTS_CRYPTO_EVERIFY;
   /* Inspector established exact inner/outer AlgorithmIdentifier equality. */
   const uint8_t *start = view.tbs_der + view.tbs_size;
   size_t remaining = view.certificate_size - (size_t)(start - view.certificate_der);
-  if (salts_asn1_reader_init(&reader, start, remaining, SALTS_ASN1_DER) != SALTS_ASN1_OK ||
-      salts_asn1_reader_next(&reader, &algorithm) != SALTS_ASN1_OK) return SALTS_CRYPTO_EVERIFY;
+  if (asn1_reader_init(&reader, start, remaining, SALTS_ASN1_DER) != SALTS_ASN1_OK ||
+      asn1_reader_next(&reader, &algorithm) != SALTS_ASN1_OK) return SALTS_CRYPTO_EVERIFY;
   return salts_crypto_sm2_signed_der(&algorithm, view.tbs_der, view.tbs_size,
       view.signature, view.signature_size, issuer, id, idn);
 }

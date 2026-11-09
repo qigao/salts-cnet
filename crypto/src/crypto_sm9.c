@@ -133,24 +133,24 @@ void salts_crypto_sm9_enc_key_clear(salts_crypto_sm9_enc_key *key) {
 static int append_field(uint32_t tag, const void *data, size_t n,
     uint8_t *out, size_t cap, size_t *used) {
   size_t written = 0;
-  if (salts_asn1_encode_tlv(0, 0, tag, data, n, SALTS_ASN1_DER, 0,
+  if (asn1_encode_tlv(0, 0, tag, data, n, SALTS_ASN1_DER, 0,
       out + *used, cap - *used, &written) != SALTS_ASN1_OK) return 0;
   *used += written;
   return 1;
 }
 static int read_fields(const void *der, size_t n, const uint32_t *tags,
-    salts_asn1_tlv *fields, size_t count) {
-  salts_asn1_reader outer, inner;
-  salts_asn1_tlv seq, extra;
-  if (salts_asn1_reader_init(&outer, der, n, SALTS_ASN1_DER) != SALTS_ASN1_OK ||
-      salts_asn1_reader_next(&outer, &seq) != SALTS_ASN1_OK || outer.offset != n ||
+    asn1_tlv *fields, size_t count) {
+  asn1_reader outer, inner;
+  asn1_tlv seq, extra;
+  if (asn1_reader_init(&outer, der, n, SALTS_ASN1_DER) != SALTS_ASN1_OK ||
+      asn1_reader_next(&outer, &seq) != SALTS_ASN1_OK || outer.offset != n ||
       seq.tag_class || !seq.constructed || seq.tag_number != 16u ||
-      salts_asn1_reader_open_children(&outer, &seq, &inner) != SALTS_ASN1_OK) return 0;
+      asn1_reader_open_children(&outer, &seq, &inner) != SALTS_ASN1_OK) return 0;
   for (size_t i = 0; i < count; ++i) {
-    if (salts_asn1_reader_next(&inner, fields + i) != SALTS_ASN1_OK ||
+    if (asn1_reader_next(&inner, fields + i) != SALTS_ASN1_OK ||
         fields[i].tag_class || fields[i].constructed || fields[i].tag_number != tags[i]) return 0;
   }
-  return salts_asn1_reader_next(&inner, &extra) == SALTS_ASN1_DONE;
+  return asn1_reader_next(&inner, &extra) == SALTS_ASN1_DONE;
 }
 
 int salts_crypto_sm9_sign(const salts_crypto_sm9_sign_key *raw,
@@ -172,7 +172,7 @@ int salts_crypto_sm9_sign(const salts_crypto_sm9_sign_key *raw,
   if (sm9_z256_point_to_uncompressed_octets(&sig.S, point + 1u) != 1 ||
       !append_field(4u, h, sizeof(h), content, sizeof(content), &used) ||
       !append_field(3u, point, sizeof(point), content, sizeof(content), &used) ||
-      salts_asn1_encode_tlv(0, 1, 16, content, used, SALTS_ASN1_DER, 0,
+      asn1_encode_tlv(0, 1, 16, content, used, SALTS_ASN1_DER, 0,
           out, 104u, &written) != SALTS_ASN1_OK || written != 104u) goto done;
   status = SALTS_CRYPTO_OK;
 done:
@@ -188,7 +188,7 @@ int salts_crypto_sm9_verify(const uint8_t pub[129], const void *id, size_t idn,
   SM9_SIGN_MASTER_KEY master = {0};
   SM9_SIGN_CTX ctx = {0};
   SM9_SIGNATURE sig = {0};
-  salts_asn1_tlv fields[2];
+  asn1_tlv fields[2];
   const uint32_t tags[] = {4u, 3u};
   int status = SALTS_CRYPTO_EVERIFY;
   if (!pub || !id_valid(id, idn) || (!message && n) || !der || n > UINT64_MAX / 8u - 389u)
@@ -295,7 +295,7 @@ int salts_crypto_sm9_encrypt(const uint8_t pub[65], const void *id, size_t idn,
       !append_field(3u, point, sizeof(point), content, sizeof(content), &used) ||
       !append_field(4u, tag, sizeof(tag), content, sizeof(content), &used) ||
       !append_field(4u, cipher, n, content, sizeof(content), &used) ||
-      salts_asn1_encode_tlv(0, 1, 16, content, used, SALTS_ASN1_DER, 0,
+      asn1_encode_tlv(0, 1, 16, content, used, SALTS_ASN1_DER, 0,
           out, 367u, written) != SALTS_ASN1_OK) goto done;
   status = SALTS_CRYPTO_OK;
 done:
@@ -308,7 +308,7 @@ int salts_crypto_sm9_decrypt(const salts_crypto_sm9_enc_key *raw, const void *id
     const void *in, size_t n, void *out, size_t cap, size_t *written) {
   uint8_t secret[287] = {0}, tag[32] = {0};
   const uint32_t tags[] = {2u, 3u, 4u, 4u};
-  salts_asn1_tlv fields[4];
+  asn1_tlv fields[4];
   unsigned mismatch = 0;
   int status = SALTS_CRYPTO_EVERIFY;
   if (!raw || !id_valid(id, idn) || !in || !out || cap < 255u || !written ||

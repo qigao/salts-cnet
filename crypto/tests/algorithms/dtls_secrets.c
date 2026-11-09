@@ -2,7 +2,6 @@
 #include "../../src/crypto_dtls_client.h"
 #include "../../src/crypto_dtls_server.h"
 #include <gmssl/tls.h>
-#define TINYTEST_NO_MAIN
 #include <tinytest.h>
 #include <stdio.h>
 #include <stdlib.h>

@@ -11,12 +11,12 @@ static const uint8_t data_oid[] = {0x2a,0x86,0x48,0x86,0xf7,0x0d,1,7,1};
 static const uint8_t key_oid[] = {0x2a,0x81,0x1c,0xcf,0x55,1,0x82,0x2d,3};
 static const uint8_t cipher_oid[] = {0x2a,0x81,0x1c,0xcf,0x55,1,0x68,8};
 static void zero(cms_writer *w) { const uint8_t v = 0u; put(w,0u,0u,2u,&v,1u); }
-static int version_zero(salts_asn1_reader *r) {
-  salts_asn1_tlv v;
+static int version_zero(asn1_reader *r) {
+  asn1_tlv v;
   return take(r,0u,0u,2u,&v) && v.content_size == 1u && !v.content[0];
 }
-static int expect_oid(salts_asn1_reader *r, const void *data, size_t n) {
-  salts_asn1_tlv v;
+static int expect_oid(asn1_reader *r, const void *data, size_t n) {
+  asn1_tlv v;
   return take(r,0u,0u,6u,&v) && is_oid(&v,data,n);
 }
 static int encrypt_admitted(const salts_crypto_sm2_cms_envelope_recipient *c,
@@ -94,8 +94,8 @@ int salts_crypto_sm2_cms_envelope_decrypt(const salts_crypto_sm2_cms_envelope_ke
       !disjoint(out,bound,written,c->certificate.der,c->certificate.size) ||
       !disjoint(out,bound,written,der,n)) return SALTS_CRYPTO_EINVAL;
   int status = SALTS_CRYPTO_EVERIFY;
-  salts_asn1_reader outer, explicit_value, envelope, recipients, recipient, sid, alg, eci, parameter;
-  salts_asn1_tlv name, serial, wrapped, nonce, ciphertext, tag, value;
+  asn1_reader outer, explicit_value, envelope, recipients, recipient, sid, alg, eci, parameter;
+  asn1_tlv name, serial, wrapped, nonce, ciphertext, tag, value;
   crypto_x509_der_view leaf;
   uint8_t cek[SALTS_CRYPTO_SM2_PLAINTEXT_MAX_SIZE] = {0}; size_t cek_size = 0u;
   uint8_t *plain = NULL;

@@ -3,28 +3,18 @@
 
 #include <cnet/cnet.h>
 #include <native_io.h>
+#include <native_io_transport.h>
+#include <native_io_socket.h>
 
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 
-typedef enum cnet_transport_resource_kind {
-  CNET_TRANSPORT_RESOURCE_NONE = 0,
-  CNET_TRANSPORT_RESOURCE_SOCKET,
-  CNET_TRANSPORT_RESOURCE_PIPE
-} cnet_transport_resource_kind;
-
-typedef struct cnet_transport {
-  uintptr_t native_handle;
-  native_io_endpoint endpoint;
-  uintptr_t write_native_handle;
-  native_io_endpoint write_endpoint;
-  cnet_transport_resource_kind resource_kind;
-  bool native_open;
-  bool attached;
-  bool write_native_open;
-  bool write_attached;
-} cnet_transport;
+typedef native_io_transport cnet_transport;
+typedef native_io_transport_resource_kind cnet_transport_resource_kind;
+#define CNET_TRANSPORT_RESOURCE_NONE NATIVE_IO_TRANSPORT_RESOURCE_NONE
+#define CNET_TRANSPORT_RESOURCE_SOCKET NATIVE_IO_TRANSPORT_RESOURCE_SOCKET
+#define CNET_TRANSPORT_RESOURCE_PIPE NATIVE_IO_TRANSPORT_RESOURCE_PIPE
 
 /** Applies one validated policy to an unattached TCP socket. */
 int cnet_transport_apply_stream_socket_options(
@@ -210,6 +200,12 @@ int cnet_transport_tcp_shutdown(cnet_transport *transport,
                                 cnet_tcp_shutdown how);
 
 bool cnet_transport_active(const cnet_transport *transport);
+
+/* Portable value adaptation; all native address access belongs to NativeIO. */
+int cnet_transport_decode_endpoint(const void *address, size_t length, bool datagram,
+                                  cnet_stream_endpoint *out_endpoint);
+int cnet_transport_encode_datagram_endpoint(const cnet_stream_endpoint *endpoint,
+    void *address, size_t capacity, size_t *out_length);
 
 /** Closes owned native resources, then releases drained NativeIO metadata. */
 int cnet_transport_close(cnet_transport *transport, native_io_backend *backend);

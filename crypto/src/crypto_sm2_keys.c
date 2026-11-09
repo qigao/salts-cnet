@@ -25,7 +25,7 @@ static void put(der_writer *w, uint8_t cls, uint8_t constructed, uint32_t tag,
     const void *data, size_t n) {
   size_t added = 0;
   if (w->failed) return;
-  if (salts_asn1_encode_tlv(cls, constructed, tag, data, n, SALTS_ASN1_DER, 0,
+  if (asn1_encode_tlv(cls, constructed, tag, data, n, SALTS_ASN1_DER, 0,
       w->data + w->size, sizeof(w->data) - w->size, &added) != SALTS_ASN1_OK)
     w->failed = 1;
   else w->size += added;
@@ -42,39 +42,39 @@ static void integer(der_writer *w, uint32_t value) {
   put(w, 0, 0, 2, bytes+i, sizeof(bytes)-i);
 }
 #define oid(w, name) put(w, 0, 0, 6, name, sizeof(name))
-static int take(salts_asn1_reader *r, uint8_t cls, uint8_t constructed,
-    uint32_t tag, salts_asn1_tlv *v) {
-  return salts_asn1_reader_next(r, v) == SALTS_ASN1_OK &&
+static int take(asn1_reader *r, uint8_t cls, uint8_t constructed,
+    uint32_t tag, asn1_tlv *v) {
+  return asn1_reader_next(r, v) == SALTS_ASN1_OK &&
       v->tag_class == cls && v->constructed == constructed && v->tag_number == tag;
 }
-static int end(const salts_asn1_reader *r) { return r->offset == r->size; }
-static int children(salts_asn1_reader *r, const salts_asn1_tlv *v) {
-  return salts_asn1_reader_init(r, v->content, v->content_size, SALTS_ASN1_DER) == SALTS_ASN1_OK;
+static int end(const asn1_reader *r) { return r->offset == r->size; }
+static int children(asn1_reader *r, const asn1_tlv *v) {
+  return asn1_reader_init(r, v->content, v->content_size, SALTS_ASN1_DER) == SALTS_ASN1_OK;
 }
-static int enter(salts_asn1_reader *parent, salts_asn1_reader *child) {
-  salts_asn1_tlv v;
+static int enter(asn1_reader *parent, asn1_reader *child) {
+  asn1_tlv v;
   return take(parent, 0, 1, 16, &v) && children(child, &v);
 }
-static int root(const void *data, size_t n, salts_asn1_reader *child) {
-  salts_asn1_reader r;
-  return salts_asn1_reader_init(&r, data, n, SALTS_ASN1_DER) == SALTS_ASN1_OK &&
+static int root(const void *data, size_t n, asn1_reader *child) {
+  asn1_reader r;
+  return asn1_reader_init(&r, data, n, SALTS_ASN1_DER) == SALTS_ASN1_OK &&
       enter(&r, child) && end(&r);
 }
-static int match_oid(salts_asn1_reader *r, const uint8_t *bytes, size_t n) {
-  salts_asn1_tlv v;
+static int match_oid(asn1_reader *r, const uint8_t *bytes, size_t n) {
+  asn1_tlv v;
   return take(r, 0, 0, 6, &v) && v.content_size == n && memcmp(v.content, bytes, n) == 0;
 }
 #define match(r, name) match_oid(r, name, sizeof(name))
-static int number(salts_asn1_reader *r, uint32_t *out) {
-  salts_asn1_tlv v; uint32_t value = 0;
+static int number(asn1_reader *r, uint32_t *out) {
+  asn1_tlv v; uint32_t value = 0;
   if (!take(r, 0, 0, 2, &v) || !v.content_size || v.content_size > 4u ||
       (v.content[0] & 0x80u)) return 0;
   for (size_t i = 0; i < v.content_size; ++i) value = (value << 8) | v.content[i];
   *out = value;
   return 1;
 }
-static int ec_algorithm(salts_asn1_reader *r) {
-  salts_asn1_reader alg;
+static int ec_algorithm(asn1_reader *r) {
+  asn1_reader alg;
   return enter(r, &alg) && match(&alg, ec_oid) && match(&alg, sm2_oid) && end(&alg);
 }
 static int valid_public(const uint8_t pub[65]) {
@@ -116,7 +116,7 @@ int salts_crypto_sm2_spki_export(const uint8_t pub[65], void *out, size_t cap, s
   return finish_export(status, &result, out, 91, written);
 }
 int salts_crypto_sm2_spki_import(const void *der, size_t n, uint8_t pub[65]) {
-  salts_asn1_reader r; salts_asn1_tlv v;
+  asn1_reader r; asn1_tlv v;
   if (!import_args(der, n, 91, pub, 65)) return SALTS_CRYPTO_EINVAL;
   if (!root(der, n, &r) || !ec_algorithm(&r) || !take(&r, 0, 0, 3, &v) ||
       v.content_size != 66u || v.content[0] != 0u || !end(&r) || !valid_public(v.content+1)) {
@@ -146,7 +146,7 @@ done:
   return status;
 }
 static int read_private(const void *der, size_t n, uint8_t key[32]) {
-  salts_asn1_reader r, ec, opt; salts_asn1_tlv v, secret; uint32_t version;
+  asn1_reader r, ec, opt; asn1_tlv v, secret; uint32_t version;
   uint8_t pub[65] = {0}; int ok = 0;
   if (!root(der, n, &r) || !number(&r, &version) || version != 0u || !ec_algorithm(&r) ||
       !take(&r, 0, 0, 4, &v) || !end(&r) || !root(v.content, v.content_size, &ec) ||
@@ -154,11 +154,11 @@ static int read_private(const void *der, size_t n, uint8_t key[32]) {
       secret.content_size != 32u) goto done;
   if (salts_crypto_sm2_public_key(secret.content, pub) != SALTS_CRYPTO_OK) goto done;
   if (!end(&ec)) {
-    if (salts_asn1_reader_next(&ec, &v) != SALTS_ASN1_OK) goto done;
+    if (asn1_reader_next(&ec, &v) != SALTS_ASN1_OK) goto done;
     if (v.tag_class == 2u && v.constructed && v.tag_number == 0u) {
       if (!children(&opt, &v) || !match(&opt, sm2_oid) || !end(&opt)) goto done;
       if (end(&ec)) { ok = 1; goto done; }
-      if (salts_asn1_reader_next(&ec, &v) != SALTS_ASN1_OK) goto done;
+      if (asn1_reader_next(&ec, &v) != SALTS_ASN1_OK) goto done;
     }
     if (v.tag_class != 2u || !v.constructed || v.tag_number != 1u ||
         !children(&opt, &v) || !take(&opt, 0, 0, 3, &v) || v.content_size != 66u ||
@@ -210,7 +210,7 @@ typedef struct encrypted_view {
   uint32_t iterations;
 } encrypted_view;
 static int read_encrypted(const void *der, size_t n, uint32_t max, int aes, encrypted_view *out) {
-  salts_asn1_reader r, alg, pair, kdf, params, prf, scheme; salts_asn1_tlv v; uint32_t key_size;
+  asn1_reader r, alg, pair, kdf, params, prf, scheme; asn1_tlv v; uint32_t key_size;
   if (!root(der, n, &r) || !enter(&r, &alg) || !match(&alg, pbes2_oid) ||
       !enter(&alg, &pair) || !end(&alg) || !enter(&pair, &kdf) || !match(&kdf, pbkdf2_oid) ||
       !enter(&kdf, &params) || !end(&kdf) || !take(&params, 0, 0, 4, &v) ||
@@ -218,7 +218,7 @@ static int read_encrypted(const void *der, size_t n, uint32_t max, int aes, encr
   out->salt = v.content; out->salt_size = v.content_size;
   if (!number(&params, &out->iterations) || out->iterations < SALTS_CRYPTO_SM2_KEY_ITERATIONS_MIN ||
       out->iterations > max) return 0;
-  salts_asn1_reader probe = params;
+  asn1_reader probe = params;
   if (number(&probe, &key_size)) {
     if (key_size != (aes ? 32u : 16u)) return 0;
     params = probe;

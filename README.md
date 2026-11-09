@@ -1,194 +1,197 @@
-# SaltsCore
+# SaltsCore network SDK
 
-**Status: bootstrap / Draft qualification. Not a production replacement yet.**
+This checkout builds the `SaltsNet` CMake project. It owns Crypto, CNet and
+SCTP. The installed package remains `SaltsCore` with the existing `Salts::*`
+targets. The integration branch is `chore-housing-keeping`.
 
-SaltsCore is an independently built **C11 foundation SDK**. It does not depend
-on the historical `qigao/salts`, `qigao/salts-utils`, CMeta, CFlow, or CSTL
-packages. Development is tracked by [migration epic #1](https://github.com/qigao/salts-core/issues/1).
+The foundation modules now belong to [SaltsBase](https://github.com/qigao/salts-base).
+They are consumed as an installed SDK; this repository does not rebuild or copy
+Core, NativeIO, ASN1, URI, TinyTest, Media or their implementations.
 
-The original M0 bootstrap implements an **owned-by-caller, non-owning counted byte view**
-in `Salts::Core`. The stacked M1/M2 migration candidate adds
-`Salts::Platform` (clock, OS CSPRNG, thread/synchronization) and
-`Salts::Concurrency` (SPSC, bounded deadline queue, RCU, Disruptor,
-ThreadPool and Leader/Followers). The next stacked candidate adds
-`Salts::Coroutine` (the original minicoro-backed lifecycle, pool and
-bounded sharded executor). These are imported from exact Salts sources and
-have no CMeta/CFlow dependencies. The next Core foundation slice extracts
-`mem_buffer_t`, `mem_slice_t` and the bounded slab allocator and the original single-owner bipartite `ring_buffer`
-from old `salts/utils`, with only the independent Platform synchronization API. A further stacked candidate moves the
-original NativeIO backend and Sharded/IPC ownership to
-`Salts::NativeIO` (IOCP, epoll, io_uring, kqueue); the ACE completion-token
-adapter remains in Salts and is not installed by Core. They require exact-head Linux/Windows/macOS
-CI and installed C11/C++17 qualification before this candidate is accepted. It is not yet a replacement for any
-published `Salts::Core` binary, and no old APIs or CMake aliases have been
-cut over.
+| Module | Public targets | Tests and support files |
+| --- | --- | --- |
+| `crypto/` | `Salts::Crypto` | `crypto/tests/{algorithms,asn1,tls,x509}` |
+| `cnet/` | `Salts::CNet` | `cnet/tests/`, including owner, independent peers and static-owner fixtures |
+| `sctp/` | `Salts::SCTPWire`, `Salts::SCTP`, `Salts::SCTPDTLS` | `sctp/tests/`, including private engines, independent peers and secure DTLS tests |
 
-## Source layout and original module ownership
+Each module adds its own test graph with `BUILD_TESTS`. `BUILD_BENCHMARK`
+selects the existing optional measurement cases and requires `BUILD_TESTS`.
+There is no root test aggregator or module-subset switch. Private SCTP engines
+are built only with their module's tests. The SCTP public headers are
+`<sctp_wire.h>`, `<sctp_session.h>` and `<sctp_dtls.h>`.
 
-The optional `media/` module compiles the existing native Capture and Playback implementations into a single `Salts::Media` static archive. It keeps the existing C headers and symbol names but has no legacy CMake target aliases.
+## Dependencies and ownership
 
-The repository root has **no** catch-all `include/` or `src/`. Each
-existing module owns its own source and header tree:
+Set `SALTS_BASE_ROOT` to a matching released SaltsBase SDK (0.1.1 or newer). Configuration
+uses only that root and fails if the package or its required components are
+missing. Core thread, memory and IPC calls use SaltsBase's current public names
+and headers; no compatibility aliases or private source paths are added.
+CNet listener composition uses SaltsBase's installed `<native_io_accept.h>`.
+Socket creation, bind/listen, accept, readiness, address codecs, options,
+shutdown and close use `<native_io_socket.h>` / `<native_io_transport.h>`.
+CNet retains connection/protocol policy and adapts its existing public values;
+it contains no first-party native socket I/O implementation. The c-ares provider
+continues to own DNS protocol execution on the same progress owner.
 
-- The explicitly retained `core/include`, `core/src` hold the Core byte and
-  pool foundation and the **only** native `base64_utils.h` / `tn_base64_*`
-  implementation. `fs/include, fs/src` and `process/include, process/src`
-  retain their selected module names.
-- `platform/`, `concurrency/`, `coroutine/`, `native-io/`, `cnet/`
-  and `uri/` keep their existing names and private/public layout.
-  The generated URI grammar remains under `uri/parser/`, and SCTP retains
-  its independent `sctp/` subtree.
-- Already-owned `unicode/`, `idna/`, `cserde/` and `tinytest/`
-  keep their own layouts. Migration does not create source-path shims,
-  duplicate providers or old module aliases.
+This boundary requires the released [SaltsBase 0.1.1 SDK](https://github.com/qigao/salts-base/releases/tag/v0.1.1).
+Version 0.1.0 lacks these headers/symbols and fails the package version check.
+CI consumes immutable published SDKs; local builds can extract the same archives
+into separate installation prefixes.
 
-The **installed** C11/C++17 SDK maintains documented include spellings
-(`<base64_utils.h>`, `<random.h>`, `<cnet/cnet.h>`) and
-`Salts::*` target identities; flat installed includes do **not** imply
-flat root source ownership. `tools/check_module_layout.py` gates this
-invariant on Linux, Windows and macOS.
+Crypto links the required vcpkg `GmSSL::GmSSL` provider (`3.2.0#44`), including
+the reviewed extensions pinned by `crypto/gmssl-extensions/source-lock.json`.
+Like SaltsBase, this checkout consumes the preinstalled SDK published by
+[qigao/vcpkg-cache v0.1.2](https://github.com/qigao/vcpkg-cache/releases/tag/v0.1.2).
+Each supported triplet has a URL/SHA-256 lock in `cmake/dependencies/`.
+Restore that lock with the release's `scripts/restore-native-dependency.py`;
+set `VCPKG_INSTALLED_DIR` to the reported payload root and select its exact
+`VCPKG_TARGET_TRIPLET`. For example, from this checkout:
 
-## Default and optional modules
-
-| Mandatory | Optional on supported platforms |
-|---|---|
-| Core byte views, Platform, Concurrency, FS, Coroutine, NativeIO, ASN1, Crypto, URI, CNet | Process, Unicode, IDNA, Serial, Media (Capture + Playback) |
-
-Unicode stays pinned to Unicode 17.0.0 with re2c as a **build-time** tool only;
-IDNA depends only on the new Unicode module. FS and Process are native system
-components; they **must not require** CFlow IO Actors or CMeta Reflection.
-Advanced CMeta/CFlow/CSTL/Component/ACE functionality remains in `qigao/salts`
-and consumes the new Core, never the other way round. The plain CNet transport
-implementation is part of the default Core candidate; CMeta/ACE-specific
-CNet integrations stay in Salts. Enabling a module does not establish its
-cross-platform or release qualification.
-
-See [architecture](docs/ARCHITECTURE.md) for ownership and migration gates.
-
-## Default local Crypto and CNet build (Draft)
-
-The default graph builds the whole CNet transport source tree, including the
-original IPC FIFO, peer index and native-path changes. Production CNet links
-the first-party static `Salts::Crypto` facade and the **separately installed**
-vcpkg `GmSSL::GmSSL` static library (GmSSL 3.2.0#28). No local native GmSSL
-source mirror is compiled into `Salts::Crypto`; Ed448 remains first-party
-under `crypto/vendor/libecc/`. CNet is the single production DSO owner of the
-linked native TLS implementation; two independently loaded plugins must import
-CNet instead of copying GmSSL/Crypto static archives.
-
-Installed `find_package(SaltsCore CONFIG REQUIRED)` imports the shared runtime
-without loading the separate static Crypto package or locating GmSSL. CMeta
-and other shared-runtime users need only the Core SDK. Programs that directly
-link `Salts::Crypto` must explicitly `find_package(Crypto CONFIG REQUIRED)`
-and provide that static package's declared dependencies. CNet's private TLS
-implementation and the Core source-build dependency graph are unchanged.
-
-Use CMake 3.21 or newer, a C11 compiler, and a C++17 compiler when testing.
-Provide the canonical pinned c-ares, KCP and SIMDe dependencies and an installed
-host re2c 4.6 with the pinned Unicode 17 data. The checked-in manifest makes
-these base dependencies mandatory. The `cnet` feature remains an empty
-compatibility feature and does not control the production target:
-
-```sh
-python3 crypto/tools/check_local_native_source.py
-cmake -S . -B build-cnet -DBUILD_TESTING=ON \
-  -DCMAKE_TOOLCHAIN_FILE=/path/to/verified-vcpkg-toolchain.cmake
-cmake --build build-cnet --parallel
-ctest --test-dir build-cnet --output-on-failure
+```powershell
+python "$env:VCPKG_CACHE_REPOSITORY_ROOT/scripts/restore-native-dependency.py" locked cmake/dependencies/qigao-x64-windows-llvm-mingw.lock.json --destination build/dependencies/vcpkg-windows-x64 --payload vcpkg_installed
 ```
 
-### Mandatory native unit test framework
+Use the printed `root` value as `VCPKG_INSTALLED_DIR`. The restore validates
+SHA-256, safely extracts the archive and records its provenance. This prefix
+contains GmSSL 3.2.0#44, c-ares, KCP, zstd, SIMDe and SaltsBase's JPEG/libyuv
+imports. `vcpkg.json` and `vcpkg-configuration.json` retain the dependency and
+source inventory; configure no longer runs a vcpkg resolver or builds ports.
+Missing packages fail configuration. Refreshing dependencies means reviewing
+and updating the locks; there is no port-build fallback.
 
-When `BUILD_TESTING=ON`, the source graph requires
-`SALTSCORE_BUILD_TINYTEST=ON` and fails configuration if it is disabled.
-C11 native test suites include `tinytest.h`; C++17 suites include
-`tinytest.hpp`; their executables link `Salts::TinyTest` and register
-real `spec/it/check` cases. CTest remains the sole runner for timeouts,
-sanitizers and platform test selection. No private `spec/it` facade or
-separate unit-test harness is permitted; empty suites and missing case
-filters must return failure.
+This uses the same prebuilt dependency owner as SaltsBase instead of rebuilding
+an overlapping graph or depending on cache hits. It trades automatic manifest
+resolution for explicit SDK updates and requires matching compiler/ABI assets.
+Use a fresh configure when migrating from the previous toolchain model; do not
+reuse a cache that still selects `vcpkg.cmake`. Compiler selection is independent:
+LLVM-MinGW uses explicit target drivers, native LLVM uses `clang` from PATH,
+and Android uses CMake's NDK support.
 
-The existing Linux native and TSan LLVM jobs enable
-`CNET_SCTP_TEST_OWNER_THREADS=ON` to run the actual POSIX Owner,
-Provider DSO and opaque Session DSO lifecycle tests. Worker-thread
-fatal invariants remain process-fail-closed; TinyTest checks joined
-owner/post-unload state from the main test thread. These are not
-synthetic consumer or installer projects. With `BUILD_TESTING=OFF`,
-production-only consumers may explicitly disable the TinyTest library.
+CNet remains the shared runtime owner of its linked Crypto/GmSSL implementation.
+SCTP stays provider-independent; the explicit `SCTPDTLS` target composes it with
+CNet. TLS verification, retained buffers, completion ownership, cancel/drain
+and exact mode semantics are preserved. See [Crypto coverage](crypto/docs/SHANGMI-COVERAGE.md)
+for the finite supported profiles and remaining qualification gates.
 
-The checked-in vcpkg manifest declares GmSSL and CNet dependencies directly.
-Compiler, ccache and host-data setup Actions use published
-`qigao/vcpkg-cache@v0.1.6`. Dependency setup uses the immutable registry commit
-below, which supplies native Windows pkg-config and
-preserves `PKG_CONFIG` in vcpkg's
-port environment. The manifest requests `pkgconf` only on non-Windows targets;
-Windows uses that native host tool without acquiring pkg-config from MSYS2.
-The custom registry reference and baseline both pin
-`9936b5d958755cff47b304e25b794df7ac9a071f`. GmSSL 3.2.0#28
-includes TLS 1.2 negotiation, RSA-PSS, enabled ShangMi algorithms, SM9 retry/secret
-cleanup, TLCP dual-key/signature-extension fixes and mandatory TLS 1.3 KeyUpdate
-responses with correct partial-write continuation, cipher/version filtering
-and signature-policy enforcement, bounded memory identity sets and DNS SAN
-selection, and HRR padding/pre-key alert fixes; its complete port tree is
-pinned in the Crypto source lock. The USB module and its libusb dependency
-have been removed from the SDK. The remaining dependency graph does not
-request the libusb Autotools/MSYS2 tool bundle.
+SaltsBase's package also resolves its Media archive's JPEG/libyuv dependencies;
+the preinstalled dependency prefix supplies those imports without adding a Media implementation here.
+Runtime paths include the selected vcpkg prefix, SaltsBase's runtime and, for
+Windows llvm-mingw, the selected compiler's runtime directory.
 
-CI must use the shared `qigao/vcpkg-cache` setup Actions. Normal builds set
-`restore-packages: "false"` and restore vcpkg binary/download caches through
-GitHub Actions before configuring the complete `cnet,media,zstd` graph.
-vcpkg builds missing ABI packages from the pinned manifest and saves them to
-the local files cache; CI preserves that cache after configure, before product
-builds and tests. Cache misses are supported; dependency build errors fail the
-job. These Actions caches are repository-scoped and do not share package bytes
-with cmeta or salts-utils. Compiler-cache restoration is independent of registry
-revisions. Publishing dependency packages to a shared feed is a separate operation.
+## Build and test
 
-An unavailable dependency fails configuration, without substituting another
-TLS provider or an implicit transport fallback. Local source ownership does
-not make the retained GmSSL-derived implementation third-party-free. Exact
-current-source platform CI, TLS/CA/SAN and independent peer tests, sanitizers,
-and physical runtime ownership still gate acceptance.
-No downstream cutover or production release is implied by this candidate.
+Use the versioned `CMakeUserPresets.json`. Populate the required environment
+inputs from [.env.example](.env.example); CMake does not load `.env` itself.
+On Windows, enter the configured Visual Studio developer environment, or use
+`cmake/WithVs.cmd` after setting `VSDEVCMD_BAT`.
 
-## Local build
-
-```sh
-cmake --preset native-release-user
-cmake --build --preset native-release-user
-ctest --preset native-release-user
+```powershell
+cmake/WithVs.cmd cmake --fresh --preset native-release-user
+cmake/WithVs.cmd cmake --build --preset native-release-user
+cmake/WithVs.cmd ctest --preset native-release-user --output-on-failure
+cmake/WithVs.cmd cmake --build --preset install-native-release-user
 ```
 
-The parent environment supplies the vcpkg and LLVM chainload toolchains,
-triplets and install prefix consumed by the preset. Missing inputs fail at
-configure time. Installed-consumer and smoke projects are intentionally not
-part of the build or CI contract.
+POSIX LLVM uses `llvm-native-release-user`; existing sanitizer and Android
+profiles remain in the user presets. CI configures the complete graph, builds
+it without target filtering, and runs the formal tests through CTest. Android
+is build-only unless an explicit device runner is provided.
 
-The standalone install exports `Salts::Core` through
-`find_package(SaltsCore CONFIG REQUIRED)`. Optional targets will be exported
-only when their independent implementations and platform gates are qualified.
+CI resolves the latest stable [SaltsBase release](https://github.com/qigao/salts-base/releases/latest).
+The independent `prepare` job resolves it once, checks the release API's
+manifest digest, and downloads the required SDKs from the canonical public
+release asset URLs. The matrix lives in `.github/ci/sdk-matrix.json` and is
+also the download plan: shared SDKs and dependency triplets are downloaded
+once through the vcpkg-cache helper and addressed by SHA-256. The compiler
+archive and exact infrastructure snapshot join the same prepared inputs.
 
-## Native LLVM thread and scheduler contract
+An Actions artifact distributes these original archives to all nine jobs.
+Qualification verifies the SaltsBase archive size/hash and safely extracts it;
+dependency/compiler restores use `QIGAO_PREPARED_INPUTS` for offline restoration.
+A missing or corrupt prepared blob fails rather than downloading another copy.
+The source release manifest retains producer-CI and commit provenance. This
+workflow-local distribution artifact carries released SDKs, not a build of
+moving SaltsBase master. Host tools and test-oracle setup keep their existing
+installation steps. This reduces duplicate source requests without adding
+workflow/job retries or alternate-source recovery. The released downloader's
+existing bounded transfer policy remains in effect; terminal failures stop preparation.
 
-The mandatory TinyTest / CTest division, exact native module ownership,
-worker-thread failure rules, and opt-in original CNet Crypto test admission are
-documented in [Native Test Ownership](docs/NATIVE-TESTING.md).
+Release 0.1.1 provides Windows x64 MSVC/LLVM-MinGW, Linux x64 and ARM64
+Clang/GCC, macOS ARM64, and Android arm64/x64 SDKs. It includes the public
+NativeIO socket/transport/accept headers and the retained startup repairs. Its Core headers use `<core/...>`, ASN1 uses
+`<asn1.h>` and `<asn1_value.h>`, and coroutine headers use `<salts/coro_*.h>`.
+Consumers use these public headers directly without draft-layout aliases.
 
+Core CI explicitly selects seven of those published platform/compiler SDKs: Windows x64 MSVC and LLVM-MinGW, Linux x64 GCC and Clang, macOS ARM64
+Clang, and Android arm64/x64 NDK. Each lane selects its exact manifest entry;
+no architecture or compiler substitution is performed. The two Linux ARM64 SDKs
+passed producer CI; consumer ARM64 qualification is not yet in this matrix.
+Windows ARM64 and macOS x64 still require producer SDKs.
+The existing ASan/UBSan and TSan lanes additionally use the Linux x64 Clang
+foundation and instrument this network graph; that does not qualify the
+prebuilt foundation itself under sanitizers. There are nine qualification
+jobs covering seven released SDKs.
 
-The unified CI workflow uses the shared vcpkg-cache compiler setup on
-Linux/macOS x64 and ARM64 (runner-native Clang), and Windows x64 and ARM64
-(llvm-mingw/UCRT 20261020). It builds the complete configured graph and runs
-its formal native CTest suite. The workflow does not build installer/consumer
-projects or run compiler/source preflight probes.
+The historical fixed-tag `v0.1.002` eight-RID NuGet publisher has a broader
+packaging contract and is not qualified by this seven-SDK matrix. It requires
+its own coordinated release migration; changing this CI scope does not create
+or replace a published package or tag.
 
-Platform public declarations explicitly export/import their one shared DLL
-owner, including native thread, clock, random, readiness and fast-key APIs.
-The coroutine scheduler uses the same compiler-selected thread-local storage
-contract as Platform/Executor. The existing coroutine test overlaps two live
-OS threads and verifies that each sees only its own scheduler, then restores
-an empty current-scheduler state on thread exit.
+## WebSocket SIMD measurements
 
-The migration integration must pass the same full native graph before a
-The 0.1.002 source release carries the flattened public headers. SIMD execution
-is owned by SaltsUtils and
-is no longer built or exported by SaltsCore.
+CNet uses SaltsBase's public `<simd.h>` / `Salts::SIMD` to scan complete
+16-byte ASCII runs during strict UTF-8 validation. Pending continuation bytes,
+non-ASCII sequences and short tails retain the strict state machine. Loads stay
+inside the borrowed payload; no padding, ownership change, allocation, new ISA
+requirement or public API is introduced. Reed-Solomon's existing SIMDe kernel
+is retained rather than replaced with per-operation abstraction calls.
+
+The formal `cnet/tests/websocket_utf8_test.c` covers alignment, block boundaries,
+invalid scalar values, incomplete sequences, fragment state and protected page
+ends. The optional `websocket_utf8_benchmark.c` measures the public send path
+with a synchronous memory sink. It includes validation, framing and copy;
+binary sends provide a same-copy control. It does not measure network throughput.
+
+```powershell
+cmake/WithVs.cmd cmake --preset native-benchmark-user
+cmake/WithVs.cmd cmake --build --preset native-benchmark-user
+cmake/WithVs.cmd ctest --preset native-benchmark-user -R ^saltscore_websocket_utf8_benchmark$ -V
+```
+
+Measured on Windows x64 (AMD Ryzen 9 7940HX), LLVM-MinGW Clang 23.1.4 Release,
+SaltsBase 0.1.0 and
+the locked v0.1.2 dependencies. Each case uses seven samples of approximately
+16 MiB, with initialization and assertions outside timing. Baseline is the
+scalar validator from `5f330f7`, with the same benchmark and dependencies.
+
+| Payload | Scalar MiB/s | SIMD MiB/s | Change |
+| --- | ---: | ---: | ---: |
+| ASCII, 64 bytes | 1547.06 | 1832.26 | +18.4% |
+| ASCII, 2048 bytes | 2740.83 | 3564.30 | +30.0% |
+| ASCII, 65536 bytes | 2782.69 | 3557.09 | +27.8% |
+| Mixed ASCII / three-byte UTF-8, 65536 bytes | 2055.83 | 2708.02 | +31.7% |
+| Three-byte UTF-8 only, 65535 bytes | 1120.66 | 1053.90 | -6.0% |
+
+The pure multi-byte case does not use the fast path and showed a decrease;
+sample ranges overlap (scalar 13.956–15.090 ms, SIMD 14.204–16.076 ms).
+The 64 KiB binary control measured 61198.84 / 59350.33 MiB/s. These observations
+support ASCII-heavy workloads on this host, not a universal speedup or a claim
+for other CPUs/platforms. Revert the ASCII block alone to roll back this
+optimization; the dependency and public API contracts remain unchanged.
+
+## Integration and rollback
+
+This branch retains the module split while carrying forward the Crypto/CNet/
+DTLS/SCTP changes through merged master `ffade4c280286e247ea67733432b6fd9226fb5e1`,
+including #274/#275/#277 and their formal regression cases. Tests, fixtures and
+registration move together; the independent Go peers require Go 1.26.10.
+Shared fixtures retain one owner: Crypto owns direct TLS helpers and PKCS12
+creation; CNet owns the independent protocol peers reused by policy tests.
+
+Media/#197 is a reference-only draft in its separate branch. Its Frame V2/GPU
+proposal is not integrated into this network SDK and has no release or device
+qualification claim. Issues #188/#219/#276 retain their independent gates.
+
+Rollback the repository split as a coordinated SDK/configuration change, with
+separate installation prefixes. Do not restore removed modules beside their
+SaltsBase owners or install parallel compatibility implementations.

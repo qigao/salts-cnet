@@ -1,141 +1,380 @@
 {
   "version": 6,
   "include": [
-    "CMakePresets.json"
+    "CMakePresets.json",
+    "presets/UserEnvironments.json"
   ],
   "configurePresets": [
     {
-      "name": "gmssl-copy-user",
-      "displayName": "Linux x64 full graph with GmSSL explicit-copy counters",
-      "inherits": "full-native",
-      "condition": {"type": "equals", "lhs": "${hostSystemName}", "rhs": "Linux"},
-      "environment": {
-        "SALTSCORE_VCPKG_TARGET_TRIPLET": "salts-gmssl-copy-x64-linux"
-      },
-      "cacheVariables": {
-        "VCPKG_OVERLAY_TRIPLETS": "${sourceDir}/tests/gmssl-copy-profile/triplets",
-        "SALTSCORE_GMSSL_COPY_PROFILE": "ON",
-        "SALTSCORE_CNET_TLS_MIXED_MEASUREMENTS": "ON"
-      }
-    },
-    {
       "name": "native-release-user",
-      "displayName": "Native LLVM Release",
-      "inherits": "full-native"
+      "displayName": "Windows llvm-mingw Release",
+      "inherits": [
+        "llvm-mingw-native-environment",
+        "windows-llvm-mingw",
+        "full-native"
+      ]
     },
     {
-      "name": "ci-native",
-      "displayName": "CI native LLVM full graph",
-      "inherits": "full-native"
+      "name": "llvm-native-asan-ubsan-user",
+      "displayName": "Linux LLVM ASan+UBSan",
+      "inherits": [
+        "llvm-native-environment",
+        "full-native-asan-ubsan",
+        "toolkit-llvm-native"
+      ]
     },
     {
-      "name": "ci-asan-ubsan",
-      "displayName": "CI Linux LLVM ASan+UBSan",
-      "inherits": "full-native-asan-ubsan"
+      "name": "llvm-native-tsan-user",
+      "displayName": "Linux LLVM TSan",
+      "inherits": [
+        "llvm-native-environment",
+        "full-native-tsan",
+        "toolkit-llvm-native"
+      ]
     },
     {
-      "name": "ci-tsan",
-      "displayName": "CI Linux LLVM TSan",
-      "inherits": "full-native-tsan"
+      "name": "msvc-release-user",
+      "displayName": "Windows MSVC Release",
+      "inherits": [
+        "msvc-environment",
+        "windows-msvc",
+        "full-native"
+      ]
     },
     {
-      "name": "ci-android",
-      "displayName": "CI Android LLVM",
-      "inherits": "android-release"
+      "name": "llvm-native-release-user",
+      "displayName": "POSIX LLVM Release",
+      "inherits": [
+        "llvm-native-environment",
+        "toolkit-llvm-native",
+        "full-native"
+      ]
+    },
+    {
+      "name": "gcc-release-user",
+      "displayName": "Linux GCC Release",
+      "inherits": [
+        "gcc-environment",
+        "linux-gcc",
+        "full-native"
+      ]
+    },
+    {
+      "name": "android-release-user",
+      "displayName": "Android NDK Clang Release",
+      "inherits": [
+        "android-environment",
+        "android-release"
+      ]
+    },
+    {
+      "name": "llvm-mingw-x64-release-user",
+      "displayName": "llvm-mingw Windows x64 Release",
+      "inherits": [
+        "llvm-mingw-x64-environment",
+        "target-llvm-mingw-x64",
+        "release-mode"
+      ]
+    },
+    {
+      "name": "llvm-mingw-arm64-release-user",
+      "displayName": "llvm-mingw Windows ARM64 Release",
+      "inherits": [
+        "llvm-mingw-arm64-environment",
+        "target-llvm-mingw-arm64",
+        "release-mode"
+      ]
+    },
+    {
+      "name": "android-arm64-release-user",
+      "displayName": "Android NDK arm64-v8a Release",
+      "inherits": [
+        "android-arm64-environment",
+        "android-arm64-v8a-release"
+      ]
+    },
+    {
+      "name": "android-x64-release-user",
+      "displayName": "Android NDK x86_64 Release",
+      "inherits": [
+        "android-x64-environment",
+        "android-x86_64-release"
+      ]
+    },
+    {
+      "name": "macos-gcc-release-user",
+      "displayName": "macOS GCC Release",
+      "inherits": [
+        "gcc-environment",
+        "macos-gcc",
+        "full-native"
+      ]
+    },
+    {
+      "name": "native-benchmark-user",
+      "displayName": "Windows Release benchmark graph",
+      "inherits": "native-release-user",
+      "cacheVariables": {
+        "BUILD_BENCHMARK": "ON"
+      }
     }
   ],
   "buildPresets": [
     {
-      "name": "gmssl-copy-user",
-      "configurePreset": "gmssl-copy-user",
-      "jobs": 2
-    },
-    {
       "name": "native-release-user",
-      "configurePreset": "native-release-user",
-      "jobs": 2
+      "inherits": [
+        "base-build",
+        "build-windows"
+      ],
+      "configurePreset": "native-release-user"
     },
     {
       "name": "install-native-release-user",
-      "configurePreset": "native-release-user",
-      "targets": ["install"],
-      "jobs": 2
+      "inherits": [
+        "base-install",
+        "build-windows"
+      ],
+      "configurePreset": "native-release-user"
     },
     {
-      "name": "ci-native",
-      "configurePreset": "ci-native",
-      "jobs": 2
+      "name": "llvm-native-asan-ubsan-user",
+      "inherits": [
+        "base-build",
+        "build-linux"
+      ],
+      "configurePreset": "llvm-native-asan-ubsan-user"
     },
     {
-      "name": "install-ci-native",
-      "configurePreset": "ci-native",
-      "targets": ["install"],
-      "jobs": 2
+      "name": "install-llvm-native-asan-ubsan-user",
+      "inherits": [
+        "base-install",
+        "build-linux"
+      ],
+      "configurePreset": "llvm-native-asan-ubsan-user"
     },
     {
-      "name": "ci-asan-ubsan",
-      "configurePreset": "ci-asan-ubsan",
-      "jobs": 2
+      "name": "llvm-native-tsan-user",
+      "inherits": [
+        "base-build",
+        "build-linux"
+      ],
+      "configurePreset": "llvm-native-tsan-user"
     },
     {
-      "name": "install-ci-asan-ubsan",
-      "configurePreset": "ci-asan-ubsan",
-      "targets": ["install"],
-      "jobs": 2
+      "name": "install-llvm-native-tsan-user",
+      "inherits": [
+        "base-install",
+        "build-linux"
+      ],
+      "configurePreset": "llvm-native-tsan-user"
     },
     {
-      "name": "ci-tsan",
-      "configurePreset": "ci-tsan",
-      "jobs": 2
+      "name": "msvc-release-user",
+      "inherits": [
+        "base-build",
+        "build-windows"
+      ],
+      "configurePreset": "msvc-release-user"
     },
     {
-      "name": "install-ci-tsan",
-      "configurePreset": "ci-tsan",
-      "targets": ["install"],
-      "jobs": 2
+      "name": "install-msvc-release-user",
+      "inherits": [
+        "base-install",
+        "build-windows"
+      ],
+      "configurePreset": "msvc-release-user"
     },
     {
-      "name": "ci-android",
-      "configurePreset": "ci-android",
-      "jobs": 2
+      "name": "llvm-native-release-user",
+      "inherits": [
+        "base-build",
+        "build-posix"
+      ],
+      "configurePreset": "llvm-native-release-user"
     },
     {
-      "name": "install-ci-android",
-      "configurePreset": "ci-android",
-      "targets": ["install"],
-      "jobs": 2
+      "name": "install-llvm-native-release-user",
+      "inherits": [
+        "base-install",
+        "build-posix"
+      ],
+      "configurePreset": "llvm-native-release-user"
+    },
+    {
+      "name": "gcc-release-user",
+      "inherits": [
+        "base-build",
+        "build-linux"
+      ],
+      "configurePreset": "gcc-release-user"
+    },
+    {
+      "name": "install-gcc-release-user",
+      "inherits": [
+        "base-install",
+        "build-linux"
+      ],
+      "configurePreset": "gcc-release-user"
+    },
+    {
+      "name": "android-release-user",
+      "inherits": "base-build",
+      "configurePreset": "android-release-user"
+    },
+    {
+      "name": "install-android-release-user",
+      "inherits": "base-install",
+      "configurePreset": "android-release-user"
+    },
+    {
+      "name": "llvm-mingw-x64-release-user",
+      "inherits": [
+        "base-build",
+        "build-windows"
+      ],
+      "configurePreset": "llvm-mingw-x64-release-user"
+    },
+    {
+      "name": "install-llvm-mingw-x64-release-user",
+      "inherits": [
+        "base-install",
+        "build-windows"
+      ],
+      "configurePreset": "llvm-mingw-x64-release-user"
+    },
+    {
+      "name": "llvm-mingw-arm64-release-user",
+      "inherits": [
+        "base-build",
+        "build-windows"
+      ],
+      "configurePreset": "llvm-mingw-arm64-release-user"
+    },
+    {
+      "name": "install-llvm-mingw-arm64-release-user",
+      "inherits": [
+        "base-install",
+        "build-windows"
+      ],
+      "configurePreset": "llvm-mingw-arm64-release-user"
+    },
+    {
+      "name": "android-arm64-release-user",
+      "inherits": "base-build",
+      "configurePreset": "android-arm64-release-user"
+    },
+    {
+      "name": "install-android-arm64-release-user",
+      "inherits": "base-install",
+      "configurePreset": "android-arm64-release-user"
+    },
+    {
+      "name": "android-x64-release-user",
+      "inherits": "base-build",
+      "configurePreset": "android-x64-release-user"
+    },
+    {
+      "name": "install-android-x64-release-user",
+      "inherits": "base-install",
+      "configurePreset": "android-x64-release-user"
+    },
+    {
+      "name": "macos-gcc-release-user",
+      "inherits": [
+        "base-build",
+        "build-macos"
+      ],
+      "configurePreset": "macos-gcc-release-user"
+    },
+    {
+      "name": "install-macos-gcc-release-user",
+      "inherits": [
+        "base-install",
+        "build-macos"
+      ],
+      "configurePreset": "macos-gcc-release-user"
+    },
+    {
+      "name": "native-benchmark-user",
+      "inherits": [
+        "base-build",
+        "build-windows"
+      ],
+      "configurePreset": "native-benchmark-user"
+    },
+    {
+      "name": "install-native-benchmark-user",
+      "inherits": [
+        "base-install",
+        "build-windows"
+      ],
+      "configurePreset": "native-benchmark-user"
     }
   ],
   "testPresets": [
     {
-      "name": "gmssl-copy-user",
-      "configurePreset": "gmssl-copy-user",
-      "output": {"outputOnFailure": true},
-      "execution": {"noTestsAction": "error", "stopOnFailure": false}
-    },
-    {
       "name": "native-release-user",
-      "configurePreset": "native-release-user",
-      "output": {"outputOnFailure": true},
-      "execution": {"noTestsAction": "error", "stopOnFailure": false}
+      "inherits": [
+        "base-test",
+        "test-windows"
+      ],
+      "configurePreset": "native-release-user"
     },
     {
-      "name": "ci-native",
-      "configurePreset": "ci-native",
-      "output": {"outputOnFailure": true},
-      "execution": {"noTestsAction": "error", "stopOnFailure": false}
+      "name": "llvm-native-asan-ubsan-user",
+      "inherits": [
+        "base-test",
+        "test-linux"
+      ],
+      "configurePreset": "llvm-native-asan-ubsan-user"
     },
     {
-      "name": "ci-asan-ubsan",
-      "configurePreset": "ci-asan-ubsan",
-      "output": {"outputOnFailure": true},
-      "execution": {"noTestsAction": "error", "stopOnFailure": false}
+      "name": "llvm-native-tsan-user",
+      "inherits": [
+        "base-test",
+        "test-linux"
+      ],
+      "configurePreset": "llvm-native-tsan-user"
     },
     {
-      "name": "ci-tsan",
-      "configurePreset": "ci-tsan",
-      "output": {"outputOnFailure": true},
-      "execution": {"noTestsAction": "error", "stopOnFailure": false}
+      "name": "msvc-release-user",
+      "inherits": [
+        "base-test",
+        "test-windows"
+      ],
+      "configurePreset": "msvc-release-user"
+    },
+    {
+      "name": "llvm-native-release-user",
+      "inherits": [
+        "base-test",
+        "test-posix"
+      ],
+      "configurePreset": "llvm-native-release-user"
+    },
+    {
+      "name": "gcc-release-user",
+      "inherits": [
+        "base-test",
+        "test-linux"
+      ],
+      "configurePreset": "gcc-release-user"
+    },
+    {
+      "name": "macos-gcc-release-user",
+      "inherits": [
+        "base-test",
+        "test-macos"
+      ],
+      "configurePreset": "macos-gcc-release-user"
+    },
+    {
+      "name": "native-benchmark-user",
+      "inherits": [
+        "base-test",
+        "test-windows"
+      ],
+      "configurePreset": "native-benchmark-user"
     }
   ]
 }

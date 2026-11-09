@@ -27,40 +27,40 @@ typedef struct pfx_material {
   uint32_t work_budget;
 } pfx_material;
 
-static int done(const salts_asn1_reader *r) { return r->offset == r->size; }
-static int take(salts_asn1_reader *r, unsigned cls, unsigned constructed,
-    unsigned tag, salts_asn1_tlv *v) {
-  return salts_asn1_reader_next(r, v) == SALTS_ASN1_OK &&
+static int done(const asn1_reader *r) { return r->offset == r->size; }
+static int take(asn1_reader *r, unsigned cls, unsigned constructed,
+    unsigned tag, asn1_tlv *v) {
+  return asn1_reader_next(r, v) == SALTS_ASN1_OK &&
       v->tag_class == cls && v->constructed == constructed && v->tag_number == tag;
 }
-static int open_value(const salts_asn1_reader *parent, const salts_asn1_tlv *v,
-    salts_asn1_reader *child) {
-  return salts_asn1_reader_open_children(parent, v, child) == SALTS_ASN1_OK;
+static int open_value(const asn1_reader *parent, const asn1_tlv *v,
+    asn1_reader *child) {
+  return asn1_reader_open_children(parent, v, child) == SALTS_ASN1_OK;
 }
-static int enter(salts_asn1_reader *r, unsigned cls, unsigned tag, salts_asn1_reader *child) {
-  salts_asn1_tlv v;
+static int enter(asn1_reader *r, unsigned cls, unsigned tag, asn1_reader *child) {
+  asn1_tlv v;
   return take(r, cls, 1u, tag, &v) && open_value(r, &v, child);
 }
-static int root(const void *data, size_t size, salts_asn1_reader *out) {
-  salts_asn1_reader r;
-  return salts_asn1_reader_init(&r, data, size, SALTS_ASN1_DER) == SALTS_ASN1_OK &&
+static int root(const void *data, size_t size, asn1_reader *out) {
+  asn1_reader r;
+  return asn1_reader_init(&r, data, size, SALTS_ASN1_DER) == SALTS_ASN1_OK &&
       enter(&r, 0u, 16u, out) && done(&r);
 }
-static int is_oid(const salts_asn1_tlv *v, const void *bytes, size_t size) {
+static int is_oid(const asn1_tlv *v, const void *bytes, size_t size) {
   return v->tag_class == 0u && !v->constructed && v->tag_number == 6u &&
       v->content_size == size && !memcmp(v->content, bytes, size);
 }
 #define OID(v, name) is_oid(v, name, sizeof(name))
-static int number(salts_asn1_reader *r, uint32_t *out) {
-  salts_asn1_tlv v;
+static int number(asn1_reader *r, uint32_t *out) {
+  asn1_tlv v;
   if (!take(r, 0u, 0u, 2u, &v) || !v.content_size || v.content_size > 4u || (v.content[0] & 128u)) return 0;
   uint32_t n = 0u;
   for (size_t i = 0u; i < v.content_size; ++i) n = (n << 8) | v.content[i];
   *out = n;
   return 1;
 }
-static int octets(salts_asn1_reader *r, pfx_view *out) {
-  salts_asn1_tlv v;
+static int octets(asn1_reader *r, pfx_view *out) {
+  asn1_tlv v;
   if (!take(r, 0u, 0u, 4u, &v)) return 0;
   *out = (pfx_view){v.content, v.content_size};
   return 1;
@@ -94,7 +94,7 @@ static int bmp_password(const crypto_tls_password *password, unsigned char *out,
   return 1;
 }
 
-static const DIGEST *mac_digest(const salts_asn1_tlv *oid) {
+static const DIGEST *mac_digest(const asn1_tlv *oid) {
   static const unsigned char sm3[] = {0x2a,0x81,0x1c,0xcf,0x55,1,0x83,0x11};
   if (OID(oid, sm3)) return DIGEST_sm3();
   static const unsigned char prefix[] = {0x60,0x86,0x48,1,0x65,3,4,2};
@@ -110,10 +110,10 @@ static const DIGEST *mac_digest(const salts_asn1_tlv *oid) {
   }
 }
 
-static int authenticate(salts_asn1_reader *pfx, pfx_view auth,
+static int authenticate(asn1_reader *pfx, pfx_view auth,
     const crypto_tls_password *password, uint32_t *budget) {
-  salts_asn1_reader mac, info, algorithm;
-  salts_asn1_tlv oid, null_value;
+  asn1_reader mac, info, algorithm;
+  asn1_tlv oid, null_value;
   pfx_view expected, salt;
   uint32_t iterations = 1u;
   if (!enter(pfx, 0u, 16u, &mac) || !done(pfx) || !enter(&mac, 0u, 16u, &info) ||
@@ -159,10 +159,10 @@ end:
 
 /* Attributes are metadata, never authority for key binding. Admit only the two
  * standard bounded attributes; reject duplicates and unsupported attributes. */
-static int attributes(salts_asn1_reader *bag) {
+static int attributes(asn1_reader *bag) {
   if (done(bag)) return 1;
-  salts_asn1_reader set, attribute, values;
-  salts_asn1_tlv oid, value;
+  asn1_reader set, attribute, values;
+  asn1_tlv oid, value;
   unsigned seen = 0u;
   if (!enter(bag, 0u, 17u, &set) || !done(bag) || done(&set)) return 0;
   while (!done(&set)) {
@@ -180,8 +180,8 @@ static int attributes(salts_asn1_reader *bag) {
 }
 
 static int safe_contents(pfx_material *m, pfx_view safe, const crypto_tls_password *password) {
-  salts_asn1_reader contents, bag, value, cert;
-  salts_asn1_tlv oid, raw;
+  asn1_reader contents, bag, value, cert;
+  asn1_tlv oid, raw;
   if (!root(safe.data, safe.size, &contents)) return CRYPTO_TLS_STREAM_EIO;
   while (!done(&contents)) {
     if (++m->bag_count > PFX_BAGS) return CRYPTO_TLS_STREAM_ERANGE;
@@ -205,7 +205,7 @@ static int safe_contents(pfx_material *m, pfx_view safe, const crypto_tls_passwo
       if (!enter(&value, 0u, 16u, &cert) || !done(&value) || !take(&cert, 0u, 0u, 6u, &oid) ||
           !OID(&oid, cert_oid) || !enter(&cert, 2u, 0u, &value) || !done(&cert) ||
           !octets(&value, &bytes) || !done(&value) || !bytes.size ||
-          salts_asn1_validate(bytes.data, bytes.size, SALTS_ASN1_DER) != SALTS_ASN1_OK) return CRYPTO_TLS_STREAM_EIO;
+          asn1_validate(bytes.data, bytes.size, SALTS_ASN1_DER) != SALTS_ASN1_OK) return CRYPTO_TLS_STREAM_EIO;
       if (m->cert_count == PFX_CERTS || bytes.size > sizeof(m->certs) - m->cert_bytes) return CRYPTO_TLS_STREAM_ERANGE;
       for (size_t i = 0u; i < m->cert_count; ++i)
         if (m->certificates[i].size == bytes.size && !memcmp(m->certificates[i].data, bytes.data, bytes.size))
@@ -220,8 +220,8 @@ static int safe_contents(pfx_material *m, pfx_view safe, const crypto_tls_passwo
 }
 
 static int authenticated_safe(pfx_material *m, pfx_view auth, const crypto_tls_password *password) {
-  salts_asn1_reader safes, info, content, encrypted, info_data;
-  salts_asn1_tlv oid, algorithm, ciphertext;
+  asn1_reader safes, info, content, encrypted, info_data;
+  asn1_tlv oid, algorithm, ciphertext;
   unsigned char *plain = NULL;
   int status = CRYPTO_TLS_STREAM_EIO;
   size_t safe_count = 0u;
@@ -359,8 +359,8 @@ int crypto_tls_credential_object_from_pkcs12(const crypto_tls_data *input,
       !password || !password->data ||
       (kind != CRYPTO_TLS_CREDENTIAL_SINGLE && kind != CRYPTO_TLS_CREDENTIAL_TLCP_SERVER)) return CRYPTO_TLS_STREAM_EINVAL;
   if (input->size > CRYPTO_TLS_PKCS12_MAX_BYTES || password->size > CRYPTO_TLS_PASSWORD_MAX_BYTES) return CRYPTO_TLS_STREAM_ERANGE;
-  salts_asn1_reader pfx, info, content;
-  salts_asn1_tlv oid;
+  asn1_reader pfx, info, content;
+  asn1_tlv oid;
   pfx_view auth;
   uint32_t version;
   if (!root(input->data, input->size, &pfx) || !number(&pfx, &version) || version != 3u ||

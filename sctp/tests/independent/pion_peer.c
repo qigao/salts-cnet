@@ -4,7 +4,7 @@
  * negotiation/wire conformance fixture. It is NOT a production transport,
  * authentication provider, installed target, or M4 DTLS qualification. */
 #define _POSIX_C_SOURCE 200809L
-#include <cnet/sctp_session.h>
+#include <sctp_session.h>
 
 #include <arpa/inet.h>
 #include <errno.h>

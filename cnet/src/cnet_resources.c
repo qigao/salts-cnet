@@ -1,11 +1,16 @@
 #include "cnet_resources.h"
-#include <error_codes.h>
+#include <core/error_codes.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 
 typedef union cnet_storage_header {
+#if defined(_MSC_VER)
+  /* MSVC C omits max_align_t; these members cover its fundamental ABI. */
+  union { long double floating; long long integer; void *pointer; } alignment;
+#else
   max_align_t alignment;
+#endif
   struct { cnet_allocator allocator; size_t bytes; } value;
 } cnet_storage_header;
 

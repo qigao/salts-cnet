@@ -1,7 +1,7 @@
 #ifndef CNET_URI_H
 #define CNET_URI_H
 
-#include <error_codes.h>
+#include <core/error_codes.h>
 
 #include <stdint.h>
 

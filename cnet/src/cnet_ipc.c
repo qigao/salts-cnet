@@ -7,14 +7,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-#if !defined(_WIN32)
-  #include <errno.h>
-  #include <fcntl.h>
-  #include <sys/socket.h>
-  #include <sys/un.h>
-  #include <unistd.h>
-#endif
-
 /* One owner; fixed-capacity accepted-handle FIFO, not a reflection/CSTL container.
  * No allocation after listener init. The queue owns accepted handles until
  * the caller takes them or stop drains and closes them. */
@@ -83,10 +75,10 @@ typedef struct cnet_ipc_listener_impl {
   bool stopping;
   bool stopped;
 #if defined(_WIN32)
-  cmeta_ipc_pipe_server server;
+  ipc_pipe_server server;
   uintptr_t *wait_handles;
 #else
-  int socket_value;
+  uintptr_t socket_value;
 #endif
 } cnet_ipc_listener_impl;
 
@@ -111,13 +103,12 @@ int cnet_ipc_accepted_close(cnet_ipc_accepted *accepted) {
 #endif
 }
 
-
 #if defined(_WIN32)
-static void cnet_ipc_accept_terminal(void *user, const cmeta_ipc_completion *completion,
-                                     cmeta_ipc_pipe_endpoint endpoint) {
+static void cnet_ipc_accept_terminal(void *user, const ipc_completion *completion,
+                                     ipc_pipe_endpoint endpoint) {
   cnet_ipc_listener_impl *impl = (cnet_ipc_listener_impl *)user;
   int status = SALTS_OK;
-  if (cmeta_ipc_pipe_endpoint_valid(&endpoint)) {
+  if (ipc_pipe_endpoint_valid(&endpoint)) {
     cnet_ipc_accepted accepted = {endpoint.handle, CNET_IPC_RESOURCE_PIPE};
     if (!impl->stopping) status = cnet_ipc_queue_push(&impl->ready, &accepted);
     if (impl->stopping || status != SALTS_OK) {
@@ -130,12 +121,13 @@ static void cnet_ipc_accept_terminal(void *user, const cmeta_ipc_completion *com
   if (impl->progress_status == SALTS_OK) impl->progress_status = status;
 }
 #else
-static int cnet_ipc_nonblocking(int descriptor) {
-  int flags = fcntl(descriptor, F_GETFL, 0);
-  if (flags < 0 || fcntl(descriptor, F_SETFL, flags | O_NONBLOCK) < 0) return -errno;
-  flags = fcntl(descriptor, F_GETFD, 0);
-  if (flags < 0 || fcntl(descriptor, F_SETFD, flags | FD_CLOEXEC) < 0) return -errno;
-  return SALTS_OK;
+static int cnet_ipc_socket_status(native_io_socket_result result) {
+  return result.native_status > 0 ? -result.native_status : result.status;
+}
+static int cnet_ipc_nonblocking(uintptr_t socket_value) {
+  native_io_socket_result result = native_io_socket_nonblocking(socket_value);
+  if (result.status == SALTS_OK) result = native_io_socket_close_on_exec(socket_value);
+  return cnet_ipc_socket_status(result);
 }
 #endif
 
@@ -172,7 +164,7 @@ int cnet_ipc_listener_init(cnet_ipc_listener *listener, const cnet_ipc_listener_
     return SALTS_ENOMEM;
   }
 #if !defined(_WIN32)
-  impl->socket_value = -1;
+  impl->socket_value = UINTPTR_MAX;
 #endif
   impl->accept_capacity = config->accept_capacity;
   impl->child_capacity = config->child_capacity;
@@ -181,7 +173,7 @@ int cnet_ipc_listener_init(cnet_ipc_listener *listener, const cnet_ipc_listener_
 #if defined(_WIN32)
   {
     char *name = NULL;
-    cmeta_ipc_pipe_server_config native_config = {0};
+    ipc_pipe_server_config native_config = {0};
     impl->wait_handles = (uintptr_t *)calloc(config->accept_capacity, sizeof(uintptr_t));
     if (impl->wait_handles == NULL) {
       status = SALTS_ENOMEM;
@@ -196,28 +188,25 @@ int cnet_ipc_listener_init(cnet_ipc_listener *listener, const cnet_ipc_listener_
     native_config.output_buffer_size = config->output_buffer_bytes;
     native_config.completion = cnet_ipc_accept_terminal;
     native_config.completion_user = impl;
-    status = cmeta_ipc_pipe_server_init(&impl->server, &native_config);
+    status = ipc_pipe_server_init(&impl->server, &native_config);
     free(name);
     if (status != SALTS_OK) goto fail;
   }
 #else
   {
-    struct sockaddr_un address;
+    native_io_socket_address address;
     size_t length = 0u;
     status = cnet_transport_ipc_address(uri.path, &address, sizeof(address), &length);
     if (status != SALTS_OK) goto fail;
-    impl->socket_value = socket(AF_UNIX, SOCK_STREAM, 0);
-    if (impl->socket_value < 0) {
-      status = -errno;
-      goto fail;
-    }
+    status = cnet_ipc_socket_status(native_io_socket_create_unattached(
+        native_io_socket_domain(NATIVE_IO_SOCKET_LOCAL), false, &impl->socket_value));
+    if (status != SALTS_OK) goto fail;
     status = cnet_ipc_nonblocking(impl->socket_value);
     if (status != SALTS_OK) goto fail;
-    if (bind(impl->socket_value, (const struct sockaddr *)&address, (socklen_t)length) != 0 ||
-        listen(impl->socket_value, (int)config->accept_capacity) != 0) {
-      status = -errno;
-      goto fail;
-    }
+    status = cnet_ipc_socket_status(native_io_socket_bind(impl->socket_value, &address, length));
+    if (status == SALTS_OK)
+      status = cnet_ipc_socket_status(native_io_socket_listen(impl->socket_value, config->accept_capacity));
+    if (status != SALTS_OK) goto fail;
   }
 #endif
   listener->impl = impl;
@@ -226,7 +215,7 @@ fail:
 #if defined(_WIN32)
   free(impl->wait_handles);
 #else
-  if (impl->socket_value >= 0) (void)close(impl->socket_value);
+  if (impl->socket_value != UINTPTR_MAX) (void)native_io_socket_close(impl->socket_value);
 #endif
   cnet_ipc_queue_destroy(&impl->ready);
   free(impl);
@@ -244,19 +233,19 @@ int cnet_ipc_listener_advance(cnet_ipc_listener *listener, size_t max_events, si
   impl->advancing = true;
   impl->progress_status = SALTS_OK;
 #if defined(_WIN32)
-  status = cmeta_ipc_pipe_server_observe(&impl->server, max_events, out_events);
+  status = ipc_pipe_server_observe(&impl->server, max_events, out_events);
   if (status == SALTS_OK) status = impl->progress_status;
   if (!impl->stopping && status == SALTS_OK) {
-    cmeta_ipc_pipe_server_stats stats;
-    if (!cmeta_ipc_pipe_server_get_stats(&impl->server, &stats)) status = SALTS_EPROTO;
+    ipc_pipe_server_stats stats;
+    if (!ipc_pipe_server_get_stats(&impl->server, &stats)) status = SALTS_EPROTO;
     else {
       size_t active = stats.active_requests;
       const size_t ready = cnet_ipc_queue_size(&impl->ready);
       for (size_t count = 0u; count < max_events && active < impl->accept_capacity &&
                               active < impl->child_capacity - ready;
            ++count, ++active) {
-        cmeta_ipc_request_id request;
-        status = cmeta_ipc_pipe_server_try_accept(&impl->server, &request);
+        ipc_request_id request;
+        status = ipc_pipe_server_try_accept(&impl->server, &request);
         if (status != SALTS_OK) break;
       }
     }
@@ -264,16 +253,17 @@ int cnet_ipc_listener_advance(cnet_ipc_listener *listener, size_t max_events, si
 #else
   while (!impl->stopping && *out_events < max_events &&
          cnet_ipc_queue_size(&impl->ready) < impl->child_capacity) {
-    int descriptor = accept(impl->socket_value, NULL, NULL);
+    uintptr_t descriptor;
+    native_io_socket_result result = native_io_socket_accept(impl->socket_value, &descriptor, NULL, 0, NULL);
     cnet_ipc_accepted accepted;
-    if (descriptor < 0) {
-      status = errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR ? SALTS_OK : -errno;
+    if (result.status != SALTS_OK) {
+      status = result.status == SALTS_ETIMEDOUT || result.status == SALTS_EINTR ?
+          SALTS_OK : cnet_ipc_socket_status(result);
       break;
     }
     accepted = (cnet_ipc_accepted){(uintptr_t)descriptor, CNET_IPC_RESOURCE_SOCKET};
     status = cnet_ipc_nonblocking(descriptor);
-    if (status == SALTS_OK)
-      status = cnet_ipc_queue_push(&impl->ready, &accepted);
+    if (status == SALTS_OK) status = cnet_ipc_queue_push(&impl->ready, &accepted);
     if (status != SALTS_OK) {
       (void)cnet_ipc_accepted_close(&accepted);
       break;
@@ -311,7 +301,7 @@ int cnet_ipc_listener_wait_sources(const cnet_ipc_listener *listener,
   if (impl->stopped) return SALTS_OK;
 #if defined(_WIN32)
   {
-    const int status = cmeta_ipc_pipe_server_wait_sources(&impl->server, impl->wait_handles,
+    const int status = ipc_pipe_server_wait_sources(&impl->server, impl->wait_handles,
                                                           impl->accept_capacity, &count, out_ready);
     if (status != SALTS_OK) return status;
   }
@@ -349,14 +339,14 @@ int cnet_ipc_listener_stop(cnet_ipc_listener *listener, bool *out_stopped) {
   }
 #if defined(_WIN32)
   if (!impl->stopped) {
-    status = cmeta_ipc_pipe_server_close(&impl->server);
+    status = ipc_pipe_server_close(&impl->server);
     if (status != SALTS_OK && impl->stop_status == SALTS_OK) impl->stop_status = status;
-    impl->stopped = cmeta_ipc_pipe_server_is_quiescent(&impl->server);
+    impl->stopped = ipc_pipe_server_is_quiescent(&impl->server);
   }
 #else
-  if (impl->socket_value >= 0) {
-    status = close(impl->socket_value) == 0 ? SALTS_OK : -errno;
-    impl->socket_value = -1;
+  if (impl->socket_value != UINTPTR_MAX) {
+    status = cnet_ipc_socket_status(native_io_socket_close(impl->socket_value));
+    impl->socket_value = UINTPTR_MAX;
     if (status != SALTS_OK && impl->stop_status == SALTS_OK) impl->stop_status = status;
   }
   impl->stopped = true;
@@ -374,7 +364,7 @@ int cnet_ipc_listener_destroy(cnet_ipc_listener *listener) {
   if (impl->advancing || !impl->stopped) return SALTS_EBUSY;
 #if defined(_WIN32)
   {
-    const int status = cmeta_ipc_pipe_server_destroy(&impl->server);
+    const int status = ipc_pipe_server_destroy(&impl->server);
     if (status != SALTS_OK) return status;
   }
   free(impl->wait_handles);

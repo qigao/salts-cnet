@@ -1,55 +1,12 @@
 @PACKAGE_INIT@
 include(CMakeFindDependencyMacro)
 find_dependency(Threads)
-
-# ASN1 retains its own export set, resolved through the caller's SDK prefix.
-# Crypto is a separate static API package: direct Crypto users load it explicitly.
-# Shared CNet already owns its private Crypto/GmSSL implementation. Importing
-# the shared runtime must not require its private build-time provider package.
-find_dependency(ASN1 0.1 CONFIG REQUIRED)
-
-# A static Media archive retains link dependencies; resolve the exact providers
-# explicitly instead of exporting build-machine paths or a dynamic fallback.
-if(@SALTSCORE_BUILD_MEDIA@ AND (WIN32 OR ANDROID OR CMAKE_SYSTEM_NAME STREQUAL "Linux"))
-  find_dependency(JPEG REQUIRED)
-  find_dependency(libyuv CONFIG REQUIRED)
+if("$ENV{SALTS_BASE_ROOT}" STREQUAL "")
+  message(FATAL_ERROR "SALTS_BASE_ROOT must name the matching installed SaltsBase SDK")
 endif()
-
-# Reject a pre-existing legacy Salts runtime owner instead of silently accepting
-# colliding Salts:: targets from a different binary or SDK.
-get_property(_salts_core_owner GLOBAL PROPERTY SALTS_CORE_PACKAGE_OWNER)
-if(TARGET Salts::Core AND NOT _salts_core_owner STREQUAL "${CMAKE_CURRENT_LIST_DIR}")
-  message(FATAL_ERROR "Salts::Core is already owned by another package; mixed native owners forbidden")
-endif()
+unset(SaltsBase_DIR CACHE)
+find_dependency(SaltsBase @SALTS_BASE_REQUIRED_VERSION@ CONFIG REQUIRED PATHS "$ENV{SALTS_BASE_ROOT}"
+  NO_DEFAULT_PATH NO_CMAKE_FIND_ROOT_PATH)
+find_dependency(GmSSL CONFIG REQUIRED)
 include("${CMAKE_CURRENT_LIST_DIR}/SaltsCoreTargets.cmake")
-set_property(GLOBAL PROPERTY SALTS_CORE_PACKAGE_OWNER "${CMAKE_CURRENT_LIST_DIR}")
-foreach(_salts_core_required IN ITEMS Core Platform Concurrency FS Coroutine NativeIO ASN1 URI CNet)
-  if(NOT TARGET "Salts::${_salts_core_required}")
-    message(FATAL_ERROR "SaltsCore SDK missing required Salts::${_salts_core_required} target")
-  endif()
-endforeach()
-foreach(_salts_core_archive IN ITEMS ASN1 URI)
-  get_target_property(_salts_core_kind "Salts::${_salts_core_archive}" TYPE)
-  if(NOT _salts_core_kind STREQUAL "STATIC_LIBRARY")
-    message(FATAL_ERROR "SaltsCore requires its installed static ${_salts_core_archive} owner")
-  endif()
-endforeach()
-if(@SALTSCORE_BUILD_MEDIA@)
-  if(NOT TARGET Salts::Media)
-    message(FATAL_ERROR "SaltsCore package is missing Salts::Media")
-  endif()
-  get_target_property(_salts_core_media_kind Salts::Media TYPE)
-  if(NOT _salts_core_media_kind STREQUAL "STATIC_LIBRARY")
-    message(FATAL_ERROR "Salts::Media must be static")
-  endif()
-endif()
-get_target_property(_salts_core_kind Salts::CNet TYPE)
-if(NOT _salts_core_kind STREQUAL "SHARED_LIBRARY")
-  message(FATAL_ERROR "SaltsCore requires its installed shared CNet owner")
-endif()
-unset(_salts_core_owner)
-unset(_salts_core_required)
-unset(_salts_core_archive)
-unset(_salts_core_kind)
-unset(_salts_core_media_kind)
 check_required_components(SaltsCore)

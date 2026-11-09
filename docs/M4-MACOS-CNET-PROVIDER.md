@@ -7,7 +7,8 @@ cross-compilation or a provider-free Core SDK smoke test.
 ## Toolchain and dependency closure
 
 The unified `.github/workflows/ci.yml` qualifies both macOS-15 ARM64 and
-macOS-15 Intel x64 through the checked-in `ci-native` preset. It restores the
+macOS-15 Intel x64 through the checked-in `llvm-native-release-user` preset,
+also used for local POSIX LLVM builds. It restores the
 manifest through the pinned vcpkg-cache action and consumes the checked-in
 custom registry that pins GmSSL 3.2.0#13.
 

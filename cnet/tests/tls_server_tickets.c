@@ -1,8 +1,8 @@
 #include <cnet/cnet.h>
 #include <crypto/tls_peer_policy.h>
-#include <cmeta_buffer.h>
-#include <clock.h>
-#include <error_codes.h>
+#include <memory/buffer.h>
+#include <core/clock.h>
+#include <core/error_codes.h>
 #include <tinytest.h>
 #include <stdatomic.h>
 #include <stdio.h>
@@ -88,8 +88,8 @@ static int run_server(void) {
     probe p={0}; bool accepted=false, demand=false, replied=false;
     policy.deny=reject && round != 0u;
     const bool reject_round=((reject || expired) && round != 0u) || (bad_binder && round == 1u) || constraints;
-    const uint64_t deadline=cmeta_monotonic_ms()+25000u;
-    while (!p.terminal && cmeta_monotonic_ms() < deadline) {
+    const uint64_t deadline=monotonic_ms()+25000u;
+    while (!p.terminal && monotonic_ms() < deadline) {
       if (!accepted) {
         int available=0; REQUIRE(cnet_listener_wait(&listener,0u,&available) == SALTS_OK);
         if (available) {

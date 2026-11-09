@@ -8,8 +8,8 @@ ASN.1 reader inside Crypto.
 
 `crypto/src/asn1/crypto.c` contains ECDSA DER SignatureValue and RFC 8410
 SPKI/PKCS8 format logic. The canonical general-purpose BER/DER, OID, TLV,
-reader and owned Value Tree are under [../asn1/](../asn1/), exported as
-`Salts::ASN1` and consumed directly. All public APIs are `Salts::XXX`
+reader and owned Value Tree belong to the separately installed SaltsBase SDK, imported as
+`Salts::ASN1` and consumed directly through `<asn1.h>`. All public APIs are `Salts::XXX`
 CMake targets, C11 source and C++17-usable C headers.
 
 Use the repository's user presets for the ASN1/Crypto/CNet build and formal
@@ -17,7 +17,7 @@ CTest suite. The native GmSSL implementation is installed from the immutable
 `gmssl 3.2.0#44` vcpkg port, whose extension sources are pinned from
 `gmssl-extensions/`. `Salts::Crypto` links the imported `GmSSL::GmSSL` static
 library; it never compiles a duplicate GmSSL implementation.
-The registry and shared CI Actions use `v0.1.1`, with immutable baseline
+The GmSSL registry uses `v0.1.1`, with immutable baseline
 `4ac631f89e07cebfd347848af642f31fe8c4edec`. The default CI setup restores
 exact published ABI binaries first; missing ABIs are compiled and cached.
 It registers #44 with TLCP
@@ -28,13 +28,32 @@ No backwards-compatibility alias, fallback or duplicate BER/DER owner.
 
 GmSSL provenance and licenses remain explicit. Production CNet calls only the
 opaque Crypto stream API; Crypto's external GmSSL archive is linked transitively
-into the single CNet shared owner. Runtime consumers still link `Salts::CNet`
-without importing the private provider package.
+into the single CNet shared owner. Runtime consumers still link `Salts::CNet`;
+the unified SDK's CMake package also resolves GmSSL for the exported static
+Crypto target.
 
-Installed consumers require `find_package(Crypto 0.1 CONFIG REQUIRED)`
-and link `Salts::Crypto`. This imports the sibling `Salts::ASN1` via
-`find_dependency(ASN1)`. Direct protocol consumers should instead use only
-`find_package(ASN1 0.1 CONFIG REQUIRED)` and `Salts::ASN1`.
+Installed consumers use `find_package(SaltsCore CONFIG REQUIRED)` and link
+`Salts::Crypto`. SaltsCore resolves its `Salts::ASN1` dependency through
+`find_dependency(SaltsBase ...)` at the configured `SALTS_BASE_ROOT`.
+Direct codec consumers use `find_package(SaltsBase CONFIG REQUIRED)` and link
+`Salts::ASN1`; Crypto does not export a second ASN1 owner.
+
+## Unified SDK packaging
+
+Crypto's archive, headers and `Salts::Crypto` target belong to the root
+SaltsCore export set. The former independent `CryptoConfig.cmake` and package
+version are no longer produced. Restoring that separate package would retain
+two SDK configuration/version owners; the unified export instead keeps the
+module and its dependencies in one root-owned build and installation graph.
+
+Consumers migrate `find_package(Crypto ...)` to `find_package(SaltsCore ...)`;
+the linked target, archive filename and public header paths stay the same.
+SaltsCore package discovery now requires GmSSL even when a caller links only
+the shared runtime, because the package also exports the static Crypto facade.
+This changes CMake dependency discovery, not TLS behavior or physical runtime
+ownership. To roll back, restore the former export/configuration ownership as
+one change and use a separate installation prefix; no compatibility package or
+second Crypto implementation is installed alongside the unified SDK.
 
 ## ShangMi algorithm APIs
 

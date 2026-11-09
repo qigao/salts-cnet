@@ -1,17 +1,17 @@
 #include "crypto_x509_policy.h"
 
-static int tag(const salts_asn1_tlv *v, uint32_t number, unsigned constructed) {
+static int tag(const asn1_tlv *v, uint32_t number, unsigned constructed) {
   return !v->tag_class && v->tag_number == number && v->constructed == constructed;
 }
-static int next(salts_asn1_reader *r, salts_asn1_tlv *v, uint32_t number, unsigned constructed) {
-  return salts_asn1_reader_next(r, v) == SALTS_ASN1_OK && tag(v, number, constructed);
+static int next(asn1_reader *r, asn1_tlv *v, uint32_t number, unsigned constructed) {
+  return asn1_reader_next(r, v) == SALTS_ASN1_OK && tag(v, number, constructed);
 }
-static int end(const salts_asn1_reader *r) { return r->offset == r->size; }
-static int sequence(const void *data, size_t n, salts_asn1_reader *r) {
-  salts_asn1_reader top; salts_asn1_tlv v;
-  return salts_asn1_reader_init(&top, data, n, SALTS_ASN1_DER) == SALTS_ASN1_OK &&
+static int end(const asn1_reader *r) { return r->offset == r->size; }
+static int sequence(const void *data, size_t n, asn1_reader *r) {
+  asn1_reader top; asn1_tlv v;
+  return asn1_reader_init(&top, data, n, SALTS_ASN1_DER) == SALTS_ASN1_OK &&
       next(&top, &v, 16, 1) && end(&top) &&
-      salts_asn1_reader_open_children(&top, &v, r) == SALTS_ASN1_OK;
+      asn1_reader_open_children(&top, &v, r) == SALTS_ASN1_OK;
 }
 static unsigned decimal(const uint8_t *p, size_t n) {
   unsigned value = 0;
@@ -19,7 +19,7 @@ static unsigned decimal(const uint8_t *p, size_t n) {
   return value;
 }
 static int leap(unsigned y) { return y%4u == 0u && (y%100u != 0u || y%400u == 0u); }
-static int date_value(const salts_asn1_tlv *v, int64_t *out, int x509) {
+static int date_value(const asn1_tlv *v, int64_t *out, int x509) {
   static const unsigned days[] = {31,28,31,30,31,30,31,31,30,31,30,31};
   size_t digits = v->tag_number == 23u ? 12u : 14u, k;
   if (v->tag_class || v->constructed || (v->tag_number != 23u && v->tag_number != 24u) ||
@@ -37,27 +37,27 @@ static int date_value(const salts_asn1_tlv *v, int64_t *out, int x509) {
   *out = (before+d-1)*86400 + h*3600 + min*60 + sec;
   return 1;
 }
-int salts_crypto_x509_date(const salts_asn1_tlv *v, int64_t *out) {
+int salts_crypto_x509_date(const asn1_tlv *v, int64_t *out) {
   return date_value(v,out,1);
 }
-int salts_crypto_generalized_time(const salts_asn1_tlv *v, int64_t *out) {
+int salts_crypto_generalized_time(const asn1_tlv *v, int64_t *out) {
   return v->tag_number == 24u && date_value(v,out,0);
 }
 int salts_crypto_x509_valid_time(const crypto_x509_der_view *v, int64_t now) {
-  salts_asn1_reader r; salts_asn1_tlv first, last; int64_t a, b;
+  asn1_reader r; asn1_tlv first, last; int64_t a, b;
   return sequence(v->validity_der, v->validity_size, &r) &&
-      salts_asn1_reader_next(&r, &first) == SALTS_ASN1_OK &&
-      salts_asn1_reader_next(&r, &last) == SALTS_ASN1_OK && end(&r) &&
+      asn1_reader_next(&r, &first) == SALTS_ASN1_OK &&
+      asn1_reader_next(&r, &last) == SALTS_ASN1_OK && end(&r) &&
       salts_crypto_x509_date(&first, &a) && salts_crypto_x509_date(&last, &b) && a <= b && a <= now && now <= b;
 }
 int salts_crypto_x509_valid_name(const void *der, size_t n) {
-  salts_asn1_reader rdns, attrs, fields; salts_asn1_tlv rdn, attr, oid, value;
+  asn1_reader rdns, attrs, fields; asn1_tlv rdn, attr, oid, value;
   if (!sequence(der, n, &rdns) || end(&rdns)) return 0;
   while (!end(&rdns)) {
-    if (!next(&rdns, &rdn, 17, 1) || salts_asn1_reader_open_children(&rdns, &rdn, &attrs) != SALTS_ASN1_OK || end(&attrs)) return 0;
+    if (!next(&rdns, &rdn, 17, 1) || asn1_reader_open_children(&rdns, &rdn, &attrs) != SALTS_ASN1_OK || end(&attrs)) return 0;
     while (!end(&attrs)) {
-      if (!next(&attrs, &attr, 16, 1) || salts_asn1_reader_open_children(&attrs, &attr, &fields) != SALTS_ASN1_OK ||
-          !next(&fields, &oid, 6, 0) || salts_asn1_reader_next(&fields, &value) != SALTS_ASN1_OK ||
+      if (!next(&attrs, &attr, 16, 1) || asn1_reader_open_children(&attrs, &attr, &fields) != SALTS_ASN1_OK ||
+          !next(&fields, &oid, 6, 0) || asn1_reader_next(&fields, &value) != SALTS_ASN1_OK ||
           value.tag_class || value.constructed || !value.content_size || !end(&fields)) return 0;
     }
   }

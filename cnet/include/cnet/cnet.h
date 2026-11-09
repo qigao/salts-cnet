@@ -1,10 +1,10 @@
 #ifndef CNET_CNET_H
 #define CNET_CNET_H
 
-#include <error_codes.h>
+#include <core/error_codes.h>
 #include <native_io.h>
 #include <cnet/resources.h>
-#include <cmeta_buffer.h>
+#include <memory/buffer.h>
 #include <crypto/tls_peer_policy.h>
 #include <crypto/tls_diagnostic.h>
 #include <crypto/tls_sm2_crl_policy.h>

@@ -2,8 +2,8 @@
 #include "cnet_event.h"
 
 #include <cnet/cnet.h>
-#include <disruptor.h>
-#include <cmeta_buffer.h>
+#include <queue/disruptor.h>
+#include <memory/buffer.h>
 
 #include <limits.h>
 #include <stdatomic.h>

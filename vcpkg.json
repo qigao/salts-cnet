@@ -2,40 +2,13 @@
   "name": "salts-core",
   "version-semver": "0.1.2",
   "builtin-baseline": "b1b19307e2d2ec1eefbdb7ea069de7d4bcd31f01",
-  "features": {
-    "zstd": {
-      "description": "Pinned private static Zstd provider for the original Core compression API",
-      "dependencies": [
-        "zstd"
-      ]
-    },
-    "cnet": {
-      "description": "Compatibility feature: CNet is always built with local Crypto; networking dependencies belong to the base SDK"
-    },
-    "media": {
-      "description": "One static Media owner for Capture and PCM Playback",
-      "dependencies": [
-        "miniaudio",
-        {
-          "name": "libyuv",
-          "platform": "windows | android | linux"
-        },
-        {
-          "name": "libjpeg-turbo",
-          "platform": "windows"
-        }
-      ]
-    }
-  },
   "dependencies": [
-    {
-      "name": "pkgconf",
-      "host": true,
-      "platform": "!windows"
-    },
     "simde",
+    "zstd",
     "c-ares",
     "kcp",
-    "gmssl"
+    "gmssl",
+    "libjpeg-turbo",
+    "libyuv"
   ]
 }

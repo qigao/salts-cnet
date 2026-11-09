@@ -6,37 +6,37 @@
 
 #include <string.h>
 
-static int tag_is(const salts_asn1_tlv *v, uint8_t cls,
+static int tag_is(const asn1_tlv *v, uint8_t cls,
                   uint8_t constructed, uint32_t tag) {
     return v->tag_class == cls && v->constructed == constructed &&
            v->tag_number == tag;
 }
 
-static salts_asn1_status required(salts_asn1_reader *r, salts_asn1_tlv *v) {
-    salts_asn1_status s = salts_asn1_reader_next(r, v);
+static asn1_status required(asn1_reader *r, asn1_tlv *v) {
+    asn1_status s = asn1_reader_next(r, v);
     return s == SALTS_ASN1_DONE ? SALTS_ASN1_MALFORMED : s;
 }
 
-static salts_asn1_status end_of(salts_asn1_reader *r) {
-    salts_asn1_tlv extra;
-    salts_asn1_status s = salts_asn1_reader_next(r, &extra);
+static asn1_status end_of(asn1_reader *r) {
+    asn1_tlv extra;
+    asn1_status s = asn1_reader_next(r, &extra);
     return s == SALTS_ASN1_DONE ? SALTS_ASN1_OK :
            s == SALTS_ASN1_OK ? SALTS_ASN1_MALFORMED : s;
 }
 
-static const uint8_t *encoded(const salts_asn1_tlv *v) {
+static const uint8_t *encoded(const asn1_tlv *v) {
     /* The canonical Reader validated encoded_size >= content_size. */
     return v->content - (v->encoded_size - v->content_size);
 }
 
-static salts_asn1_status algorithm(
-    const salts_asn1_reader *parent, const salts_asn1_tlv *value,
+static asn1_status algorithm(
+    const asn1_reader *parent, const asn1_tlv *value,
     const uint8_t **oid, size_t *oid_size) {
-    salts_asn1_reader r;
-    salts_asn1_tlv v;
-    salts_asn1_status s;
+    asn1_reader r;
+    asn1_tlv v;
+    asn1_status s;
     if (!tag_is(value, 0u, 1u, 16u)) return SALTS_ASN1_MALFORMED;
-    s = salts_asn1_reader_open_children(parent, value, &r);
+    s = asn1_reader_open_children(parent, value, &r);
     if (s != SALTS_ASN1_OK) return s;
     s = required(&r, &v);
     if (s != SALTS_ASN1_OK) return s;
@@ -46,13 +46,13 @@ static salts_asn1_status algorithm(
     /* AlgorithmIdentifier parameters are OPTIONAL, but at most one value.
      * Profile-specific rules (e.g. absent Ed25519 parameters) belong to
      * the Crypto algorithm/profile validation, not this generic inspector. */
-    s = salts_asn1_reader_next(&r, &v);
+    s = asn1_reader_next(&r, &v);
     if (s == SALTS_ASN1_DONE) return SALTS_ASN1_OK;
     if (s != SALTS_ASN1_OK) return s;
     return end_of(&r);
 }
 
-static int date_syntax(const salts_asn1_tlv *v) {
+static int date_syntax(const asn1_tlv *v) {
     size_t digits, i;
     const uint8_t *p = v->content;
     if (v->tag_class != 0u || v->constructed) return 0;
@@ -77,13 +77,13 @@ static int date_syntax(const salts_asn1_tlv *v) {
     return 1;
 }
 
-static salts_asn1_status validity(const salts_asn1_reader *parent,
-                                 const salts_asn1_tlv *v) {
-    salts_asn1_reader r;
-    salts_asn1_tlv time;
-    salts_asn1_status s;
+static asn1_status validity(const asn1_reader *parent,
+                                 const asn1_tlv *v) {
+    asn1_reader r;
+    asn1_tlv time;
+    asn1_status s;
     if (!tag_is(v, 0u, 1u, 16u)) return SALTS_ASN1_MALFORMED;
-    s = salts_asn1_reader_open_children(parent, v, &r);
+    s = asn1_reader_open_children(parent, v, &r);
     if (s != SALTS_ASN1_OK) return s;
     s = required(&r, &time);
     if (s != SALTS_ASN1_OK) return s;
@@ -94,14 +94,14 @@ static salts_asn1_status validity(const salts_asn1_reader *parent,
     return end_of(&r);
 }
 
-static salts_asn1_status spki(
-    const salts_asn1_reader *parent, const salts_asn1_tlv *v,
+static asn1_status spki(
+    const asn1_reader *parent, const asn1_tlv *v,
     crypto_x509_der_view *out) {
-    salts_asn1_reader r;
-    salts_asn1_tlv alg, bits;
-    salts_asn1_status s;
+    asn1_reader r;
+    asn1_tlv alg, bits;
+    asn1_status s;
     if (!tag_is(v, 0u, 1u, 16u)) return SALTS_ASN1_MALFORMED;
-    s = salts_asn1_reader_open_children(parent, v, &r);
+    s = asn1_reader_open_children(parent, v, &r);
     if (s != SALTS_ASN1_OK) return s;
     s = required(&r, &alg);
     if (s != SALTS_ASN1_OK) return s;
@@ -116,34 +116,34 @@ static salts_asn1_status spki(
     return end_of(&r);
 }
 
-static salts_asn1_status extensions(
-    const salts_asn1_reader *parent, const salts_asn1_tlv *field,
+static asn1_status extensions(
+    const asn1_reader *parent, const asn1_tlv *field,
     crypto_x509_der_view *out) {
-    salts_asn1_reader wrapper, entries, attributes;
-    salts_asn1_tlv list, ext, oid, value;
-    salts_asn1_status s;
+    asn1_reader wrapper, entries, attributes;
+    asn1_tlv list, ext, oid, value;
+    asn1_status s;
     size_t count = 0u, i;
     /* One bounded set of borrowed OIDs, solely for rejecting duplicates. */
     const uint8_t *seen[CRYPTO_X509_DER_MAX_EXTENSIONS];
     size_t lengths[CRYPTO_X509_DER_MAX_EXTENSIONS];
     if (!tag_is(field, 2u, 1u, 3u)) return SALTS_ASN1_MALFORMED;
-    s = salts_asn1_reader_open_children(parent, field, &wrapper);
+    s = asn1_reader_open_children(parent, field, &wrapper);
     if (s != SALTS_ASN1_OK) return s;
     s = required(&wrapper, &list);
     if (s != SALTS_ASN1_OK) return s;
     if (!tag_is(&list, 0u, 1u, 16u)) return SALTS_ASN1_MALFORMED;
     s = end_of(&wrapper);
     if (s != SALTS_ASN1_OK) return s;
-    s = salts_asn1_reader_open_children(&wrapper, &list, &entries);
+    s = asn1_reader_open_children(&wrapper, &list, &entries);
     if (s != SALTS_ASN1_OK) return s;
     for (;;) {
-        s = salts_asn1_reader_next(&entries, &ext);
+        s = asn1_reader_next(&entries, &ext);
         if (s == SALTS_ASN1_DONE) break;
         if (s != SALTS_ASN1_OK) return s;
         if (!tag_is(&ext, 0u, 1u, 16u) ||
             count == CRYPTO_X509_DER_MAX_EXTENSIONS)
             return SALTS_ASN1_LIMIT_EXCEEDED;
-        s = salts_asn1_reader_open_children(&entries, &ext, &attributes);
+        s = asn1_reader_open_children(&entries, &ext, &attributes);
         if (s != SALTS_ASN1_OK) return s;
         s = required(&attributes, &oid);
         if (s != SALTS_ASN1_OK) return s;
@@ -174,21 +174,21 @@ static salts_asn1_status extensions(
     return SALTS_ASN1_OK;
 }
 
-static salts_asn1_status parse_tbs(
-    const salts_asn1_reader *parent, const salts_asn1_tlv *tbs,
+static asn1_status parse_tbs(
+    const asn1_reader *parent, const asn1_tlv *tbs,
     crypto_x509_der_view *out,
     const uint8_t **tbs_algorithm_der, size_t *tbs_algorithm_size) {
-    salts_asn1_reader r, vreader;
-    salts_asn1_tlv v, number, serial, alg;
-    salts_asn1_status s;
+    asn1_reader r, vreader;
+    asn1_tlv v, number, serial, alg;
+    asn1_status s;
     uint32_t previous_optional = 0u;
     if (!tag_is(tbs, 0u, 1u, 16u)) return SALTS_ASN1_MALFORMED;
-    s = salts_asn1_reader_open_children(parent, tbs, &r);
+    s = asn1_reader_open_children(parent, tbs, &r);
     if (s != SALTS_ASN1_OK) return s;
     s = required(&r, &v);
     if (s != SALTS_ASN1_OK) return s;
     if (tag_is(&v, 2u, 1u, 0u)) {
-        s = salts_asn1_reader_open_children(&r, &v, &vreader);
+        s = asn1_reader_open_children(&r, &v, &vreader);
         if (s != SALTS_ASN1_OK) return s;
         s = required(&vreader, &number);
         if (s != SALTS_ASN1_OK) return s;
@@ -247,7 +247,7 @@ static salts_asn1_status parse_tbs(
     out->spki_size = v.encoded_size;
 
     for (;;) {
-        s = salts_asn1_reader_next(&r, &v);
+        s = asn1_reader_next(&r, &v);
         if (s == SALTS_ASN1_DONE) return SALTS_ASN1_OK;
         if (s != SALTS_ASN1_OK) return s;
         if (v.tag_class != 2u || v.tag_number < 1u ||
@@ -274,12 +274,12 @@ static salts_asn1_status parse_tbs(
     }
 }
 
-salts_asn1_status crypto_x509_der_inspect(
+asn1_status crypto_x509_der_inspect(
     const void *certificate_der, size_t certificate_size,
     crypto_x509_der_view *out) {
-    salts_asn1_reader top, cert;
-    salts_asn1_tlv root, tbs, outer_alg, signature;
-    salts_asn1_status s;
+    asn1_reader top, cert;
+    asn1_tlv root, tbs, outer_alg, signature;
+    asn1_status s;
     crypto_x509_der_view value = {0};
     const uint8_t *inner_algorithm = NULL, *oid = NULL;
     size_t inner_algorithm_size = 0u, oid_size = 0u;
@@ -287,9 +287,9 @@ salts_asn1_status crypto_x509_der_inspect(
         return SALTS_ASN1_INVALID_ARGUMENT;
     if (certificate_size > CRYPTO_X509_DER_MAX_CERT_BYTES)
         return SALTS_ASN1_LIMIT_EXCEEDED;
-    s = salts_asn1_validate(certificate_der, certificate_size, SALTS_ASN1_DER);
+    s = asn1_validate(certificate_der, certificate_size, SALTS_ASN1_DER);
     if (s != SALTS_ASN1_OK) return s;
-    s = salts_asn1_reader_init(&top, certificate_der, certificate_size,
+    s = asn1_reader_init(&top, certificate_der, certificate_size,
                               SALTS_ASN1_DER);
     if (s != SALTS_ASN1_OK) return s;
     s = required(&top, &root);
@@ -297,7 +297,7 @@ salts_asn1_status crypto_x509_der_inspect(
     if (!tag_is(&root, 0u, 1u, 16u) ||
         root.encoded_size != certificate_size)
         return SALTS_ASN1_MALFORMED;
-    s = salts_asn1_reader_open_children(&top, &root, &cert);
+    s = asn1_reader_open_children(&top, &root, &cert);
     if (s != SALTS_ASN1_OK) return s;
     s = required(&cert, &tbs);
     if (s != SALTS_ASN1_OK) return s;
@@ -333,13 +333,13 @@ salts_asn1_status crypto_x509_der_inspect(
     return SALTS_ASN1_OK;
 }
 
-salts_asn1_status crypto_x509_der_chain_next(
+asn1_status crypto_x509_der_chain_next(
     const void *chain, size_t chain_size, size_t *offset,
     crypto_x509_der_view *out) {
-    salts_asn1_reader reader;
-    salts_asn1_tlv certificate;
+    asn1_reader reader;
+    asn1_tlv certificate;
     crypto_x509_der_view value;
-    salts_asn1_status s;
+    asn1_status s;
     const uint8_t *data = (const uint8_t *)chain;
     size_t position;
     if (!chain || !offset || !out || *offset > chain_size)
@@ -348,7 +348,7 @@ salts_asn1_status crypto_x509_der_chain_next(
         return SALTS_ASN1_LIMIT_EXCEEDED;
     position = *offset;
     if (position == chain_size) return SALTS_ASN1_DONE;
-    s = salts_asn1_reader_init(&reader, data + position,
+    s = asn1_reader_init(&reader, data + position,
                               chain_size - position, SALTS_ASN1_DER);
     if (s != SALTS_ASN1_OK) return s;
     s = required(&reader, &certificate);
@@ -366,7 +366,7 @@ salts_asn1_status crypto_x509_der_chain_next(
 
 /* The legacy SaltsNet X509 parser recognized these OIDs. They are ordinary
  * ASN.1 AlgorithmIdentifier metadata, not evidence of public-key validity. */
-salts_asn1_status crypto_x509_der_get_public_key_kind(
+asn1_status crypto_x509_der_get_public_key_kind(
     const crypto_x509_der_view *view,
     crypto_x509_der_public_key_kind *out) {
     static const uint8_t rsa[] = {
@@ -393,7 +393,7 @@ salts_asn1_status crypto_x509_der_get_public_key_kind(
     return SALTS_ASN1_OK;
 }
 
-salts_asn1_status crypto_x509_der_common_name(
+asn1_status crypto_x509_der_common_name(
     const crypto_x509_der_view *view, uint8_t issuer,
     const uint8_t **out_data, size_t *out_size) {
     static const uint8_t cn_oid[] = {0x55u,0x04u,0x03u};
@@ -401,9 +401,9 @@ salts_asn1_status crypto_x509_der_common_name(
     size_t name_size;
     const uint8_t *found = NULL;
     size_t found_size = 0u;
-    salts_asn1_reader root_reader, rdns, attributes, fields;
-    salts_asn1_tlv root, rdn, attribute, oid, value;
-    salts_asn1_status s;
+    asn1_reader root_reader, rdns, attributes, fields;
+    asn1_tlv root, rdn, attribute, oid, value;
+    asn1_status s;
     if (!view || !out_data || !out_size || issuer > 1u)
         return SALTS_ASN1_INVALID_ARGUMENT;
     name = issuer ? view->issuer_der : view->subject_der;
@@ -411,29 +411,29 @@ salts_asn1_status crypto_x509_der_common_name(
     if (!name || name_size == 0u ||
         name_size > CRYPTO_X509_DER_MAX_CERT_BYTES)
         return SALTS_ASN1_INVALID_ARGUMENT;
-    s = salts_asn1_reader_init(&root_reader, name, name_size, SALTS_ASN1_DER);
+    s = asn1_reader_init(&root_reader, name, name_size, SALTS_ASN1_DER);
     if (s != SALTS_ASN1_OK) return s;
     s = required(&root_reader, &root);
     if (s != SALTS_ASN1_OK) return s;
     if (!tag_is(&root,0u,1u,16u) || root.encoded_size != name_size)
         return SALTS_ASN1_MALFORMED;
-    s = salts_asn1_reader_open_children(&root_reader,&root,&rdns);
+    s = asn1_reader_open_children(&root_reader,&root,&rdns);
     if (s != SALTS_ASN1_OK) return s;
     for (;;) {
-        s = salts_asn1_reader_next(&rdns,&rdn);
+        s = asn1_reader_next(&rdns,&rdn);
         if (s == SALTS_ASN1_DONE) break;
         if (s != SALTS_ASN1_OK) return s;
         if (!tag_is(&rdn,0u,1u,17u)) return SALTS_ASN1_MALFORMED;
-        s = salts_asn1_reader_open_children(&rdns,&rdn,&attributes);
+        s = asn1_reader_open_children(&rdns,&rdn,&attributes);
         if (s != SALTS_ASN1_OK) return s;
         if (attributes.size == 0u) return SALTS_ASN1_MALFORMED;
         for (;;) {
-            s = salts_asn1_reader_next(&attributes,&attribute);
+            s = asn1_reader_next(&attributes,&attribute);
             if (s == SALTS_ASN1_DONE) break;
             if (s != SALTS_ASN1_OK) return s;
             if (!tag_is(&attribute,0u,1u,16u))
                 return SALTS_ASN1_MALFORMED;
-            s = salts_asn1_reader_open_children(
+            s = asn1_reader_open_children(
                 &attributes,&attribute,&fields);
             if (s != SALTS_ASN1_OK) return s;
             s = required(&fields,&oid);

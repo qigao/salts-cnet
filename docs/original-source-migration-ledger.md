@@ -1,9 +1,7 @@
 # Whole-tree Salts / Salts-utils migration completeness admission
 
 > Historical provenance ledger. The SIMD owner recorded below moved to
-> SaltsUtils; it is no longer a SaltsCore build/install target. USB and
-> libusb were removed on 2026-11-05. Their entries below preserve the original
-> source inventory and do not describe the current SDK.
+> SaltsUtils; it is no longer a SaltsCore build/install target.
 
 ## Immutable source identities
 
@@ -63,7 +61,7 @@ python3 -B tools/check_full_source_migration.py --require-complete \
   --evidence-dir /tmp/core-evidence
 ```
 
-Enable `BUILD_TESTING`, `SALTSCORE_BUILD_SIMD`, `SALTSCORE_BUILD_TINYTEST` in
+Enable `BUILD_TESTS`, `SALTSCORE_BUILD_SIMD`, `SALTSCORE_BUILD_TINYTEST` in
 the native build. Configure the installed build from `tests/installed` with
 `SALTSCORE_REQUIRE_SIMD=ON`. Preserve required generator/provider environment
 such as `RE2C_ROOT`. Collect `linux-release`, `linux-asan-ubsan`,
@@ -115,7 +113,7 @@ the API column means the initial 610-function scan did not cover the module.
 | Salts `asn1/` | 15 | 15 | 0 | — |
 | Salts `idna/` | 9 | 2 | 7 | — |
 | Salts `simd/` | 7 | 7 | 0 | 0; 32 supplemental |
-| Salts `uri/` | 7 | 4 | 3 | — |
+| Salts `cnet/uri/` | 7 | 4 | 3 | — |
 | Salts-utils `unicode/` | 56 | 8 | 48 | — |
 | Salts-utils `capture/` | 39 | 39 | 0 | 29 |
 | Salts-utils `salts_serial/` | 20 | 20 | 0 | 30 |

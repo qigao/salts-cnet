@@ -1,6 +1,6 @@
 /* Formal production CNet/NativeIO driver. The host owns observation and socket
  * lifetimes; protocol callbacks forward borrowed views and actual terminals. */
-#include <clock.h>
+#include <core/clock.h>
 #include <cnet/dtls.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -99,7 +99,7 @@ static void receive(void *context, cnet_datagram *d,
     bool verified = false;
     size_t reply_size = 0;
     uint8_t reply[CRYPTO_DTLS_COOKIE_REPLY_BYTES];
-    int n = cnet_dtls_cookie_gate(f->listener, peer, v, cmeta_monotonic_ms(),
+    int n = cnet_dtls_cookie_gate(f->listener, peer, v, monotonic_ms(),
                                   reply, sizeof(reply), &reply_size, &verified);
     if (n) {
       error(f, n);
@@ -110,7 +110,7 @@ static void receive(void *context, cnet_datagram *d,
           &f->datagram, *peer, f->listener, {application, application_sent, f},
           1u,           7u};
       int refused =
-          cnet_dtls_accept(&f->dtls, &rejected, v, cmeta_monotonic_ms());
+          cnet_dtls_accept(&f->dtls, &rejected, v, monotonic_ms());
       if (refused != SALTS_EPROTO || f->dtls.impl) {
         f->registered = f->dtls.impl != NULL;
         error(f, SALTS_EPROTO);
@@ -131,7 +131,7 @@ static void receive(void *context, cnet_datagram *d,
     const cnet_dtls_accept_config cfg = {
         &f->datagram, *peer, f->listener, {application, application_sent, f},
         1u,           7u};
-    n = cnet_dtls_accept(&f->dtls, &cfg, v, cmeta_monotonic_ms());
+    n = cnet_dtls_accept(&f->dtls, &cfg, v, monotonic_ms());
     if (n) {
       error(f, n);
       return;
@@ -182,16 +182,16 @@ static void sent(void *context, cnet_datagram *d,
   bool matched = false;
   /* Same-sized unrelated tags and duplicate routes cannot settle this send. */
   int n = cnet_dtls_send_complete(&f->dtls, d, peer, size, status, tag ^ 1u,
-                                  cmeta_monotonic_ms(), &matched);
+                                  monotonic_ms(), &matched);
   if (n || matched)
     error(f, SALTS_EPROTO);
   n = cnet_dtls_send_complete(&f->dtls, d, peer, size, status, tag,
-                              cmeta_monotonic_ms(), &matched);
+                              monotonic_ms(), &matched);
   error(f, n);
   if (!matched)
     error(f, SALTS_EPROTO);
   n = cnet_dtls_send_complete(&f->dtls, d, peer, size, status, tag,
-                              cmeta_monotonic_ms(), &matched);
+                              monotonic_ms(), &matched);
   if (n != SALTS_EALREADY || !matched)
     error(f, SALTS_EPROTO);
 }
@@ -261,7 +261,7 @@ static int step(fixture *f, uint32_t timeout, bool observe_io) {
       f->rearm = false;
   }
   if (f->registered) {
-    int advanced = cnet_dtls_advance(&f->dtls, cmeta_monotonic_ms(), &events);
+    int advanced = cnet_dtls_advance(&f->dtls, monotonic_ms(), &events);
     if (advanced && !first)
       first = advanced;
     cnet_dtls_info info;
@@ -474,8 +474,8 @@ int main(int argc, char **argv) {
       /* Release the host receive credit before synthetic capacity probes. */
       status = cnet_datagram_pause_receive(&f->datagram);
       bool quiet = false;
-      uint64_t started = cmeta_monotonic_ms();
-      while (!status && !quiet && cmeta_monotonic_ms() - started < 1000u) {
+      uint64_t started = monotonic_ms();
+      while (!status && !quiet && monotonic_ms() - started < 1000u) {
         status = cnet_datagram_quiescent(&f->datagram, &quiet);
         if (!status && !quiet)
           status = observe(f, 1u);
@@ -607,8 +607,8 @@ done:
     (void)cnet_dtls_abort(&f->dtls);
   if (f->external) {
     bool a = !f->datagram.impl, b = !f->neighbor.impl;
-    uint64_t start = cmeta_monotonic_ms();
-    while ((!a || !b) && cmeta_monotonic_ms() - start < 5000u) {
+    uint64_t start = monotonic_ms();
+    while ((!a || !b) && monotonic_ms() - start < 5000u) {
       int x = a ? 0 : cnet_datagram_stop_external(&f->datagram, &a),
           y = b ? 0 : cnet_datagram_stop_external(&f->neighbor, &b);
       if ((x && x != SALTS_EBUSY) || (y && y != SALTS_EBUSY))
@@ -616,7 +616,7 @@ done:
       (void)observe(f, 1u);
       if (f->registered) {
         size_t events;
-        (void)cnet_dtls_advance(&f->dtls, cmeta_monotonic_ms(), &events);
+        (void)cnet_dtls_advance(&f->dtls, monotonic_ms(), &events);
       }
     }
     if (!a || !b)
@@ -625,7 +625,7 @@ done:
     result = 3;
   if (f->registered) {
     size_t events;
-    (void)cnet_dtls_advance(&f->dtls, cmeta_monotonic_ms(), &events);
+    (void)cnet_dtls_advance(&f->dtls, monotonic_ms(), &events);
     if (cnet_dtls_destroy(&f->dtls))
       result = 3;
   }

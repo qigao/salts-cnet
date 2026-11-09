@@ -1,0 +1,8 @@
+{
+  "schema": 1,
+  "source": {
+    "kind": "url",
+    "url": "https://github.com/qigao/vcpkg-cache/releases/download/v0.1.2/installed-qigao-x64-windows-llvm-mingw.tar.xz"
+  },
+  "sha256": "34bc670c3637fa30eba1ba87f1bb4d7e6728dd50b9b6ea2362be17d761759a69"
+}

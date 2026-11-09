@@ -15,7 +15,7 @@ Salts::Core [C11 base byte views / future buffer/error]
   ├── Unicode 17 ──> IDNA UTS #46
   ├── Serial [POSIX / Win32, SPSC]
   ├── ASN1 ──> Crypto [locked local native objects, one static archive] ──> CNet
-  └── optional Media (Capture / Playback)
+  └── optional USB / Capture / Playback
 ```
 
 **No arrow points from SaltsCore to a Salts or SaltsUtils package.**
@@ -36,24 +36,117 @@ reflection. Source/API renaming is not itself a reason to discard ABI tests.
   remain only for existing binary/API shape, with no Reflection dependency.
 - `qigao/salts/coroutine` and `native-io`: independent native executors and
   OS completion/readiness mechanisms (future qualification).
-- `qigao/salts/cnet` plus `uri` and WebSocket parser: native transport stack
+- `qigao/salts/cnet` plus `cnet/uri` and WebSocket parser: native transport stack
   moves to Core after NativeIO; CMeta/ACE interface tests stay in Salts.
 - `qigao/salts/unicode` and `idna`: all generated Unicode 17.0.0 source tables,
   re2c tool/data hash gates, NFC, Bidi, casefold and IDNA tests. Existing
   `vstr` is `CMETA_STRUCT`-defined: replace reflection-based declaration with
   plain C11 view **while proving byte-exact field layout and call ABI**.
 - `qigao/salts-utils/crypto`: Ed448 with private libecc and native CSPRNG.
-- `qigao/salts-utils/cflow-fs`: copy native watch backends; replace CFlow worker
-  executor with a native Core bounded worker. The `fs_watch_publisher` remains
+- `qigao/salts-utils/cflow-fs`: native watch backends and the bounded metadata
+  service now live in `fs/`, using Core Concurrency instead of the CFlow worker
+  executor. The `fs_watch_publisher` remains
   an optional **downstream Salts/CFlow adapter**, not a Core dependency.
-- `qigao/salts-utils/cflow-process`: keep native process owner and pipes;
-  reimplement IOCP/epoll/kqueue admission/completion independent of CFlow
-  IO Actor before retiring its old wrapper.
+- `qigao/salts-utils/cflow-process`: native process pipes and the bounded Shell
+  facade now live in `process/`; NativeIO drives their IOCP/epoll/io_uring/kqueue
+  admission and completion independently of CFlow IO Actor. The existing Core
+  process owner remains the single process lifecycle authority.
+- `qigao/salts-utils/cflow-usb`: current libusb event-thread and callback
+  queue are already independent of CFlow's Actor; remove unnecessary CFlow
+  linkage and remap thread/error dependencies to Core.
 - `qigao/salts-utils/salts_serial`: migrate POSIX/Win32 backends, SPSC ring,
   pump, and events. Replace CSTL `vec_t` with private counted port snapshot,
   preserving deep copy, ownership and allocation-failure semantics.
 - `qigao/salts-utils/capture` and `playback`: platform-optional modules.
   Never compile multiple miniaudio implementations into one binary image.
+
+## Native FS / Process asynchronous extraction
+
+The metadata service, native watchers, asynchronous process pipes and Shell
+come from `salts-utils-release-rc9` commit
+`234c4a73bcefc455d48b3550ec2142d7ff1c3f5a` (`cflow-fs/`, `cflow-process/`).
+Regular-file ownership follows `salts` commit
+`9df83cfc6885071f00b60d5c61cdb16e67857d86`, `cflow/src/io_file.c` and its native
+file backends. These are source references, not runtime/build dependencies.
+The extraction retains native code and behavioral tests and replaces the
+CFlow executor, Actor, lease and acknowledgment plumbing with Core ownership.
+
+| Capability / public header | State owner and execution |
+|---|---|
+| Sync filesystem / `fs.h` | Existing descriptor/root capability owner; API preserved |
+| Metadata and paths / `fs_async.h` | FS fixed slots and copied paths; bounded Concurrency thread pool |
+| Directory events / `fs_watch.h` | FS bounded queue; native Windows/inotify/FSEvents publication |
+| Regular-file data / `fs_file.h` | FS handle and private/injected shared runtime; NativeIO completion owner |
+| Async standard streams / `process_async.h` | Process owns three pipes; NativeIO driver owns request slots |
+| Command execution / `shell.h` | Process owns copied input, bounded output and chunk buffers |
+
+The same `native_io_driver` serves files and process pipes. A mutex protects
+MPSC admission/cancellation; one owner submits to the selected native backend,
+observes terminals and invokes callbacks. Fixed slot and completion capacities
+are allocated at initialization. Successful admission commits one nonzero ID
+and a buffer borrow; rejection clears the ID and retains nothing. An accepted
+native submission failure is delivered as `FAILED`. Request IDs never wrap.
+Callbacks release their borrow only after returning. A delivering slot remains
+occupied, and driver reentry or premature destruction returns `EBUSY`.
+Concurrent reads must not share writable storage; write storage must remain
+immutable until callback return. These APIs do not schedule CFlow tasks or
+acquire an Executor implicitly.
+
+| Target | File data backend | Process pipe backend | Directory watch |
+|---|---|---|---|
+| Windows | IOCP offset read/write | IOCP | Overlapped `ReadDirectoryChangesW` |
+| Linux | io_uring offset read/write/fsync | Explicit epoll or io_uring | inotify |
+| macOS | Darwin AIO offset read/write/fsync | kqueue | FSEvents |
+| Android | io_uring, subject to kernel/policy admission | epoll or io_uring | Explicit `ENOTSUP` |
+| iOS / supported BSD | Explicit `ENOTSUP` for file data | kqueue | Explicit `ENOTSUP` |
+
+Backend availability is checked against the target build. Initialization and
+native I/O errors propagate; no worker/backend fallback is selected. IOCP
+`FILE_FLUSH` returns `ENOTSUP`: blocking `FlushFileBuffers` is not presented as
+native asynchronous I/O. On Linux/macOS, wait for writes to complete before
+requesting flush when durability is required; flush is not a fence across
+concurrent producers. Metadata operations remain explicit worker operations
+because their syscall contracts differ from regular-file data. File open and
+final handle close are synchronous boundaries. Darwin AIO observation uses
+native `aio_suspend` in at most 10 ms slices to bound control-wake delay;
+`aio_return` is the sole reclamation point, including after cancellation.
+
+Stop/join producers before lifecycle calls. Call `close`, continue `run_ready`
+until `is_quiescent`, then `destroy`. Cancellation is a request: a completed
+operation may win and retain its original terminal. Never recycle a buffer or
+close its endpoint merely because cancel returned success. Shared file runtimes
+outlive every attached file; file close cancels only that file's requests.
+Runtime close stops all admission and cancels all requests; runtime destruction
+also requires every file to be destroyed. Process close additionally terminates
+its Core-owned process tree and waits for the original owner to publish the
+terminal result. No second process state machine is introduced. Shell pumps
+partial I/O and EOF, reports the shared stdout/stderr output limit explicitly,
+and retains the bounded captured prefix on overflow.
+
+This composition reuses NativeIO completion ownership instead of copying a
+second IOCP/io_uring engine into FS/Process. Keeping CFlow Actor/Publisher in
+Core would introduce a reverse dependency; replacing every metadata operation
+with OS-specific async APIs would broaden the semantic change. A short mutex
+and fixed-array scans favor an auditable owner over another queue framework.
+The driver polls only when called; no scheduler/waker integration or performance
+improvement is claimed. Watch threads and the existing process monitor retain
+their native roles. `Salts::FS` publicly depends on Platform/NativeIO and
+privately on Concurrency; `Salts::Process` publicly depends on Platform/NativeIO
+and privately on Core for Shell's existing bounded `tstr` storage.
+
+Migration is additive to the synchronous FS/Process API. New headers use flat
+Core includes and `salts_*` symbols; CFlow request/lease types and Publisher/Actor
+wrappers remain downstream. Adding `offset` to `native_io_operation` changes
+its layout, so all NativeIO consumers must rebuild against this candidate SDK
+and zero-initialize descriptors. No published binary compatibility is claimed.
+Rollback requires a matched SDK and consumer rebuild, or use of the preserved
+synchronous APIs. Do not mix old/new NativeIO structures or link historical
+and Core module owners together.
+
+Formal tests stay in `fs/tests` and `process/tests`. Windows llvm-mingw qualifies
+this checkout locally; Linux/macOS execution and Android/iOS cross-builds remain
+separate release requirements. See [NATIVE-TESTING.md](NATIVE-TESTING.md) for
+commands, coverage and limitations.
 
 ## Nonnegotiable gates
 
@@ -63,8 +156,8 @@ reflection. Source/API renaming is not itself a reason to discard ABI tests.
    names are allowed solely as historical compatibility while implementing
    their functionality without reflection/actor runtime.
 2. **Lifetime correctness**: FS sandbox paths and watch event ownership;
-   Process cancellation, pipe drain, forced child-tree reaping;
-   Serial background pump join and SPSC
+   Process cancellation, pipe drain, forced child-tree reaping; USB device
+   removal and terminal acknowledgment; Serial background pump join and SPSC
    producer/consumer contract; Capture/Playback stop/unload.
 3. **Crypto**: remove incompatible GmSSL/libecc `sha256_*` global symbols and
    duplicate `get_random`; unique include guards; test real final-image
@@ -78,9 +171,6 @@ reflection. Source/API renaming is not itself a reason to discard ABI tests.
    Keep legacy implementations until coordinated migration passes.
 
 ## Current status
-
-The USB module and libusb dependency were removed on 2026-11-05.
-The SDK no longer exports `Salts::USB` or installs `cflow/usb.h`.
 
 **Draft migration candidate under qualification:** the default graph includes
 Core, Platform, Concurrency, Coroutine, NativeIO, ASN1, local static Crypto,

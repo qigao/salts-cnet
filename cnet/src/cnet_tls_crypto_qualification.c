@@ -14,7 +14,7 @@
 #include <crypto/tls_auth.h>
 #include <crypto/tls_peer.h>
 #include <crypto/tls_close.h>
-#include <error_codes.h>
+#include <core/error_codes.h>
 
 #include <stdatomic.h>
 #include <stdbool.h>

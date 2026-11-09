@@ -146,28 +146,28 @@ end:
   return status;
 }
 
-static int match_content(salts_asn1_reader *r, salts_crypto_sm2_cms_format f, unsigned type) {
+static int match_content(asn1_reader *r, salts_crypto_sm2_cms_format f, unsigned type) {
   uint8_t value[sizeof(gm_prefix)+1u];
   const uint8_t *prefix = f == SALTS_CRYPTO_SM2_CMS_RFC5652 ? rfc_prefix : gm_prefix;
   size_t n = f == SALTS_CRYPTO_SM2_CMS_RFC5652 ? sizeof(rfc_prefix) : sizeof(gm_prefix);
   memcpy(value,prefix,n); value[n++] = (uint8_t)type;
-  salts_asn1_tlv v;
+  asn1_tlv v;
   return take(r,0u,0u,6u,&v) && is_oid(&v,value,n);
 }
-static int version_one(salts_asn1_reader *r) {
-  salts_asn1_tlv v;
+static int version_one(asn1_reader *r) {
+  asn1_tlv v;
   return take(r,0u,0u,2u,&v) && v.content_size == 1u && v.content[0] == 1u;
 }
-static int parse_algorithm(salts_asn1_reader *r, int signature) {
-  salts_asn1_reader a; salts_asn1_tlv value;
+static int parse_algorithm(asn1_reader *r, int signature) {
+  asn1_reader a; asn1_tlv value;
   if (!enter(r,0u,16u,&a) || !take(&a,0u,0u,6u,&value)) return 0;
   if (signature ? (!is_oid(&value,sm2_oid,sizeof(sm2_oid)) && !is_oid(&value,sm2_sm3_oid,sizeof(sm2_sm3_oid)))
                 : !is_oid(&value,sm3_oid,sizeof(sm3_oid))) return 0;
   if (!done(&a) && (!take(&a,0u,0u,5u,&value) || value.content_size)) return 0;
   return done(&a);
 }
-static int parse_certificates(salts_asn1_reader *r, const salts_crypto_sm2_cms_verify_config *c) {
-  salts_asn1_reader set; salts_asn1_tlv cert;
+static int parse_certificates(asn1_reader *r, const salts_crypto_sm2_cms_verify_config *c) {
+  asn1_reader set; asn1_tlv cert;
   bool seen[SALTS_CRYPTO_SM2_TRUST_MAX_CHAIN] = {false};
   cms_span previous = {NULL,0u}; size_t count = 0u;
   if (!enter(r,2u,0u,&set)) return 0;
@@ -185,16 +185,16 @@ static int parse_certificates(salts_asn1_reader *r, const salts_crypto_sm2_cms_v
   }
   return count == c->chain_count;
 }
-static int parse_attributes(salts_asn1_reader *r, salts_crypto_sm2_cms_format f,
+static int parse_attributes(asn1_reader *r, salts_crypto_sm2_cms_format f,
     const void *content, size_t n, uint8_t encoded[CMS_ATTRIBUTES_MAX], size_t *encoded_size) {
   size_t start = r->offset;
-  salts_asn1_reader attrs, attribute, values; salts_asn1_tlv list, name, value;
+  asn1_reader attrs, attribute, values; asn1_tlv list, name, value;
   if (!take(r,2u,1u,0u,&list) || list.encoded_size > CMS_ATTRIBUTES_MAX ||
-      salts_asn1_reader_open_children(r,&list,&attrs) != SALTS_ASN1_OK) return 0;
+      asn1_reader_open_children(r,&list,&attrs) != SALTS_ASN1_OK) return 0;
   memcpy(encoded,r->data+start,list.encoded_size); encoded[0] = 0x31u; *encoded_size = list.encoded_size;
   /* IMPLICIT [0] is semantically SET OF; validate its canonical ordering using
    * the same ASN1 owner rather than re-encoding the signed attribute values. */
-  if (salts_asn1_validate(encoded,*encoded_size,SALTS_ASN1_DER) != SALTS_ASN1_OK) return 0;
+  if (asn1_validate(encoded,*encoded_size,SALTS_ASN1_DER) != SALTS_ASN1_OK) return 0;
   uint8_t digest[32]; unsigned seen = 0u;
   if (salts_crypto_sm3(content,n,digest) != SALTS_CRYPTO_OK) return 0;
   int ok = 0;
@@ -212,7 +212,7 @@ static int parse_attributes(salts_asn1_reader *r, salts_crypto_sm2_cms_format f,
           gmssl_secure_memcmp(value.content,digest,sizeof(digest))) goto end;
     } else {
       int64_t seconds;
-      if (salts_asn1_reader_next(&values,&value) != SALTS_ASN1_OK || !salts_crypto_x509_date(&value,&seconds)) goto end;
+      if (asn1_reader_next(&values,&value) != SALTS_ASN1_OK || !salts_crypto_x509_date(&value,&seconds)) goto end;
     }
     if (!done(&values)) goto end;
   }
@@ -248,8 +248,8 @@ int salts_crypto_sm2_cms_verify(const salts_crypto_sm2_cms_verify_config *c,
     const void *der, size_t size, const void *detached, size_t detached_size,
     void *out, size_t cap, size_t *written) {
   if (!verify_admitted(c,der,size,detached,detached_size,out,cap,written)) return SALTS_CRYPTO_EINVAL;
-  salts_asn1_reader outer, explicit_value, sd, digests, eci, content_reader, signers, signer, sid;
-  salts_asn1_tlv value;
+  asn1_reader outer, explicit_value, sd, digests, eci, content_reader, signers, signer, sid;
+  asn1_tlv value;
   cms_span content = {detached,detached_size};
   uint8_t attributes[CMS_ATTRIBUTES_MAX], signature[64] = {0}, public_key[65] = {0};
   size_t attribute_size = 0u;

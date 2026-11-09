@@ -1,5 +1,5 @@
 #include <cnet/destination_policy.h>
-#include <error_codes.h>
+#include <core/error_codes.h>
 
 int cnet_destination_validate(const cnet_destination_hint *endpoints, size_t count) {
   if (endpoints == NULL || count == 0u) return SALTS_EINVAL;

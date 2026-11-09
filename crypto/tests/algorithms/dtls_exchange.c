@@ -1,7 +1,6 @@
 #include "../../src/crypto_dtls_exchange.h"
 #include "../../src/crypto_dtls_secrets.h"
 #include <crypto/tls_cipher.h>
-#define TINYTEST_NO_MAIN
 #include <tinytest.h>
 #include <stdio.h>
 #include <stdlib.h>
