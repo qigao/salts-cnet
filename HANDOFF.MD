@@ -2045,3 +2045,22 @@
   validation; cross-platform/sanitizer qualification belongs to subsequent CI,
   and issue closure is not claimed. CBC storage integrity and private-arithmetic side channels remain
   separate gates. Root's unrelated housekeeping edits were untouched.
+
+### TLS resumed-certificate expiry failure observation, issue #276 (2026-11-09)
+
+- Combined CI #419 on 8af42629c62c5844ff31d1ac2dc01c7a01ffab9d passed
+  Windows ARM64/macOS x64 204/204 and all new AES/SCTP/DTLS tests. Windows
+  x64 failed TLS13 session resumption/expired at terminal_count == 1; the
+  peer reported no error. Root cause is unproven, not a demonstrated expiry
+  bypass: this assertion alone does not distinguish missing/duplicate terminal
+  notifications from an unexpected CONNECTED state.
+- Preserve the rejection assertion and add failure-only native connected,
+  terminal, failure, state/error/diagnostic counts plus UTC/elapsed samples.
+  The existing Go expiry peer records its NotAfter and actual handshake
+  start/end on failure. No keys, plaintext, validity relaxation, retry or
+  timeout change. Production validation already checks the cached chain at
+  resumed handshake completion; do not assume it is missing.
+- Complete native-release-user Windows x64 graph and the affected existing
+  CTest passed with observations (9.54s). TEMP/salts-276-observation.log.
+  This one successful run does not reproduce or repair #276. Keep the issue
+  open until the failing boundary and correction have formal evidence.
