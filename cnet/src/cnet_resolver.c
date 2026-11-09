@@ -421,7 +421,9 @@ int cnet_resolver_submit(cnet_resolver *resolver, const char *host, uint16_t por
   memset(out_query, 0, sizeof(*out_query));
   if (impl == NULL || host == NULL || port == 0u) return SALTS_EINVAL;
   if (socket_type != SOCK_STREAM && socket_type != SOCK_DGRAM) return SALTS_EAI_SOCKTYPE;
-  host_length = strnlen(host, CNET_RESOLVER_HOST_CAPACITY);
+  for (host_length = 0u; host_length < CNET_RESOLVER_HOST_CAPACITY; ++host_length) {
+    if (host[host_length] == '\0') break;
+  }
   if (host_length == 0u || host_length == CNET_RESOLVER_HOST_CAPACITY) return SALTS_ENAMETOOLONG;
 
   sync_mutex_lock(&impl->control_lock);

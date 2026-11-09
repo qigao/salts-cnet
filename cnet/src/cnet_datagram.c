@@ -20,6 +20,7 @@
 typedef SOCKET cnet_datagram_socket;
   #define CNET_DATAGRAM_INVALID_SOCKET INVALID_SOCKET
 #else
+  #include <arpa/inet.h>
   #include <errno.h>
   #include <netinet/in.h>
   #include <sys/socket.h>
