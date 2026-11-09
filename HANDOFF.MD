@@ -1993,3 +1993,20 @@
   Go 1.26.10 source confirms heap-owned wsaRsa.name/namelen in ReadFromInet4.
   Logs: TEMP/salts-219-go-udp-fix.log and
   TEMP/salts-219-go-peer-regression.log. Windows ARM64 qualification pending.
+
+### DTLS teardown neighbor requires both native terminals (2026-11-09)
+
+- CI #414 also failed macOS x64 saltscore.cnet_dtls_native in
+  TestDTLSNativeServer/external/missing: listener teardown stopped shared
+  backend. The test's progress loop stopped as soon as neighborSent advanced,
+  then asserted neighborReceived already equaled it. Native fixture receive()
+  and sent() independently increment those counters, and observe() may route
+  them in separate completion batches; local send never proves peer receipt.
+- Continue the existing bounded progress loop until both counters advance.
+  Require exactly one additional send and receive; report before/sent/received
+  values on failure. No poll-count increase, timeout change, sleep, production
+  routing change or dropped assertion. All bytes/backends retain their owners.
+- Existing CNet DTLS native plus Crypto DTLS client/server Pion CTests pass
+  with patched Go on Windows x64 (3/3, 12.68s), via native-release-user.
+  Log: TEMP/salts-219-dtls-terminal-regression.log. Exact-head macOS matrix is
+  still required; do not mark the earlier #414 failure as passed.
