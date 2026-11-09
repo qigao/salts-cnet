@@ -5,6 +5,7 @@
  */
 #include "capture.h"
 #include "capture_video_backend.h"
+#include "capture_video_frame.h"
 
 #if defined(__linux__) && !defined(__ANDROID__)
 
@@ -67,6 +68,8 @@ typedef struct {
     int framerate;
     int format;  /* turbo format: 0=I420, 1=NV12, 2=RGB24, 3=BGRA */
     uint32_t v4l2_pixfmt;  /* V4L2 pixel format */
+    size_t row_stride;
+    salts_video_frame_sink frame_sink;
 
     /* Conversion buffer if needed */
     uint8_t *convert_buf;
@@ -75,6 +78,11 @@ typedef struct {
     /* Parent capture */
     salts_capture_t *capture;
 } v4l2_ctx_t;
+
+salts_video_frame_sink *salts_video_platform_frame_sink(salts_capture_t *capture) {
+    if (!capture || capture->type != SALTS_CAPTURE_TYPE_VIDEO || !capture->platform_ctx) return NULL;
+    return &((v4l2_ctx_t *)capture->platform_ctx)->frame_sink;
+}
 
 static int xioctl(int fd, unsigned long request, void *arg) {
     int r;
@@ -171,20 +179,20 @@ static int video_native_modes_equal(const salts_video_native_mode_t *lhs,
 
 /* Simple YUYV to I420 conversion */
 static void yuyv_to_i420(const uint8_t *src, uint8_t *dst,
-                         int width, int height) {
-    int frame_size = width * height;
+                         int width, int height, size_t row_stride) {
+    size_t frame_size = (size_t)width * (size_t)height;
     uint8_t *y = dst;
     uint8_t *u = dst + frame_size;
     uint8_t *v = u + frame_size / 4;
 
     for (int j = 0; j < height; j++) {
         for (int i = 0; i < width; i += 2) {
-            int idx = (j * width + i) * 2;
-            y[j * width + i] = src[idx];
-            y[j * width + i + 1] = src[idx + 2];
+            size_t idx = (size_t)j * row_stride + (size_t)i * 2u;
+            y[(size_t)j * (size_t)width + (size_t)i] = src[idx];
+            y[(size_t)j * (size_t)width + (size_t)i + 1u] = src[idx + 2u];
 
             if (j % 2 == 0) {
-                int uv_idx = (j / 2) * (width / 2) + (i / 2);
+                size_t uv_idx = (size_t)(j / 2) * (size_t)(width / 2) + (size_t)(i / 2);
                 u[uv_idx] = src[idx + 1];
                 v[uv_idx] = src[idx + 3];
             }
@@ -284,8 +292,16 @@ static void *v4l2_capture_thread(void *arg) {
         /* Convert YUYV to I420 if needed */
         if (ctx->v4l2_pixfmt == V4L2_PIX_FMT_YUYV && ctx->format == 0) {
             if (ctx->convert_buf) {
+                if (ctx->row_stride < (size_t)ctx->width * 2u ||
+                    ctx->row_stride > SIZE_MAX / (size_t)ctx->height ||
+                    frame_len < ctx->row_stride * ((size_t)ctx->height - 1u) + (size_t)ctx->width * 2u) {
+                    capture->state = SALTS_CAPTURE_STATE_ERROR;
+                    if (capture->state_cb) capture->state_cb(capture, capture->state, capture->user_data);
+                    xioctl(ctx->fd, VIDIOC_QBUF, &buf);
+                    break;
+                }
                 yuyv_to_i420(frame_data, ctx->convert_buf,
-                             ctx->width, ctx->height);
+                             ctx->width, ctx->height, ctx->row_stride);
                 frame_data = ctx->convert_buf;
                 frame_len = ctx->convert_buf_size;
             }
@@ -294,16 +310,21 @@ static void *v4l2_capture_thread(void *arg) {
         uint64_t timestamp = get_timestamp_us();
 
         /* Deliver frame */
-        if (capture->video_cb) {
-            capture->video_cb(capture, frame_data, frame_len,
-                              ctx->width, ctx->height,
-                              timestamp, capture->user_data);
-        }
+        int delivery = SALTS_CAPTURE_OK;
+        if (salts_video_frame_has_callback(capture))
+            delivery = salts_video_frame_deliver(capture, frame_data, frame_len,
+                ctx->width, ctx->height, (salts_video_frame_format_t)ctx->format,
+                frame_data == ctx->convert_buf ? 0u : ctx->row_stride, 0, timestamp,
+                SALTS_VIDEO_FRAME_CLOCK_MONOTONIC,
+                ctx->format == SALTS_VIDEO_CAPTURE_FORMAT_RGB24 || ctx->format == SALTS_VIDEO_CAPTURE_FORMAT_BGRA
+                    ? SALTS_VIDEO_FRAME_MATRIX_RGB : SALTS_VIDEO_FRAME_MATRIX_UNKNOWN,
+                SALTS_VIDEO_FRAME_RANGE_UNKNOWN);
 
         /* Re-queue buffer */
         if (xioctl(ctx->fd, VIDIOC_QBUF, &buf) == -1) {
             break;
         }
+        if (delivery != SALTS_CAPTURE_OK) break;
     }
 
     return NULL;
@@ -381,6 +402,8 @@ static int v4l2_backend_init_exact(
     }
 
     ctx->v4l2_pixfmt = fmt.fmt.pix.pixelformat;
+    ctx->row_stride = fmt.fmt.pix.bytesperline;
+    ctx->frame_sink.unsupported = !ctx->row_stride && ctx->format != SALTS_VIDEO_CAPTURE_FORMAT_MJPEG;
     ctx->width = fmt.fmt.pix.width;
     ctx->height = fmt.fmt.pix.height;
 

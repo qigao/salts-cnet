@@ -5,6 +5,27 @@
 
 static const salts_camera_control_t auto_exposure = SALTS_CAMERA_CONTROL_AUTO_EXPOSURE;
 
+static unsigned frame_legacy_count, frame_v2_count, frame_error_count;
+static const uint8_t *frame_expected_data;
+static void legacy_frame(salts_capture_t *capture, const uint8_t *data, size_t size,
+    int w, int h, uint64_t timestamp, void *user) {
+    (void)capture; (void)data; (void)size; (void)w; (void)h; (void)timestamp;
+    ++*(unsigned *)user;
+}
+static void described_frame(salts_capture_t *capture, const salts_video_frame_v2_t *frame, void *user) {
+    (void)capture;
+    ++*(unsigned *)user;
+    check_equal(frame->planes[0].data, frame_expected_data);
+    check_equal(frame->planes[0].size, 16u);
+    check_equal(frame->format, SALTS_VIDEO_FRAME_BGRA);
+    check_equal(frame->clock, SALTS_VIDEO_FRAME_CLOCK_MF_PRESENTATION);
+}
+static void frame_error(salts_capture_t *capture, salts_capture_state_t state, void *user) {
+    (void)capture; (void)user;
+    check_equal(state, SALTS_CAPTURE_STATE_ERROR);
+    ++frame_error_count;
+}
+
 typedef struct {
     IAMCameraControl iface;
     long exposure;
@@ -198,5 +219,38 @@ suite("Windows automatic exposure") {
         check_equal(salts_capture_start(NULL), -1);
         check_equal(salts_playback_get_state(NULL), SALTS_PLAYBACK_STATE_ERROR);
         check_equal(salts_playback_start(NULL), SALTS_PLAYBACK_ERR_FORMAT);
+    }
+
+    it("delivers a borrowed V2 frame and restores the untouched legacy registration") {
+        uint8_t bytes[16] = {0};
+        frame_legacy_count = frame_v2_count = 0u;
+        frame_expected_data = bytes;
+        context.width = context.height = 2; context.format = SALTS_VIDEO_CAPTURE_FORMAT_BGRA;
+        context.source_stride = 8;
+        camera.video_cb = legacy_frame; camera.user_data = &frame_legacy_count;
+        check_equal(salts_video_capture_set_callback_v2(&camera, described_frame, &frame_v2_count), SALTS_CAPTURE_OK);
+        camera.state = SALTS_CAPTURE_STATE_RUNNING;
+        check_equal(mf_frame_deliver(&camera, &context, bytes, sizeof(bytes), 42u), SALTS_CAPTURE_OK);
+        check_equal(frame_v2_count, 1u); check_equal(frame_legacy_count, 0u);
+        check_equal(salts_video_capture_set_callback_v2(&camera, NULL, NULL), SALTS_CAPTURE_ERR_BUSY);
+        camera.state = SALTS_CAPTURE_STATE_STOPPED;
+        check_equal(salts_video_capture_set_callback_v2(&camera, NULL, NULL), SALTS_CAPTURE_OK);
+        check_equal(camera.user_data, &frame_legacy_count);
+        check_equal(mf_frame_deliver(&camera, &context, bytes, sizeof(bytes), 43u), SALTS_CAPTURE_OK);
+        check_equal(frame_legacy_count, 1u); check_equal(frame_v2_count, 1u);
+    }
+    it("rejects an unsupported V2 layout and reports invalid frames once") {
+        uint8_t bytes[16] = {0};
+        frame_v2_count = frame_error_count = 0u; frame_expected_data = bytes;
+        context.width = context.height = 2; context.format = SALTS_VIDEO_CAPTURE_FORMAT_BGRA;
+        context.source_stride = 8; context.frame_sink.unsupported = 1;
+        check_equal(salts_video_capture_set_callback_v2(&camera, described_frame, &frame_v2_count), SALTS_CAPTURE_ERR_UNSUPPORTED);
+        context.frame_sink.unsupported = 0; camera.state_cb = frame_error;
+        check_equal(salts_video_capture_set_callback_v2(&camera, described_frame, &frame_v2_count), SALTS_CAPTURE_OK);
+        camera.state = SALTS_CAPTURE_STATE_RUNNING;
+        check_equal(mf_frame_deliver(&camera, &context, bytes, 1u, 0u), SALTS_CAPTURE_ERR_FORMAT);
+        check_equal(camera.state, SALTS_CAPTURE_STATE_ERROR);
+        check_equal(mf_frame_deliver(&camera, &context, bytes, sizeof(bytes), 0u), SALTS_CAPTURE_ERR_FORMAT);
+        check_equal(frame_error_count, 1u); check_equal(frame_v2_count, 0u);
     }
 }

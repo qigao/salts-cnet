@@ -10,6 +10,7 @@
 #import "capture_ios_guard.h"
 #include "capture.h"
 #include "capture_video_ios_backend.h"
+#include "capture_video_frame.h"
 #include <limits.h>
 #include <stdlib.h>
 #include <string.h>
@@ -47,8 +48,14 @@ typedef struct {
     int width;
     int height;
     int fps;
+    salts_video_frame_sink frame_sink;
     SaltsCaptureGuard *guard;
 } ios_video_capture_t;
+
+salts_video_frame_sink *salts_video_platform_frame_sink(salts_capture_t *capture) {
+    if (!capture || capture->type != SALTS_CAPTURE_TYPE_VIDEO || !capture->platform_ctx) return NULL;
+    return &((ios_video_capture_t *)capture)->frame_sink;
+}
 
 static uint64_t now_us(void) {
     return (uint64_t)([[NSDate date] timeIntervalSince1970] * 1000000.0);
@@ -238,7 +245,7 @@ int ios_video_device_create_capture(
             ios_video_capture_t *cap_ref =
                 (ios_video_capture_t *)[guard acquireCapture];
             if (!cap_ref) return;
-            if (!cap_ref->base.video_cb) {
+            if (!salts_video_frame_has_callback(&cap_ref->base)) {
                 [guard releaseCapture];
                 return;
             }
@@ -251,9 +258,10 @@ int ios_video_device_create_capture(
             uint8_t *frame = copy_nv12_frame(
                 cap_ref, pixel_buffer, &width, &height, &len);
             if (frame) {
-                cap_ref->base.video_cb((salts_capture_t *)cap_ref, frame, len,
-                                       width, height, now_us(),
-                                       cap_ref->base.user_data);
+                salts_video_frame_deliver(&cap_ref->base, frame, len, width, height,
+                    SALTS_VIDEO_FRAME_NV12, (size_t)width, 0, now_us(),
+                    SALTS_VIDEO_FRAME_CLOCK_UNIX, SALTS_VIDEO_FRAME_MATRIX_UNKNOWN,
+                    SALTS_VIDEO_FRAME_RANGE_FULL);
             }
             CVPixelBufferUnlockBaseAddress(pixel_buffer,
                                            kCVPixelBufferLock_ReadOnly);

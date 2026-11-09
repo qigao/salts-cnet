@@ -11,6 +11,7 @@ endif()
 
 add_library(salts_media STATIC
   capture/src/capture_video.c
+  capture/src/capture_video_frame.c
   capture/src/miniaudio_impl.c
   playback/src/playback_buffer.c
   playback/src/salts_playback.c)
