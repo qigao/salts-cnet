@@ -1,0 +1,8 @@
+{
+  "schema": 1,
+  "source": {
+    "kind": "url",
+    "url": "https://github.com/qigao/vcpkg-cache/releases/download/v0.1.2/installed-x64-windows.tar.xz"
+  },
+  "sha256": "34b7aeec28e1f5522ead55498d85633a0e475dbdcdd4882f3c5fdba63d1a3355"
+}

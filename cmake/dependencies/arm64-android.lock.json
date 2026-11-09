@@ -1,0 +1,8 @@
+{
+  "schema": 1,
+  "source": {
+    "kind": "url",
+    "url": "https://github.com/qigao/vcpkg-cache/releases/download/v0.1.2/installed-arm64-android.tar.xz"
+  },
+  "sha256": "aef8ddbf41d6a9a34e56a94992008fefcfe502be28b2e8b2da682a8f2a399cf5"
+}

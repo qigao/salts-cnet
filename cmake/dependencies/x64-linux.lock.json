@@ -1,0 +1,8 @@
+{
+  "schema": 1,
+  "source": {
+    "kind": "url",
+    "url": "https://github.com/qigao/vcpkg-cache/releases/download/v0.1.2/installed-x64-linux.tar.xz"
+  },
+  "sha256": "f9b8ca57488c7426508b1a0e6d453eba3a9475468844044ad596905ca472c3a0"
+}

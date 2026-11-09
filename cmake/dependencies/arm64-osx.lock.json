@@ -1,0 +1,8 @@
+{
+  "schema": 1,
+  "source": {
+    "kind": "url",
+    "url": "https://github.com/qigao/vcpkg-cache/releases/download/v0.1.2/installed-arm64-osx.tar.xz"
+  },
+  "sha256": "c078193387c94dd8ae5bb8bf0c89660b7b5bfcebbe52fcd4dd70d27f7f0206ac"
+}
