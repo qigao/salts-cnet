@@ -2,7 +2,7 @@
  * digest, HMAC, PBES2 and key binding belong to the pinned GmSSL provider. */
 #include "crypto_tls_credentials.h"
 #include "crypto_internal.h"
-#include <salts/asn1.h>
+#include <asn1.h>
 #include <gmssl/hmac.h>
 #include <gmssl/mem.h>
 #include <gmssl/x509_cer.h>

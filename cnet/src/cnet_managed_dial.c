@@ -2,8 +2,8 @@
 #include "cnet_manager_internal.h"
 #include "cnet_reuse.h"
 #include <cnet/managed_dial.h>
-#include <salts/clock.h>
-#include <salts/error_codes.h>
+#include <core/clock.h>
+#include <core/error_codes.h>
 #include <threads/threads.h>
 
 #include <stdint.h>

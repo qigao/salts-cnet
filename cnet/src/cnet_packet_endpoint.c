@@ -9,7 +9,7 @@
 #endif
 
 #include <monocypher.h>
-#include <salts/clock.h>
+#include <core/clock.h>
 
 #include <limits.h>
 #include <stdlib.h>

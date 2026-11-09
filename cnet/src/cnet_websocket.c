@@ -2,8 +2,8 @@
 
 #include "websocket_frame_parser.h"
 
-#include <salts/error_codes.h>
-#include <salts/platform.h>
+#include <core/error_codes.h>
+#include <core/platform.h>
 
 #include <limits.h>
 #include <stdlib.h>

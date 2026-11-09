@@ -32,9 +32,9 @@
   C++ process-API CTests passed 2/2, then the normal install preset succeeded.
   Local acceptance exercised no physical camera or Android device. Linux,
   macOS, ARM64, Android and sanitizer execution on this split remain CI gates.
-- CI requires a qualified SaltsBase producer artifact for its current master
-  and the selected RID. No older artifact, missing module/test skip or automatic
-  retry is allowed. This workflow has not been executed for the local split.
+- Before the first public Base release, CI selected exact-master producer
+  artifacts. The released-SDK integration below supersedes that restore path;
+  the no-fallback/no-skip/no-retry boundary remains unchanged.
 
 - The extracted foundation also retains strong Disruptor registration CAS and
   NativeIO bootstrap cancellation status publication, with the Core regression.
@@ -44,3 +44,33 @@
   and its SDK was installed before the final network run (101/101, 62.99s).
   The bootstrap callback follows the executor skill's accepted-task run-or-cancel
   and borrowed-argument lifetime contract. Initial failures remain in TEMP.
+
+## SaltsBase 0.1.0 release consumption
+
+- Release: https://github.com/qigao/salts-base/releases/tag/v0.1.0,
+  source 40afa9a3caf5c481a909251c1ba60210fce02484, producer CI 42603250304.
+  The release contains the public accept surface, strong registration CAS and
+  bootstrap cancellation repair; do not reapply old draft patches to the SDK.
+- The released namespace differs from the checkout used for the initial split:
+  Core headers are `core/*.h`; ASN1 is `asn1.h` / `asn1_value.h`; coroutine
+  headers remain `salts/coro_*.h`. Consumers were updated directly; no shim or
+  alternate provider was added. URI no longer requires a local re2c tool root.
+- The Windows LLVM-MinGW tar and manifest were checked against GitHub release
+  asset digests; the tar also matches its manifest size/hash. The tested tar's
+  SHA-256 is a6fa28ce6b44c37df306dd4cada8b54db1b91fae0bf795592183081459330671.
+  Local `SALTS_BASE_ROOT` now names that extracted release in ignored build/.
+- Reproducible validation with the existing Windows user preset/developer shell:
+  `cmake --fresh --preset native-release-user`, complete `cmake --build
+  --preset native-release-user --parallel 8`, `ctest --preset native-release-user
+  --parallel 4 --output-on-failure`, normal `install-native-release-user`.
+  Complete C11/C++17 graph built; 101/101 CTests passed in 65.17s; install passed.
+  Logs: TEMP/salts-base-release-{configure,build,tests,install}.log.
+- CI now resolves the latest stable release, verifies its manifest's API digest
+  and the selected SDK hash, then uses safe tar extraction. The minimum CMake
+  dependency is 0.1.0; the resolver does not freeze future patch releases.
+  PowerShell/YAML syntax was reviewed; the whole new hosted workflow was not run.
+- 0.1.0 has seven platform/compiler SDKs. It has no Windows ARM64, Linux ARM64
+  or macOS x64 asset. Existing network matrix lanes are retained and report
+  this explicitly instead of selecting another architecture or skipping tests.
+  Linux sanitizer lanes instrument the network graph with a released Clang
+  dependency; that does not establish sanitizer qualification of the binary SDK.

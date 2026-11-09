@@ -22,7 +22,7 @@ are built only with their module's tests. The SCTP public headers are
 
 ## Dependencies and ownership
 
-Set `SALTS_BASE_ROOT` to the matching installed SaltsBase SDK. Configuration
+Set `SALTS_BASE_ROOT` to a matching released SaltsBase SDK (0.1.0 or newer). Configuration
 uses only that root and fails if the package or its required components are
 missing. Core thread, memory and IPC calls use SaltsBase's current public names
 and headers; no compatibility aliases or private source paths are added.
@@ -65,11 +65,23 @@ profiles remain in the user presets. CI configures the complete graph, builds
 it without target filtering, and runs the formal tests through CTest. Android
 is build-only unless an explicit device runner is provided.
 
-CI resolves SaltsBase master and requires a successful producer workflow for
-that exact commit and a matching RID SDK artifact. Missing producer qualification
-or an unavailable RID is an error; it does not select an older SDK or skip a
-platform. The producer must include the public accept header before this split
-can qualify in CI. A release SDK remains a separate package from SaltsBase.
+CI resolves the latest stable [SaltsBase release](https://github.com/qigao/salts-base/releases/latest).
+It checks the release API's manifest digest, selects the exact platform/compiler
+entry, checks the archive SHA-256 and extracts the SDK with Python's safe data
+filter. The manifest records source and producer-CI provenance. It does not
+require a build of moving master or consume expiring workflow artifacts.
+
+Release 0.1.0 provides Windows x64 MSVC/LLVM-MinGW, Linux x64 Clang/GCC,
+macOS ARM64, and Android arm64/x64 SDKs. It includes the public accept header
+and the retained startup repairs. Its Core headers use `<core/...>`, ASN1 uses
+`<asn1.h>` and `<asn1_value.h>`, and coroutine headers use `<salts/coro_*.h>`.
+Consumers use these public headers directly without draft-layout aliases.
+
+The existing Windows ARM64, Linux ARM64 and macOS x64 qualification lanes have
+no matching SDK in 0.1.0. They fail with an explicit missing-platform error;
+they do not select another architecture or skip tests. The sanitizer lanes use
+the released Linux x64 Clang foundation and instrument this network graph;
+that does not qualify the prebuilt foundation itself under sanitizers.
 
 ## Integration and rollback
 

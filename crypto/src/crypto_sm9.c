@@ -1,7 +1,7 @@
 #include <crypto/sm9.h>
 #include <crypto/sm9_exchange.h>
 #include <crypto/sm3.h>
-#include <salts/asn1.h>
+#include <asn1.h>
 #include "crypto_internal.h"
 #include <gmssl/sm9.h>
 #include <string.h>

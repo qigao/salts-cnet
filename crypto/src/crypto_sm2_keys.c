@@ -2,7 +2,7 @@
 #include <crypto/sm2.h>
 #include <crypto/sm3.h>
 #include <crypto/sm4.h>
-#include <salts/asn1.h>
+#include <asn1.h>
 #include <gmssl/sm2.h>
 #include <gmssl/rand.h>
 #include <gmssl/aes.h>

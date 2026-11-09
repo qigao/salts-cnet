@@ -7,8 +7,8 @@
 #include "m6_shared_owner.h"
 #include <memory/buffer.h>
 #include <threads/threads.h>
-#include <salts/clock.h>
-#include <salts/error_codes.h>
+#include <core/clock.h>
+#include <core/error_codes.h>
 
 #include <stdint.h>
 #include <stdio.h>

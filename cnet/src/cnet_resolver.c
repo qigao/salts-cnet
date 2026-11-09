@@ -4,7 +4,7 @@
 
 #include <ares.h>
 #include <cnet/name_lookup.h>
-#include <salts/clock.h>
+#include <core/clock.h>
 #include <stdatomic.h>
 #include <threads/threads.h>
 

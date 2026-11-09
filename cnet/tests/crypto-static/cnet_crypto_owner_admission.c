@@ -5,7 +5,7 @@
 #include "cnet_tls.h" /* canonical private CNet hostname capacity */
 #include <crypto/tls_ext.h>
 #include <crypto/tls_auth.h>
-#include <salts/error_codes.h>
+#include <core/error_codes.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>

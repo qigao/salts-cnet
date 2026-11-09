@@ -1,8 +1,8 @@
 /* Formal SCTP-over-production-DTLS host. One bounded peer table, one socket,
  * one NativeIO observer; only public CNet/Crypto/SCTP APIs. */
-#include <salts/clock.h>
+#include <core/clock.h>
 #include <sctp_dtls.h>
-#include <salts/platform.h>
+#include <core/platform.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>

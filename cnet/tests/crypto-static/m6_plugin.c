@@ -5,7 +5,7 @@
 #include "m6_shared_owner.h"
 #include <memory/buffer.h>
 #include <threads/threads.h>
-#include <salts/error_codes.h>
+#include <core/error_codes.h>
 
 #if defined(_WIN32)
 #define M6_PLUGIN_EXPORT __declspec(dllexport)

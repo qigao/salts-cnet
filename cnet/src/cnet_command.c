@@ -3,7 +3,7 @@
 
 #include <memory/buffer.h>
 #if defined(CNET_INTERNAL_PROFILING)
-  #include <salts/clock.h>
+  #include <core/clock.h>
 #endif
 
 #include <stdbool.h>

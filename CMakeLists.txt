@@ -32,7 +32,7 @@ if("$ENV{SALTS_BASE_ROOT}" STREQUAL "")
   message(FATAL_ERROR "SALTS_BASE_ROOT must name the matching installed SaltsBase SDK")
 endif()
 unset(SaltsBase_DIR CACHE)
-find_package(SaltsBase CONFIG REQUIRED PATHS "$ENV{SALTS_BASE_ROOT}" NO_DEFAULT_PATH)
+find_package(SaltsBase 0.1.0 CONFIG REQUIRED PATHS "$ENV{SALTS_BASE_ROOT}" NO_DEFAULT_PATH)
 find_package(GmSSL CONFIG REQUIRED)
 
 add_subdirectory(vendor)

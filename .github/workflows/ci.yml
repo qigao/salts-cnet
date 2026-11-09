@@ -36,7 +36,6 @@ on:
 permissions:
   contents: read
   packages: read
-  actions: read
 
 concurrency:
   group: saltscore-ci-${{ github.event.pull_request.number || github.ref }}
@@ -105,20 +104,40 @@ jobs:
           restore-packages: "false"
           token: ${{ github.token }}
 
-      - name: Restore the exact qualified SaltsBase SDK
+      - uses: actions/setup-python@v5
+        id: test-python
+        with:
+          python-version: '3.12'
+
+      - name: Restore the latest released SaltsBase SDK
         shell: pwsh
         env:
           GH_TOKEN: ${{ secrets.VCPKG_CACHE_READ_TOKEN || github.token }}
           RID: ${{ matrix.rid }}
         run: |
           $ErrorActionPreference = 'Stop'
-          $sha = & gh api repos/qigao/salts-base/commits/master --jq .sha
+          $reply = & gh api repos/qigao/salts-base/releases/latest
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          $reply = & gh api "repos/qigao/salts-base/actions/workflows/native-ci.yml/runs?head_sha=$sha&status=success&per_page=1"
+          $release = $reply | ConvertFrom-Json
+          $stableTag = $release.tag_name -match '^v(\d+\.\d+\.\d+)$'
+          if ($release.draft -or $release.prerelease -or -not $stableTag) {
+            throw 'A stable SaltsBase semantic-version release is required'
+          }
+          $version = $Matches[1]
+          $manifestName = "salts-base-$version-manifest.json"
+          $manifestAsset = @($release.assets | Where-Object name -eq $manifestName)
+          if ($manifestAsset.Count -ne 1) { throw "Release $($release.tag_name) must provide one $manifestName" }
+          $download = Join-Path $env:RUNNER_TEMP "salts-base-download-$env:RID"
+          & gh release download $release.tag_name --repo qigao/salts-base --pattern $manifestName --dir $download
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          $runs = ($reply | ConvertFrom-Json).workflow_runs
-          if ($runs.Count -eq 0) { throw "SaltsBase master $sha has no successful producer CI; an older SDK must not be substituted" }
-          $run = $runs[0]
+          $manifestFile = Join-Path $download $manifestName
+          $manifestHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $manifestFile).Hash.ToLowerInvariant()
+          if ("sha256:$manifestHash" -cne $manifestAsset[0].digest) { throw 'SaltsBase release manifest digest mismatch' }
+          $manifest = Get-Content -LiteralPath $manifestFile -Raw | ConvertFrom-Json
+          if ($manifest.schemaVersion -ne 1 -or $manifest.name -cne 'SaltsBase' -or
+              $manifest.repository -cne 'https://github.com/qigao/salts-base' -or
+              $manifest.version -cne $version -or $manifest.tag -cne $release.tag_name -or
+              $manifest.ci.conclusion -cne 'success') { throw 'Invalid or unqualified SaltsBase release manifest' }
           $profiles = @{
             'windows-x64'='windows-llvm-mingw-x64'; 'windows-arm64'='windows-llvm-mingw-arm64'
             'linux-x64'='linux-clang-x64'; 'linux-arm64'='linux-clang-arm64'
@@ -126,19 +145,29 @@ jobs:
             'macos-x64'='macos-clang-x64'; 'macos-arm64'='macos-clang-arm64'
             'android-x64'='android-x64'; 'android-arm64'='android-arm64'
           }
-          $artifact = "salts-base-$($profiles[$env:RID])-$sha-$($run.run_attempt)"
-          $download = Join-Path $env:RUNNER_TEMP "salts-base-download-$env:RID"
-          & gh run download $run.id --repo qigao/salts-base --name $artifact --dir $download
+          $profile = $profiles[$env:RID]
+          $sdk = @($manifest.sdks | Where-Object platform -eq $profile)
+          if ($sdk.Count -ne 1) { throw "SaltsBase $version has no SDK for $profile; this platform remains unqualified" }
+          $sdk = $sdk[0]
+          if ($sdk.file -cne "salts-base-$version-$profile.tar") { throw 'Unexpected SaltsBase archive name' }
+          & gh release download $release.tag_name --repo qigao/salts-base --pattern $sdk.file --dir $download
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $archive = Join-Path $download $sdk.file
+          if ((Get-Item -LiteralPath $archive).Length -ne $sdk.sizeBytes -or
+              (Get-FileHash -Algorithm SHA256 -LiteralPath $archive).Hash.ToLowerInvariant() -cne $sdk.sha256) {
+            throw 'SaltsBase SDK archive size or SHA-256 mismatch'
+          }
           $sdkRoot = Join-Path $env:RUNNER_TEMP "salts-base-sdk-$env:RID"
           New-Item -ItemType Directory -Path $sdkRoot | Out-Null
-          Push-Location $sdkRoot
-          try {
-            & cmake -E tar xf "$download/salts-base-sdk.tar"
-            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          } finally { Pop-Location }
+          $extract = @'
+          import sys, tarfile
+          with tarfile.open(sys.argv[1]) as archive:
+              archive.extractall(sys.argv[2], filter="data")
+          '@
+          $extract | python - $archive $sdkRoot
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           "SALTS_BASE_ROOT=$($sdkRoot.Replace('\', '/'))" >> $env:GITHUB_ENV
-          "SaltsBase commit: $sha; producer run: $($run.id); artifact: $artifact" >> $env:GITHUB_STEP_SUMMARY
+          "SaltsBase release: $version; source: $($manifest.commit); producer CI: $($manifest.ci.runId); SDK: $profile; SHA-256: $($sdk.sha256)" >> $env:GITHUB_STEP_SUMMARY
 
       - name: Locate Visual Studio developer environment
         if: runner.os == 'Windows'
@@ -153,12 +182,6 @@ jobs:
         with:
           go-version-file: cnet/tests/tickets/go.mod
           cache: false
-
-      - uses: actions/setup-python@v5
-        id: test-python
-        if: matrix.android_abi == ''
-        with:
-          python-version: '3.12'
 
       - name: Install formal TLS test fixture dependency
         if: matrix.android_abi == ''

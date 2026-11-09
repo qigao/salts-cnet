@@ -1,7 +1,7 @@
 #ifndef CNET_CNET_H
 #define CNET_CNET_H
 
-#include <salts/error_codes.h>
+#include <core/error_codes.h>
 #include <native_io.h>
 #include <cnet/resources.h>
 #include <memory/buffer.h>

@@ -3,7 +3,7 @@
 #include "cnet_module.h"
 #include "cnet_transport.h"
 
-#include <salts/clock.h>
+#include <core/clock.h>
 #include <threads/threads.h>
 
 #include <limits.h>

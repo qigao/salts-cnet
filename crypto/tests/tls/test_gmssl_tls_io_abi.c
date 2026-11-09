@@ -16,9 +16,9 @@
 #include <string.h>
 #include <stdlib.h>
 #include <native_io.h>
-#include <salts/clock.h>
+#include <core/clock.h>
 #include <memory/buffer.h>
-#include <salts/error_codes.h>
+#include <core/error_codes.h>
 #include <threads/threads.h>
 #if defined(_WIN32)
 #include <winsock2.h>

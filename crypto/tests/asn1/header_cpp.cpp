@@ -1,5 +1,5 @@
-#include <salts/asn1.h>
-#include <salts/asn1_value.h>
+#include <asn1.h>
+#include <asn1_value.h>
 #include <crypto/asn1_crypto.h>
 #include <crypto/tls_credentials.h>
 #include <crypto/tls_group.h>

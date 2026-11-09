@@ -9,7 +9,7 @@ ASN.1 reader inside Crypto.
 `crypto/src/asn1/crypto.c` contains ECDSA DER SignatureValue and RFC 8410
 SPKI/PKCS8 format logic. The canonical general-purpose BER/DER, OID, TLV,
 reader and owned Value Tree belong to the separately installed SaltsBase SDK, imported as
-`Salts::ASN1` and consumed directly through `<salts/asn1.h>`. All public APIs are `Salts::XXX`
+`Salts::ASN1` and consumed directly through `<asn1.h>`. All public APIs are `Salts::XXX`
 CMake targets, C11 source and C++17-usable C headers.
 
 Use the repository's user presets for the ASN1/Crypto/CNet build and formal

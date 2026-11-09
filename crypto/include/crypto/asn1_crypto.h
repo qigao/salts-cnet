@@ -1,7 +1,7 @@
 #ifndef SALTS_ASN1_CRYPTO_H
 #define SALTS_ASN1_CRYPTO_H
 
-#include <salts/asn1.h>
+#include <asn1.h>
 
 #ifdef __cplusplus
 extern "C" {

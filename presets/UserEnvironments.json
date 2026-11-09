@@ -22,8 +22,7 @@
         "VCPKG_HOST_TRIPLET": "$env{VCPKG_HOST_TRIPLET}",
         "CMAKE_PREFIX_PATH": "$env{VCPKG_INSTALLED_DIR}/$env{VCPKG_TARGET_TRIPLET}/$env{VCPKG_CONFIGURATION_SUBDIR}",
         "CMAKE_TOOLCHAIN_FILE": "$env{VCPKG_CACHE_REPOSITORY_ROOT}/cmake/QigaoVcpkgToolchain.cmake",
-        "CMAKE_INSTALL_PREFIX": "$env{INSTALL_PREFIX}",
-        "RE2C_ROOT": "$env{RE2C_ROOT}"
+        "CMAKE_INSTALL_PREFIX": "$env{INSTALL_PREFIX}"
       }
     },
     {

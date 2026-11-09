@@ -12,8 +12,8 @@
 #include <crypto/tls_auth.h>
 #include <crypto/cipher_bio.h>
 #include <memory/buffer.h>
-#include <salts/clock.h>
-#include <salts/error_codes.h>
+#include <core/clock.h>
+#include <core/error_codes.h>
 
 #include <stdbool.h>
 #include <stdint.h>

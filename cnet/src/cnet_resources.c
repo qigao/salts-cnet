@@ -1,5 +1,5 @@
 #include "cnet_resources.h"
-#include <salts/error_codes.h>
+#include <core/error_codes.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>

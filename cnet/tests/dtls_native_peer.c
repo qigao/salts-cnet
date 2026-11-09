@@ -1,6 +1,6 @@
 /* Formal production CNet/NativeIO driver. The host owns observation and socket
  * lifetimes; protocol callbacks forward borrowed views and actual terminals. */
-#include <salts/clock.h>
+#include <core/clock.h>
 #include <cnet/dtls.h>
 #include <stdio.h>
 #include <stdlib.h>

@@ -2,7 +2,7 @@
 #define CRYPTO_CMS_DER_H
 /* Private bounded CMS schema composition; canonical TLV encoding/validation
  * remains owned by Salts ASN1. Never handles cryptographic arithmetic. */
-#include <salts/asn1.h>
+#include <asn1.h>
 #include "crypto_internal.h"
 #include <string.h>
 typedef struct cms_writer { uint8_t *data; size_t size, capacity; int failed; } cms_writer;

@@ -1,8 +1,8 @@
 #include <cnet/cnet.h>
 #include <crypto/tls_peer_policy.h>
 #include <memory/buffer.h>
-#include <salts/clock.h>
-#include <salts/error_codes.h>
+#include <core/clock.h>
+#include <core/error_codes.h>
 #include <tinytest.h>
 #include <stdatomic.h>
 #include <stdio.h>

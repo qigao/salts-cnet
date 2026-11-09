@@ -1,6 +1,6 @@
 #include "cnet_kcp_secure_internal.h"
 
-#include <salts/platform.h>
+#include <core/platform.h>
 
 #include <monocypher.h>
 

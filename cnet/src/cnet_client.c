@@ -11,7 +11,7 @@
 #include "cnet_transport.h"
 #include "cnet_uri.h"
 
-#include <salts/clock.h>
+#include <core/clock.h>
 #include <threads/threads.h>
 
 #include <limits.h>

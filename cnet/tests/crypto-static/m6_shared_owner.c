@@ -8,9 +8,9 @@
 #include <crypto/tls.h>
 #include <crypto/cipher_bio.h>
 #include <cnet/cnet.h>
-#include <salts/error_codes.h>
+#include <core/error_codes.h>
 #include <threads/threads.h>
-#include <salts/clock.h>
+#include <core/clock.h>
 #include <stdatomic.h>
 #include <stdbool.h>
 #include <stdint.h>

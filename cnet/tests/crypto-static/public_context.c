@@ -7,7 +7,7 @@
  */
 #include "public_context.h"
 #include "cnet_tls_crypto_qualification.h"
-#include <salts/error_codes.h>
+#include <core/error_codes.h>
 
 #include <string.h>
 

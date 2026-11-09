@@ -5,7 +5,7 @@
 #include "cnet_transport.h"
 #include <native_io_accept.h>
 
-#include <salts/clock.h>
+#include <core/clock.h>
 
 #include <limits.h>
 #include <stdbool.h>

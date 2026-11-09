@@ -9,7 +9,7 @@
 #include "cnet_test_named_pipe.h"
 #include "cnet_test_pipe.h"
 #include "tinytest.h"
-#include <salts/clock.h>
+#include <core/clock.h>
 #include <threads/threads.h>
 #include <memory/buffer.h>
 

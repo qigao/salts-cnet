@@ -5,7 +5,7 @@
 #ifndef CRYPTO_X509_DER_H
 #define CRYPTO_X509_DER_H
 
-#include <salts/asn1.h>
+#include <asn1.h>
 
 #ifdef __cplusplus
 extern "C" {

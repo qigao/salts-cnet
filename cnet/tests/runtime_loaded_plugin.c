@@ -5,7 +5,7 @@
 #include <cnet/cnet.h>
 #include <memory/buffer.h>
 #include <threads/threads.h>
-#include <salts/error_codes.h>
+#include <core/error_codes.h>
 
 #if defined(_WIN32)
 #  define PLUGIN_EXPORT __declspec(dllexport)

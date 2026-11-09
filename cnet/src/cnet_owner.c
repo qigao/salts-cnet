@@ -1,9 +1,9 @@
 #include "cnet_owner.h"
 #include "cnet_resources.h"
 
-#include <salts/clock.h>
+#include <core/clock.h>
 #include <queue/deadline_queue.h>
-#include <salts/error_codes.h>
+#include <core/error_codes.h>
 
 #include <limits.h>
 #include <stdbool.h>

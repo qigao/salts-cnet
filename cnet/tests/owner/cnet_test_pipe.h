@@ -1,7 +1,7 @@
 #ifndef CNET_TEST_PIPE_H
 #define CNET_TEST_PIPE_H
 
-#include <salts/error_codes.h>
+#include <core/error_codes.h>
 
 #include <errno.h>
 #include <limits.h>

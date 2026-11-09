@@ -7,7 +7,7 @@
 #include <tinytest.h>
 #include <memory/buffer.h>
 #include <threads/threads.h>
-#include <salts/error_codes.h>
+#include <core/error_codes.h>
 #include <stddef.h>
 #include <stdio.h>
 #include <stdint.h>

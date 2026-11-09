@@ -7,8 +7,8 @@
 #include <tinytest.h>
 #include <cnet/cnet.h>
 #include <cnet/client_pool.h>
-#include <salts/clock.h>
-#include <salts/error_codes.h>
+#include <core/clock.h>
+#include <core/error_codes.h>
 #include <memory/buffer.h>
 
 #include <stdbool.h>

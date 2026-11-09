@@ -3,11 +3,11 @@
 #include <cnet/handoff.h>
 #include <cnet/managed_dial.h>
 #include <stdlib.h>
-#include <salts/clock.h>
+#include <core/clock.h>
 #include <cnet/destination_policy.h>
 #include <cnet/owner_placement.h>
 #include <cnet/recovery_policy.h>
-#include <salts/error_codes.h>
+#include <core/error_codes.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <string.h>

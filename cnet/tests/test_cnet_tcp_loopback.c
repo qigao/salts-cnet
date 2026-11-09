@@ -9,10 +9,10 @@
 #include <cnet/managed_dial.h>
 #include <cnet/ipc.h>
 #include <cnet/sg_host.h>
-#include <salts/clock.h>
+#include <core/clock.h>
 #include <threads/threads.h>
 #include <atomic/atomic.h>
-#include <salts/error_codes.h>
+#include <core/error_codes.h>
 #include <memory/buffer.h>
 
 #include <stdint.h>
