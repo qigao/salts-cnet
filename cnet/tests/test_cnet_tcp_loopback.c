@@ -20,6 +20,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <limits.h>
+#include <stdatomic.h>
 
 #if defined(_WIN32)
 #  include <winsock2.h>
@@ -2700,7 +2701,9 @@ typedef struct sg_owner_case {
   native_io_sharded_host_lease lease;
   const void *thread;
   size_t shard, owner_count, observations;
-  int command, failure;
+  atomic_int command;
+  atomic_bool task_complete;
+  int failure;
   bool host_active;
   bool sustained;
   size_t bulk_admitted, saturated_rounds;
@@ -2867,6 +2870,7 @@ static void sg_case_cleanup(native_io_sharded_context *context, sg_owner_case *o
  * unassociated native peer sockets transfer to main after startup completes. */
 static void sg_case_task(native_io_sharded_context *context, void *user) {
   sg_owner_case *owner = user;
+  const int command = atomic_load_explicit(&owner->command, memory_order_acquire);
   size_t events = 0u;
   native_io_backend_stats stats = {0};
 #define SG_REQUIRE(expr) do { if (!(expr)) {                                    \
@@ -2875,9 +2879,9 @@ static void sg_case_task(native_io_sharded_context *context, void *user) {
   SG_REQUIRE(native_io_sharded_context_shard(context) == owner->shard);
   if (owner->thread == NULL) owner->thread = sync_thread_current_token();
   SG_REQUIRE(owner->thread == sync_thread_current_token());
-  if (owner->command == SG_CASE_CLEANUP) {
+  if (command == SG_CASE_CLEANUP) {
     sg_case_cleanup(context, owner);
-  } else if (owner->command == SG_CASE_START) {
+  } else if (command == SG_CASE_START) {
     cnet_client_config config = client_config();
     const cnet_listener_config listener_config = {backend_kind(), "127.0.0.1", 0u, 2u};
     struct sockaddr_in remote = {0};
@@ -2982,7 +2986,7 @@ static void sg_case_task(native_io_sharded_context *context, void *user) {
       SG_REQUIRE(owner->sg_active && owner->sg_terminals == 0u && owner->sg_finalized == 0u);
     }
     SG_REQUIRE(native_io_sharded_context_release_host(context, owner->lease) == SALTS_EBUSY);
-  } else if (owner->command == SG_CASE_LOAD) {
+  } else if (command == SG_CASE_LOAD) {
     cnet_send_usage usage = {0};
     bool full = false;
     SG_REQUIRE(owner->sustained && owner->pending[0] != NULL);
@@ -3001,7 +3005,7 @@ static void sg_case_task(native_io_sharded_context *context, void *user) {
     SG_REQUIRE(usage.operations == SG_LOAD_OPERATIONS && usage.bytes == SG_LOAD_OPERATIONS * SG_BULK_BYTES);
     SG_REQUIRE(owner->probes[0].failed == 0u && owner->probes[1].failed == 0u &&
                owner->probes[0].terminal == 0u && owner->probes[1].terminal == 0u);
-  } else if (owner->command == SG_CASE_NEXT_CONTROL) {
+  } else if (command == SG_CASE_NEXT_CONTROL) {
     SG_REQUIRE(owner->sustained && owner->probes[1].borrowed_bytes < SG_CONTROL_EXCHANGES);
     owner->pending[1] = mem_get_buffer(mem_global(), 1u);
     SG_REQUIRE(owner->pending[1] != NULL);
@@ -3011,7 +3015,7 @@ static void sg_case_task(native_io_sharded_context *context, void *user) {
     SG_REQUIRE(cnet_send_buffer(&owner->clients[1], owner->connections[1], owner->pending[1]) == SALTS_OK);
     mem_buffer_release(owner->pending[1]);
     owner->pending[1] = NULL;
-  } else if (owner->command == SG_CASE_FINISH_LOAD) {
+  } else if (command == SG_CASE_FINISH_LOAD) {
     native_io_backend *backend = owner->backend;
     SG_REQUIRE(owner->sustained && owner->saturated_rounds >= SG_CONTROL_EXCHANGES);
     SG_REQUIRE(owner->probes[0].sent == owner->bulk_admitted && owner->bulk_admitted > SG_LOAD_OPERATIONS);
@@ -3024,13 +3028,13 @@ static void sg_case_task(native_io_sharded_context *context, void *user) {
     SG_REQUIRE(owner->probes[0].terminal == 1u && owner->probes[1].terminal == 1u &&
                owner->probes[0].failed == 0u && owner->probes[1].failed == 0u);
     SG_REQUIRE(native_io_backend_get_stats(backend, &stats) && stats.active_requests == 0u && stats.endpoint_count == 0u);
-  } else if (owner->command == SG_CASE_TLS_STEP) {
+  } else if (command == SG_CASE_TLS_STEP) {
     SG_REQUIRE(owner->tls_failure);
     SG_REQUIRE(sg_case_progress(context, owner) == SALTS_OK);
     SG_REQUIRE(owner->probes[0].failed <= 1u && owner->probes[0].connected == 0u &&
                owner->probes[0].sent == 0u && owner->probes[0].borrowed_bytes == 0u &&
                owner->probes[1].failed == 0u);
-  } else if (owner->command == SG_CASE_TLS_RELEASE) {
+  } else if (command == SG_CASE_TLS_RELEASE) {
     SG_REQUIRE(owner->tls_failure && owner->probes[0].terminal == 1u && owner->probes[0].failed == 1u);
     SG_REQUIRE(owner->probes[0].last_error_status != SALTS_OK &&
                owner->probes[0].last_error_status != SALTS_ETIMEDOUT &&
@@ -3041,10 +3045,10 @@ static void sg_case_task(native_io_sharded_context *context, void *user) {
     SG_REQUIRE(native_io_backend_get_stats(owner->backend, &stats) && stats.active_requests == 0u &&
                stats.endpoint_count == 1u && stats.admission_open);
     SG_REQUIRE(native_io_sharded_context_release_host(context, owner->lease) == SALTS_EBUSY);
-  } else if (owner->command == SG_CASE_STEP) {
+  } else if (command == SG_CASE_STEP) {
     SG_REQUIRE(sg_case_progress(context, owner) == SALTS_OK);
     SG_REQUIRE(owner->probes[0].failed == 0u && owner->probes[1].failed == 0u);
-  } else if (owner->command == SG_CASE_CLOSE_BULK) {
+  } else if (command == SG_CASE_CLOSE_BULK) {
     SG_REQUIRE(owner->probes[0].sent == 1u && owner->probes[0].last_send_bytes == SG_BULK_BYTES);
     SG_REQUIRE(owner->probes[1].sent == 1u && owner->probes[1].last_send_bytes == 1u);
     SG_REQUIRE(cnet_close(&owner->clients[0], owner->connections[0]) == SALTS_OK);
@@ -3053,7 +3057,7 @@ static void sg_case_task(native_io_sharded_context *context, void *user) {
     SG_REQUIRE(cnet_client_stop_external(&owner->clients[0]) == SALTS_OK);
     SG_REQUIRE(cnet_client_destroy(&owner->clients[0]) == SALTS_OK);
     SG_REQUIRE(native_io_sharded_context_release_host(context, owner->lease) == SALTS_EBUSY);
-  } else if (owner->command == SG_CASE_CHECK_BORROW) {
+  } else if (command == SG_CASE_CHECK_BORROW) {
     SG_REQUIRE(owner->clients[0].impl == NULL && owner->clients[1].impl != NULL);
     SG_REQUIRE(owner->probes[1].borrowed_bytes == 0u && owner->probes[1].terminal == 0u);
     SG_REQUIRE(native_io_backend_get_stats(owner->backend, &stats));
@@ -3066,7 +3070,7 @@ static void sg_case_task(native_io_sharded_context *context, void *user) {
       SG_REQUIRE(native_io_sharded_context_cancel(context, owner->sg_request) == SALTS_OK);
       SG_REQUIRE(owner->sg_active && owner->sg_terminals == 1u && owner->sg_finalized == 1u);
     }
-  } else if (owner->command == SG_CASE_FINAL_CONTROL) {
+  } else if (command == SG_CASE_FINAL_CONTROL) {
     if (owner->mixed)
       SG_REQUIRE(!owner->sg_active && owner->sg_terminals == 2u &&
                    owner->sg_finalized == 2u && owner->sg_routed == 2u);
@@ -3080,7 +3084,7 @@ static void sg_case_task(native_io_sharded_context *context, void *user) {
                                           owner->pending[1]) == SALTS_OK);
     mem_buffer_release(owner->pending[1]);
     owner->pending[1] = NULL;
-  } else if (owner->command == SG_CASE_FINISH) {
+  } else if (command == SG_CASE_FINISH) {
     if (owner->tls_failure) {
       SG_REQUIRE(owner->probes[0].connected == 0u && owner->probes[0].sent == 0u &&
                  owner->probes[0].terminal == 1u && owner->probes[0].failed == 1u);
@@ -3107,17 +3111,34 @@ static void sg_case_task(native_io_sharded_context *context, void *user) {
 #undef SG_REQUIRE
 }
 
+/* Keep the test-owned transfer visible when the SDK is not instrumented.
+ * wait() must already have completed this finalizer: this is an immediate
+ * publication check, never an extra wait or a replacement completion owner. */
+static void sg_case_task_finalize(void *user) {
+  sg_owner_case *owner = user;
+  atomic_store_explicit(&owner->task_complete, true, memory_order_release);
+}
+
 static int sg_case_run_all(native_io_sharded *runtime, sg_owner_case *owners,
                             size_t count, int command) {
   int first = SALTS_OK;
   for (size_t i = 0u; i < count; ++i) {
-    const native_io_sharded_task task = {sg_case_task, NULL, NULL, &owners[i]};
-    owners[i].command = command;
+    const native_io_sharded_task task = {sg_case_task, NULL, sg_case_task_finalize, &owners[i]};
+    atomic_store_explicit(&owners[i].task_complete, false, memory_order_relaxed);
+    atomic_store_explicit(&owners[i].command, command, memory_order_release);
     const int status = native_io_sharded_submit_to(runtime, i, &task);
-    if (first == SALTS_OK && status != SALTS_OK) first = status;
+    if (status != SALTS_OK) {
+      /* Rejected admission invokes no callback and retains main's storage. */
+      atomic_store_explicit(&owners[i].task_complete, true, memory_order_relaxed);
+      if (first == SALTS_OK) first = status;
+    }
   }
   const int waited = native_io_sharded_wait(runtime);
   if (first == SALTS_OK && waited != SALTS_OK) first = waited;
+  for (size_t i = 0u; i < count; ++i) {
+    if (!atomic_load_explicit(&owners[i].task_complete, memory_order_acquire))
+      return first != SALTS_OK ? first : SALTS_EPROTO;
+  }
   if (command != SG_CASE_CLEANUP) {
     for (size_t i = 0u; i < count; ++i) {
       if (owners[i].failure == 0) continue;
@@ -3140,6 +3161,8 @@ static int saltscore_native_entry_test_cnet_sg_owners(size_t owner_count, bool m
   owners = calloc(owner_count, sizeof(*owners));
   VERIFY(owners != NULL);
   for (size_t i = 0u; i < owner_count; ++i) {
+    atomic_init(&owners[i].command, SG_CASE_START);
+    atomic_init(&owners[i].task_complete, true);
     owners[i].shard = i;
     owners[i].owner_count = owner_count;
     owners[i].mixed = mixed;
@@ -3272,6 +3295,8 @@ static int saltscore_native_entry_test_cnet_sg_sustained(size_t owner_count) {
   owners = calloc(owner_count, sizeof(*owners));
   VERIFY(owners != NULL);
   for (size_t i = 0u; i < owner_count; ++i) {
+    atomic_init(&owners[i].command, SG_CASE_START);
+    atomic_init(&owners[i].task_complete, true);
     owners[i].shard = i;
     owners[i].owner_count = owner_count;
     owners[i].sustained = true;
@@ -3388,6 +3413,8 @@ static int saltscore_native_entry_test_cnet_sg_tls_failure(size_t owner_count) {
   owners = calloc(owner_count, sizeof(*owners));
   VERIFY(owners != NULL);
   for (size_t i = 0u; i < owner_count; ++i) {
+    atomic_init(&owners[i].command, SG_CASE_START);
+    atomic_init(&owners[i].task_complete, true);
     owners[i].shard = i;
     owners[i].owner_count = owner_count;
     owners[i].tls_failure = true;
