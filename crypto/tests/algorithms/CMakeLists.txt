@@ -15,6 +15,9 @@ target_link_libraries(crypto_algorithms_cpp_header PRIVATE Salts::Crypto Salts::
 add_test(NAME crypto.algorithms.cpp17_header COMMAND crypto_algorithms_cpp_header)
 
 add_executable(crypto_tls_session_cache_test tls_session_cache.c)
+if(MSVC)
+  target_compile_options(crypto_tls_session_cache_test PRIVATE /experimental:c11atomics)
+endif()
 target_link_libraries(crypto_tls_session_cache_test PRIVATE Salts::Crypto Salts::TinyTest)
 add_test(NAME crypto.algorithms.tls_session_cache COMMAND crypto_tls_session_cache_test)
 set_tests_properties(crypto.algorithms.tls_session_cache PROPERTIES TIMEOUT 30)

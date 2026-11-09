@@ -37,6 +37,10 @@ if(NOT CMAKE_SYSTEM_NAME STREQUAL "Android")
   # Separate image: one Crypto/GmSSL owner, never also Salts::CNet.
   add_executable(saltscore_crypto_tls_peer_policy_test test_crypto_tls_peer_policy.c)
   target_link_libraries(saltscore_crypto_tls_peer_policy_test PRIVATE Salts::Crypto)
+  if(MSVC)
+    # The peer-policy fixture owns C11 atomic retain/release counters.
+    target_compile_options(saltscore_crypto_tls_peer_policy_test PRIVATE /experimental:c11atomics)
+  endif()
   set_target_properties(saltscore_crypto_tls_peer_policy_test PROPERTIES
     C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF FOLDER "crypto/tests/tls")
   add_test(NAME saltscore.crypto_tls_shangmi_revocation
