@@ -196,15 +196,29 @@ func TestSCTPOverNativeDTLS(t *testing.T) {
 		nativeClient := strings.HasSuffix(mode, "-client")
 		external := strings.HasPrefix(mode, "external")
 		cases := []struct {
-			count int
-			mixed bool
-		}{{1, false}, {4, true}, {8, true}, {8, false}}
+			count         int
+			mixed         bool
+			largeMessages int
+		}{{1, false, 1}, {4, true, 1}, {8, true, 1}, {8, false, 1}, {8, false, 16}}
 		if nativeClient {
 			cases = cases[:1]
 		}
 		for _, scenario := range cases {
 			count, mixed := scenario.count, scenario.mixed
-			t.Run(fmt.Sprintf("%s/%d/mixed_%t", mode, count, mixed), func(t *testing.T) {
+			name := fmt.Sprintf("%s/%d/mixed_%t", mode, count, mixed)
+			if scenario.largeMessages > 1 {
+				name += fmt.Sprintf("/sustained_%d", scenario.largeMessages)
+			}
+			t.Run(name, func(t *testing.T) {
+				// Keep each authenticated association alive while copied queues,
+				// TX tickets, receive slots and I-DATA identifiers cycle repeatedly.
+				// This is one sustained workload, not a retry of failed handshakes.
+				sizes := []int{1, 1024}
+				for i := 0; i < scenario.largeMessages; i++ {
+					sizes = append(sizes, 24576)
+				}
+				sizes = append(sizes, 0)
+				expectedMessages := uint32(len(sizes))
 				server, client, bad := credentials(t), credentials(t), credentials(t)
 				sockets := make([]*net.UDPConn, count)
 				ports := make([]int, count)
@@ -349,7 +363,7 @@ func TestSCTPOverNativeDTLS(t *testing.T) {
 							done <- i
 							return
 						}
-						for _, size := range []int{1, 1024, 24576, 0} {
+						for _, size := range sizes {
 							if size == 24576 {
 								transport.arm()
 							}
@@ -377,7 +391,7 @@ func TestSCTPOverNativeDTLS(t *testing.T) {
 								return
 							}
 						}
-						if transport.combined.Load() != 1 {
+						if transport.combined.Load() != uint32(scenario.largeMessages) {
 							fail(fmt.Errorf("coalesced record tail was not exercised"))
 							return
 						}
@@ -482,7 +496,7 @@ func TestSCTPOverNativeDTLS(t *testing.T) {
 						if mixed && i < 2 {
 							continue
 						}
-						if s.messages != 4 || s.acks != 4 {
+						if s.messages != expectedMessages || s.acks != expectedMessages {
 							complete = false
 						}
 					}
@@ -497,7 +511,7 @@ func TestSCTPOverNativeDTLS(t *testing.T) {
 					if mixed && i < 2 {
 						continue
 					}
-					if s.messages != 4 || s.acks != 4 {
+					if s.messages != expectedMessages || s.acks != expectedMessages {
 						t.Fatalf("peer %d message/ACK mismatch %d/%d err=%d flags=%x", i, s.messages, s.acks, s.err, s.flags)
 					}
 				}

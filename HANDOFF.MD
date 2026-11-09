@@ -1902,3 +1902,30 @@
   invalid CRC and a truncated header, including input immutability. Subsequent
   Windows ARM64 execution is required to locate the failing boundary; this
   instrumentation is not a claimed fix for the observed corruption.
+
+### SCTP copy/loss and sustained-association isolation (2026-11-09)
+
+- The first read-only audit candidate passed full CI #412 on exact head
+  00f815aaa1fefa155780f54b928e98f259caf094, including 204/204 Windows ARM64
+  CTests. The intermittent #411 corruption did not reproduce; no repair is
+  established by that passing run.
+- Add a deterministic case to existing `cnet_sctp_data_test`: eight independent
+  sender/receiver pairs queue 24 KiB nonuniform copies from one reused producer
+  buffer, poison it immediately, and round-robin protocol progress. Drop each
+  sixth I-DATA fragment once, require exactly one repair from an owned TX
+  ticket, poison each delivered wire buffer, and compare every serialized
+  fragment and the complete reassembled message. Gap SACKs transact over live
+  pending copies; all 25 emitted packets per sender and final TX drain are
+  checked. The pure SCTP owner has no TLS/socket/Go dependency in this case.
+- Extend the real `saltscore.sctp_dtls_native` entry with owned/external
+  eight-peer sustained scenarios: 16 large messages per live authenticated
+  association plus the original small/empty boundaries. Require all 19 native
+  message receipts and cumulative ACKs per peer and all 16 coalesced encrypted
+  flights. Original cases remain unchanged; process/test deadlines and feature
+  configuration are unchanged. This exercises slot/MID/TSN reuse within live
+  connections rather than retrying failed or completed handshakes.
+- Windows x64 LLVM-MinGW Release under VsDevCmd: complete native-release-user
+  graph passed, then the two affected existing CTests passed in 9.90s (pure
+  DATA 0.01s, real SCTP/DTLS 9.88s). Log:
+  TEMP/salts-219-sctp-sustained.log. New Windows ARM64 evidence is required;
+  neither this coverage nor the earlier full matrix is a corruption fix.
