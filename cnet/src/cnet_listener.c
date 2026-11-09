@@ -21,6 +21,7 @@
 typedef SOCKET cnet_listener_socket;
   #define CNET_LISTENER_INVALID_SOCKET INVALID_SOCKET
 #else
+  #include <arpa/inet.h>
   #include <errno.h>
   #include <fcntl.h>
   #include <netinet/in.h>

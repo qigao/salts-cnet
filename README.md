@@ -99,11 +99,20 @@ and the retained startup repairs. Its Core headers use `<core/...>`, ASN1 uses
 `<asn1.h>` and `<asn1_value.h>`, and coroutine headers use `<salts/coro_*.h>`.
 Consumers use these public headers directly without draft-layout aliases.
 
-The existing Windows ARM64, Linux ARM64 and macOS x64 qualification lanes have
-no matching SDK in 0.1.0. They fail with an explicit missing-platform error;
-they do not select another architecture or skip tests. The sanitizer lanes use
-the released Linux x64 Clang foundation and instrument this network graph;
-that does not qualify the prebuilt foundation itself under sanitizers.
+CI matches those seven published platform/compiler SDKs explicitly in its
+matrix: Windows x64 MSVC and LLVM-MinGW, Linux x64 GCC and Clang, macOS ARM64
+Clang, and Android arm64/x64 NDK. Each lane selects its exact manifest entry;
+no architecture or compiler substitution is performed. Windows ARM64, Linux
+ARM64 and macOS x64 require new producer SDKs before joining this matrix.
+The existing ASan/UBSan and TSan lanes additionally use the Linux x64 Clang
+foundation and instrument this network graph; that does not qualify the
+prebuilt foundation itself under sanitizers. There are nine qualification
+jobs covering seven released SDKs.
+
+The historical fixed-tag `v0.1.002` eight-RID NuGet publisher has a broader
+packaging contract and is not qualified by this seven-SDK matrix. It requires
+its own coordinated release migration; changing this CI scope does not create
+or replace a published package or tag.
 
 ## WebSocket SIMD measurements
 

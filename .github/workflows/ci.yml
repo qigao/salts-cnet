@@ -1,4 +1,4 @@
-name: SaltsCore LLVM CI
+name: SaltsCore SDK CI
 
 on:
   pull_request:
@@ -7,14 +7,6 @@ on:
       - "cnet/**"
       - "sctp/**"
       - "vendor/**"
-      - "CMakeLists.txt"
-      - "CMakeOptions.cmake"
-      - "CMakePresets.json"
-      - "CMakeUserPresets.json"
-      - "presets/**"
-      - "cmake/**"
-      - "vcpkg*.json"
-      - ".github/workflows/ci.yml"
   push:
     branches: [master]
     tags: ["v0.1.002"]
@@ -23,14 +15,6 @@ on:
       - "cnet/**"
       - "sctp/**"
       - "vendor/**"
-      - "CMakeLists.txt"
-      - "CMakeOptions.cmake"
-      - "CMakePresets.json"
-      - "CMakeUserPresets.json"
-      - "presets/**"
-      - "cmake/**"
-      - "vcpkg*.json"
-      - ".github/workflows/ci.yml"
   workflow_dispatch:
 
 permissions:
@@ -43,7 +27,7 @@ concurrency:
 
 jobs:
   qualify:
-    name: LLVM / ${{ matrix.rid }} / ${{ matrix.preset }}
+    name: ${{ matrix.compiler }} / ${{ matrix.rid }} / ${{ matrix.preset }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 120
     env:
@@ -54,16 +38,16 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - {rid: linux-x64, runner: ubuntu-24.04, target: x64, triplet: x64-linux, host: x64-linux, preset: llvm-native-release-user, android_abi: "", package: true}
-          - {rid: linux-arm64, runner: ubuntu-24.04-arm, target: arm64, triplet: arm64-linux, host: arm64-linux, preset: llvm-native-release-user, android_abi: "", package: true}
-          - {rid: macos-x64, runner: macos-15-intel, target: x64, triplet: x64-osx, host: x64-osx, preset: llvm-native-release-user, android_abi: "", package: true}
-          - {rid: macos-arm64, runner: macos-15, target: arm64, triplet: arm64-osx, host: arm64-osx, preset: llvm-native-release-user, android_abi: "", package: true}
-          - {rid: windows-x64, runner: windows-2025, target: x64, triplet: qigao-x64-windows-llvm-mingw, host: qigao-x64-windows-llvm-mingw, preset: native-release-user, android_abi: "", package: true}
-          - {rid: windows-arm64, runner: windows-11-arm, target: arm64, triplet: qigao-arm64-windows-llvm-mingw, host: qigao-arm64-windows-llvm-mingw, preset: native-release-user, android_abi: "", package: true}
-          - {rid: linux-x64-asan-ubsan, runner: ubuntu-24.04, target: x64, triplet: x64-linux, host: x64-linux, preset: llvm-native-asan-ubsan-user, android_abi: "", package: false}
-          - {rid: linux-x64-tsan, runner: ubuntu-24.04, target: x64, triplet: x64-linux, host: x64-linux, preset: llvm-native-tsan-user, android_abi: "", package: false}
-          - {rid: android-x64, runner: ubuntu-24.04, target: x64, triplet: x64-android, host: x64-linux, preset: android-release-user, android_abi: x86_64, package: true}
-          - {rid: android-arm64, runner: ubuntu-24.04, target: arm64, triplet: arm64-android, host: x64-linux, preset: android-release-user, android_abi: arm64-v8a, package: true}
+          # Seven published SaltsBase SDKs, plus network-only sanitizer profiles.
+          - {rid: linux-x64, runner: ubuntu-24.04, compiler: clang, sdk: linux-clang-x64, target: x64, triplet: x64-linux, preset: llvm-native-release-user, android_abi: "", package: true}
+          - {rid: linux-gcc-x64, runner: ubuntu-24.04, compiler: gcc, sdk: linux-gcc-x64, target: x64, triplet: x64-linux, preset: gcc-release-user, android_abi: "", package: false}
+          - {rid: macos-arm64, runner: macos-15, compiler: clang, sdk: macos-clang-arm64, target: arm64, triplet: arm64-osx, preset: llvm-native-release-user, android_abi: "", package: true}
+          - {rid: windows-x64, runner: windows-2025, compiler: llvm-mingw, sdk: windows-llvm-mingw-x64, target: x64, triplet: qigao-x64-windows-llvm-mingw, preset: native-release-user, android_abi: "", package: true}
+          - {rid: windows-msvc-x64, runner: windows-2025, compiler: msvc, sdk: windows-msvc-x64, target: x64, triplet: x64-windows, preset: msvc-release-user, android_abi: "", package: false}
+          - {rid: android-x64, runner: ubuntu-24.04, compiler: ndk, sdk: android-x64, target: x64, triplet: x64-android, preset: android-release-user, android_abi: x86_64, package: true}
+          - {rid: android-arm64, runner: ubuntu-24.04, compiler: ndk, sdk: android-arm64, target: arm64, triplet: arm64-android, preset: android-release-user, android_abi: arm64-v8a, package: true}
+          - {rid: linux-x64-asan-ubsan, runner: ubuntu-24.04, compiler: clang, sdk: linux-clang-x64, target: x64, triplet: x64-linux, preset: llvm-native-asan-ubsan-user, android_abi: "", package: false}
+          - {rid: linux-x64-tsan, runner: ubuntu-24.04, compiler: clang, sdk: linux-clang-x64, target: x64, triplet: x64-linux, preset: llvm-native-tsan-user, android_abi: "", package: false}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -87,6 +71,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.VCPKG_CACHE_READ_TOKEN || github.token }}
           RID: ${{ matrix.rid }}
+          SDK_PLATFORM: ${{ matrix.sdk }}
         run: |
           $ErrorActionPreference = 'Stop'
           $reply = & gh api repos/qigao/salts-base/releases/latest
@@ -111,14 +96,7 @@ jobs:
               $manifest.repository -cne 'https://github.com/qigao/salts-base' -or
               $manifest.version -cne $version -or $manifest.tag -cne $release.tag_name -or
               $manifest.ci.conclusion -cne 'success') { throw 'Invalid or unqualified SaltsBase release manifest' }
-          $profiles = @{
-            'windows-x64'='windows-llvm-mingw-x64'; 'windows-arm64'='windows-llvm-mingw-arm64'
-            'linux-x64'='linux-clang-x64'; 'linux-arm64'='linux-clang-arm64'
-            'linux-x64-asan-ubsan'='linux-clang-x64'; 'linux-x64-tsan'='linux-clang-x64'
-            'macos-x64'='macos-clang-x64'; 'macos-arm64'='macos-clang-arm64'
-            'android-x64'='android-x64'; 'android-arm64'='android-arm64'
-          }
-          $profile = $profiles[$env:RID]
+          $profile = $env:SDK_PLATFORM
           $sdk = @($manifest.sdks | Where-Object platform -eq $profile)
           if ($sdk.Count -ne 1) { throw "SaltsBase $version has no SDK for $profile; this platform remains unqualified" }
           $sdk = $sdk[0]
@@ -161,7 +139,7 @@ jobs:
 
       - name: Restore locked Windows LLVM-MinGW compiler
         id: windows-llvm
-        if: runner.os == 'Windows'
+        if: matrix.compiler == 'llvm-mingw'
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
@@ -180,7 +158,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Select Windows compiler SDK
-        if: runner.os == 'Windows'
+        if: matrix.compiler == 'llvm-mingw'
         shell: pwsh
         env:
           COMPILER_ROOT: ${{ steps.windows-llvm.outputs.root }}
@@ -203,8 +181,7 @@ jobs:
 
       - name: Install formal TLS test fixture dependency
         if: matrix.android_abi == ''
-        # This fixture-only version provides native wheels for all six host
-        # OS/architecture pairs, including Windows ARM64 and Intel macOS.
+        # Fixture-only dependency; native SDK architecture comes from the matrix.
         run: |
           python -m pip install --only-binary=:all: cryptography==46.0.3
 
@@ -214,6 +191,7 @@ jobs:
         env:
           RID: ${{ matrix.rid }}
           TARGET_TRIPLET: ${{ matrix.triplet }}
+          COMPILER: ${{ matrix.compiler }}
           ANDROID_ABI: ${{ matrix.android_abi }}
         run: |
           set -euo pipefail
@@ -222,7 +200,15 @@ jobs:
               echo "ANDROID_TARGET_TRIPLET=$TARGET_TRIPLET"
               echo "SALTSCORE_ANDROID_ABI=$ANDROID_ABI"
               echo "ANDROID_INSTALL_PREFIX=$GITHUB_WORKSPACE/package/sdk/$RID"
-            elif [[ "$RID" == windows-* ]]; then
+            elif [[ "$COMPILER" == msvc ]]; then
+              echo "MSVC_TARGET_TRIPLET=$TARGET_TRIPLET"
+              echo "MSVC_INSTALL_PREFIX=$GITHUB_WORKSPACE/package/sdk/$RID"
+            elif [[ "$COMPILER" == gcc ]]; then
+              echo "GCC_C_COMPILER=gcc"
+              echo "GCC_CXX_COMPILER=g++"
+              echo "GCC_TARGET_TRIPLET=$TARGET_TRIPLET"
+              echo "GCC_INSTALL_PREFIX=$GITHUB_WORKSPACE/package/sdk/$RID"
+            elif [[ "$COMPILER" == llvm-mingw ]]; then
               echo "LLVM_MINGW_TARGET=${{ matrix.target == 'arm64' && 'aarch64-w64-mingw32' || 'x86_64-w64-mingw32' }}"
               echo "VCPKG_TARGET_TRIPLET=$TARGET_TRIPLET"
               echo "INSTALL_PREFIX=$GITHUB_WORKSPACE/package/sdk/$RID"
@@ -419,7 +405,7 @@ jobs:
     needs: [qualify, package]
     runs-on: ubuntu-24.04
     steps:
-      - name: Require every LLVM qualification job
+      - name: Require every SDK qualification job
         shell: bash
         run: |
           test '${{ needs.qualify.result }}' = success
