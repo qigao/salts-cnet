@@ -1860,3 +1860,19 @@
   encrypted credentials was the slowest local entry at 34.79s. CTest's generated
   JSON confirms all eight exact Go selectors and unchanged timeouts. macOS x64
   must still execute the corrected registration in the subsequent CI.
+
+### PR #273 Windows ARM64 SCTP content failure investigation (2026-11-09)
+
+- Run 42548223680/job 128937770174 failed the eight-peer owned/non-mixed
+  SCTP/DTLS scenario: a 24576-byte PPID-53 echo had the right length and no
+  read error, but different bytes. macOS x64 and all other matrix lanes passed.
+  Thirty local Windows x64 formal repetitions passed (158.35s); that does not
+  establish a fix for the ARM64 content failure.
+- Strengthen the native formal host to validate each peer's known ingress
+  pattern and immediately poison caller storage after copied echo admission.
+  The Go failure includes first differing offset and both payload digests.
+  The enhanced formal test passed once locally (5.76s). Preserve the original
+  content assertion; the next ARM64 CI supplies the missing failure boundary.
+- Cleanup previously closed one DTLS peer, then waited for every worker before
+  closing the other peers. Close all connections before one bounded group join,
+  so one primary content failure does not add repeated sibling-drain failures.

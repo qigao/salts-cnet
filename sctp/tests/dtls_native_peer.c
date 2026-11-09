@@ -334,6 +334,15 @@ static int advance_peer(peer *x, uint64_t now) {
             return SALTS_EPROTO;
           }
           x->message_size = event.message_size;
+          for (size_t i = 0; i < x->message_size; ++i) {
+            if (x->message[i] != (uint8_t)(31u + (size_t)(x - x->host->peers))) {
+              fprintf(stderr, "SCTP ingress peer=%zu size=%zu offset=%zu byte=%u\n",
+                      (size_t)(x - x->host->peers), x->message_size, i,
+                      (unsigned)x->message[i]);
+              error(x->host, SALTS_EPROTO);
+              return SALTS_EPROTO;
+            }
+          }
           x->echo = true;
           ++x->messages;
         }
@@ -345,9 +354,11 @@ static int advance_peer(peer *x, uint64_t now) {
       cnet_sctp_session_status s = cnet_sctp_session_queue_reliable_tracked(
           x->session, now, x->host->client ? 1u : 0u, x->generation, 1,
           x->message, x->message_size, &ticket);
-      if (!s)
+      if (!s) {
         x->echo = false;
-      else if (s != CNET_SCTP_SESSION_CAPACITY && s != CNET_SCTP_SESSION_BUSY &&
+        /* Successful queue admission owns its copy through fragmentation. */
+        memset(x->message, 0xa5, sizeof(x->message));
+      } else if (s != CNET_SCTP_SESSION_CAPACITY && s != CNET_SCTP_SESSION_BUSY &&
                !first)
         first = SALTS_EPROTO;
     }

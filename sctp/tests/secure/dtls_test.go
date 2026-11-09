@@ -364,7 +364,11 @@ func TestSCTPOverNativeDTLS(t *testing.T) {
 							}
 							n, ppi, e = stream.ReadSCTP(buffer)
 							if e != nil || ppi != kind || !bytes.Equal(buffer[:n], payload) {
-								fail(fmt.Errorf("message size=%d received=%d ppid=%d err=%v", size, n, ppi, e))
+								offset := 0
+								for offset < n && offset < len(payload) && buffer[offset] == payload[offset] {
+									offset++
+								}
+								fail(fmt.Errorf("message size=%d received=%d ppid=%d err=%v first_difference=%d received_sha256=%x expected_sha256=%x", size, n, ppi, e, offset, sha256.Sum256(buffer[:n]), sha256.Sum256(payload)))
 								return
 							}
 						}
@@ -386,13 +390,13 @@ func TestSCTPOverNativeDTLS(t *testing.T) {
 						if c != nil {
 							_ = c.Close()
 						}
-						joined := make(chan struct{})
-						go func() { workers.Wait(); close(joined) }()
-						select {
-						case <-joined:
-						case <-time.After(2 * time.Second):
-							t.Error("secure SCTP workers did not drain")
-						}
+					}
+					joined := make(chan struct{})
+					go func() { workers.Wait(); close(joined) }()
+					select {
+					case <-joined:
+					case <-time.After(2 * time.Second):
+						t.Error("secure SCTP workers did not drain")
 					}
 				})
 				snapshots := make([]snapshot, count)
@@ -406,7 +410,8 @@ func TestSCTPOverNativeDTLS(t *testing.T) {
 					i := 0
 					s, _ := p.rpc('P', i)
 					if s.status != 0 {
-						t.Fatal("host route error", s.status)
+						log, _ := os.ReadFile(p.log)
+						t.Fatalf("host route error %d: %s", s.status, log)
 					}
 					for i = 0; i < count; i++ {
 						s, _ = p.rpc('I', i)
