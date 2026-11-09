@@ -2,9 +2,9 @@
 #include "cnet_manager_internal.h"
 #include "cnet_reuse.h"
 #include <cnet/managed_dial.h>
-#include <clock.h>
-#include <error_codes.h>
-#include <thread.h>
+#include <salts/clock.h>
+#include <salts/error_codes.h>
+#include <threads/threads.h>
 
 #include <stdint.h>
 #include <stdlib.h>
@@ -38,7 +38,7 @@ static int dial_owner(cnet_managed_dial *dial, dial_impl **out) {
   if (out != NULL) *out = NULL;
   if (dial == NULL || dial->impl == NULL || out == NULL) return SALTS_EINVAL;
   *out = (dial_impl *)dial->impl;
-  return (*out)->owner_thread == cmeta_thread_current_token() ? SALTS_OK : SALTS_EPERM;
+  return (*out)->owner_thread == sync_thread_current_token() ? SALTS_OK : SALTS_EPERM;
 }
 static void dial_record_error(dial_impl *impl, int status) {
   if (status != SALTS_OK && impl->last_error == SALTS_OK)
@@ -67,12 +67,12 @@ static void dial_on_state(void *user, cnet_connection connection,
   impl->in_callback = true;
   if (state == CNET_CONNECTION_CONNECTED && !impl->stopping) {
     status = cnet_reconnect_connected(
-        &impl->recovery, impl->ticket, cmeta_monotonic_ms());
+        &impl->recovery, impl->ticket, monotonic_ms());
     if (status != SALTS_OK) (void)cnet_close(impl->client, connection);
   } else if (state == CNET_CONNECTION_CLOSED || state == CNET_CONNECTION_FAILED) {
     if (!impl->stopping) {
       cnet_reconnect_snapshot snapshot = {0};
-      const uint64_t now_ms = cmeta_monotonic_ms();
+      const uint64_t now_ms = monotonic_ms();
       status = cnet_reconnect_get_snapshot(&impl->recovery, &snapshot);
       if (status == SALTS_OK && snapshot.protocol_ready) {
         const uint64_t deadline = dial_deadline(now_ms, impl->episode_ms);
@@ -153,7 +153,7 @@ int cnet_managed_dial_init(cnet_managed_dial *dial,
     cnet_storage_free(impl);
     return status;
   }
-  impl->owner_thread = cmeta_thread_current_token();
+  impl->owner_thread = sync_thread_current_token();
   impl->manager = config->manager;
   impl->client = config->client;
   impl->user_observer = config->connection.observer;

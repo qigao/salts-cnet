@@ -57,7 +57,7 @@ not a compatibility wrapper, not compiler-native \`_Atomic\`, and does
 not duplicate source ownership.
 
 A compiler is admitted for an actual SDK consumer ONLY if it builds
-and runs \`tests/test_c11_threads.c\` against the real provider shared
+and runs \`platform/tests/test_c11_threads.c\` against the real provider shared
 library; cross linking alone is not evidence. Require Windows x86/x64
 and native ARM64 TinyCC→llvm-mingw, macOS Intel/ARM64 TinyCC→Clang,
 Linux TinyCC→GCC, MSVC compiled Installed SDK C11/C++17, and

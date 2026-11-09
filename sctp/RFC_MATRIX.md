@@ -1,5 +1,11 @@
 # RFC-first SCTP conformance matrix — Salts #1281
 
+> Current dependency policy: OpenSSL/BoringSSL-linked adapters have been
+> removed. DTLS results below are historical upstream evidence, not tests
+> supported by this checkout. The Pion UDP cases remain formal root-graph
+> tests; production DTLS and encrypted SCTP qualification remain open in
+> [#188](https://github.com/qigao/salts-core/issues/188).
+
 **Historical source/test checkpoint before this matrix update:** `2697fdb260d1a1e710f638f9f36849d581610876` (2026-10-21), on the private `feature/cnet-sctp-c11-wire-m1` branch of Draft PR #1182. The isolated snapshot was later carried by successor PR #1281 and merged as a private, noninstalled baseline. It adds post-COOKIE state admission for unknown-only chunks, preventing pre-establishment ERROR or provisional time changes; the immediately preceding test commits cover 128/129-Chunk count boundaries, 128 unknown REPORT causes, and the private 1200-byte single-ERROR egress ceiling. Every follow-up SHA requires its own exact-head checks.
 
 **Last fully qualified source checkpoint:** `5b2efadeec7cedc6985432839c2d45d29eb28d96`. [CNet C11 push #39615203781](https://github.com/qigao/salts/actions/runs/39615203781) and [CNet C11 PR #39615214744](https://github.com/qigao/salts/actions/runs/39615214744) passed the 5-job Linux/macOS/Windows, source ASan+UBSan, isolated pinned-GmSSL suite; [Salts CI #39615214699](https://github.com/qigao/salts/actions/runs/39615214699) passed its **selected** checks, and [immutable provenance #39615214724](https://github.com/qigao/salts/actions/runs/39615214724) passed. Formal, package, benchmarks, ServiceHost installed ABI, six-RID identity, SDK publication and the ACE candidate were **SKIPPED**, not passes. The newer commits `0bef069d`, `f0af3dac`, `a2df6fc4`, `e90a29f1`, and `2697fdb2` are **unqualified by that earlier CI**.

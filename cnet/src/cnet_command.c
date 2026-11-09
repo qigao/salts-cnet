@@ -1,9 +1,9 @@
 #include "cnet_resources.h"
 #include "cnet_command.h"
 
-#include <cmeta_buffer.h>
+#include <memory/buffer.h>
 #if defined(CNET_INTERNAL_PROFILING)
-  #include <clock.h>
+  #include <salts/clock.h>
 #endif
 
 #include <stdbool.h>
@@ -77,14 +77,14 @@ static void cnet_command_record_rejection(cnet_command_queue_impl *impl, size_t 
 
 #if defined(CNET_INTERNAL_PROFILING)
 static uint64_t cnet_command_profile_start(const cnet_command_queue_impl *impl) {
-  return impl->profile_active ? cmeta_hrtime() : 0u;
+  return impl->profile_active ? hrtime() : 0u;
 }
 
 static void cnet_command_profile_finish(cnet_command_queue_impl *impl, uint64_t started_ns,
                                         uint64_t *elapsed_ns, uint64_t *calls) {
   uint64_t elapsed;
   if (!impl->profile_active) return;
-  elapsed = cmeta_hrtime() - started_ns;
+  elapsed = hrtime() - started_ns;
   cnet_command_saturating_add(elapsed_ns, elapsed);
   cnet_command_saturating_add(calls, 1u);
 }

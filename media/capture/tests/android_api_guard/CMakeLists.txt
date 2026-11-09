@@ -1,6 +1,0 @@
-cmake_minimum_required(VERSION 3.20)
-project(SaltsCaptureAndroidApiGuard LANGUAGES C)
-if(NOT ANDROID)
-  message(FATAL_ERROR "This regression requires the real Android NDK toolchain")
-endif()
-include("${CMAKE_CURRENT_LIST_DIR}/../../cmake/require_android_api.cmake")

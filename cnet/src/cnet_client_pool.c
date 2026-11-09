@@ -1,7 +1,7 @@
 #include <cnet/client_pool.h>
 #include "cnet_resources.h"
 #include "cnet_reuse.h"
-#include <thread.h>
+#include <threads/threads.h>
 
 #include <stdatomic.h>
 #include <stdlib.h>
@@ -43,7 +43,7 @@ static int pool_owner(cnet_client_pool *pool, pool_impl **out) {
   if (out != NULL) *out = NULL;
   if (pool == NULL || pool->impl == NULL || out == NULL) return SALTS_EINVAL;
   *out = (pool_impl *)pool->impl;
-  if ((*out)->thread != cmeta_thread_current_token()) return SALTS_EPERM;
+  if ((*out)->thread != sync_thread_current_token()) return SALTS_EPERM;
   return (*out)->in_callback ? SALTS_EBUSY : SALTS_OK;
 }
 static bool key_valid(const cnet_pool_key *key) {
@@ -134,7 +134,7 @@ int cnet_pool_init(cnet_client_pool *pool, const cnet_pool_config *config) {
       &pool_incarnation_source, &incarnation, incarnation + 1u,
       memory_order_relaxed, memory_order_relaxed));
   impl->manager = config->manager;
-  impl->thread = cmeta_thread_current_token();
+  impl->thread = sync_thread_current_token();
   impl->incarnation = (uint64_t)(incarnation + 1u);
   impl->owner_id = config->owner_id;
   impl->max_physical = config->max_connections;

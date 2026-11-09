@@ -47,7 +47,7 @@ the production `crypto_tls_stream.c` instance, measured through private test
 counters. The CNet executable calls a bridge into its existing DSO, without
 linking another Crypto archive. Counts are cumulative per calling thread;
 phase deltas exclude the snapshot's structure copy. No phase overflowed or
-reported an allocation failure. `BUILD_TESTING=OFF` keeps the original libc
+reported an allocation failure. `BUILD_TESTS=OFF` keeps the original libc
 operations and compiles out the counters and bridge.
 
 Every sample's setup made **26 allocation requests / 1,591,144 requested and

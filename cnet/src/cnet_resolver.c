@@ -4,9 +4,9 @@
 
 #include <ares.h>
 #include <cnet/name_lookup.h>
-#include <clock.h>
+#include <salts/clock.h>
 #include <stdatomic.h>
-#include <thread.h>
+#include <threads/threads.h>
 
 #include <limits.h>
 #include <stdio.h>
@@ -74,8 +74,8 @@ typedef struct cnet_resolver_impl {
   size_t ready_count;
   size_t active_count;
   bool admission_open;
-  cmeta_mutex_t control_lock;
-  cmeta_mutex_t state_lock;
+  sync_mutex_t control_lock;
+  sync_mutex_t state_lock;
   bool socket_overflow;
   uint64_t lookup_identity;
   size_t result_capacity, name_capacity;
@@ -206,7 +206,7 @@ static void cnet_resolver_callback(void *argument, int status, int timeouts,
     if (node == NULL) status = ARES_ENODATA;
   }
 
-  cmeta_mutex_lock(&impl->state_lock);
+  sync_mutex_lock(&impl->state_lock);
   if (slot->state == CNET_RESOLVER_SLOT_ACTIVE) {
     memset(&slot->result, 0, sizeof(slot->result));
     slot->result.query.slot = (uint32_t)(slot - impl->slots) + 1u;
@@ -254,7 +254,7 @@ static void cnet_resolver_callback(void *argument, int status, int timeouts,
         slot->result.query.slot - 1u;
     ++impl->ready_count;
   }
-  cmeta_mutex_unlock(&impl->state_lock);
+  sync_mutex_unlock(&impl->state_lock);
 
   if (addresses != NULL) ares_freeaddrinfo(addresses);
 }
@@ -318,16 +318,16 @@ int cnet_resolver_init(cnet_resolver *resolver, const cnet_resolver_config *conf
     impl->slots[index].owner = impl;
     impl->free_slots[index] = (uint32_t)(impl->capacity - index - 1u);
   }
-  cmeta_mutex_init(&impl->control_lock);
-  cmeta_mutex_init(&impl->state_lock);
+  sync_mutex_init(&impl->control_lock);
+  sync_mutex_init(&impl->state_lock);
 
   memset(&options, 0, sizeof(options));
   options.sock_state_cb = cnet_resolver_socket_state;
   options.sock_state_cb_data = impl;
   status = ares_init_options(&impl->channel, &options, ARES_OPT_SOCK_STATE_CB);
   if (status != ARES_SUCCESS) {
-    cmeta_mutex_destroy(&impl->state_lock);
-    cmeta_mutex_destroy(&impl->control_lock);
+    sync_mutex_destroy(&impl->state_lock);
+    sync_mutex_destroy(&impl->control_lock);
     free(impl->ready_events);
     free(impl->poll_fds);
     free(impl->sockets);
@@ -351,11 +351,11 @@ int cnet_resolver_poll(cnet_resolver *resolver) {
   ares_status_t status;
   if (impl == NULL) return SALTS_EINVAL;
 
-  cmeta_mutex_lock(&impl->control_lock);
+  sync_mutex_lock(&impl->control_lock);
   if (impl->socket_overflow) {
     impl->socket_overflow = false;
     ares_cancel(impl->channel);
-    cmeta_mutex_unlock(&impl->control_lock);
+    sync_mutex_unlock(&impl->control_lock);
     return SALTS_ENOBUFS;
   }
   while (offset < impl->socket_count) {
@@ -378,7 +378,7 @@ int cnet_resolver_poll(cnet_resolver *resolver) {
     polled = poll(impl->poll_fds, (nfds_t)batch, 0);
 #endif
     if (polled < 0) {
-      cmeta_mutex_unlock(&impl->control_lock);
+      sync_mutex_unlock(&impl->control_lock);
       return SALTS_EAI_FAIL;
     }
     for (index = 0u; polled > 0 && index < batch; ++index) {
@@ -394,7 +394,7 @@ int cnet_resolver_poll(cnet_resolver *resolver) {
   }
   status = ares_process_fds(impl->channel, ready_count != 0u ? impl->ready_events : NULL,
                             ready_count, ARES_PROCESS_FLAG_NONE);
-  cmeta_mutex_unlock(&impl->control_lock);
+  sync_mutex_unlock(&impl->control_lock);
   if (status == ARES_SUCCESS) return SALTS_OK;
   return status == ARES_ENOMEM ? SALTS_ENOMEM : SALTS_EAI_FAIL;
 }
@@ -403,9 +403,9 @@ bool cnet_resolver_has_pending(cnet_resolver *resolver) {
   cnet_resolver_impl *impl = cnet_resolver_get_impl(resolver);
   bool pending;
   if (impl == NULL) return false;
-  cmeta_mutex_lock(&impl->state_lock);
+  sync_mutex_lock(&impl->state_lock);
   pending = impl->active_count != 0u;
-  cmeta_mutex_unlock(&impl->state_lock);
+  sync_mutex_unlock(&impl->state_lock);
   return pending;
 }
 
@@ -424,16 +424,16 @@ int cnet_resolver_submit(cnet_resolver *resolver, const char *host, uint16_t por
   host_length = strnlen(host, CNET_RESOLVER_HOST_CAPACITY);
   if (host_length == 0u || host_length == CNET_RESOLVER_HOST_CAPACITY) return SALTS_ENAMETOOLONG;
 
-  cmeta_mutex_lock(&impl->control_lock);
-  cmeta_mutex_lock(&impl->state_lock);
+  sync_mutex_lock(&impl->control_lock);
+  sync_mutex_lock(&impl->state_lock);
   if (!impl->admission_open) {
-    cmeta_mutex_unlock(&impl->state_lock);
-    cmeta_mutex_unlock(&impl->control_lock);
+    sync_mutex_unlock(&impl->state_lock);
+    sync_mutex_unlock(&impl->control_lock);
     return SALTS_ESHUTDOWN;
   }
   if (impl->free_count == 0u) {
-    cmeta_mutex_unlock(&impl->state_lock);
-    cmeta_mutex_unlock(&impl->control_lock);
+    sync_mutex_unlock(&impl->state_lock);
+    sync_mutex_unlock(&impl->control_lock);
     return SALTS_ENOBUFS;
   }
 
@@ -446,20 +446,20 @@ int cnet_resolver_submit(cnet_resolver *resolver, const char *host, uint16_t por
   slot->requested_port = port;
   slot->cancelled = false;
   slot->dropped = slot->expired = false; slot->address_count = slot->address_index = 0;
-  slot->deadline = cmeta_monotonic_ms() + impl->lookup_timeout;
+  slot->deadline = monotonic_ms() + impl->lookup_timeout;
   memcpy(slot->host, host, host_length + 1u);
   (void)snprintf(slot->service, sizeof(slot->service), "%u", (unsigned int)port);
   ++impl->active_count;
   out_query->slot = slot_index + 1u;
   out_query->generation = slot->generation;
-  cmeta_mutex_unlock(&impl->state_lock);
+  sync_mutex_unlock(&impl->state_lock);
 
   memset(&hints, 0, sizeof(hints));
   hints.ai_family = AF_UNSPEC;
   hints.ai_socktype = socket_type;
   hints.ai_protocol = socket_type == SOCK_STREAM ? IPPROTO_TCP : IPPROTO_UDP;
   ares_getaddrinfo(impl->channel, slot->host, slot->service, &hints, cnet_resolver_callback, slot);
-  cmeta_mutex_unlock(&impl->control_lock);
+  sync_mutex_unlock(&impl->control_lock);
   return SALTS_OK;
 }
 
@@ -468,10 +468,10 @@ int cnet_resolver_cancel(cnet_resolver *resolver, cnet_resolver_query query) {
   cnet_resolver_slot *slot;
 
   if (impl == NULL) return SALTS_EINVAL;
-  cmeta_mutex_lock(&impl->state_lock);
+  sync_mutex_lock(&impl->state_lock);
   slot = cnet_resolver_find_slot(impl, query);
   if (slot == NULL) {
-    cmeta_mutex_unlock(&impl->state_lock);
+    sync_mutex_unlock(&impl->state_lock);
     return SALTS_ENOENT;
   }
   slot->cancelled = true;
@@ -479,7 +479,7 @@ int cnet_resolver_cancel(cnet_resolver *resolver, cnet_resolver_query query) {
     slot->result.status = SALTS_EAI_CANCELED;
     slot->result.address_length = 0u;
   }
-  cmeta_mutex_unlock(&impl->state_lock);
+  sync_mutex_unlock(&impl->state_lock);
   return SALTS_OK;
 }
 
@@ -493,10 +493,10 @@ int cnet_resolver_take(cnet_resolver *resolver, cnet_resolver_result *out_result
   memset(out_result, 0, sizeof(*out_result));
   if (impl == NULL) return SALTS_EINVAL;
 
-  cmeta_mutex_lock(&impl->state_lock);
+  sync_mutex_lock(&impl->state_lock);
   if (impl->ready_count == 0u) {
     drained = !impl->admission_open && impl->active_count == 0u;
-    cmeta_mutex_unlock(&impl->state_lock);
+    sync_mutex_unlock(&impl->state_lock);
     return drained ? SALTS_EOF : SALTS_ETIMEDOUT;
   }
 
@@ -511,7 +511,7 @@ int cnet_resolver_take(cnet_resolver *resolver, cnet_resolver_result *out_result
   slot->cancelled = false;
   --impl->active_count;
   if (slot->state == CNET_RESOLVER_SLOT_FREE) impl->free_slots[impl->free_count++] = slot_index;
-  cmeta_mutex_unlock(&impl->state_lock);
+  sync_mutex_unlock(&impl->state_lock);
   return SALTS_OK;
 }
 
@@ -521,17 +521,17 @@ int cnet_resolver_close(cnet_resolver *resolver, uint32_t timeout_ms) {
   if (impl == NULL) return SALTS_EINVAL;
   (void)timeout_ms;
 
-  cmeta_mutex_lock(&impl->control_lock);
-  cmeta_mutex_lock(&impl->state_lock);
+  sync_mutex_lock(&impl->control_lock);
+  sync_mutex_lock(&impl->state_lock);
   if (!impl->admission_open) {
-    cmeta_mutex_unlock(&impl->state_lock);
-    cmeta_mutex_unlock(&impl->control_lock);
+    sync_mutex_unlock(&impl->state_lock);
+    sync_mutex_unlock(&impl->control_lock);
     return SALTS_EALREADY;
   }
   impl->admission_open = false;
-  cmeta_mutex_unlock(&impl->state_lock);
+  sync_mutex_unlock(&impl->state_lock);
   ares_cancel(impl->channel);
-  cmeta_mutex_unlock(&impl->control_lock);
+  sync_mutex_unlock(&impl->control_lock);
   return SALTS_OK;
 }
 
@@ -541,19 +541,19 @@ int cnet_resolver_destroy(cnet_resolver *resolver) {
   if (resolver == NULL) return SALTS_EINVAL;
   if (impl == NULL) return SALTS_OK;
 
-  cmeta_mutex_lock(&impl->control_lock);
-  cmeta_mutex_lock(&impl->state_lock);
+  sync_mutex_lock(&impl->control_lock);
+  sync_mutex_lock(&impl->state_lock);
   if (impl->admission_open || impl->active_count != 0u) {
-    cmeta_mutex_unlock(&impl->state_lock);
-    cmeta_mutex_unlock(&impl->control_lock);
+    sync_mutex_unlock(&impl->state_lock);
+    sync_mutex_unlock(&impl->control_lock);
     return SALTS_EBUSY;
   }
-  cmeta_mutex_unlock(&impl->state_lock);
+  sync_mutex_unlock(&impl->state_lock);
   ares_destroy(impl->channel);
-  cmeta_mutex_unlock(&impl->control_lock);
+  sync_mutex_unlock(&impl->control_lock);
 
-  cmeta_mutex_destroy(&impl->state_lock);
-  cmeta_mutex_destroy(&impl->control_lock);
+  sync_mutex_destroy(&impl->state_lock);
+  sync_mutex_destroy(&impl->control_lock);
   free(impl->lookup_storage);
   free(impl->ready_events);
   free(impl->poll_fds);
@@ -720,14 +720,14 @@ int cnet_name_lookup_advance(cnet_name_lookup *lookup) {
   cnet_resolver_impl *p = lookup_impl(lookup); cnet_resolver carrier = {p}; int rc;
   if (!p) return SALTS_EINVAL;
   for (size_t i = 0; i < p->capacity; ++i)
-    if (p->slots[i].state == CNET_RESOLVER_SLOT_ACTIVE && !p->slots[i].cancelled && cmeta_monotonic_ms() >= p->slots[i].deadline) p->slots[i].expired = true;
+    if (p->slots[i].state == CNET_RESOLVER_SLOT_ACTIVE && !p->slots[i].cancelled && monotonic_ms() >= p->slots[i].deadline) p->slots[i].expired = true;
   rc = cnet_resolver_poll(&carrier);
   for (size_t i = 0; i < p->capacity; ++i)
     if (p->slots[i].state == CNET_RESOLVER_SLOT_READY && p->slots[i].dropped) lookup_retire(p, &p->slots[i]);
   return rc;
 }
 int cnet_name_lookup_next_timeout(cnet_name_lookup *lookup, uint32_t max_wait, uint32_t *out) {
-  cnet_resolver_impl *p = lookup_impl(lookup); uint64_t now = cmeta_monotonic_ms(); struct timeval maximum, timeout;
+  cnet_resolver_impl *p = lookup_impl(lookup); uint64_t now = monotonic_ms(); struct timeval maximum, timeout;
   if (!p || !out) return SALTS_EINVAL;
   *out = max_wait;
   for (size_t i = 0; i < p->capacity; ++i) if (p->slots[i].state == CNET_RESOLVER_SLOT_ACTIVE && !p->slots[i].cancelled && !p->slots[i].expired) {
@@ -743,14 +743,14 @@ int cnet_name_lookup_next_timeout(cnet_name_lookup *lookup, uint32_t max_wait, u
 int cnet_name_lookup_ready(cnet_name_lookup *lookup, cnet_name_query query, bool *out) {
   cnet_resolver_slot *s = lookup_slot(lookup_impl(lookup), query);
   if (!s || !out) return SALTS_EINVAL;
-  *out = s->state == CNET_RESOLVER_SLOT_READY || s->cancelled || cmeta_monotonic_ms() >= s->deadline; return SALTS_OK;
+  *out = s->state == CNET_RESOLVER_SLOT_READY || s->cancelled || monotonic_ms() >= s->deadline; return SALTS_OK;
 }
 int cnet_name_lookup_next(cnet_name_lookup *lookup, cnet_name_query query, cnet_ip_address *out) {
   cnet_resolver_slot *s = lookup_slot(lookup_impl(lookup), query);
   if (!s || !out) return SALTS_EINVAL;
   if (s->state != CNET_RESOLVER_SLOT_READY) {
     if (s->cancelled) return SALTS_EAI_CANCELED;
-    if (cmeta_monotonic_ms() >= s->deadline) s->expired = true;
+    if (monotonic_ms() >= s->deadline) s->expired = true;
     return s->expired ? SALTS_EAI_AGAIN : SALTS_ETIMEDOUT;
   }
   if (s->result.status != SALTS_OK) return s->result.status;

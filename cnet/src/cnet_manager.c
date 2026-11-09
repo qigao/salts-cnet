@@ -3,7 +3,7 @@
 #include "cnet_reuse.h"
 #include "cnet_client_internal.h"
 #include <cnet/manager.h>
-#include <thread.h>
+#include <threads/threads.h>
 #include <stdatomic.h>
 #include <stdlib.h>
 #include <string.h>
@@ -38,7 +38,7 @@ static atomic_uint_fast64_t manager_incarnation;
 static int get_manager(cnet_manager *manager, manager_impl **out) {
   if (manager == NULL || manager->impl == NULL) return SALTS_EINVAL;
   *out = manager->impl;
-  return (*out)->thread == cmeta_thread_current_token() ? SALTS_OK : SALTS_EPERM;
+  return (*out)->thread == sync_thread_current_token() ? SALTS_OK : SALTS_EPERM;
 }
 int cnet_manager_validate_client(cnet_manager *manager, cnet_client *client) {
   manager_impl *impl;
@@ -139,7 +139,7 @@ int cnet_manager_init(cnet_manager *manager, const cnet_manager_config *config) 
                                                   incarnation + 1u, memory_order_relaxed,
                                                   memory_order_relaxed));
   impl->client = config->client;
-  impl->thread = cmeta_thread_current_token();
+  impl->thread = sync_thread_current_token();
   impl->capacity = config->record_capacity;
   impl->limit = config->connection_capacity;
   for (size_t i = 0u; i < impl->capacity; ++i) {

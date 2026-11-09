@@ -1,7 +1,7 @@
 #ifndef CNET_SCTP_SESSION_INTERNAL_H
 #define CNET_SCTP_SESSION_INTERNAL_H
 
-#include <cnet/sctp_session.h>
+#include <sctp_session.h>
 
 #include "sctp_assoc_internal.h"
 #include "sctp_dcep_internal.h"

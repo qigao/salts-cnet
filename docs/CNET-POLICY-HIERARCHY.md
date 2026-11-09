@@ -820,7 +820,7 @@ must preserve current cnet_connection ABI, terminal identity and ownership.
 ## Acceptance without new workflows or consumer/test projects
 
 **M0:** approved design/mapping, no new runtime capability or performance
-claim. **Implemented M1:** extend the existing `tests/test_cnet_policy.c`
+claim. **Implemented M1:** extend the existing `cnet/tests/test_cnet_policy.c`
 with real CNet URI/TLS and UDP/KCP/secure-KCP admission checks, bounded FEC/
 Owner/terminal version rejections, positive endpoint initialization and
 pre-READY secure KCP send denial. Link the existing `saltscore.cnet_policy`
@@ -828,7 +828,7 @@ CTest target against production `Salts::CNet` instead of duplicating policy
 sources into the test executable. PR #157's exact-head CI #153 passed all ten
 LLVM matrix jobs; this does not introduce first-class host Channel Plan APIs.
 
-**M1:** within existing tests/test_cnet_policy.c TinyTest, verify invalid
+**M1:** within existing cnet/tests/test_cnet_policy.c TinyTest, verify invalid
 classification/version, raw transport/channel recipe mismatch (e.g. TLS/UDP,
 DTLS pretending to be qualified, KCP/TCP), security downgrade denial,
 capability/READY rejection, STRICT_KEY/FULL, host plan's bounded limits,

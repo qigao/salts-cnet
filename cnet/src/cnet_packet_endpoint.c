@@ -8,9 +8,8 @@
   #include "cnet_test_internal.h"
 #endif
 
-#include "cnet_monocypher_namespace.h"
 #include <monocypher.h>
-#include <clock.h>
+#include <salts/clock.h>
 
 #include <limits.h>
 #include <stdlib.h>
@@ -703,7 +702,7 @@ static int cnet_packet_record_open(cnet_packet_endpoint_impl *impl, const cnet_p
   record->occupied = true;
   *out_session = cnet_packet_record_handle(impl, record);
   if (record->secure_kcp_initialized) {
-    status = cnet_secure_kcp_start(&record->secure_kcp, (uint32_t)cmeta_monotonic_ms());
+    status = cnet_secure_kcp_start(&record->secure_kcp, (uint32_t)monotonic_ms());
     if (status != SALTS_OK) {
       (void)cnet_packet_index_remove(&impl->peer_index, &record->key);
       (void)cnet_secure_kcp_destroy(&record->secure_kcp);
@@ -1182,11 +1181,11 @@ int cnet_packet_poll(cnet_packet_endpoint *endpoint, uint32_t timeout_ms, size_t
   if (impl->polling || impl->callback_depth != 0u) return SALTS_EBUSY;
   impl->polling = true;
   impl->pending_status = SALTS_OK;
-  now_ms = (uint32_t)cmeta_monotonic_ms();
+  now_ms = (uint32_t)monotonic_ms();
   cnet_packet_update_kcp(impl, now_ms);
   wait_ms = cnet_packet_wait_ms(impl, now_ms, timeout_ms);
   status = cnet_datagram_poll(&impl->datagram, wait_ms, out_events);
-  now_ms = (uint32_t)cmeta_monotonic_ms();
+  now_ms = (uint32_t)monotonic_ms();
   cnet_packet_update_kcp(impl, now_ms);
   if (status == SALTS_OK && impl->pending_status != SALTS_OK) status = impl->pending_status;
   impl->polling = false;

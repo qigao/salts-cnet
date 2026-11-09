@@ -5,98 +5,60 @@
     "minor": 25,
     "patch": 0
   },
+  "include": [
+    "presets/ConfigurePresets.json",
+    "presets/BuildPresets.json",
+    "presets/TestPresets.json"
+  ],
   "configurePresets": [
     {
-      "name": "base",
+      "name": "native-runtime",
       "hidden": true,
-      "generator": "Ninja",
-      "binaryDir": "${sourceDir}/build/${presetName}",
-      "cacheVariables": {
-        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
-        "CMAKE_TOOLCHAIN_FILE": "$env{SALTSCORE_VCPKG_TOOLCHAIN_FILE}",
-        "VCPKG_CHAINLOAD_TOOLCHAIN_FILE": "$env{SALTSCORE_CHAINLOAD_TOOLCHAIN_FILE}",
-        "VCPKG_TARGET_TRIPLET": "$env{SALTSCORE_VCPKG_TARGET_TRIPLET}",
-        "VCPKG_HOST_TRIPLET": "$env{SALTSCORE_VCPKG_HOST_TRIPLET}",
-        "CMAKE_INSTALL_PREFIX": "$env{SALTSCORE_INSTALL_PREFIX}"
-      }
-    },
-    {
-      "name": "release-base",
-      "hidden": true,
-      "inherits": "base",
-      "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "Release",
-        "SALTSCORE_ENABLE_ASAN": "OFF",
-        "SALTSCORE_ENABLE_UBSAN": "OFF",
-        "SALTSCORE_ENABLE_TSAN": "OFF"
+      "environment": {
+        "PATH": "${sourceDir}/build/${presetName}/bin${pathListSep}$env{VCPKG_INSTALLED_DIR}/$env{VCPKG_TARGET_TRIPLET}/$env{VCPKG_CONFIGURATION_SUBDIR}bin${pathListSep}$env{VCPKG_INSTALLED_DIR}/$env{VCPKG_TARGET_TRIPLET}/bin${pathListSep}$env{SALTS_BASE_ROOT}/bin${pathListSep}$penv{PATH}",
+        "LD_LIBRARY_PATH": "$env{VCPKG_INSTALLED_DIR}/$env{VCPKG_TARGET_TRIPLET}/$env{VCPKG_CONFIGURATION_SUBDIR}lib${pathListSep}$env{VCPKG_INSTALLED_DIR}/$env{VCPKG_TARGET_TRIPLET}/lib${pathListSep}$env{SALTS_BASE_ROOT}/lib${pathListSep}$penv{LD_LIBRARY_PATH}"
       }
     },
     {
       "name": "full-native",
       "hidden": true,
-      "inherits": "release-base",
+      "inherits": [
+        "ISNative",
+        "base",
+        "release-mode",
+        "selected-toolchain"
+      ],
       "cacheVariables": {
-        "BUILD_TESTING": "ON",
-        "VCPKG_MANIFEST_FEATURES": "cnet;usb;media;zstd",
-        "SALTSCORE_BUILD_URI": "ON",
-        "SALTSCORE_BUILD_CNET": "ON",
-        "SALTSCORE_BUILD_WEBSOCKET_PARSER": "ON",
-        "SALTSCORE_BUILD_CSERDE": "ON",
-        "SALTSCORE_BUILD_TINYTEST": "ON",
-        "SALTSCORE_BUILD_UNICODE": "ON",
-        "SALTSCORE_BUILD_IDNA": "ON",
-        "SALTSCORE_NATIVE_CPP_CONFORMANCE": "ON",
-        "SALTSCORE_BUILD_FS": "ON",
-        "SALTSCORE_BUILD_PROCESS": "ON",
-        "SALTSCORE_CNET_OWNER_SOURCE_TESTS": "ON",
-        "SALTSCORE_BUILD_SCTP": "ON",
-        "SALTSCORE_BUILD_USB": "ON",
-        "SALTSCORE_BUILD_SERIAL": "ON",
-        "SALTSCORE_BUILD_ZSTD": "ON",
-        "SALTSCORE_BUILD_MEDIA": "ON"
+        "BUILD_TESTS": "ON"
       }
     },
     {
       "name": "full-native-asan-ubsan",
       "hidden": true,
-      "inherits": "full-native",
-      "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "Debug",
-        "SALTSCORE_ENABLE_ASAN": "ON",
-        "SALTSCORE_ENABLE_UBSAN": "ON"
-      }
+      "inherits": [
+        "ISLinux",
+        "asan-ubsan-mode",
+        "full-native"
+      ]
     },
     {
       "name": "full-native-tsan",
       "hidden": true,
-      "inherits": "full-native",
-      "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "Debug",
-        "SALTSCORE_ENABLE_TSAN": "ON"
-      }
+      "inherits": [
+        "ISLinux",
+        "tsan-mode",
+        "full-native"
+      ]
     },
     {
       "name": "android-release",
       "hidden": true,
-      "inherits": "release-base",
+      "inherits": [
+        "android-base",
+        "release-mode"
+      ],
       "cacheVariables": {
-        "BUILD_TESTING": "OFF",
-        "ANDROID_ABI": "$env{SALTSCORE_ANDROID_ABI}",
-        "ANDROID_PLATFORM": "android-26",
-        "VCPKG_MANIFEST_FEATURES": "cnet;usb;media;zstd",
-        "SALTSCORE_BUILD_URI": "ON",
-        "SALTSCORE_BUILD_WEBSOCKET_PARSER": "ON",
-        "SALTSCORE_BUILD_CSERDE": "ON",
-        "SALTSCORE_BUILD_TINYTEST": "ON",
-        "SALTSCORE_BUILD_UNICODE": "ON",
-        "SALTSCORE_BUILD_IDNA": "ON",
-        "SALTSCORE_BUILD_FS": "ON",
-        "SALTSCORE_BUILD_PROCESS": "ON",
-        "SALTSCORE_BUILD_SCTP": "ON",
-        "SALTSCORE_BUILD_USB": "ON",
-        "SALTSCORE_BUILD_SERIAL": "ON",
-        "SALTSCORE_BUILD_ZSTD": "ON",
-        "SALTSCORE_BUILD_MEDIA": "ON"
+        "ANDROID_ABI": "$env{SALTSCORE_ANDROID_ABI}"
       }
     }
   ]

@@ -1,4 +1,4 @@
-#include <cnet/sctp_session.h>
+#include <sctp_session.h>
 #include "provider_dso_fixture.h"
 
 #ifdef NDEBUG

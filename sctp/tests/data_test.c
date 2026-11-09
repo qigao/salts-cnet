@@ -3,6 +3,7 @@
 #include <tinytest.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 typedef struct test_owner { int admitted; } test_owner;
@@ -1164,7 +1165,101 @@ static void output_count_zeroed_before_owner_guard(void) {
   check(cnet_sctp_data_stop(&b) == CNET_SCTP_DATA_OK);
 }
 
+enum { INTEGRITY_PEERS = 8 };
+typedef struct integrity_pair {
+  cnet_sctp_data sender, receiver;
+  test_owner send_owner, receive_owner;
+  uint8_t expected[CNET_SCTP_DATA_MESSAGE_MAX];
+  uint8_t received[CNET_SCTP_DATA_MESSAGE_MAX];
+  unsigned packets, dropped, recovered, done;
+} integrity_pair;
+static integrity_pair *integrity_pairs;
+
+static uint8_t integrity_byte(size_t peer, size_t offset) {
+  return (uint8_t)(31u + peer * 29u + offset * 17u + (offset >> 8u));
+}
+
 spec("SCTP native data contract") {
+  before_each() { integrity_pairs = NULL; }
+  after_each() { free(integrity_pairs); integrity_pairs = NULL; }
+  it("preserves eight independent maximum-size copies through I-DATA loss and retransmission") {
+    uint8_t source[CNET_SCTP_DATA_MESSAGE_MAX], packet[1200], sack[1200], reply[1200];
+    integrity_pairs = calloc(INTEGRITY_PEERS, sizeof(*integrity_pairs));
+    check_not_null(integrity_pairs);
+    for (size_t i = 0u; i < INTEGRITY_PEERS; ++i) {
+      integrity_pair *p = &integrity_pairs[i];
+      cnet_sctp_data_config a = config(1, &p->send_owner, (uint32_t)(100u + i * 100u), 3000u);
+      cnet_sctp_data_config b = config(0, &p->receive_owner, (uint32_t)(100u + i * 100u), 3000u);
+      p->send_owner.admitted = p->receive_owner.admitted = 1;
+      a.interleaving_supported = b.interleaving_supported = 1u;
+      check_equal(cnet_sctp_data_init(&p->sender, &a, 0u), CNET_SCTP_DATA_OK);
+      check_equal(cnet_sctp_data_init(&p->receiver, &b, 0u), CNET_SCTP_DATA_OK);
+      for (size_t j = 0u; j < sizeof(source); ++j)
+        source[j] = p->expected[j] = integrity_byte(i, j);
+      check_equal(cnet_sctp_data_queue_message(&p->sender, 1u, 0u, 53u, 0,
+          source, sizeof(source)), CNET_SCTP_DATA_OK);
+      /* Every pending queue owns its full copy before the shared producer
+       * storage is poisoned and reused for a different association. */
+      memset(source, 0xa5, sizeof(source));
+    }
+    unsigned completed = 0u;
+    for (unsigned round = 0u; round < 200u && completed < INTEGRITY_PEERS; ++round) {
+      const uint64_t now = 2u + round;
+      for (size_t k = 0u; k < INTEGRITY_PEERS; ++k) {
+        const size_t i = (round + k) % INTEGRITY_PEERS;
+        integrity_pair *p = &integrity_pairs[i];
+        if (p->done) continue;
+        size_t n = 0u, sn = 0u, rn = 0u;
+        cnet_sctp_data_status status = cnet_sctp_data_advance(&p->sender, now, packet, sizeof(packet), &n);
+        check(status == CNET_SCTP_DATA_OK || status == CNET_SCTP_DATA_CAPACITY);
+        if (!n && status == CNET_SCTP_DATA_OK)
+          status = cnet_sctp_data_pump(&p->sender, now, packet, sizeof(packet), &n);
+        check(status == CNET_SCTP_DATA_OK || status == CNET_SCTP_DATA_CAPACITY ||
+            status == CNET_SCTP_DATA_EMPTY || status == CNET_SCTP_DATA_RETRANSMIT_PENDING);
+        if (!n) continue;
+        ++p->packets;
+        cnet_sctp_wire_chunk ch;
+        inspect(packet, n, 64u, p->receiver.config.local_tag, &ch);
+        check_equal(ch.value_size, (size_t)(16u + 1024u));
+        uint32_t fsn = (ch.flags & 2u) ? 0u : rd32(ch.value + 12u);
+        check_less(fsn, 24u);
+        check_equal(ch.value + 16u, p->expected + (size_t)fsn * 1024u, 1024u);
+        /* A deterministic network loss must be repaired from an owned TX
+         * ticket while later gap SACKs transact over the pending copy. */
+        if (fsn == 5u && !p->dropped) { p->dropped = 1u; continue; }
+        if (fsn == 5u && p->dropped) ++p->recovered;
+        check_equal(cnet_sctp_data_input(&p->receiver, now, packet, n, sack,
+            sizeof(sack), &sn), CNET_SCTP_DATA_OK);
+        memset(packet, 0xa5, sizeof(packet)); /* RX fragments must own copies too. */
+        check_greater(sn, 0u);
+        check_equal(cnet_sctp_data_input(&p->sender, now, sack, sn, reply,
+            sizeof(reply), &rn), CNET_SCTP_DATA_OK);
+        check_equal(rn, (size_t)0u);
+        cnet_sctp_data_message message = {0};
+        size_t mn = 0u;
+        status = cnet_sctp_data_take(&p->receiver, &message, p->received,
+            sizeof(p->received), &mn);
+        check(status == CNET_SCTP_DATA_OK || status == CNET_SCTP_DATA_EMPTY);
+        if (status == CNET_SCTP_DATA_OK) {
+          check_equal(mn, sizeof(p->expected));
+          check_equal(p->received, p->expected, sizeof(p->expected));
+          check_equal(message.ppid, 53u);
+          check_equal(message.interleaved, 1u);
+          check_equal(p->dropped, 1u);
+          check_equal(p->recovered, 1u);
+          check_equal(p->packets, 25u);
+          check_true(cnet_sctp_data_outbound_drained(&p->sender));
+          p->done = 1u;
+          ++completed;
+        }
+      }
+    }
+    check_equal(completed, (unsigned)INTEGRITY_PEERS);
+    for (size_t i = 0u; i < INTEGRITY_PEERS; ++i) {
+      check_equal(cnet_sctp_data_stop(&integrity_pairs[i].sender), CNET_SCTP_DATA_OK);
+      check_equal(cnet_sctp_data_stop(&integrity_pairs[i].receiver), CNET_SCTP_DATA_OK);
+    }
+  }
   it("preserves all original RFC, boundary and negative-path assertions") {
   output_count_zeroed_before_owner_guard();
   data_reserved_i_and_unordered_ssn_are_ignored();

@@ -19,7 +19,7 @@ All three inputs are from `qigao/salts`
 | --- | --- | --- |
 | `utils/include/bucket_priority_queue_mpmc.h` | `6179fb4e16f407e00a2ab2bc57e258134f389ae6` | `concurrency/include/bucket_priority_queue_mpmc.h` |
 | `utils/src/bucket_priority_queue_mpmc.c` | `ff8e503abbafff7cb952e8c6575c7f6cbb6e1605` | `concurrency/src/bucket_priority_queue_mpmc.c` |
-| `utils/tests/test_bucket_priority_queue_mpmc.c` | `5d1498d3f0fd13a9d0619914c644baaaf0bd077e` | `tests/test_bucket_priority_queue_mpmc.c` |
+| `utils/tests/test_bucket_priority_queue_mpmc.c` | `5d1498d3f0fd13a9d0619914c644baaaf0bd077e` | `concurrency/tests/test_bucket_priority_queue_mpmc.c` |
 
 The header replaces old umbrella includes with canonical native headers and
 plain declarations. The original test body is unchanged; only its thread header

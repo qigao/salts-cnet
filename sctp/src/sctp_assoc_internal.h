@@ -1,7 +1,7 @@
 #ifndef CNET_SCTP_ASSOC_INTERNAL_H
 #define CNET_SCTP_ASSOC_INTERNAL_H
 
-#include <cnet/sctp_wire.h>
+#include <sctp_wire.h>
 #include "sctp_data_internal.h"
 #include <stddef.h>
 #include <stdint.h>

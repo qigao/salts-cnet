@@ -16,9 +16,9 @@ The bounded source mapping is:
 | --- | --- | --- |
 | `utils/include/cmeta_zstd.h` | `core/include/cmeta_zstd.h` | Replace only `<platform.h>` with `"cmeta_api.h"` |
 | `utils/src/cmeta_zstd.c` | `core/src/cmeta_zstd.c` | Exact original bytes |
-| `utils/tests/test_cmeta_zstd.c` | `tests/test_cmeta_zstd.c` | Exact original bytes; all six original cases run |
+| `utils/tests/test_cmeta_zstd.c` | `core/tests/test_cmeta_zstd.c` | Exact original bytes; all six original cases run |
 
-`tests/test_original_zstd_provenance.py` reverses that single header include
+`core/tests/test_original_zstd_provenance.py` reverses that single header include
 change and compares all three Git blobs/sizes to the frozen manifest. It also
 checks all seven public declarations, rejects source drift or a missing
 original test, and checks the retained provider registry and license. It does
@@ -54,7 +54,7 @@ The source profile requires:
 ```sh
 cmake -S . -B build-zstd \
   -DCMAKE_BUILD_TYPE=Release \
-  -DBUILD_TESTING=ON \
+  -DBUILD_TESTS=ON \
   -DSALTSCORE_BUILD_ZSTD=ON \
   -DSALTSCORE_BUILD_TINYTEST=ON \
   -DCMAKE_TOOLCHAIN_FILE=<pinned-vcpkg-toolchain> \
@@ -70,7 +70,7 @@ Use the platform's pinned target/host triplets with that toolchain. A manual
 provider build can instead supply its verified installation through
 `CMAKE_PREFIX_PATH`; the actual pinned source and port settings must be
 recorded. Missing providers and missing TinyTest in an enabled conformance
-build fail configuration. `BUILD_TESTING=OFF` builds the production owner.
+build fail configuration. `BUILD_TESTS=OFF` builds the production owner.
 
 Installed clients use `find_package(SaltsCore 0.1 CONFIG REQUIRED)`, link only
 `Salts::Core`, and include `<cmeta_zstd.h>`. `<cmeta_error.h>` provides the

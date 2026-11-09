@@ -1,8 +1,8 @@
 #ifndef CNET_WEBSOCKET_H
 #define CNET_WEBSOCKET_H
 
-#include <error_codes.h>
-#include <cmeta_buffer.h>
+#include <salts/error_codes.h>
+#include <memory/buffer.h>
 
 #include <stdbool.h>
 #include <stddef.h>

@@ -14,7 +14,7 @@
 #include <crypto/tls_auth.h>
 #include <crypto/tls_peer.h>
 #include <crypto/tls_close.h>
-#include <error_codes.h>
+#include <salts/error_codes.h>
 
 #include <stdatomic.h>
 #include <stdbool.h>
@@ -240,6 +240,7 @@ int cnet_crypto_tls_test_client_context(
         policy, effective_dns_name, exact_protocol, cipher_capacity,
         CNET_CRYPTO_OWNER_TEST_ONLY, &options);
     if (status != SALTS_OK) return status;
+    if (policy->session_cache_capacity != 0u) return SALTS_ENOTSUP;
     if (policy->cert_file != NULL) {
         auth.struct_size = (uint32_t)sizeof(auth);
         auth.client_auth = CRYPTO_TLS_CLIENT_AUTH_NONE;
@@ -269,6 +270,7 @@ int cnet_crypto_tls_test_server_context(
         policy, exact_protocol, cipher_capacity,
         CNET_CRYPTO_OWNER_TEST_ONLY, &options);
     if (status != SALTS_OK) return status;
+    if (policy->session_ticket_capacity || policy->session_ticket_lifetime_seconds) return SALTS_ENOTSUP;
     if (policy->client_auth == CNET_TLS_CLIENT_AUTH_REQUIRED) {
         auth.struct_size = (uint32_t)sizeof(auth);
         auth.client_auth = CRYPTO_TLS_CLIENT_AUTH_REQUIRED;
@@ -454,6 +456,16 @@ bool cnet_tls_state_handshake_complete(const cnet_tls_state *state)
     return state != NULL && state->handshake_complete;
 }
 
+int cnet_tls_get_diagnostic(const cnet_tls_state *state, crypto_tls_diagnostic *out)
+{
+    if (out == NULL) return SALTS_EINVAL;
+    *out = (crypto_tls_diagnostic){0};
+    if (get_engine(state) == NULL) return SALTS_EINVAL;
+    /* This test-only legacy session facade has no verification-result API.
+     * Do not invent production stream diagnostics or inspect provider state. */
+    return SALTS_ENOTSUP;
+}
+
 int cnet_tls_state_set_protocol_range(cnet_tls_state *state,
                                       cnet_tls_protocol_version min,
                                       cnet_tls_protocol_version max)
@@ -499,6 +511,16 @@ size_t cnet_tls_cipher_input_capacity(const cnet_tls_state *state)
         || snap.input_pending > snap.capacity)
         return 0u;
     return snap.capacity - snap.input_pending;
+}
+
+bool cnet_tls_cipher_output_empty(const cnet_tls_state *state)
+{
+    cnet_crypto_state *eng = get_engine(state);
+    crypto_tls_cipher_bio_snapshot snap = {0};
+    if (eng == NULL) return false;
+    snap.struct_size = (uint32_t)sizeof(snap);
+    return crypto_tls_cipher_bio_get_snapshot(eng->bio, &snap) == CRYPTO_TLS_OK
+        && snap.output_pending == 0u;
 }
 
 int cnet_tls_feed_cipher(cnet_tls_state *state, const void *data, size_t size)
@@ -844,6 +866,12 @@ static int copy_name(const cnet_tls_state *state, const char *value,
     memcpy(buffer, value, length + 1u);
     *out_size = length;
     return SALTS_OK;
+}
+
+int cnet_tls_state_session_reused(const cnet_tls_state *state, bool *out) {
+  if (!out) return SALTS_EINVAL;
+  *out = false;
+  return state ? SALTS_ENOTSUP : SALTS_EINVAL;
 }
 
 int cnet_tls_state_negotiated_version(const cnet_tls_state *state,

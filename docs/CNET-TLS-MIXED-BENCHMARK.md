@@ -78,10 +78,10 @@ Evidence: [Windows x64, 2026-11-04](benchmarks/cnet-tls-mixed-windows-x64-2026-1
 
 ## TLS adapter memory instrumentation protocol
 
-The follow-up uses private `BUILD_TESTING` diagnostics in the same production
+The follow-up uses private `BUILD_TESTS` diagnostics in the same production
 `crypto_tls_stream.c` instance. The direct executable snapshots its Crypto
 archive; the CNet executable calls a private bridge into its existing CNet DSO.
-It does not link another Crypto archive. `BUILD_TESTING=OFF` builds expand the instrumented
+It does not link another Crypto archive. `BUILD_TESTS=OFF` builds expand the instrumented
 sites to the original libc operations and contain no counters or bridge.
 
 One calling thread owns a fixed-size, thread-local set of cumulative saturating

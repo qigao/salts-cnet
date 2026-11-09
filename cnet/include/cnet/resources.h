@@ -1,7 +1,7 @@
 #ifndef CNET_RESOURCES_H
 #define CNET_RESOURCES_H
 
-#include <cmeta_buffer.h>
+#include <memory/buffer.h>
 #include <stdbool.h>
 #include <stddef.h>
 

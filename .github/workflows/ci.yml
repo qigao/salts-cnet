@@ -3,138 +3,40 @@ name: SaltsCore LLVM CI
 on:
   pull_request:
     paths:
-      - "platform/src/**"
-      - "platform/include/**"
-      - "core/src/**"
-      - "core/include/**"
-      - "core/parser/**"
-      - "asn1/src/**"
-      - "asn1/include/**"
-      - "crypto/src/**"
-      - "crypto/include/**"
-      - "crypto/native/gmssl/src/**"
-      - "crypto/native/gmssl/include/**"
-      - "concurrency/src/**"
-      - "concurrency/include/**"
-      - "coroutine/src/**"
-      - "coroutine/include/**"
-      - "native-io/src/**"
-      - "native-io/include/**"
-      - "uri/src/**"
-      - "uri/include/**"
-      - "uri/parser/**"
-      - "cnet/src/**"
-      - "cnet/include/**"
-      - "cserde/src/**"
-      - "cserde/include/**"
-      - "tinytest/src/**"
-      - "tinytest/include/**"
-      - "unicode/src/**"
-      - "unicode/include/**"
-      - "unicode/data/**"
-      - "idna/src/**"
-      - "idna/include/**"
-      - "fs/src/**"
-      - "fs/include/**"
-      - "process/src/**"
-      - "process/include/**"
-      - "sctp/src/**"
-      - "sctp/include/**"
-      - "usb/src/**"
-      - "usb/include/**"
-      - "media/**"
-      - "serial/*.c"
-      - "serial/*.h"
-      - "verification/*.pml"
-      - "vendor/reed/**"
-      - "vendor/monocypher/**"
-      - "crypto/gmssl-extensions/**"
+      - "crypto/**"
+      - "cnet/**"
+      - "sctp/**"
+      - "vendor/**"
       - "CMakeLists.txt"
       - "CMakeOptions.cmake"
       - "CMakePresets.json"
-      - "vcpkg.json"
-      - "vcpkg-configuration.json"
+      - "CMakeUserPresets.json"
+      - "presets/**"
+      - "cmake/**"
+      - "vcpkg*.json"
       - ".github/workflows/ci.yml"
-      - "tests/**"
-      - "**/tests/**"
-      - "tinytest/test/**"
   push:
     branches: [master]
     tags: ["v0.1.002"]
     paths:
-      - "platform/src/**"
-      - "platform/include/**"
-      - "core/src/**"
-      - "core/include/**"
-      - "core/parser/**"
-      - "asn1/src/**"
-      - "asn1/include/**"
-      - "crypto/src/**"
-      - "crypto/include/**"
-      - "crypto/native/gmssl/src/**"
-      - "crypto/native/gmssl/include/**"
-      - "concurrency/src/**"
-      - "concurrency/include/**"
-      - "coroutine/src/**"
-      - "coroutine/include/**"
-      - "native-io/src/**"
-      - "native-io/include/**"
-      - "uri/src/**"
-      - "uri/include/**"
-      - "uri/parser/**"
-      - "cnet/src/**"
-      - "cnet/include/**"
-      - "cserde/src/**"
-      - "cserde/include/**"
-      - "tinytest/src/**"
-      - "tinytest/include/**"
-      - "unicode/src/**"
-      - "unicode/include/**"
-      - "unicode/data/**"
-      - "idna/src/**"
-      - "idna/include/**"
-      - "fs/src/**"
-      - "fs/include/**"
-      - "process/src/**"
-      - "process/include/**"
-      - "sctp/src/**"
-      - "sctp/include/**"
-      - "usb/src/**"
-      - "usb/include/**"
-      - "media/**"
-      - "serial/*.c"
-      - "serial/*.h"
-      - "verification/*.pml"
-      - "vendor/reed/**"
-      - "vendor/monocypher/**"
-      - "crypto/gmssl-extensions/**"
+      - "crypto/**"
+      - "cnet/**"
+      - "sctp/**"
+      - "vendor/**"
       - "CMakeLists.txt"
       - "CMakeOptions.cmake"
       - "CMakePresets.json"
-      - "vcpkg.json"
-      - "vcpkg-configuration.json"
+      - "CMakeUserPresets.json"
+      - "presets/**"
+      - "cmake/**"
+      - "vcpkg*.json"
       - ".github/workflows/ci.yml"
-      - "tests/**"
-      - "**/tests/**"
-      - "tinytest/test/**"
   workflow_dispatch:
-    inputs:
-      cnet_measurements:
-        description: "Run existing TLS measurement CTests; also heaptrack them on Linux x64"
-        type: boolean
-        default: false
-      gmssl_copy_profile:
-        description: "Run the full Linux x64 graph with explicit GmSSL copy counters"
-        type: boolean
-        default: false
-      cnet_cpu_profile:
-        description: "Sample CPU callchains of existing TLS CTests on Linux x64"
-        type: boolean
-        default: false
 
 permissions:
   contents: read
   packages: read
+  actions: read
 
 concurrency:
   group: saltscore-ci-${{ github.event.pull_request.number || github.ref }}
@@ -154,16 +56,16 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - {rid: linux-x64, runner: ubuntu-24.04, target: x64, triplet: x64-linux, host: x64-linux, preset: ci-native, android_abi: "", package: true}
-          - {rid: linux-arm64, runner: ubuntu-24.04-arm, target: arm64, triplet: arm64-linux, host: arm64-linux, preset: ci-native, android_abi: "", package: true}
-          - {rid: macos-x64, runner: macos-15-intel, target: x64, triplet: x64-osx, host: x64-osx, preset: ci-native, android_abi: "", package: true}
-          - {rid: macos-arm64, runner: macos-15, target: arm64, triplet: arm64-osx, host: arm64-osx, preset: ci-native, android_abi: "", package: true}
-          - {rid: windows-x64, runner: windows-2025, target: x64, triplet: qigao-x64-windows-llvm-mingw, host: qigao-x64-windows-llvm-mingw, preset: ci-native, android_abi: "", package: true}
-          - {rid: windows-arm64, runner: windows-11-arm, target: arm64, triplet: qigao-arm64-windows-llvm-mingw, host: qigao-arm64-windows-llvm-mingw, preset: ci-native, android_abi: "", package: true}
-          - {rid: linux-x64-asan-ubsan, runner: ubuntu-24.04, target: x64, triplet: x64-linux, host: x64-linux, preset: ci-asan-ubsan, android_abi: "", package: false}
-          - {rid: linux-x64-tsan, runner: ubuntu-24.04, target: x64, triplet: x64-linux, host: x64-linux, preset: ci-tsan, android_abi: "", package: false}
-          - {rid: android-x64, runner: ubuntu-24.04, target: x64, triplet: x64-android, host: x64-linux, preset: ci-android, android_abi: x86_64, package: true}
-          - {rid: android-arm64, runner: ubuntu-24.04, target: arm64, triplet: arm64-android, host: x64-linux, preset: ci-android, android_abi: arm64-v8a, package: true}
+          - {rid: linux-x64, runner: ubuntu-24.04, target: x64, triplet: x64-linux, host: x64-linux, preset: llvm-native-release-user, android_abi: "", package: true}
+          - {rid: linux-arm64, runner: ubuntu-24.04-arm, target: arm64, triplet: arm64-linux, host: arm64-linux, preset: llvm-native-release-user, android_abi: "", package: true}
+          - {rid: macos-x64, runner: macos-15-intel, target: x64, triplet: x64-osx, host: x64-osx, preset: llvm-native-release-user, android_abi: "", package: true}
+          - {rid: macos-arm64, runner: macos-15, target: arm64, triplet: arm64-osx, host: arm64-osx, preset: llvm-native-release-user, android_abi: "", package: true}
+          - {rid: windows-x64, runner: windows-2025, target: x64, triplet: qigao-x64-windows-llvm-mingw, host: qigao-x64-windows-llvm-mingw, preset: native-release-user, android_abi: "", package: true}
+          - {rid: windows-arm64, runner: windows-11-arm, target: arm64, triplet: qigao-arm64-windows-llvm-mingw, host: qigao-arm64-windows-llvm-mingw, preset: native-release-user, android_abi: "", package: true}
+          - {rid: linux-x64-asan-ubsan, runner: ubuntu-24.04, target: x64, triplet: x64-linux, host: x64-linux, preset: llvm-native-asan-ubsan-user, android_abi: "", package: false}
+          - {rid: linux-x64-tsan, runner: ubuntu-24.04, target: x64, triplet: x64-linux, host: x64-linux, preset: llvm-native-tsan-user, android_abi: "", package: false}
+          - {rid: android-x64, runner: ubuntu-24.04, target: x64, triplet: x64-android, host: x64-linux, preset: android-release-user, android_abi: x86_64, package: true}
+          - {rid: android-arm64, runner: ubuntu-24.04, target: arm64, triplet: arm64-android, host: x64-linux, preset: android-release-user, android_abi: arm64-v8a, package: true}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -183,7 +85,7 @@ jobs:
           build-type: toolchain-only
           obfuscator: "false"
 
-      - name: Set up Windows LLVM-MinGW
+      - name: Set up Windows llvm-mingw
         id: windows-llvm
         if: runner.os == 'Windows'
         uses: qigao/vcpkg-cache/.github/actions/setup-llvm-mingw@v0.1.5
@@ -195,7 +97,7 @@ jobs:
       - name: Set up shared dependency contract
         id: vcpkg
         # Includes the pinned native Windows pkg-config; avoid MSYS2 for pkg-config.
-        uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-curl-cache@v0.1.5
+        uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-curl-cache@v0.1.1
         with:
           mode: read
           triplet: ${{ matrix.triplet }}
@@ -203,19 +105,63 @@ jobs:
           restore-packages: "false"
           token: ${{ github.token }}
 
-      - name: Restore re2c and Unicode host data
-        uses: qigao/vcpkg-cache/.github/actions/setup-re2c-tools@v0.1.5
+      - name: Restore the exact qualified SaltsBase SDK
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.VCPKG_CACHE_READ_TOKEN || github.token }}
+          RID: ${{ matrix.rid }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $sha = & gh api repos/qigao/salts-base/commits/master --jq .sha
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $reply = & gh api "repos/qigao/salts-base/actions/workflows/native-ci.yml/runs?head_sha=$sha&status=success&per_page=1"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $runs = ($reply | ConvertFrom-Json).workflow_runs
+          if ($runs.Count -eq 0) { throw "SaltsBase master $sha has no successful producer CI; an older SDK must not be substituted" }
+          $run = $runs[0]
+          $profiles = @{
+            'windows-x64'='windows-llvm-mingw-x64'; 'windows-arm64'='windows-llvm-mingw-arm64'
+            'linux-x64'='linux-clang-x64'; 'linux-arm64'='linux-clang-arm64'
+            'linux-x64-asan-ubsan'='linux-clang-x64'; 'linux-x64-tsan'='linux-clang-x64'
+            'macos-x64'='macos-clang-x64'; 'macos-arm64'='macos-clang-arm64'
+            'android-x64'='android-x64'; 'android-arm64'='android-arm64'
+          }
+          $artifact = "salts-base-$($profiles[$env:RID])-$sha-$($run.run_attempt)"
+          $download = Join-Path $env:RUNNER_TEMP "salts-base-download-$env:RID"
+          & gh run download $run.id --repo qigao/salts-base --name $artifact --dir $download
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $sdkRoot = Join-Path $env:RUNNER_TEMP "salts-base-sdk-$env:RID"
+          New-Item -ItemType Directory -Path $sdkRoot | Out-Null
+          Push-Location $sdkRoot
+          try {
+            & cmake -E tar xf "$download/salts-base-sdk.tar"
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          } finally { Pop-Location }
+          "SALTS_BASE_ROOT=$($sdkRoot.Replace('\', '/'))" >> $env:GITHUB_ENV
+          "SaltsBase commit: $sha; producer run: $($run.id); artifact: $artifact" >> $env:GITHUB_STEP_SUMMARY
+
+      - name: Locate Visual Studio developer environment
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio/Installer/vswhere.exe'
+          $installation = & $vswhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          if ($LASTEXITCODE -ne 0 -or -not $installation) { throw 'Visual Studio C++ tools are required' }
+          "VSDEVCMD_BAT=$($installation.Replace('\', '/'))/Common7/Tools/VsDevCmd.bat" >> $env:GITHUB_ENV
+
+      - uses: actions/setup-go@v5
         with:
-          token: ${{ github.token }}
+          go-version-file: cnet/tests/tickets/go.mod
+          cache: false
 
       - uses: actions/setup-python@v5
         id: test-python
-        if: matrix.preset != 'ci-android'
+        if: matrix.android_abi == ''
         with:
           python-version: '3.12'
 
       - name: Install formal TLS test fixture dependency
-        if: matrix.preset != 'ci-android'
+        if: matrix.android_abi == ''
         # This fixture-only version provides native wheels for all six host
         # OS/architecture pairs, including Windows ARM64 and Intel macOS.
         run: |
@@ -237,31 +183,33 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             autoconf autoconf-archive automake libtool
 
-      - name: Select preset toolchains
+      # Local launchers and other CI systems supply these same preset inputs.
+      - name: Set platform preset inputs
         shell: bash
         env:
-          VCPKG_TOOLCHAIN: ${{ steps.vcpkg.outputs.toolchain_file }}
           RID: ${{ matrix.rid }}
           TARGET_TRIPLET: ${{ matrix.triplet }}
           HOST_TRIPLET: ${{ matrix.host }}
           ANDROID_ABI: ${{ matrix.android_abi }}
         run: |
           set -euo pipefail
-          test -n "$VCPKG_TOOLCHAIN"
-          if [[ "$RID" == android-* ]]; then
-            chainload="$ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake"
-            test -f "$chainload"
-          else
-            chainload="$QIGAO_COMPILER_TOOLCHAIN_FILE"
-            test -f "$chainload"
-          fi
           {
-            echo "SALTSCORE_VCPKG_TOOLCHAIN_FILE=$VCPKG_TOOLCHAIN"
-            echo "SALTSCORE_CHAINLOAD_TOOLCHAIN_FILE=$chainload"
-            echo "SALTSCORE_VCPKG_TARGET_TRIPLET=$TARGET_TRIPLET"
-            echo "SALTSCORE_VCPKG_HOST_TRIPLET=$HOST_TRIPLET"
-            echo "SALTSCORE_ANDROID_ABI=$ANDROID_ABI"
-            echo "SALTSCORE_INSTALL_PREFIX=$GITHUB_WORKSPACE/package/sdk/$RID"
+            if [[ "$RID" == android-* ]]; then
+              echo "ANDROID_TARGET_TRIPLET=$TARGET_TRIPLET"
+              echo "ANDROID_HOST_TRIPLET=$HOST_TRIPLET"
+              echo "SALTSCORE_ANDROID_ABI=$ANDROID_ABI"
+              echo "ANDROID_INSTALL_PREFIX=$GITHUB_WORKSPACE/package/sdk/$RID"
+            elif [[ "$RID" == windows-* ]]; then
+              echo "LLVM_MINGW_PROJECT_TOOLCHAIN_FILE=$QIGAO_COMPILER_TOOLCHAIN_FILE"
+              echo "VCPKG_TARGET_TRIPLET=$TARGET_TRIPLET"
+              echo "VCPKG_HOST_TRIPLET=$HOST_TRIPLET"
+              echo "INSTALL_PREFIX=$GITHUB_WORKSPACE/package/sdk/$RID"
+            else
+              echo "LLVM_NATIVE_TOOLCHAIN_FILE=$QIGAO_COMPILER_TOOLCHAIN_FILE"
+              echo "LLVM_NATIVE_TARGET_TRIPLET=$TARGET_TRIPLET"
+              echo "LLVM_NATIVE_HOST_TRIPLET=$HOST_TRIPLET"
+              echo "LLVM_NATIVE_INSTALL_PREFIX=$GITHUB_WORKSPACE/package/sdk/$RID"
+            fi
           } >> "$GITHUB_ENV"
 
       - name: Restore vcpkg binaries and downloads
@@ -295,56 +243,18 @@ jobs:
           ccache --version
           ccache --zero-stats
 
-      # Tool setup Actions initialize Python and replace PKG_CONFIG_PATH.
-      # Establish product-owned system SDK paths after all tool setup.
-      - name: Install Linux native capture SDK headers
-        if: runner.os == 'Linux' && matrix.preset != 'ci-android'
-        shell: bash
-        run: |
-          set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            libudev-dev libpipewire-0.3-dev libx11-dev libxext-dev
-          multiarch="$(dpkg-architecture -qDEB_HOST_MULTIARCH)"
-          system_pkg_config_path="/usr/lib/$multiarch/pkgconfig:/usr/lib/pkgconfig:/usr/share/pkgconfig"
-          if [[ -n "${PKG_CONFIG_PATH:-}" ]]; then
-            system_pkg_config_path="$system_pkg_config_path:$PKG_CONFIG_PATH"
-          fi
-          echo "PKG_CONFIG_PATH=$system_pkg_config_path" >> "$GITHUB_ENV"
-          PKG_CONFIG_PATH="$system_pkg_config_path" pkg-config --exists libpipewire-0.3
-
       - name: Configure full graph
-        shell: bash
+        shell: pwsh
         env:
           CMAKE_C_COMPILER_LAUNCHER: ccache
           CMAKE_CXX_COMPILER_LAUNCHER: ccache
         run: |
-          set -euo pipefail
-          tls_options=()
-          if [[ "${{ matrix.preset }}" != "ci-android" ]]; then
-            tls_options+=(
-              "-DPython3_EXECUTABLE=${{ steps.test-python.outputs.python-path }}"
-              -DSALTSCORE_CNET_PRODUCTION_REQUIRED_MTLS_TEST=ON
-              -DSALTSCORE_TEST_CNET_CRYPTO_QUALIFICATION=ON
-              -DSALTSCORE_CNET_M6_SHARED_DSO_TEST=ON
-              "-DSALTSCORE_CRYPTO_TEST_FIXTURES=${GITHUB_WORKSPACE}/crypto/tests/fixtures"
-            )
-          fi
-          # Existing formal M5/M6 and independent TLS peer tests run on
-          # every native backend and sanitizer lane. Android is build-only.
-          if [[ "${{ matrix.rid }}" == "linux-x64" ||
-                "${{ matrix.rid }}" == "linux-x64-tsan" ]]; then
-            tls_options+=(-DCNET_SCTP_TEST_OWNER_THREADS=ON)
-          fi
-          if [[ "${{ inputs.cnet_measurements }}" == "true" &&
-                "${{ matrix.preset }}" == "ci-native" ]]; then
-            tls_options+=(-DSALTSCORE_CNET_TLS_MIXED_MEASUREMENTS=ON)
-          fi
-          if [[ "${{ inputs.cnet_cpu_profile }}" == "true" &&
-                "${{ matrix.rid }}" == "linux-x64" ]]; then
-            tls_options+=(-DSALTSCORE_CNET_TLS_MIXED_MEASUREMENTS=ON)
-          fi
-          cmake --preset "${{ matrix.preset }}" "${tls_options[@]}"
+          if ($IsWindows) {
+            & cmake/WithVs.cmd cmake --preset "${{ matrix.preset }}"
+          } else {
+            & cmake --preset "${{ matrix.preset }}"
+          }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       # Configure completes vcpkg installation and local binary-cache writes.
       # Save now so a later project build/test failure does not discard them.
@@ -359,8 +269,14 @@ jobs:
 
       - name: Build full graph
         id: build
-        shell: bash
-        run: cmake --build --preset "${{ matrix.preset }}"
+        shell: pwsh
+        run: |
+          if ($IsWindows) {
+            & cmake/WithVs.cmd cmake --build --preset "${{ matrix.preset }}"
+          } else {
+            & cmake --build --preset "${{ matrix.preset }}"
+          }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Report compiler cache statistics
         if: always() && steps.build.outcome != 'skipped' && steps.build.outcome != ''
@@ -368,188 +284,15 @@ jobs:
         run: ccache --show-stats --verbose
 
       - name: Run formal CTest suite
-        if: matrix.preset != 'ci-android'
-        shell: bash
-        run: ctest --preset "${{ matrix.preset }}"
-
-      - name: Preserve formal measurement output and host provenance
-        if: always() && ((inputs.cnet_measurements && matrix.preset == 'ci-native') || (inputs.cnet_cpu_profile && matrix.rid == 'linux-x64'))
+        if: matrix.android_abi == ''
         shell: pwsh
         run: |
-          $ErrorActionPreference = 'Stop'
-          $output = 'build/cnet-measurements/${{ matrix.rid }}'
-          New-Item -ItemType Directory -Force -Path $output | Out-Null
-          Copy-Item -LiteralPath 'build/${{ matrix.preset }}/Testing/Temporary/LastTest.log' -Destination "$output/timing-ctest.log"
-          @(
-            "source=$(git rev-parse HEAD)"
-            "event-sha=$env:GITHUB_SHA"
-            "run=$env:GITHUB_RUN_ID"
-            'rid=${{ matrix.rid }}'
-            'preset=${{ matrix.preset }}'
-            "os=$([Runtime.InteropServices.RuntimeInformation]::OSDescription)"
-            "architecture=$([Runtime.InteropServices.RuntimeInformation]::OSArchitecture)"
-            "processors=$([Environment]::ProcessorCount)"
-            'protection=none'
-            'affinity-frequency-background-load=uncontrolled'
-          ) | Set-Content -Encoding utf8 "$output/host.txt"
-          Copy-Item -LiteralPath 'build/${{ matrix.preset }}/tests/tls-mixed-compiler.txt' -Destination "$output/compiler.txt"
-          if ($IsLinux) { lscpu | Add-Content "$output/host.txt" }
-          elseif ($IsMacOS) { sysctl machdep.cpu.brand_string hw.ncpu hw.memsize | Add-Content "$output/host.txt" }
-          else { Get-CimInstance Win32_Processor | Select-Object Name,NumberOfCores,NumberOfLogicalProcessors | Out-String | Add-Content "$output/host.txt" }
-
-      - name: Profile the same formal cases with Linux heaptrack
-        if: success() && inputs.cnet_measurements && matrix.rid == 'linux-x64'
-        shell: bash
-        run: |
-          set -euo pipefail
-          sudo apt-get install -y heaptrack
-          output=build/cnet-measurements/linux-x64
-          heaptrack --version | tee "$output/heaptrack-version.txt"
-          heaptrack_print --version | tee -a "$output/heaptrack-version.txt"
-          cmake --preset ci-native -DSALTSCORE_CNET_TLS_MIXED_HEAPTRACK=ON
-          cmake --build --preset ci-native
-          ctest --preset ci-native -L '^cnet_tls_mixed_measurements$' --verbose \
-            --output-log "$output/heaptrack-ctest.log"
-          while IFS= read -r -d '' trace; do
-            heaptrack_print "$trace" --print-leaks=true \
-              --disable-builtin-suppressions --disable-embedded-suppressions \
-              --print-histogram "$trace.histogram" \
-              --print-flamegraph "$trace.allocations" > "$trace.txt"
-          done < <(find build/ci-native/tests/tls-mixed-heaptrack -maxdepth 1 -type f \( -name '*.gz' -o -name '*.zst' \) -print0)
-
-      - uses: actions/upload-artifact@v4
-        if: always() && ((inputs.cnet_measurements && matrix.preset == 'ci-native') || (inputs.cnet_cpu_profile && matrix.rid == 'linux-x64'))
-        with:
-          name: cnet-measurements-${{ matrix.rid }}
-          path: |
-            build/cnet-measurements/${{ matrix.rid }}
-            build/${{ matrix.preset }}/tests/tls-mixed-heaptrack
-          if-no-files-found: error
-          retention-days: 14
-
-      - name: Sample the same formal cases with Linux perf
-        if: success() && inputs.cnet_cpu_profile && matrix.rid == 'linux-x64'
-        id: tls-perf
-        shell: bash
-        env:
-          DEBUGINFOD_URLS: ""
-        run: |
-          set -euo pipefail
-          output=build/cnet-cpu-measurements
-          mkdir -p "$output"
-          dpkg-query -W libc6 > "$output/native-libc.txt"
-          cp build/cnet-measurements/linux-x64/timing-ctest.log "$output/native-ctest.log"
-          cp build/ci-native/tests/tls-mixed-compiler.txt "$output/compiler.txt"
-          cp build/ci-native/vcpkg_installed/vcpkg/status "$output/vcpkg-status.txt"
-          sudo apt-get install -y --no-install-recommends "linux-tools-$(uname -r)" libc6-dbg
-          original_paranoid=$(sysctl -n kernel.perf_event_paranoid)
-          trap 'sudo sysctl -w kernel.perf_event_paranoid="$original_paranoid" >/dev/null' EXIT
-          sudo sysctl -w kernel.perf_event_paranoid=-1
-          {
-            git rev-parse HEAD
-            uname -a
-            lscpu
-            perf version --build-options
-            dpkg-query -W libc6 libc6-dbg "linux-tools-$(uname -r)"
-            sysctl kernel.perf_event_paranoid kernel.perf_event_max_sample_rate
-          } > "$output/host.txt"
-          cmake --preset ci-native -DSALTSCORE_CNET_TLS_MIXED_HEAPTRACK=OFF \
-            -DSALTSCORE_CNET_TLS_MIXED_PERF=ON
-          cmake --build --preset ci-native
-          ctest --preset ci-native -L '^cnet_tls_mixed_measurements$' --verbose \
-            --output-log "$output/perf-ctest.log"
-          while IFS= read -r -d '' trace; do
-            name=$(basename "$trace" .data)
-            sha256sum "$trace" >> "$output/recording-sha256.txt"
-            perf buildid-list -i "$trace" > "$output/$name.buildids.txt"
-            perf report -i "$trace" --stdio --header --no-children --percent-limit 0 \
-              --show-nr-samples --show-total-period --sort dso,symbol \
-              --field-separator , > "$output/$name.flat.txt" 2> "$output/$name.flat.stderr.txt"
-            perf report -i "$trace" --stdio --children --percent-limit 0 \
-              --show-nr-samples --show-total-period --sort dso,symbol \
-              > "$output/$name.children.txt" 2> "$output/$name.children.stderr.txt"
-            perf script -i "$trace" --ns --show-lost-events \
-              --fields comm,pid,tid,time,event,period,ip,sym,dso \
-              2> "$output/$name.script.stderr.txt" | gzip > "$output/$name.stacks.txt.gz"
-          done < <(find build/ci-native/tests/tls-mixed-perf -maxdepth 1 -type f -name '*.data' -print0)
-
-      - uses: actions/upload-artifact@v4
-        if: always() && steps.tls-perf.outcome != 'skipped' && steps.tls-perf.outcome != ''
-        with:
-          name: cnet-cpu-measurements-linux-x64
-          path: build/cnet-cpu-measurements
-          if-no-files-found: error
-          retention-days: 14
-
-      - name: Restore diagnostic GmSSL package cache
-        if: success() && inputs.gmssl_copy_profile && matrix.rid == 'linux-x64'
-        id: gmssl-copy-cache
-        uses: actions/cache/restore@v4
-        with:
-          path: |
-            ${{ env.VCPKG_BINARY_CACHE }}
-            ${{ env.VCPKG_DOWNLOADS }}
-          key: gmssl-copy-v1-${{ steps.vcpkg-cache.outputs.cache-primary-key }}-${{ hashFiles('tests/gmssl-copy-profile/**', 'crypto/src/crypto_gmssl_copy_test.*') }}
-          restore-keys: |
-            gmssl-copy-v1-vcpkg-v1-${{ runner.os }}-${{ runner.arch }}-${{ matrix.rid }}-${{ matrix.preset }}-${{ steps.vcpkg.outputs.cache_revision }}-
-
-      - name: Configure full graph with GmSSL copy counters
-        if: success() && inputs.gmssl_copy_profile && matrix.rid == 'linux-x64'
-        id: gmssl-copy-configure
-        shell: bash
-        env:
-          CMAKE_C_COMPILER_LAUNCHER: ccache
-          CMAKE_CXX_COMPILER_LAUNCHER: ccache
-        run: |
-          cmake --preset gmssl-copy-user \
-            "-DPython3_EXECUTABLE=${{ steps.test-python.outputs.python-path }}" \
-            -DSALTSCORE_CNET_PRODUCTION_REQUIRED_MTLS_TEST=ON \
-            -DSALTSCORE_TEST_CNET_CRYPTO_QUALIFICATION=ON \
-            -DSALTSCORE_CNET_M6_SHARED_DSO_TEST=ON \
-            "-DSALTSCORE_CRYPTO_TEST_FIXTURES=${GITHUB_WORKSPACE}/crypto/tests/fixtures" \
-            -DCNET_SCTP_TEST_OWNER_THREADS=ON
-
-      - name: Save diagnostic GmSSL package cache
-        if: success() && steps.gmssl-copy-configure.outcome == 'success' && steps.gmssl-copy-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
-        with:
-          path: |
-            ${{ env.VCPKG_BINARY_CACHE }}
-            ${{ env.VCPKG_DOWNLOADS }}
-          key: ${{ steps.gmssl-copy-cache.outputs.cache-primary-key }}
-
-      - name: Build and run the full formal suite with GmSSL copy counters
-        if: success() && inputs.gmssl_copy_profile && matrix.rid == 'linux-x64'
-        shell: bash
-        run: |
-          set -euo pipefail
-          cmake --build --preset gmssl-copy-user
-          ctest --preset gmssl-copy-user
-          ccache --show-stats --verbose
-
-      - name: Preserve provider-copy output and provenance
-        if: always() && steps.gmssl-copy-configure.outcome == 'success'
-        shell: bash
-        run: |
-          set -euo pipefail
-          output=build/gmssl-copy-measurements
-          mkdir -p "$output"
-          cp build/gmssl-copy-user/Testing/Temporary/LastTest.log "$output/ctest.log"
-          cp build/gmssl-copy-user/tests/tls-mixed-compiler.txt "$output/compiler.txt"
-          {
-            git rev-parse HEAD
-            uname -a
-            lscpu
-          } > "$output/host.txt"
-          cp build/gmssl-copy-user/vcpkg_installed/vcpkg/status "$output/vcpkg-status.txt"
-
-      - uses: actions/upload-artifact@v4
-        if: always() && steps.gmssl-copy-configure.outcome == 'success'
-        with:
-          name: gmssl-copy-measurements-linux-x64
-          path: build/gmssl-copy-measurements
-          if-no-files-found: error
-          retention-days: 14
+          if ($IsWindows) {
+            & cmake/WithVs.cmd ctest --preset "${{ matrix.preset }}"
+          } else {
+            & ctest --preset "${{ matrix.preset }}"
+          }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Save compiler cache
         if: success() && steps.compiler-cache.outputs.cache-hit != 'true'
@@ -560,8 +303,14 @@ jobs:
 
       - name: Install release SDK
         if: matrix.package && github.ref == 'refs/tags/v0.1.002'
-        shell: bash
-        run: cmake --build --preset "install-${{ matrix.preset }}"
+        shell: pwsh
+        run: |
+          if ($IsWindows) {
+            & cmake/WithVs.cmd cmake --build --preset "install-${{ matrix.preset }}"
+          } else {
+            & cmake --build --preset "install-${{ matrix.preset }}"
+          }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Record immutable SDK provenance
         if: matrix.package && github.ref == 'refs/tags/v0.1.002'

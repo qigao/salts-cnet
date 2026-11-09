@@ -1,6 +1,6 @@
 #include "cnet_tls.h"
 #include <crypto/tls_stream.h>
-#include <error_codes.h>
+#include <salts/error_codes.h>
 #include <stdatomic.h>
 #include <stdlib.h>
 #include <string.h>
@@ -46,6 +46,42 @@ static crypto_tls_stream *cnet_tls_stream(const cnet_tls_state *state) {
   return state != NULL ? (crypto_tls_stream *)state->engine : NULL;
 }
 
+int cnet_tls_credential_object_create(const cnet_tls_credentials *input,
+    cnet_tls_credential_kind kind, cnet_tls_credential_object **out) {
+  return cnet_tls_status(crypto_tls_credential_object_create(input, kind, out));
+}
+int cnet_tls_credential_object_from_pkcs12(const cnet_tls_data *input,
+    const cnet_tls_password *password, cnet_tls_credential_kind kind,
+    cnet_tls_credential_object **out) {
+  return cnet_tls_status(crypto_tls_credential_object_from_pkcs12(input, password, kind, out));
+}
+
+int cnet_tls_credential_object_retain(cnet_tls_credential_object *object) {
+  return cnet_tls_status(crypto_tls_credential_object_retain(object));
+}
+void cnet_tls_credential_object_release(cnet_tls_credential_object *object) {
+  crypto_tls_credential_object_release(object);
+}
+
+int cnet_tls_sm2_ocsp_peer_policy_create(const cnet_tls_sm2_ocsp_config *config,
+    cnet_tls_peer_policy *out_policy) {
+  return cnet_tls_status(crypto_tls_sm2_ocsp_peer_policy_create(config, out_policy));
+}
+int cnet_tlcp_sm2_ocsp_peer_policy_create(const cnet_tls_sm2_ocsp_config *config,
+    cnet_tls_peer_policy *out_policy) {
+  return cnet_tls_status(crypto_tlcp_sm2_ocsp_peer_policy_create(config, out_policy));
+}
+
+int cnet_tls_sm2_crl_peer_policy_create(const cnet_tls_sm2_crl_config *config,
+    cnet_tls_peer_policy *out_policy) {
+  return cnet_tls_status(crypto_tls_sm2_crl_peer_policy_create(config, out_policy));
+}
+
+int cnet_tlcp_sm2_crl_peer_policy_create(const cnet_tls_sm2_crl_config *config,
+    cnet_tls_peer_policy *out_policy) {
+  return cnet_tls_status(crypto_tlcp_sm2_crl_peer_policy_create(config, out_policy));
+}
+
 static int cnet_tls_wrap_context(crypto_tls_stream_context *provider, bool server,
                                   cnet_tls_context **out) {
   cnet_tls_context *context = calloc(1u, sizeof(*context));
@@ -87,6 +123,30 @@ int cnet_tls_client_context_create(const cnet_tls_client_config *config, cnet_tl
     policy.alpn_protocols = config->alpn_protocols;
     policy.alpn_protocol_count = config->alpn_protocol_count;
     policy.security_profile = (crypto_tls_stream_security_profile)config->security_profile;
+    policy.peer_policy = config->peer_policy;
+    policy.key_update_record_limit = config->key_update_record_limit;
+    policy.key_update_byte_limit = config->key_update_byte_limit;
+    policy.key_update_interval_ms = config->key_update_interval_ms;
+    policy.peer_key_update_limit = config->peer_key_update_limit;
+    policy.peer_key_update_min_interval_ms = config->peer_key_update_min_interval_ms;
+    policy.peer_key_update_min_bytes = config->peer_key_update_min_bytes;
+    policy.ca_data = config->ca_data;
+    policy.credentials = config->credentials;
+    policy.minimum_version = (crypto_tls_stream_protocol_version)config->minimum_version;
+    policy.maximum_version = (crypto_tls_stream_protocol_version)config->maximum_version;
+    policy.verification_depth = config->verification_depth;
+    policy.verification_time = config->verification_time;
+    policy.session_cache_capacity = config->session_cache_capacity;
+    policy.cipher_suites = config->cipher_suites;
+    policy.cipher_suite_count = config->cipher_suite_count;
+    policy.supported_groups = config->supported_groups;
+    policy.supported_group_count = config->supported_group_count;
+    policy.signature_algorithms = config->signature_algorithms;
+    policy.signature_algorithm_count = config->signature_algorithm_count;
+    policy.certificate_signature_algorithms = config->certificate_signature_algorithms;
+    policy.certificate_signature_algorithm_count = config->certificate_signature_algorithm_count;
+    policy.identities = config->identities;
+    policy.identity_count = config->identity_count;
   }
   status = cnet_tls_status(crypto_tls_stream_client_context_create(&policy, &provider));
   return status == SALTS_OK ? cnet_tls_wrap_context(provider, false, out_context) : status;
@@ -141,6 +201,31 @@ int cnet_tls_server_init(cnet_tls_server *server, const cnet_tls_server_config *
   policy.alpn_protocols = config->alpn_protocols;
   policy.alpn_protocol_count = config->alpn_protocol_count;
   policy.security_profile = (crypto_tls_stream_security_profile)config->security_profile;
+  policy.peer_policy = config->peer_policy;
+  policy.key_update_record_limit = config->key_update_record_limit;
+  policy.key_update_byte_limit = config->key_update_byte_limit;
+  policy.key_update_interval_ms = config->key_update_interval_ms;
+  policy.peer_key_update_limit = config->peer_key_update_limit;
+  policy.peer_key_update_min_interval_ms = config->peer_key_update_min_interval_ms;
+  policy.peer_key_update_min_bytes = config->peer_key_update_min_bytes;
+  policy.ca_data = config->ca_data;
+  policy.credentials = config->credentials;
+  policy.minimum_version = (crypto_tls_stream_protocol_version)config->minimum_version;
+  policy.maximum_version = (crypto_tls_stream_protocol_version)config->maximum_version;
+  policy.verification_depth = config->verification_depth;
+  policy.verification_time = config->verification_time;
+  policy.cipher_suites = config->cipher_suites;
+  policy.cipher_suite_count = config->cipher_suite_count;
+  policy.supported_groups = config->supported_groups;
+  policy.supported_group_count = config->supported_group_count;
+  policy.signature_algorithms = config->signature_algorithms;
+  policy.signature_algorithm_count = config->signature_algorithm_count;
+  policy.certificate_signature_algorithms = config->certificate_signature_algorithms;
+  policy.certificate_signature_algorithm_count = config->certificate_signature_algorithm_count;
+  policy.identities = config->identities;
+  policy.identity_count = config->identity_count;
+  policy.session_ticket_capacity = config->session_ticket_capacity;
+  policy.session_ticket_lifetime_seconds = config->session_ticket_lifetime_seconds;
   status = cnet_tls_status(crypto_tls_stream_server_context_create(&policy, &provider));
   if (status != SALTS_OK) return status;
   status = cnet_tls_wrap_context(provider, true, &context);
@@ -211,6 +296,9 @@ int cnet_tls_probe_peer_close(cnet_tls_state *state, bool *out_peer_closed, bool
   if (status == SALTS_OK && *out_peer_closed) state->peer_close_notify = true;
   return status;
 }
+int cnet_tls_get_diagnostic(const cnet_tls_state *state, crypto_tls_diagnostic *out) {
+  return cnet_tls_status(crypto_tls_stream_get_diagnostic(cnet_tls_stream(state), out));
+}
 int cnet_tls_shutdown(cnet_tls_state *state, bool *out_notify_generated, bool *out_peer_notify_received) {
   int status = cnet_tls_status(crypto_tls_stream_shutdown(cnet_tls_stream(state), out_notify_generated, out_peer_notify_received));
   if (status == SALTS_OK) {
@@ -234,6 +322,10 @@ size_t cnet_tls_state_io_buffer_bytes(const cnet_tls_state *state) {
 
 size_t cnet_tls_cipher_input_capacity(const cnet_tls_state *state) {
   return crypto_tls_stream_cipher_input_capacity(cnet_tls_stream(state));
+}
+
+bool cnet_tls_cipher_output_empty(const cnet_tls_state *state) {
+  return crypto_tls_stream_cipher_output_empty(cnet_tls_stream(state));
 }
 
 int cnet_tls_feed_cipher(cnet_tls_state *state, const void *data, size_t size) {
@@ -260,6 +352,10 @@ int cnet_tls_write(cnet_tls_state *state, const void *data, size_t size, bool *o
 int cnet_tls_get_negotiated_alpn(const cnet_tls_state *state, const unsigned char **out_data,
                                  size_t *out_size) {
   return cnet_tls_status(crypto_tls_stream_get_negotiated_alpn(cnet_tls_stream(state), out_data, out_size));
+}
+
+int cnet_tls_state_session_reused(const cnet_tls_state *state, bool *out) {
+  return cnet_tls_status(crypto_tls_stream_session_reused(cnet_tls_stream(state),out));
 }
 
 int cnet_tls_state_negotiated_version(const cnet_tls_state *state, char *buffer, size_t capacity,

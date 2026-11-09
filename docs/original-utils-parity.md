@@ -62,7 +62,7 @@ function because its old implementation included CMeta reflection.
 | `utils/include/str.h` | `core/include/str.h` | Same original source, CI pending |
 | `utils/include/memory_pool.h`, `utils/src/memory_pool.c` | `core/include/memory_pool.h`, `core/src/memory_pool.c` | Plain C11, CI pending |
 | `vendor/sds/{sds.c,sds.h,sdsalloc.h,LICENSE}` | `core/src/sds/` | Original bytes, private Core-owned storage; BSD license retained |
-| `utils/tests/test_tstr_v2_contract.c` | `tests/test_tstr_v2_contract.c` | Exact original TinyTest case, optional profile |
+| `utils/tests/test_tstr_v2_contract.c` | `core/tests/test_tstr_v2_contract.c` | Exact original TinyTest case, optional profile |
 
 The old SIMD-only vector operations are replaced with *bounded C11 byte scans*
 for independent baseline Core builds; exported behavior is retained but

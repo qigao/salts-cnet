@@ -1,133 +1,54 @@
-# Original CNet transport target is owned here; SCTP is independent.
 # Provider-free C11 WebSocket frame parser. This is a private component of
 # the always-assembled CNet owner, not a separately exported SDK target.
 add_library(saltscore_wsparser OBJECT
   src/wsparser/websocket_frame_parser.c)
 target_compile_features(saltscore_wsparser PUBLIC c_std_11)
 set_target_properties(saltscore_wsparser PROPERTIES
-  C_STANDARD_REQUIRED ON C_EXTENSIONS OFF
-  POSITION_INDEPENDENT_CODE ON C_VISIBILITY_PRESET hidden)
+  C_STANDARD_REQUIRED ON C_EXTENSIONS OFF POSITION_INDEPENDENT_CODE ON C_VISIBILITY_PRESET hidden)
 target_include_directories(saltscore_wsparser PRIVATE
   "${CMAKE_CURRENT_SOURCE_DIR}/src/wsparser")
 
 # Production CNet drives the opaque Crypto stream API. Backend protocol state,
 # certificates and platform trust stores belong to Crypto.
-if(NOT TARGET Salts::URI OR NOT TARGET saltscore_wsparser)
-  message(FATAL_ERROR "CNet requires native Core URI and WebSocket parser targets")
-endif()
 find_package(c-ares CONFIG REQUIRED)
 find_package(kcp CONFIG REQUIRED)
-if(NOT TARGET c-ares::cares OR NOT TARGET kcp::kcp)
-  message(FATAL_ERROR "CNet requires c-ares::cares and kcp::kcp")
-endif()
-if(NOT TARGET salts_crypto OR NOT TARGET Salts::Crypto)
-  message(FATAL_ERROR "CNet requires the local Salts::Crypto owner")
-endif()
-get_target_property(_cnet_crypto_alias Salts::Crypto ALIASED_TARGET)
-get_target_property(_cnet_crypto_type salts_crypto TYPE)
-get_target_property(_cnet_crypto_imported salts_crypto IMPORTED)
-if(NOT _cnet_crypto_alias STREQUAL "salts_crypto" OR
-   NOT _cnet_crypto_type STREQUAL "STATIC_LIBRARY" OR _cnet_crypto_imported)
-  message(FATAL_ERROR "CNet requires exactly one local non-imported STATIC Crypto owner")
-endif()
-
-# Never fold a second copy of any stateful runtime into CNet. Core/Platform/
-# Concurrency/Coroutine/NativeIO are one installed shared owner each.
-foreach(_owner IN ITEMS saltscore_core saltscore_platform saltscore_concurrency
-                        saltscore_coroutine saltscore_native_io)
-  get_target_property(_owner_kind ${_owner} TYPE)
-  if(NOT _owner_kind STREQUAL "SHARED_LIBRARY")
-    message(FATAL_ERROR "CNet requires shared foundation owner: ${_owner}")
-  endif()
-endforeach()
-# The stateless URI parser may remain an independent PIC archive.
-set_target_properties(saltscore_uri PROPERTIES POSITION_INDEPENDENT_CODE ON)
-
-# Both private code libraries are built exactly once in vendor/CMakeLists.txt.
-# No alternate crypto/erasure implementation or target alias is permitted.
-if(NOT TARGET saltscore_cnet_monocypher OR NOT TARGET saltscore_cnet_reed)
-  message(FATAL_ERROR "CNet requires its vendor-owned Monocypher and Reed targets")
-endif()
-
 # Salts source at refactor/cnet-ipc-name-native: native C11 FIFO, indexed peers,
 # and caller-owned IPC path. Keep the entire CNet DSO in one ownership domain.
-set(_saltscore_cnet_sources
-  cnet/src/cnet_resources.c
-  cnet/src/cnet_client.c
-  cnet/src/cnet_command.c
-  cnet/src/cnet_datagram.c
-  cnet/src/cnet_kcp.c
-  cnet/src/cnet_kcp_fec.c
-  cnet/src/cnet_kcp_secure.c
-  cnet/src/cnet_secure_kcp.c
-  cnet/src/cnet_packet_endpoint.c
-  cnet/src/cnet_dispatcher.c
-  cnet/src/cnet_event.c
-  cnet/src/cnet_listener.c
-  cnet/src/cnet_module.c
-  cnet/src/cnet_owner.c
-  cnet/src/cnet_owner_strategy.c
-  cnet/src/cnet_destination_policy.c
-  cnet/src/cnet_client_pool.c
-  cnet/src/cnet_recovery_policy.c
-  cnet/src/cnet_managed_dial.c
-  cnet/src/cnet_sg_host.c
-  cnet/src/cnet_resolver.c
-  cnet/src/cnet_session.c
-  cnet/src/cnet_shards.c
-  cnet/src/cnet_tls.c
-  cnet/src/cnet_transport.c
-  cnet/src/cnet_transport_pipe.c
-  cnet/src/cnet_transport_ipc.c
-  cnet/src/cnet_ipc.c
-  cnet/src/cnet_transport_vsock.c
-  cnet/src/cnet_uri.c
-  cnet/src/cnet_write_queue.c
-  cnet/src/cnet_websocket.c
-  cnet/src/cnet_manager.c
-  cnet/src/cnet_handoff.c
-  $<TARGET_OBJECTS:saltscore_wsparser>)
-
-# Keep exact original Owner test inputs repo-relative; make module library
-# sources absolute so its CMakeLists owns the target from cnet/.
-set(_saltscore_cnet_sources "${_saltscore_cnet_sources}" PARENT_SCOPE)
-set(_saltscore_cnet_local_sources)
-foreach(_unit IN LISTS _saltscore_cnet_sources)
-  if(_unit MATCHES "^\\$<TARGET_OBJECTS:")
-    list(APPEND _saltscore_cnet_local_sources "${_unit}")
-  else()
-    list(APPEND _saltscore_cnet_local_sources "${PROJECT_SOURCE_DIR}/${_unit}")
-  endif()
-endforeach()
-add_library(saltscore_cnet SHARED ${_saltscore_cnet_local_sources})
-add_library(Salts::CNet ALIAS saltscore_cnet)
+cmake_add_source(cnet_sources DIRS src include/cnet
+  EXCLUDES src/cnet_tls_crypto_qualification.c)
+source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES ${cnet_sources})
+add_library(saltscore_cnet SHARED ${cnet_sources} $<TARGET_OBJECTS:saltscore_wsparser>)
+cmake_config_target(saltscore_wsparser FOLDER "cnet")
+cmake_config_target(saltscore_cnet ALIAS Salts::CNet FOLDER "cnet")
 target_compile_features(saltscore_cnet PUBLIC c_std_11)
+cmake_config_target(saltscore_cnet
+  VERSION "${PROJECT_VERSION}"
+  SOVERSION "${SALTSCORE_NATIVE_SOVERSION}"
+  EXPORT_NAME CNet)
 set_target_properties(saltscore_cnet PROPERTIES
-  VERSION "${PROJECT_VERSION}" SOVERSION "${SALTSCORE_NATIVE_SOVERSION}"
-  EXPORT_NAME CNet C_STANDARD_REQUIRED ON C_EXTENSIONS OFF
-  WINDOWS_EXPORT_ALL_SYMBOLS ON)
+  C_STANDARD_REQUIRED ON C_EXTENSIONS OFF WINDOWS_EXPORT_ALL_SYMBOLS ON)
 if(WIN32)
-  set_target_properties(saltscore_cnet PROPERTIES
+  cmake_config_target(saltscore_cnet
     OUTPUT_NAME "saltscore_cnet-${SALTSCORE_NATIVE_SOVERSION}")
 endif()
 target_include_directories(saltscore_cnet
   PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+    $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/crypto/include>
     $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
   PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/src"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/wsparser"
-    "${PROJECT_SOURCE_DIR}/native-io/src"
     "${PROJECT_SOURCE_DIR}/vendor/monocypher"
     "${PROJECT_SOURCE_DIR}/vendor/reed")
 target_link_libraries(saltscore_cnet
   PUBLIC
     Salts::Core
     Salts::NativeIO
-    Salts::Concurrency
+    Salts::Core
   PRIVATE
     Salts::URI
-    Salts::Platform
+    Salts::Core
     saltscore_cnet_monocypher
     saltscore_cnet_reed
     c-ares::cares
@@ -142,7 +63,7 @@ install(DIRECTORY include/cnet
   DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
   FILES_MATCHING PATTERN "*.h")
 
-if(BUILD_TESTING)
+if(BUILD_TESTS)
   # Private counters in the same production Crypto instance; no extra runtime.
   target_compile_definitions(saltscore_cnet PRIVATE CNET_TLS_MEMORY_TESTING)
   target_include_directories(saltscore_cnet PRIVATE "${PROJECT_SOURCE_DIR}/crypto/src")
@@ -187,7 +108,7 @@ if(BUILD_TESTING)
   endif()
   add_test(NAME saltscore.cnet_native_crypto_owner
     COMMAND "${Python3_EXECUTABLE}" -B
-      "${PROJECT_SOURCE_DIR}/tests/cnet-owner/audit_native_crypto_owner.py"
+      "${PROJECT_SOURCE_DIR}/cnet/tests/owner/audit_native_crypto_owner.py"
       --archive "$<TARGET_FILE:salts_crypto>"
       --gmssl-archive "$<TARGET_FILE:GmSSL::GmSSL>"
       --runtime "$<TARGET_FILE:saltscore_cnet>"
@@ -204,6 +125,10 @@ if(BUILD_TESTING)
   set_tests_properties(saltscore.cnet_native_crypto_owner PROPERTIES TIMEOUT 60)
   add_test(NAME saltscore.cnet_native_crypto_owner_negative
     COMMAND "${Python3_EXECUTABLE}" -B -m unittest discover
-      -s "${PROJECT_SOURCE_DIR}/tests/cnet-owner"
+      -s "${PROJECT_SOURCE_DIR}/cnet/tests/owner"
       -p test_native_crypto_owner_audit.py -v)
+endif()
+
+if(BUILD_TESTS)
+  add_subdirectory(tests)
 endif()

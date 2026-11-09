@@ -1,5 +1,10 @@
 # TLS CPU sampling protocol
 
+Historical protocol: the `cnet_cpu_profile` workflow input and diagnostic CMake
+switches described below have been retired. The collected report remains
+evidence for its recorded revision. Current CI runs ordinary public presets
+and their full CTest suite, without a separate profiling setup.
+
 This #214 slice profiles the current provider before changing its scratch
 allocation. Keep the production dependency, compiler flags and existing TLS
 workload unchanged. Reuse the 25 formal CTests, five rotated repetitions of

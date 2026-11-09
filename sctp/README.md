@@ -1,28 +1,15 @@
-# Experimental CNet SCTP — pure C11
+# Experimental CNet SCTP - pure C11
 
-Independent RFC-first protocol workstream for [Salts #1181](https://github.com/qigao/salts/issues/1181) and upstream prerequisite for [TurboMedia #227](https://github.com/qigao/turbomedia/issues/227).
+SCTP exposes `Salts::SCTP` from the root SaltsCore graph. Its bounded opaque
+Session and private protocol tests are independent of a TLS provider.
+`Salts::SCTPDTLS` adds a bounded bridge to the production GmSSL-backed CNet
+DTLS owner. Its local Windows qualification is described below; broader platform
+and browser qualification remains open in
+[#188](https://github.com/qigao/salts-core/issues/188).
 
-**Research only. This is not the production SCTP transport.** There are
-three distinct, bounded interoperability lanes: **Janus** over real ICE/DTLS
-qualifies **legacy RFC 3758 FORWARD-TSN (type 192)**; independent
-**Pion SCTP v1.10.0** qualifies RFC 8260 I-DATA/I-FORWARD-TSN (types
-64/194) with controlled loss and retransmission over both test-only UDP
-and **real Pion DTLS v3.1.15 ↔ OpenSSL DTLS 1.2** (two independent
-SCTP/DTLS processes on localhost); and a separate single-process OpenSSL
-DTLS consumer qualifies the **installed public opaque Session** with
-ASan/UBSan, ciphertext rejection and test Owner-generation refusal.
-The Pion/OpenSSL DTLS path now proves **both SHA-256 certificate pins**,
-identical independent RFC 5705 export-derived non-secret generation
-identities, **creation of the native Session only AFTER DTLS authentication**,
-and refusal of otherwise authenticated late DATA after test Owner revocation.
-None of these paths installs Go/OpenSSL adapters or changes production
-`Salts::CNet`/TurboMedia usrsctp. Browser ICE/DataChannel, production
-DTLS Owner/DSO lifecycle, mobile device execution and full six-RID release
-remain unqualified. No exactly-once/no-loss production claim is made.
+## Build and test
 
-## Isolation and build
-
-This directory is a self-contained C11 CMake project, not a subdirectory of the production Salts CMake graph. Its standalone package exports `CNetSctpPrototype::Wire` and the opaque `CNetSctpPrototype::Session`; neither is included in `SaltsTargets`. Association/DATA/DCEP implementation layouts, prototype targets and tests remain **private** and are not installed.
+Use the root project and its versioned presets:
 
 ```sh
 cmake --preset native-release-user
@@ -30,102 +17,115 @@ cmake --build --preset native-release-user
 ctest --preset native-release-user
 ```
 
-The root graph owns SCTP qualification. A second installed-consumer CMake
-project is intentionally not built or maintained.
+On native Linux, `CNET_SCTP_TEST_PION_ORACLE=ON` adds the existing Pion UDP
+peer and two formal CTests to that same graph. Go is required when requested;
+missing tools fail configuration. CI enables these cases on Linux x64.
+The Go peer uses the pinned module graph with `-mod=readonly` and disables
+cgo. No installed-consumer project is required.
 
-## Independent RFC8260 Pion wire oracle (isolated test only)
+The secure DTLS peer requires Go 1.26.10 or newer; the existing CI Go setup
+reads the same patch floor from `tests/independent/shangmi/go.mod`. Go
+1.26.0/1 has a Windows overlapped UDP receive lifetime regression
+([Go #77975](https://github.com/golang/go/issues/77975),
+[1.26 backport #78041](https://github.com/golang/go/issues/78041)): the
+kernel can write the four-byte source-address length through an obsolete
+stack pointer. The SCTP/DTLS test reproduced a source-slice overwrite with
+IPv4 address length 16 while the received echo remained correct. The fix
+first shipped in 1.26.2; 1.26.10 retains it and the current 1.26 patch fixes.
+This changes only the independent test runtime requirement, with no Go
+module-dependency or production C ABI/provider change. Keep the packet,
+source-immutability and final echo assertions enabled; rolling back below
+the fixed runtime reintroduces the invalid overlapped-I/O lifetime.
 
-The experimental `CNET_SCTP_TEST_PION_ORACLE=ON` target remains available
-for source-tree research, but CI builds a stricter **separate consumer
-at `sctp/tests/independent/pion_sdk`** that finds and links only
-the *previously installed* `CNetSctpPrototype::Session` public
-package. Its distinct Go peer pins **Pion SCTP v1.10.0** and **Pion DTLS
-v3.1.15**, including direct and transitive checksum entries in
-`go.mod`/`go.sum`. The job fails if Go mutates either lock file.
-The native consumer optionally links OpenSSL **only as a test transport**;
-no Pion, native socket, DTLS object, fallback or test target enters
-the installed library, `SaltsTargets`, or production CNet.
+## Independent RFC8260 coverage
 
-[Exact-head CNet C11 #40275477236](https://github.com/qigao/salts/actions/runs/40275477236)
-passed two independent Pion cases: a dropped application I-DATA TSN
-with valid I-FORWARD-TSN 194 followed by byte-exact successor delivery;
-and an identical application loss followed by a **deliberately dropped
-first I-FORWARD**, an immutable Owner retransmission, real Pion SACK and
-exact successor delivery. Test-only transport filtering rejects accidental
-delivery of the abandoned TSN and false early forward retirement.
-DCEP PPID50, binary PPID53, original abandonment generation/TSN and
-the confirmed FORWARD's original TSN are checked.
+Pion SCTP v1.10.0 verifies I-DATA/I-FORWARD-TSN negotiation, DCEP PPID50,
+binary PPID53 in both directions, deliberate DATA loss, successor delivery,
+and exact retransmission after loss of the first I-FORWARD. These cases
+use plaintext loopback UDP solely to test the SCTP protocol.
 
-**New independently implemented RFC 8260-over-DTLS evidence:** the SAME
-two positive loss/recovery scenarios also pass with real **Pion DTLS 1.2
-on the Go side** and **OpenSSL DTLS 1.2 on the installed C11 Session
-side**, using ephemeral P-256 certificates and explicitly pinned mutual
-SHA-256 leaf fingerprints. OpenSSL's RFC 5705 exporter and Pion's
-independent exporter must agree on the complete **64-bit non-secret
-Owner Generation token** before the native SCTP Session is even created.
-The negative identity cases reject a wrong expected server fingerprint
-at Pion, and a wrong expected client fingerprint at OpenSSL **before
-C11 Session creation**. A third negative runs an actual DTLS-encrypted
-PPID53 message after the isolated Owner generation is revoked: OpenSSL
-authenticates/decrypts, but C11 `session_input()` returns
-`CNET_SCTP_SESSION_OWNER` with zero reply, never publishing that ULP.
+The OpenSSL-linked DTLS adapters and standalone DTLS consumer were removed.
+Their historical fingerprint, exporter, encrypted-record and revoked-owner
+results are not current qualification. No DTLS mode silently falls back to
+UDP: obsolete arguments fail. The replacement below uses production CNet DTLS
+and GmSSL in the existing project graph. General Session owner,
+stopped-session and generation checks remain in the formal C11 suite.
+Python TLS peers elsewhere in the repository remain external test processes;
+their platform OpenSSL implementation is not linked into Salts targets.
 
-[Exact-head CNet SCTP CI #40288797102](https://github.com/qigao/salts/actions/runs/40288797102)
-passes **12/12** jobs: four native C11+installed SDK consumer environments,
-Android/iOS ARM64 cross-linked standalone SDK consumers (NOT device-run),
-the six-case Pion SCTP/DTLS oracle (two UDP, two real DTLS, two bad-pin
-cases, plus a seventh isolated late-Owner-revocation scenario), source
-ASan/UBSan, effective-source Owner/provider DSO TSan, pinned GmSSL
-Cookie MAC and separate real OpenSSL DTLS consumer under ASan/UBSan ×10.
-This is an independent localhost SCTP-over-DTLS proof, **not ICE or
-browser/libwebrtc DataChannel**, not concurrent production DTLS lease
-or DSO unload, and not six-RID production SDK/release qualification.
+## CNet DTLS bridge
 
-## Real DTLS 1.2 application records — installed opaque Session (test only)
+Include `<sctp_dtls.h>` and link `Salts::SCTPDTLS` for the C11 bridge.
+Keep `Salts::SCTP` alone for a provider-independent Session. The bridge borrows
+one existing DTLS owner and one Session on the same fixed Owner. Initialize
+only after DTLS READY, using `cnet_dtls_get_info().binding` as Session's exact
+`peer_binding`. DTLS, Session and provider context must outlive bridge destroy.
+DTLS READY, SCTP `data_ready` and DCEP channel readiness are separate gates.
 
-The independent CMake consumer at `sctp/tests/independent/dtls`
-finds **only the previously installed `CNetSctpPrototype::Session` public
-CMake package and OpenSSL 3**. No internal Association/DATA header, native
-usrsctp dependency, adapter or OpenSSL type enters the production SDK.
+The host routes DTLS `on_receive` to `cnet_sctp_dtls_receive`, returning its
+result unchanged: ENOBUFS consumes nothing and DTLS retains the authenticated
+record for later advance. It routes every actual `on_send` to
+`cnet_sctp_dtls_send_complete`, including during error/abort drain. A wrong tag
+is unmatched; a real local send never implies remote SCTP acknowledgment.
+Drive bridge advance, DTLS advance, then the existing single host observation
+and complete batch routing. No second backend, worker or observer is created.
 
-Two ephemeral EC P-256 certificate identities negotiate actual **DTLS 1.2**
-via OpenSSL memory BIOs; after the handshake both peer SHA-256 fingerprints
-must match their expected identities (a forged fingerprint is refused).
-The fixture derives a nonzero opaque SCTP `peer_binding` from the verified
-certificate fingerprints, retains separate random HMAC-SHA256 Cookie
-providers and encrypts/authenticates every SCTP INIT/INIT-ACK/COOKIE-
-ECHO/COOKIE-ACK, DCEP OPEN/ACK and PPID53 I-DATA record with
-`SSL_write()`/`SSL_read()`. A valid decrypted old SCTP datagram is
-rejected when the **test-only external Owner Generation** no longer matches,
-and again after abortive stop; a tampered encrypted record produces **no
-decrypted SCTP plaintext**. All copied resources are destroyed before the
-OpenSSL identity and Cookie providers are released.
+Configure 1..64 copied input slots, each <=1280 bytes. One 1163-byte output
+staging slot is reserved before any output-producing Session start/open/send/
+poll/close. Commit exactly once with the actual result and written count, even
+for EMPTY or noncommitting failure. CAPACITY maps to ENOBUFS; it does not admit
+wire or poison the association. An admitted output stays immutable through its
+real local send callback. For example, after Session `data_ready` succeeds:
 
-[Exact-head CNet SCTP CI #40280847157](https://github.com/qigao/salts/actions/runs/40280847157)
-passes the installed public-only real DTLS consumer and a **second run
-under Clang 18 effective-source ASan+UBSan with ten repetitions**.
-The sanitizer job audits the compile commands of all eight C11 SCTP
-implementation files plus `dtls_records.c`. It does not claim OpenSSL's
-third-party binaries were built with the same instrumentation. This is
-a single-process encrypted-record contract test, **not** an independent
-browser/Pion-over-DTLS peer, real UDP/ICE, production DTLS Provider DSO
-unload or concurrent Owner lease.
+```c
+#include <sctp_dtls.h>
 
-Reproduce on a Linux host with OpenSSL 3 development files:
-
-```sh
-cmake -S sctp -B build-c11 -DBUILD_TESTING=OFF
-cmake --build build-c11
-cmake --install build-c11 --prefix "$PWD/c11-installed"
-cmake -S sctp/tests/independent/dtls -B build-dtls-consumer \
-  -DCMAKE_PREFIX_PATH="$PWD/c11-installed"
-cmake --build build-dtls-consumer
-ctest --test-dir build-dtls-consumer --output-on-failure
+/* Same Owner; event/message are caller-owned, disjoint output buffers.
+ * Returns a Salts status; available is set only for a copied Session event. */
+static int poll_sctp(cnet_sctp_dtls *bridge, cnet_sctp_session *session,
+    uint64_t now, cnet_sctp_session_event *event, void *message,
+    size_t capacity, int *available) {
+  void *wire;
+  size_t wire_capacity, written = 0u;
+  *available = 0;
+  int result = cnet_sctp_dtls_reserve(bridge, &wire, &wire_capacity);
+  if (result) return result;
+  cnet_sctp_session_status status = cnet_sctp_session_poll(session, now,
+      event, message, capacity, wire, wire_capacity, &written);
+  result = cnet_sctp_dtls_commit(bridge, status, written);
+  if (!result) *available = status == CNET_SCTP_SESSION_OK;
+  return result;
+}
 ```
+
+Session's cookie provider requires a cryptographic secret unknown to the peer.
+DTLS exporters are shared secrets with that peer, so a public exporter label
+alone is insufficient. The formal native provider calls `cnet_dtls_hmac`
+through CNet's sole physical Crypto instance with an OS-random private
+per-association exporter context. It erases that context on cleanup. Do not
+link a second static Crypto archive into a CNet consumer.
+
+Abort stops Session, discards unsubmitted storage and waits for an admitted
+send's actual terminal. Continue routing and progress until abort succeeds,
+then destroy bridge, Session and finally the drained DTLS owner. The borrowed
+datagram/listener/backend remain the host's responsibility. Replacing DTLS under
+a live bridge is invalid; generation checks refuse old Session traffic.
+
+The module-owned formal CTest `saltscore.sctp_dtls_native` uses the
+[native host](tests/dtls_native_peer.c) and [independent Pion peer](tests/secure/dtls_test.go).
+Ten scenarios cover both native roles, ordinary/external NativeIO, one/four/
+eight peers, mixed authentication failure/cancel and eight healthy clients.
+Every healthy peer exchanges 1 byte, 1 KiB, 24 KiB and logical-empty binary
+messages, with separate cumulative ACK receipts. One-slot bridge pressure and
+two encrypted records in one actual datagram exercise non-consuming delivery.
+The shared backend neighbor survives teardown. This local Windows IOCP/IPv4
+evidence does not qualify throughput, encrypted packet-loss recovery, browsers,
+other operating systems or sanitizers. It is part of the normal build/CTest
+graph, not a replacement standalone validation project.
 
 ## Installed opaque Session: bounded messages
 
-The standalone, experimental `CNetSctpPrototype::Session` installed target
+The experimental `Salts::SCTP` target
 exposes an opaque Owner-only handle. Its immediate
 `cnet_sctp_session_send()` emits one SCTP DATA/I-DATA packet and returns
 `CAPACITY` without accepting a multi-fragment message. For payloads up to
@@ -139,7 +139,7 @@ pumping again. The DCEP-negotiated ordered/unordered, retransmit/timed policy
 is preserved for every emitted fragment. Timed lifetime starts at queue
 admission. No background worker, I/O or borrowed application input is retained.
 
-The separate installed C11 consumer verifies 2,048-byte and full 24 KiB
+The formal C11 Session tests verify 2,048-byte and full 24 KiB
 fragmentation, copied input ownership, Owner rejection, unsent TIMED expiry,
 two-sided RFC6525 reset and old-generation DATA replay, using only installed
 headers and exports.

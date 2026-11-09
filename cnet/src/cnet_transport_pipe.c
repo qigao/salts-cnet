@@ -2,7 +2,7 @@
 
 #include "cnet_uri.h"
 
-#include <error_codes.h>
+#include <salts/error_codes.h>
 
 #include <stddef.h>
 #include <stdint.h>

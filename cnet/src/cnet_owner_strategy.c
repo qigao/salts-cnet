@@ -1,6 +1,6 @@
 #include <cnet/owner_placement.h>
 
-#include <error_codes.h>
+#include <salts/error_codes.h>
 
 static size_t cnet_owner_placement_next(size_t index, size_t count) {
   return index + 1u == count ? 0u : index + 1u;

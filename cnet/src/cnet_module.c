@@ -21,7 +21,7 @@ typedef struct cnet_module_state {
 
 static cnet_module_state cnet_module_global;
 
-/* A dynamically allocated once-initialized cmeta_mutex_t leaks one heap lock
+/* A dynamically allocated once-initialized sync_mutex_t leaks one heap lock
  * per CNet DSO load/unload: there is no safe final-shutdown destroy while
  * another thread may already be entering init(). Instead use the native
  * process-local static mutex. No allocation, no destructor, no separate

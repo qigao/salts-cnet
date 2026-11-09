@@ -1,7 +1,7 @@
 #ifndef CNET_MODULE_H
 #define CNET_MODULE_H
 
-#include <error_codes.h>
+#include <salts/error_codes.h>
 
 /**
  * Initializes process-global CNet dependencies.

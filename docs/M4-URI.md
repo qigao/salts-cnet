@@ -1,7 +1,7 @@
 # M4.1: Standalone URI parser (pre-CNet)
 
 Original source pin: `qigao/salts@d6d936a86087a7f9a982126157d154e905580f30`.
-Copy of `uri/include/uri_parser.h`, `uri/src/uri_parser.c`, `uri/parser/uri_parser_internal.h`, and `uri/parser/uri_lexer.re`.
+Copy of `cnet/uri/include/uri_parser.h`, `cnet/uri/src/uri_parser.c`, `cnet/uri/parser/uri_parser_internal.h`, and `cnet/uri/parser/uri_lexer.re`.
 
 The URI parser is a **mechanism** consumed by the future Core CNet.
 It needs no CMeta, CFlow, CSTL, TLS provider or networking library.

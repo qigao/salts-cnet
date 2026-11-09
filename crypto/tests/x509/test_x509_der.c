@@ -74,7 +74,7 @@ static int read_cert_fixture(const char *file, uint8_t *der,
 
 static int real_certificate(const uint8_t *der, size_t n,
                             crypto_x509_der_view *out) {
-    salts_asn1_status s = crypto_x509_der_inspect(der, n, out);
+    asn1_status s = crypto_x509_der_inspect(der, n, out);
     REQUIRE(s == SALTS_ASN1_OK);
     REQUIRE(out->certificate_der == der && out->certificate_size == n);
     REQUIRE(out->tbs_der && out->tbs_size > 64u);
@@ -105,15 +105,15 @@ static int must_reject_unchanged(const uint8_t *der, size_t n) {
 }
 
 static int tamper_alg_identifier(uint8_t *buf, size_t n) {
-    salts_asn1_reader top, cert, algorithm;
-    salts_asn1_tlv root, tbs, alg, oid;
-    REQUIRE(salts_asn1_reader_init(&top, buf, n, SALTS_ASN1_DER) == SALTS_ASN1_OK);
-    REQUIRE(salts_asn1_reader_next(&top, &root) == SALTS_ASN1_OK);
-    REQUIRE(salts_asn1_reader_open_children(&top, &root, &cert) == SALTS_ASN1_OK);
-    REQUIRE(salts_asn1_reader_next(&cert, &tbs) == SALTS_ASN1_OK);
-    REQUIRE(salts_asn1_reader_next(&cert, &alg) == SALTS_ASN1_OK);
-    REQUIRE(salts_asn1_reader_open_children(&cert, &alg, &algorithm) == SALTS_ASN1_OK);
-    REQUIRE(salts_asn1_reader_next(&algorithm, &oid) == SALTS_ASN1_OK);
+    asn1_reader top, cert, algorithm;
+    asn1_tlv root, tbs, alg, oid;
+    REQUIRE(asn1_reader_init(&top, buf, n, SALTS_ASN1_DER) == SALTS_ASN1_OK);
+    REQUIRE(asn1_reader_next(&top, &root) == SALTS_ASN1_OK);
+    REQUIRE(asn1_reader_open_children(&top, &root, &cert) == SALTS_ASN1_OK);
+    REQUIRE(asn1_reader_next(&cert, &tbs) == SALTS_ASN1_OK);
+    REQUIRE(asn1_reader_next(&cert, &alg) == SALTS_ASN1_OK);
+    REQUIRE(asn1_reader_open_children(&cert, &alg, &algorithm) == SALTS_ASN1_OK);
+    REQUIRE(asn1_reader_next(&algorithm, &oid) == SALTS_ASN1_OK);
     REQUIRE(oid.content_size > 1u);
     ((uint8_t *)oid.content)[oid.content_size - 1u] ^= 1u;
     return 1;

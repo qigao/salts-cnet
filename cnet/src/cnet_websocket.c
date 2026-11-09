@@ -2,8 +2,8 @@
 
 #include "websocket_frame_parser.h"
 
-#include <error_codes.h>
-#include <random.h>
+#include <salts/error_codes.h>
+#include <salts/platform.h>
 
 #include <limits.h>
 #include <stdlib.h>
@@ -224,7 +224,7 @@ static int cnet_websocket_emit_frame(cnet_websocket_impl *impl, uint8_t opcode, 
   if (payload_size > impl->max_frame_bytes) return SALTS_EMSGSIZE;
   if (payload == NULL && payload_size != 0u) return SALTS_EINVAL;
   if (masked) {
-    status = cmeta_platform_secure_random(masking_key, sizeof(masking_key));
+    status = secure_random(masking_key, sizeof(masking_key));
     if (status != SALTS_OK) {
       cnet_websocket_record_error(impl, status);
       impl->state = CNET_WEBSOCKET_FAILED;

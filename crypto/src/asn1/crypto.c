@@ -12,7 +12,7 @@ static const uint8_t ed25519_oid[] = {0x2bu, 0x65u, 0x70u};
 #define ECDSA_SEQUENCE_CONTENT_MAX_BYTES \
     (ECDSA_INTEGER_TLV_MAX_BYTES * 2u)
 
-static salts_asn1_status algorithm_oid(crypto_asn1_rfc8410_algorithm algorithm,
+static asn1_status algorithm_oid(crypto_asn1_rfc8410_algorithm algorithm,
                                        const uint8_t **oid) {
     if (!oid) return SALTS_ASN1_INVALID_ARGUMENT;
     if (algorithm == CRYPTO_ASN1_RFC8410_X25519) *oid = x25519_oid;
@@ -21,19 +21,19 @@ static salts_asn1_status algorithm_oid(crypto_asn1_rfc8410_algorithm algorithm,
     return SALTS_ASN1_OK;
 }
 
-static salts_asn1_status decode_algorithm(const salts_asn1_tlv *value,
+static asn1_status decode_algorithm(const asn1_tlv *value,
                                           crypto_asn1_rfc8410_algorithm *out) {
-    salts_asn1_reader children;
-    salts_asn1_tlv oid;
-    salts_asn1_status status;
+    asn1_reader children;
+    asn1_tlv oid;
+    asn1_status status;
     crypto_asn1_rfc8410_algorithm algorithm;
     if (!value || !out || value->tag_class != 0u || !value->constructed ||
         value->tag_number != 16u)
         return SALTS_ASN1_MALFORMED;
-    status = salts_asn1_reader_init(&children, value->content,
+    status = asn1_reader_init(&children, value->content,
                                     value->content_size, SALTS_ASN1_DER);
     if (status != SALTS_ASN1_OK) return status;
-    status = salts_asn1_reader_next(&children, &oid);
+    status = asn1_reader_next(&children, &oid);
     if (status != SALTS_ASN1_OK || oid.tag_class != 0u || oid.constructed ||
         oid.tag_number != 6u || oid.content_size != sizeof(x25519_oid))
         return SALTS_ASN1_MALFORMED;
@@ -43,13 +43,13 @@ static salts_asn1_status decode_algorithm(const salts_asn1_tlv *value,
         algorithm = CRYPTO_ASN1_RFC8410_ED25519;
     else
         return SALTS_ASN1_UNSUPPORTED;
-    if (salts_asn1_reader_next(&children, &oid) != SALTS_ASN1_DONE)
+    if (asn1_reader_next(&children, &oid) != SALTS_ASN1_DONE)
         return SALTS_ASN1_MALFORMED;
     *out = algorithm;
     return SALTS_ASN1_OK;
 }
 
-static salts_asn1_status encode_integer_component(
+static asn1_status encode_integer_component(
     const uint8_t *input, size_t input_size,
     uint8_t output[ECDSA_INTEGER_TLV_MAX_BYTES],
     size_t *output_size) {
@@ -65,19 +65,19 @@ static salts_asn1_status encode_integer_component(
     content_size = prefix + input_size;
     if (prefix != 0u) content[0] = 0u;
     if (input_size != 0u) memcpy(content + prefix, input, input_size);
-    return salts_asn1_encode_tlv(0u, 0u, 2u, content, content_size,
+    return asn1_encode_tlv(0u, 0u, 2u, content, content_size,
                                  SALTS_ASN1_DER, 0u, output,
                                  ECDSA_INTEGER_TLV_MAX_BYTES,
                                  output_size);
 }
 
-salts_asn1_status crypto_asn1_ecdsa_signature_encode(
+asn1_status crypto_asn1_ecdsa_signature_encode(
     const void *r, size_t r_size, const void *s, size_t s_size,
     void *output, size_t output_capacity, size_t *written) {
     uint8_t content[ECDSA_SEQUENCE_CONTENT_MAX_BYTES];
     uint8_t staged[CRYPTO_ASN1_ECDSA_SIGNATURE_MAX_BYTES];
     size_t r_encoded_size = 0u, s_encoded_size = 0u, required = 0u;
-    salts_asn1_status status;
+    asn1_status status;
     if (!written || (!r && r_size != 0u) || (!s && s_size != 0u) ||
         (!output && output_capacity != 0u))
         return SALTS_ASN1_INVALID_ARGUMENT;
@@ -88,7 +88,7 @@ salts_asn1_status crypto_asn1_ecdsa_signature_encode(
                                       content + r_encoded_size,
                                       &s_encoded_size);
     if (status != SALTS_ASN1_OK) return status;
-    status = salts_asn1_encode_tlv(0u, 1u, 16u, content,
+    status = asn1_encode_tlv(0u, 1u, 16u, content,
                                    r_encoded_size + s_encoded_size,
                                    SALTS_ASN1_DER, 0u, staged, sizeof(staged),
                                    &required);
@@ -106,7 +106,7 @@ salts_asn1_status crypto_asn1_ecdsa_signature_encode(
     return SALTS_ASN1_OK;
 }
 
-static salts_asn1_status decode_component(const salts_asn1_tlv *value,
+static asn1_status decode_component(const asn1_tlv *value,
                                           const uint8_t **magnitude,
                                           size_t *magnitude_size) {
     const uint8_t *data;
@@ -127,35 +127,35 @@ static salts_asn1_status decode_component(const salts_asn1_tlv *value,
     return SALTS_ASN1_OK;
 }
 
-salts_asn1_status crypto_asn1_ecdsa_signature_decode(
+asn1_status crypto_asn1_ecdsa_signature_decode(
     const void *der, size_t der_size,
     const uint8_t **r, size_t *r_size,
     const uint8_t **s, size_t *s_size) {
-    salts_asn1_reader reader, children;
-    salts_asn1_tlv sequence, component;
-    salts_asn1_status status;
+    asn1_reader reader, children;
+    asn1_tlv sequence, component;
+    asn1_status status;
     const uint8_t *decoded_r, *decoded_s;
     size_t decoded_r_size, decoded_s_size;
     if (!der || der_size == 0u || !r || !r_size || !s || !s_size)
         return SALTS_ASN1_INVALID_ARGUMENT;
-    status = salts_asn1_reader_init(&reader, der, der_size, SALTS_ASN1_DER);
+    status = asn1_reader_init(&reader, der, der_size, SALTS_ASN1_DER);
     if (status != SALTS_ASN1_OK) return status;
-    status = salts_asn1_reader_next(&reader, &sequence);
+    status = asn1_reader_next(&reader, &sequence);
     if (status != SALTS_ASN1_OK) return status;
     if (reader.offset != der_size || sequence.tag_class != 0u ||
         !sequence.constructed || sequence.tag_number != 16u)
         return SALTS_ASN1_MALFORMED;
-    status = salts_asn1_reader_open_children(&reader, &sequence, &children);
+    status = asn1_reader_open_children(&reader, &sequence, &children);
     if (status != SALTS_ASN1_OK) return status;
-    status = salts_asn1_reader_next(&children, &component);
+    status = asn1_reader_next(&children, &component);
     if (status != SALTS_ASN1_OK) return status;
     status = decode_component(&component, &decoded_r, &decoded_r_size);
     if (status != SALTS_ASN1_OK) return status;
-    status = salts_asn1_reader_next(&children, &component);
+    status = asn1_reader_next(&children, &component);
     if (status != SALTS_ASN1_OK) return status;
     status = decode_component(&component, &decoded_s, &decoded_s_size);
     if (status != SALTS_ASN1_OK) return status;
-    if (salts_asn1_reader_next(&children, &component) != SALTS_ASN1_DONE)
+    if (asn1_reader_next(&children, &component) != SALTS_ASN1_DONE)
         return SALTS_ASN1_MALFORMED;
     *r = decoded_r;
     *r_size = decoded_r_size;
@@ -164,7 +164,7 @@ salts_asn1_status crypto_asn1_ecdsa_signature_decode(
     return SALTS_ASN1_OK;
 }
 
-salts_asn1_status crypto_asn1_rfc8410_spki_encode(
+asn1_status crypto_asn1_rfc8410_spki_encode(
     crypto_asn1_rfc8410_algorithm algorithm,
     const uint8_t key[CRYPTO_ASN1_RFC8410_KEY_BYTES],
     void *output, size_t output_capacity, size_t *written) {
@@ -192,35 +192,35 @@ salts_asn1_status crypto_asn1_rfc8410_spki_encode(
     return SALTS_ASN1_OK;
 }
 
-salts_asn1_status crypto_asn1_rfc8410_spki_decode(
+asn1_status crypto_asn1_rfc8410_spki_decode(
     const void *der, size_t der_size,
     crypto_asn1_rfc8410_algorithm *algorithm,
     const uint8_t **key, size_t *key_size) {
-    salts_asn1_reader reader, children;
-    salts_asn1_tlv root, value;
-    salts_asn1_status status;
+    asn1_reader reader, children;
+    asn1_tlv root, value;
+    asn1_status status;
     crypto_asn1_rfc8410_algorithm decoded_algorithm;
     const uint8_t *decoded_key;
     if (!der || !algorithm || !key || !key_size)
         return SALTS_ASN1_INVALID_ARGUMENT;
-    status = salts_asn1_reader_init(&reader, der, der_size, SALTS_ASN1_DER);
+    status = asn1_reader_init(&reader, der, der_size, SALTS_ASN1_DER);
     if (status != SALTS_ASN1_OK) return status;
-    status = salts_asn1_reader_next(&reader, &root);
+    status = asn1_reader_next(&reader, &root);
     if (status != SALTS_ASN1_OK) return status;
     if (reader.offset != der_size || root.tag_class != 0u || !root.constructed ||
         root.tag_number != 16u) return SALTS_ASN1_MALFORMED;
-    status = salts_asn1_reader_open_children(&reader, &root, &children);
+    status = asn1_reader_open_children(&reader, &root, &children);
     if (status != SALTS_ASN1_OK) return status;
-    status = salts_asn1_reader_next(&children, &value);
+    status = asn1_reader_next(&children, &value);
     if (status != SALTS_ASN1_OK) return status;
     status = decode_algorithm(&value, &decoded_algorithm);
     if (status != SALTS_ASN1_OK) return status;
-    status = salts_asn1_reader_next(&children, &value);
+    status = asn1_reader_next(&children, &value);
     if (status != SALTS_ASN1_OK || value.tag_class != 0u || value.constructed ||
         value.tag_number != 3u || value.content_size != 33u ||
         value.content[0] != 0u) return SALTS_ASN1_MALFORMED;
     decoded_key = value.content + 1u;
-    if (salts_asn1_reader_next(&children, &value) != SALTS_ASN1_DONE)
+    if (asn1_reader_next(&children, &value) != SALTS_ASN1_DONE)
         return SALTS_ASN1_MALFORMED;
     *algorithm = decoded_algorithm;
     *key = decoded_key;
@@ -228,7 +228,7 @@ salts_asn1_status crypto_asn1_rfc8410_spki_decode(
     return SALTS_ASN1_OK;
 }
 
-salts_asn1_status crypto_asn1_rfc8410_pkcs8_encode(
+asn1_status crypto_asn1_rfc8410_pkcs8_encode(
     crypto_asn1_rfc8410_algorithm algorithm,
     const uint8_t seed[CRYPTO_ASN1_RFC8410_KEY_BYTES],
     void *output, size_t output_capacity, size_t *written) {
@@ -256,46 +256,46 @@ salts_asn1_status crypto_asn1_rfc8410_pkcs8_encode(
     return SALTS_ASN1_OK;
 }
 
-salts_asn1_status crypto_asn1_rfc8410_pkcs8_decode(
+asn1_status crypto_asn1_rfc8410_pkcs8_decode(
     const void *der, size_t der_size,
     crypto_asn1_rfc8410_algorithm *algorithm,
     const uint8_t **seed, size_t *seed_size) {
-    salts_asn1_reader reader, children, inner;
-    salts_asn1_tlv root, value, nested;
-    salts_asn1_status status;
+    asn1_reader reader, children, inner;
+    asn1_tlv root, value, nested;
+    asn1_status status;
     crypto_asn1_rfc8410_algorithm decoded_algorithm;
     const uint8_t *decoded_seed;
     if (!der || !algorithm || !seed || !seed_size)
         return SALTS_ASN1_INVALID_ARGUMENT;
-    status = salts_asn1_reader_init(&reader, der, der_size, SALTS_ASN1_DER);
+    status = asn1_reader_init(&reader, der, der_size, SALTS_ASN1_DER);
     if (status != SALTS_ASN1_OK) return status;
-    status = salts_asn1_reader_next(&reader, &root);
+    status = asn1_reader_next(&reader, &root);
     if (status != SALTS_ASN1_OK) return status;
     if (reader.offset != der_size || root.tag_class != 0u || !root.constructed ||
         root.tag_number != 16u) return SALTS_ASN1_MALFORMED;
-    status = salts_asn1_reader_open_children(&reader, &root, &children);
+    status = asn1_reader_open_children(&reader, &root, &children);
     if (status != SALTS_ASN1_OK) return status;
-    status = salts_asn1_reader_next(&children, &value);
+    status = asn1_reader_next(&children, &value);
     if (status != SALTS_ASN1_OK || value.tag_class != 0u || value.constructed ||
         value.tag_number != 2u || value.content_size != 1u ||
         value.content[0] != 0u) return SALTS_ASN1_MALFORMED;
-    status = salts_asn1_reader_next(&children, &value);
+    status = asn1_reader_next(&children, &value);
     if (status != SALTS_ASN1_OK) return status;
     status = decode_algorithm(&value, &decoded_algorithm);
     if (status != SALTS_ASN1_OK) return status;
-    status = salts_asn1_reader_next(&children, &value);
+    status = asn1_reader_next(&children, &value);
     if (status != SALTS_ASN1_OK || value.tag_class != 0u || value.constructed ||
         value.tag_number != 4u) return SALTS_ASN1_MALFORMED;
-    status = salts_asn1_reader_init(&inner, value.content, value.content_size,
+    status = asn1_reader_init(&inner, value.content, value.content_size,
                                     SALTS_ASN1_DER);
     if (status != SALTS_ASN1_OK) return status;
-    status = salts_asn1_reader_next(&inner, &nested);
+    status = asn1_reader_next(&inner, &nested);
     if (status != SALTS_ASN1_OK || inner.offset != value.content_size ||
         nested.tag_class != 0u || nested.constructed || nested.tag_number != 4u ||
         nested.content_size != CRYPTO_ASN1_RFC8410_KEY_BYTES)
         return SALTS_ASN1_MALFORMED;
     decoded_seed = nested.content;
-    if (salts_asn1_reader_next(&children, &value) != SALTS_ASN1_DONE)
+    if (asn1_reader_next(&children, &value) != SALTS_ASN1_DONE)
         return SALTS_ASN1_MALFORMED;
     *algorithm = decoded_algorithm;
     *seed = decoded_seed;

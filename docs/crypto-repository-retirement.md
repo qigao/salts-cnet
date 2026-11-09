@@ -18,7 +18,10 @@ archive merge or second local GmSSL compilation.
 
 The root `vcpkg.json` declares GmSSL, and `vcpkg-configuration.json` selects
 its custom registry baseline. Crypto uses plain required CMake package
-resolution; its installed configuration explicitly imports GmSSL and ASN1.
+resolution; the unified SaltsCore installed configuration imports GmSSL and
+ASN1 and exports `Salts::Crypto` with the other SDK targets. Direct Crypto
+consumers use `find_package(SaltsCore CONFIG REQUIRED)`; the separate Crypto
+package configuration is retired, while its archive/header interfaces remain.
 Missing dependencies fail configuration. The extension sources and recipes
 belong to `crypto/gmssl-extensions/`; its
 [source lock](../crypto/gmssl-extensions/source-lock.json) records upstream,

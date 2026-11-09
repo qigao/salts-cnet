@@ -1,4 +1,12 @@
+#if !defined(_WIN32) && !defined(_POSIX_C_SOURCE)
+#define _POSIX_C_SOURCE 200809L
+#endif
+
 #include <crypto/tls_stream.h>
+#include <crypto/sha256.h>
+#include "crypto_tls_credentials.h"
+#include "crypto_tls_session_cache.h"
+#include "crypto_internal.h"
 
 #if defined(CRYPTO_TLS_STREAM_TESTING)
   #include "crypto_tls_stream_test.h"
@@ -12,10 +20,12 @@
 #include <gmssl/x509_ext.h>
 #include <gmssl/asn1.h>
 #include <gmssl/pem.h>
+#include <gmssl/rand.h>
 
 #include <limits.h>
 #include <stdatomic.h>
 #include <stdint.h>
+#include <time.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -117,8 +127,13 @@ struct crypto_tls_stream {
   bool server;
   bool handshake_started;
   bool handshake_complete;
+  int handshake_error;
+  crypto_tls_diagnostic diagnostic;
+  int terminal_error;
   bool peer_close_notify;
+  bool shutdown_started;
   bool close_notify_started;
+  bool session_reused;
 };
 
 
@@ -131,6 +146,9 @@ typedef enum crypto_tls_stream_variant {
   CRYPTO_TLS_STREAM_VARIANT_COUNT = 5
 } crypto_tls_stream_variant;
 
+static int crypto_tls_stream_select_variant(crypto_tls_stream_protocol_version minimum,
+    crypto_tls_stream_protocol_version maximum, crypto_tls_stream_variant *out_variant);
+
 struct crypto_tls_stream_context {
   TLS_CTX tls[CRYPTO_TLS_STREAM_VARIANT_COUNT];
   bool tls_ready[CRYPTO_TLS_STREAM_VARIANT_COUNT];
@@ -140,13 +158,29 @@ struct crypto_tls_stream_context {
   atomic_size_t references;
   bool server;
   bool verify_peer;
+  uint32_t verification_depth;
+  bool verification_time_set;
+  time_t verification_time;
   bool native_system_trust;
   crypto_tls_stream_security_profile security_profile;
+  crypto_tls_stream_peer_policy peer_policy;
+  crypto_tls_stream_protocol_version minimum_version, maximum_version;
+  crypto_tls_stream_variant initial_variant;
+  crypto_tls_session_cache *session_cache;
+  uint32_t session_ticket_lifetime;
 };
 
+typedef struct crypto_tls_pending_ticket {
+  uint64_t received_ms;
+  uint32_t lifetime, age_add;
+  uint8_t psk[32], ticket[32];
+  bool valid;
+} crypto_tls_pending_ticket;
 typedef struct crypto_tls_stream_gmssl_state {
   TLS_CONNECT connection;
   TLS_IO io;
+  crypto_tls_cached_session *resume;
+  crypto_tls_pending_ticket *issued;
   unsigned char *cipher_input;
   unsigned char *cipher_output;
   unsigned char *plaintext;
@@ -640,6 +674,99 @@ static int crypto_tls_stream_variant_protocol(crypto_tls_stream_variant variant)
   return TLS_protocol_tls13;
 }
 
+/* Reject an unusable explicit policy before allocation, credential I/O or
+ * peer-policy retention. Protocol bounds are independent of suite selection. */
+static int crypto_tls_stream_validate_ciphers(const crypto_tls_cipher_suite *suites,
+    size_t count, crypto_tls_stream_security_profile profile,
+    crypto_tls_stream_protocol_version minimum, crypto_tls_stream_protocol_version maximum) {
+  bool tls12 = false, tls13 = false;
+  if ((suites == NULL) != (count == 0u) || count > CRYPTO_TLS_CIPHER_SUITE_MAX_COUNT)
+    return CRYPTO_TLS_STREAM_EINVAL;
+  if (count == 0u) return CRYPTO_TLS_STREAM_OK;
+  for (size_t i = 0u; i < count; ++i) {
+    for (size_t j = 0u; j < i; ++j)
+      if (suites[i] == suites[j]) return CRYPTO_TLS_STREAM_EINVAL;
+    if (profile == CRYPTO_TLS_STREAM_SECURITY_PROFILE_SHANGMI_TLS13) {
+      if (suites[i] != CRYPTO_TLS_CIPHER_SM4_GCM_SM3) return CRYPTO_TLS_STREAM_ENOTSUP;
+    } else if (profile == CRYPTO_TLS_STREAM_SECURITY_PROFILE_TLCP11) {
+      if (suites[i] != CRYPTO_TLS_CIPHER_TLCP_ECC_SM4_GCM_SM3) return CRYPTO_TLS_STREAM_ENOTSUP;
+    } else if (suites[i] == CRYPTO_TLS_CIPHER_AES_128_GCM_SHA256) {
+      if (maximum < CRYPTO_TLS_STREAM_PROTOCOL_VERSION_1_3) return CRYPTO_TLS_STREAM_ENOTSUP;
+      tls13 = true;
+    } else if (suites[i] == CRYPTO_TLS_CIPHER_ECDHE_RSA_AES_128_GCM_SHA256 ||
+               suites[i] == CRYPTO_TLS_CIPHER_ECDHE_ECDSA_AES_128_GCM_SHA256) {
+      if (minimum > CRYPTO_TLS_STREAM_PROTOCOL_VERSION_1_2) return CRYPTO_TLS_STREAM_ENOTSUP;
+      tls12 = true;
+    } else return CRYPTO_TLS_STREAM_ENOTSUP;
+  }
+  if (profile == CRYPTO_TLS_STREAM_SECURITY_PROFILE_STANDARD &&
+      ((minimum == CRYPTO_TLS_STREAM_PROTOCOL_VERSION_1_2 && !tls12) ||
+       (maximum == CRYPTO_TLS_STREAM_PROTOCOL_VERSION_1_3 && !tls13)))
+    return CRYPTO_TLS_STREAM_ENOTSUP;
+  return CRYPTO_TLS_STREAM_OK;
+}
+
+static int crypto_tls_stream_validate_signatures(const crypto_tls_signature_scheme *schemes,
+    size_t count, crypto_tls_stream_security_profile profile,
+    crypto_tls_stream_protocol_version minimum, crypto_tls_stream_protocol_version maximum) {
+  bool tls12 = false, tls13 = false;
+  if ((schemes == NULL) != (count == 0u) || count > CRYPTO_TLS_SIGNATURE_MAX_COUNT)
+    return CRYPTO_TLS_STREAM_EINVAL;
+  if (count == 0u) return CRYPTO_TLS_STREAM_OK;
+  for (size_t i = 0u; i < count; ++i) {
+    for (size_t j = 0u; j < i; ++j)
+      if (schemes[i] == schemes[j]) return CRYPTO_TLS_STREAM_EINVAL;
+    if (profile != CRYPTO_TLS_STREAM_SECURITY_PROFILE_STANDARD) {
+      if (schemes[i] != CRYPTO_TLS_SIGNATURE_SM2_SM3) return CRYPTO_TLS_STREAM_ENOTSUP;
+    } else switch (schemes[i]) {
+      case CRYPTO_TLS_SIGNATURE_RSA_PSS_RSAE_SHA256:
+        if (maximum < CRYPTO_TLS_STREAM_PROTOCOL_VERSION_1_3) return CRYPTO_TLS_STREAM_ENOTSUP;
+        tls13 = true; break;
+      case CRYPTO_TLS_SIGNATURE_RSA_PKCS1_SHA256: tls12 = true; break;
+      case CRYPTO_TLS_SIGNATURE_ECDSA_SECP256R1_SHA256:
+      case CRYPTO_TLS_SIGNATURE_ECDSA_SECP384R1_SHA384: tls12 = tls13 = true; break;
+      default: return CRYPTO_TLS_STREAM_ENOTSUP;
+    }
+  }
+  if (profile == CRYPTO_TLS_STREAM_SECURITY_PROFILE_STANDARD &&
+      ((minimum == CRYPTO_TLS_STREAM_PROTOCOL_VERSION_1_2 && !tls12) ||
+       (maximum == CRYPTO_TLS_STREAM_PROTOCOL_VERSION_1_3 && !tls13)))
+    return CRYPTO_TLS_STREAM_ENOTSUP;
+  return CRYPTO_TLS_STREAM_OK;
+}
+
+/* Stateless provider callback: no application pointer or additional owner. */
+static int crypto_tls_stream_key_update_clock(void *user, uint64_t *out_ms) {
+  (void)user;
+#if defined(_WIN32)
+  *out_ms = (uint64_t)GetTickCount64();
+#else
+  struct timespec sample;
+  if (clock_gettime(CLOCK_MONOTONIC, &sample) != 0 || sample.tv_sec < 0 ||
+      sample.tv_nsec < 0 || sample.tv_nsec >= 1000000000L ||
+      (uint64_t)sample.tv_sec > (UINT64_MAX - 999u) / 1000u) return -1;
+  *out_ms = (uint64_t)sample.tv_sec * 1000u + (uint64_t)sample.tv_nsec / 1000000u;
+#endif
+  return 1;
+}
+
+static int crypto_tls_stream_validate_groups(const crypto_tls_group *groups,
+    size_t count, crypto_tls_stream_security_profile profile) {
+  if ((groups == NULL) != (count == 0u) || count > CRYPTO_TLS_GROUP_MAX_COUNT)
+    return CRYPTO_TLS_STREAM_EINVAL;
+  for (size_t i = 0u; i < count; ++i)
+    for (size_t j = 0u; j < i; ++j)
+      if (groups[i] == groups[j]) return CRYPTO_TLS_STREAM_EINVAL;
+  if (count == 0u) return CRYPTO_TLS_STREAM_OK;
+  if (profile == CRYPTO_TLS_STREAM_SECURITY_PROFILE_TLCP11)
+    return CRYPTO_TLS_STREAM_ENOTSUP;
+  const crypto_tls_group supported = profile == CRYPTO_TLS_STREAM_SECURITY_PROFILE_SHANGMI_TLS13
+      ? CRYPTO_TLS_GROUP_SM2P256V1 : CRYPTO_TLS_GROUP_SECP256R1;
+  for (size_t i = 0u; i < count; ++i)
+    if (groups[i] != supported) return CRYPTO_TLS_STREAM_ENOTSUP;
+  return CRYPTO_TLS_STREAM_OK;
+}
+
 static int crypto_tls_stream_configure_variant(crypto_tls_stream_context *context,
                                       crypto_tls_stream_variant variant,
                                       const char *ca_file,
@@ -647,7 +774,21 @@ static int crypto_tls_stream_configure_variant(crypto_tls_stream_context *contex
                                       const char *cert_file,
                                       const char *key_file,
                                       const char *key_password,
-                                      crypto_tls_stream_client_auth client_auth) {
+                                      crypto_tls_stream_client_auth client_auth,
+                                      uint32_t key_update_record_limit,
+                                      uint64_t key_update_byte_limit,
+                                      uint32_t key_update_interval_ms,
+                                      uint32_t peer_key_update_limit,
+                                      uint32_t peer_key_update_min_interval_ms,
+                                      uint32_t peer_key_update_min_bytes,
+                                      const crypto_tls_data *ca_data,
+                                      const crypto_tls_credentials *credentials,
+                                      const crypto_tls_cipher_suite *cipher_suites,
+                                      size_t cipher_suite_count,
+                                      const crypto_tls_signature_scheme *signature_algorithms,
+                                      size_t signature_algorithm_count,
+    const crypto_tls_signature_scheme *certificate_signatures, size_t certificate_signature_count,
+    const crypto_tls_group *configured_groups, size_t configured_group_count) {
   static const int range_ciphers[] = {
       TLS_cipher_aes_128_gcm_sha256,
       TLS_cipher_ecdhe_rsa_with_aes_128_gcm_sha256,
@@ -679,7 +820,9 @@ static int crypto_tls_stream_configure_variant(crypto_tls_stream_context *contex
   size_t group_count = sizeof(groups) / sizeof(groups[0]);
   TLS_CTX *tls;
   const int *ciphers;
+  int selected_ciphers[CRYPTO_TLS_CIPHER_SUITE_MAX_COUNT];
   const int *signatures;
+  int selected_signatures[CRYPTO_TLS_SIGNATURE_MAX_COUNT];
   size_t cipher_count;
   size_t signature_count;
   int mode;
@@ -735,9 +878,76 @@ static int crypto_tls_stream_configure_variant(crypto_tls_stream_context *contex
     signature_count = sizeof(tls13_signatures) / sizeof(tls13_signatures[0]);
   }
 
+  if (cipher_suite_count != 0u) {
+    size_t selected_count = 0u;
+    /* Filter the already validated list for each prebuilt version variant.
+     * The provider copies this bounded array into its immutable TLS_CTX. */
+    for (size_t i = 0u; i < cipher_suite_count; ++i) {
+      for (size_t j = 0u; j < cipher_count; ++j) {
+        if ((int)cipher_suites[i] == ciphers[j]) {
+          selected_ciphers[selected_count++] = ciphers[j];
+          break;
+        }
+      }
+    }
+    if (selected_count == 0u) return CRYPTO_TLS_STREAM_ENOTSUP;
+    ciphers = selected_ciphers;
+    cipher_count = selected_count;
+  }
+
+  if (signature_algorithm_count != 0u) {
+    size_t selected_count = 0u;
+    for (size_t i = 0u; i < signature_algorithm_count; ++i) {
+      for (size_t j = 0u; j < signature_count; ++j) {
+        if ((int)signature_algorithms[i] == signatures[j]) {
+          selected_signatures[selected_count++] = signatures[j];
+          break;
+        }
+      }
+    }
+    if (selected_count == 0u) return CRYPTO_TLS_STREAM_ENOTSUP;
+    signatures = selected_signatures;
+    signature_count = selected_count;
+  }
+
+  int explicit_groups[CRYPTO_TLS_GROUP_MAX_COUNT];
+  if (configured_group_count != 0u) {
+    for (size_t i = 0u; i < configured_group_count; ++i)
+      explicit_groups[i] = (int)configured_groups[i];
+    selected_groups = explicit_groups;
+    group_count = configured_group_count;
+  }
+
   if (tls_ctx_set_cipher_suites(tls, ciphers, cipher_count) != 1 ||
       tls_ctx_set_supported_groups(tls, selected_groups, group_count) != 1 ||
       tls_ctx_set_signature_algorithms(tls, signatures, signature_count) != 1)
+    return CRYPTO_TLS_STREAM_EIO;
+
+  if (certificate_signature_count) {
+    for (size_t i = 0u; i < certificate_signature_count; ++i)
+      tls->certificate_signature_algorithms[i] = (int)certificate_signatures[i];
+    tls->certificate_signature_algorithms_cnt = certificate_signature_count;
+    tls->signature_algorithms_cert = 1;
+  }
+
+  if (key_update_record_limit != 0u &&
+      (tls13_ctx_enable_key_update(tls, 1) != 1 ||
+       tls13_ctx_set_key_update_seq_num_limit(tls, key_update_record_limit) != 1))
+    return CRYPTO_TLS_STREAM_EIO;
+  if (peer_key_update_limit != 0u &&
+      tls13_ctx_set_peer_key_update_limit(tls, peer_key_update_limit) != 1)
+    return CRYPTO_TLS_STREAM_EIO;
+
+  if (key_update_byte_limit != 0u &&
+      tls13_ctx_set_key_update_byte_limit(tls, key_update_byte_limit) != 1)
+    return CRYPTO_TLS_STREAM_EIO;
+  if (key_update_interval_ms != 0u &&
+      tls13_ctx_set_key_update_interval(tls, key_update_interval_ms,
+          crypto_tls_stream_key_update_clock, NULL) != 1)
+    return CRYPTO_TLS_STREAM_EIO;
+  if ((peer_key_update_min_interval_ms != 0u || peer_key_update_min_bytes != 0u) &&
+      tls13_ctx_set_peer_key_update_spacing(tls, peer_key_update_min_interval_ms,
+          peer_key_update_min_bytes, crypto_tls_stream_key_update_clock, NULL) != 1)
     return CRYPTO_TLS_STREAM_EIO;
 
   /* RFC 5746 initial-handshake secure renegotiation is mandatory for
@@ -760,13 +970,20 @@ static int crypto_tls_stream_configure_variant(crypto_tls_stream_context *contex
     return CRYPTO_TLS_STREAM_EIO;
 
   if (context->verify_peer) {
-    status = (ca_file != NULL || ca_path != NULL)
+    status = ca_data != NULL ? crypto_tls_memory_trust(tls, ca_data) :
+        (ca_file != NULL || ca_path != NULL)
                  ? crypto_tls_stream_load_explicit_trust(tls, ca_file, ca_path)
                  : crypto_tls_stream_load_system_trust(tls);
     if (status != CRYPTO_TLS_STREAM_OK) return status;
+    tls->verify_depth = (int)context->verification_depth;
+    tls->certificate_time_set = context->verification_time_set;
+    tls->certificate_time = context->verification_time;
   }
 
-  if (cert_file != NULL) {
+  if (credentials != NULL) {
+    status = crypto_tls_memory_identity(tls, credentials);
+    if (status != CRYPTO_TLS_STREAM_OK) return status;
+  } else if (cert_file != NULL) {
     int certificate_result;
     if (variant == CRYPTO_TLS_STREAM_VARIANT_TLCP11 && context->server) {
       if (crypto_tls_stream_tlcp_certificate_roles_valid(cert_file) != CRYPTO_TLS_STREAM_OK)
@@ -796,7 +1013,10 @@ static void crypto_tls_stream_context_dispose(crypto_tls_stream_context *context
   for (index = 0u; index < CRYPTO_TLS_STREAM_VARIANT_COUNT; ++index) {
     if (context->tls_ready[index]) tls_ctx_cleanup(&context->tls[index]);
   }
+  crypto_tls_session_cache_destroy(context->session_cache);
   crypto_tls_stream_alpn_dispose(context);
+  if (context->peer_policy.release != NULL)
+    context->peer_policy.release(context->peer_policy.context);
   crypto_tls_stream_free(context);
 }
 
@@ -818,6 +1038,20 @@ static int crypto_tls_stream_context_create_common(
     const char *cert_file, const char *key_file, const char *key_password,
     crypto_tls_stream_client_auth client_auth, const char *const *alpn_protocols,
     size_t alpn_protocol_count, crypto_tls_stream_security_profile security_profile,
+    const crypto_tls_stream_peer_policy *peer_policy,
+    uint32_t key_update_record_limit,
+    uint64_t key_update_byte_limit,
+    uint32_t key_update_interval_ms,
+    uint32_t peer_key_update_limit,
+    uint32_t peer_key_update_min_interval_ms,
+    uint32_t peer_key_update_min_bytes,
+    const crypto_tls_data *ca_data, const crypto_tls_credentials *credentials,
+    crypto_tls_stream_protocol_version minimum, crypto_tls_stream_protocol_version maximum,
+    uint32_t verification_depth, const int64_t *verification_time,
+    const crypto_tls_cipher_suite *cipher_suites, size_t cipher_suite_count,
+    const crypto_tls_signature_scheme *signature_algorithms, size_t signature_algorithm_count,
+    const crypto_tls_signature_scheme *certificate_signatures, size_t certificate_signature_count,
+    const crypto_tls_group *configured_groups, size_t configured_group_count,
     crypto_tls_stream_context **out_context) {
   crypto_tls_stream_context *context;
   size_t index;
@@ -826,14 +1060,123 @@ static int crypto_tls_stream_context_create_common(
   if (out_context == NULL) return CRYPTO_TLS_STREAM_EINVAL;
   *out_context = NULL;
 
+  const int64_t certificate_time = verification_time ? *verification_time : 0;
+  if (verification_time != NULL) {
+    if (!verify_peer || certificate_time < 0 || certificate_time > INT64_C(253402300799))
+      return CRYPTO_TLS_STREAM_EINVAL;
+    if ((int64_t)(time_t)certificate_time != certificate_time)
+      return CRYPTO_TLS_STREAM_ERANGE;
+#if defined(__APPLE__) && !TARGET_OS_OSX
+    if (ca_file == NULL && ca_path == NULL && ca_data == NULL)
+      return CRYPTO_TLS_STREAM_ENOTSUP;
+#endif
+  }
+
+  if (verification_depth > CRYPTO_TLS_STREAM_VERIFICATION_DEPTH_MAX ||
+      (verification_depth != 0u && !verify_peer)) return CRYPTO_TLS_STREAM_EINVAL;
+#if defined(__APPLE__) && !TARGET_OS_OSX
+  if (verification_depth != 0u && ca_file == NULL && ca_path == NULL && ca_data == NULL)
+    return CRYPTO_TLS_STREAM_ENOTSUP;
+#endif
+
+  crypto_tls_stream_variant initial_variant;
+  status = crypto_tls_stream_select_variant(minimum, maximum, &initial_variant);
+  if (status != CRYPTO_TLS_STREAM_OK) return status;
+  if (security_profile == CRYPTO_TLS_STREAM_SECURITY_PROFILE_TLCP11) {
+    if (minimum != CRYPTO_TLS_STREAM_PROTOCOL_VERSION_DEFAULT || maximum != CRYPTO_TLS_STREAM_PROTOCOL_VERSION_DEFAULT)
+      return CRYPTO_TLS_STREAM_ENOTSUP;
+    initial_variant = CRYPTO_TLS_STREAM_VARIANT_TLCP11;
+  } else if (security_profile == CRYPTO_TLS_STREAM_SECURITY_PROFILE_SHANGMI_TLS13) {
+    if (minimum == CRYPTO_TLS_STREAM_PROTOCOL_VERSION_1_2 || maximum == CRYPTO_TLS_STREAM_PROTOCOL_VERSION_1_2)
+      return CRYPTO_TLS_STREAM_ENOTSUP;
+    minimum = maximum = CRYPTO_TLS_STREAM_PROTOCOL_VERSION_1_3;
+    initial_variant = CRYPTO_TLS_STREAM_VARIANT_SHANGMI_TLS13;
+  }
+  if (minimum == CRYPTO_TLS_STREAM_PROTOCOL_VERSION_DEFAULT) minimum = CRYPTO_TLS_STREAM_PROTOCOL_VERSION_1_2;
+  if (maximum == CRYPTO_TLS_STREAM_PROTOCOL_VERSION_DEFAULT) maximum = CRYPTO_TLS_STREAM_PROTOCOL_VERSION_1_3;
+
+  status = crypto_tls_stream_validate_groups(configured_groups, configured_group_count, security_profile);
+  if (status != CRYPTO_TLS_STREAM_OK) return status;
+
+  status = crypto_tls_stream_validate_ciphers(cipher_suites, cipher_suite_count,
+      security_profile, minimum, maximum);
+  if (status != CRYPTO_TLS_STREAM_OK) return status;
+
+  if ((certificate_signatures == NULL) != (certificate_signature_count == 0u) ||
+      certificate_signature_count > CRYPTO_TLS_SIGNATURE_MAX_COUNT) return CRYPTO_TLS_STREAM_EINVAL;
+  if (certificate_signature_count) {
+    if (security_profile == CRYPTO_TLS_STREAM_SECURITY_PROFILE_TLCP11 && server)
+      return CRYPTO_TLS_STREAM_ENOTSUP;
+    for (size_t i = 0u; i < certificate_signature_count; ++i) {
+      for (size_t j = 0u; j < i; ++j)
+        if (certificate_signatures[i] == certificate_signatures[j]) return CRYPTO_TLS_STREAM_EINVAL;
+      if (security_profile == CRYPTO_TLS_STREAM_SECURITY_PROFILE_SHANGMI_TLS13) {
+        if (certificate_signatures[i] != CRYPTO_TLS_SIGNATURE_SM2_SM3) return CRYPTO_TLS_STREAM_ENOTSUP;
+      } else if (security_profile == CRYPTO_TLS_STREAM_SECURITY_PROFILE_TLCP11) {
+        if (certificate_signatures[i] != CRYPTO_TLS_SIGNATURE_SM2_SM3 &&
+            certificate_signatures[i] != CRYPTO_TLS_SIGNATURE_RSA_PKCS1_SHA256) return CRYPTO_TLS_STREAM_ENOTSUP;
+      } else if (certificate_signatures[i] != CRYPTO_TLS_SIGNATURE_RSA_PKCS1_SHA256 &&
+          certificate_signatures[i] != CRYPTO_TLS_SIGNATURE_ECDSA_SECP256R1_SHA256 &&
+          certificate_signatures[i] != CRYPTO_TLS_SIGNATURE_ECDSA_SECP384R1_SHA384) return CRYPTO_TLS_STREAM_ENOTSUP;
+    }
+  }
+  status = crypto_tls_stream_validate_signatures(signature_algorithms, signature_algorithm_count,
+      security_profile, minimum, maximum);
+  if (status != CRYPTO_TLS_STREAM_OK) return status;
+#if defined(__APPLE__) && !TARGET_OS_OSX
+  if (!server && (signature_algorithm_count != 0u || certificate_signature_count != 0u) &&
+      ca_file == NULL && ca_path == NULL && ca_data == NULL)
+    return CRYPTO_TLS_STREAM_ENOTSUP;
+#endif
+
+  if ((ca_data != NULL && (ca_file != NULL || ca_path != NULL)) ||
+      (credentials != NULL && (cert_file != NULL || key_file != NULL || key_password != NULL)))
+    return CRYPTO_TLS_STREAM_EINVAL;
+  status = crypto_tls_memory_validate(ca_data, credentials,
+      server && security_profile == CRYPTO_TLS_STREAM_SECURITY_PROFILE_TLCP11);
+  if (status != CRYPTO_TLS_STREAM_OK) return status;
+
+  if (key_update_record_limit > CRYPTO_TLS_STREAM_KEY_UPDATE_RECORD_LIMIT_MAX ||
+      key_update_byte_limit > CRYPTO_TLS_STREAM_KEY_UPDATE_BYTE_LIMIT_MAX)
+    return CRYPTO_TLS_STREAM_EINVAL;
+  if ((key_update_record_limit != 0u || key_update_byte_limit != 0u || key_update_interval_ms != 0u || peer_key_update_limit != 0u ||
+       peer_key_update_min_interval_ms != 0u || peer_key_update_min_bytes != 0u) &&
+      security_profile != CRYPTO_TLS_STREAM_SECURITY_PROFILE_SHANGMI_TLS13)
+    return CRYPTO_TLS_STREAM_ENOTSUP;
+
+  if (peer_policy != NULL &&
+      (!verify_peer || peer_policy->check == NULL ||
+       peer_policy->retain == NULL || peer_policy->release == NULL))
+    return CRYPTO_TLS_STREAM_EINVAL;
+
+  if (peer_policy != NULL) {
+    const uint32_t known_profiles = CRYPTO_TLS_PEER_POLICY_STANDARD |
+        CRYPTO_TLS_PEER_POLICY_SHANGMI_TLS13 | CRYPTO_TLS_PEER_POLICY_TLCP11;
+    const uint32_t known_roles = CRYPTO_TLS_PEER_POLICY_CLIENT | CRYPTO_TLS_PEER_POLICY_SERVER;
+    const uint32_t peer_role = server ? CRYPTO_TLS_PEER_POLICY_CLIENT : CRYPTO_TLS_PEER_POLICY_SERVER;
+    if ((peer_policy->supported_profiles & ~known_profiles) != 0u ||
+        (peer_policy->supported_peer_roles & ~known_roles) != 0u)
+      return CRYPTO_TLS_STREAM_EINVAL;
+    if ((peer_policy->supported_profiles != 0u &&
+         (peer_policy->supported_profiles & (1u << security_profile)) == 0u) ||
+        (peer_policy->supported_peer_roles != 0u &&
+         (peer_policy->supported_peer_roles & peer_role) == 0u))
+      return CRYPTO_TLS_STREAM_ENOTSUP;
+  }
+
   context = (crypto_tls_stream_context *)crypto_tls_stream_calloc(1u, sizeof(*context));
   if (context == NULL) return CRYPTO_TLS_STREAM_ENOMEM;
   context->server = server;
   context->verify_peer = verify_peer;
+  context->verification_depth = verification_depth ? verification_depth : CRYPTO_TLS_STREAM_VERIFICATION_DEPTH_DEFAULT;
+  context->verification_time_set = verification_time != NULL;
+  context->verification_time = (time_t)certificate_time;
   context->security_profile = security_profile;
+  context->minimum_version = minimum; context->maximum_version = maximum;
+  context->initial_variant = initial_variant;
 #if defined(__APPLE__) && !TARGET_OS_OSX
   context->native_system_trust =
-      !server && verify_peer && ca_file == NULL && ca_path == NULL;
+      !server && verify_peer && ca_file == NULL && ca_path == NULL && ca_data == NULL;
 #else
   context->native_system_trust = false;
 #endif
@@ -846,6 +1189,8 @@ static int crypto_tls_stream_context_create_common(
   }
 
   for (index = 0u; index < CRYPTO_TLS_STREAM_VARIANT_COUNT; ++index) {
+    if (security_profile == CRYPTO_TLS_STREAM_SECURITY_PROFILE_STANDARD &&
+        initial_variant != CRYPTO_TLS_STREAM_VARIANT_RANGE && index != (size_t)initial_variant) continue;
     if (security_profile == CRYPTO_TLS_STREAM_SECURITY_PROFILE_SHANGMI_TLS13 &&
         index != CRYPTO_TLS_STREAM_VARIANT_SHANGMI_TLS13) continue;
     if (security_profile == CRYPTO_TLS_STREAM_SECURITY_PROFILE_STANDARD &&
@@ -855,14 +1200,65 @@ static int crypto_tls_stream_context_create_common(
         index != CRYPTO_TLS_STREAM_VARIANT_TLCP11) continue;
     status = crypto_tls_stream_configure_variant(
         context, (crypto_tls_stream_variant)index, ca_file, ca_path, cert_file, key_file,
-        key_password, client_auth);
+        key_password, client_auth, key_update_record_limit, key_update_byte_limit, key_update_interval_ms, peer_key_update_limit, peer_key_update_min_interval_ms, peer_key_update_min_bytes, ca_data, credentials,
+        cipher_suites, cipher_suite_count, signature_algorithms, signature_algorithm_count, certificate_signatures, certificate_signature_count, configured_groups, configured_group_count);
     if (status != CRYPTO_TLS_STREAM_OK) {
       crypto_tls_stream_context_dispose(context);
       return status;
     }
   }
 
+  if (peer_policy != NULL) {
+    context->peer_policy = *peer_policy;
+    context->peer_policy.retain(context->peer_policy.context);
+  }
   *out_context = context;
+  return CRYPTO_TLS_STREAM_OK;
+}
+
+static int crypto_tls_stream_identities_validate(const crypto_tls_identity *identities,
+    size_t count, bool tlcp) {
+  int status;
+  if ((identities == NULL) != (count == 0u) || count > CRYPTO_TLS_IDENTITY_MAX_COUNT)
+    return CRYPTO_TLS_STREAM_EINVAL;
+  for (size_t i = 0u; i < count; ++i) {
+    const crypto_tls_identity *id = &identities[i];
+    if (id->size != sizeof(*id) ||
+        !crypto_tls_stream_optional_path_valid(id->cert_file) ||
+        !crypto_tls_stream_optional_path_valid(id->key_file) ||
+        !crypto_tls_stream_bounded_string(id->key_password, CRYPTO_TLS_STREAM_PASSWORD_MAX_BYTES, NULL) ||
+        (id->credentials && (id->cert_file || id->key_file || id->key_password)) ||
+        (!id->credentials && (!id->cert_file || !id->key_file)))
+      return CRYPTO_TLS_STREAM_EINVAL;
+    status = crypto_tls_memory_validate(NULL, id->credentials, tlcp);
+    if (status != CRYPTO_TLS_STREAM_OK) return status;
+  }
+  return CRYPTO_TLS_STREAM_OK;
+}
+
+static int crypto_tls_stream_identities_append(crypto_tls_stream_context *context,
+    const crypto_tls_identity *identities, size_t count) {
+  int status;
+  for (size_t i = 1u; i < count; ++i) {
+    const crypto_tls_identity *id = &identities[i];
+    for (size_t variant = 0u; variant < CRYPTO_TLS_STREAM_VARIANT_COUNT; ++variant) {
+      TLS_CTX *tls = &context->tls[variant];
+      if (!context->tls_ready[variant]) continue;
+      if (id->credentials) status = crypto_tls_memory_identity(tls, id->credentials);
+      else if (variant == CRYPTO_TLS_STREAM_VARIANT_TLCP11) {
+        status = crypto_tls_stream_tlcp_certificate_roles_valid(id->cert_file);
+        if (status == CRYPTO_TLS_STREAM_OK &&
+            tlcp_ctx_add_server_certificate_and_keys(tls, id->cert_file, id->key_file,
+                id->key_password ? id->key_password : "") != 1) status = CRYPTO_TLS_STREAM_EIO;
+      } else {
+        status = tls_ctx_add_certificate_chain_and_key(tls, id->cert_file, id->key_file,
+            id->key_password ? id->key_password : "") == 1 ? CRYPTO_TLS_STREAM_OK : CRYPTO_TLS_STREAM_EIO;
+      }
+      if (status != CRYPTO_TLS_STREAM_OK) {
+        return status;
+      }
+    }
+  }
   return CRYPTO_TLS_STREAM_OK;
 }
 
@@ -870,11 +1266,37 @@ int crypto_tls_stream_client_context_create(const crypto_tls_stream_client_confi
                                    crypto_tls_stream_context **out_context) {
   crypto_tls_stream_client_config defaults = {sizeof(defaults)};
   crypto_tls_stream_context *context = NULL;
+  crypto_tls_stream_client_config selected;
   int status;
 
   if (out_context == NULL) return CRYPTO_TLS_STREAM_EINVAL;
   *out_context = NULL;
   if (config == NULL) config = &defaults;
+  if (config->size != sizeof(*config)) return CRYPTO_TLS_STREAM_EINVAL;
+  if (config->session_cache_capacity > CRYPTO_TLS_SESSION_CACHE_MAX) return CRYPTO_TLS_STREAM_EINVAL;
+  if (config->session_cache_capacity &&
+      (config->security_profile == CRYPTO_TLS_STREAM_SECURITY_PROFILE_TLCP11 ||
+       (config->security_profile == CRYPTO_TLS_STREAM_SECURITY_PROFILE_STANDARD &&
+        (config->minimum_version != CRYPTO_TLS_STREAM_PROTOCOL_VERSION_1_3 ||
+         config->maximum_version != CRYPTO_TLS_STREAM_PROTOCOL_VERSION_1_3)))) return CRYPTO_TLS_STREAM_ENOTSUP;
+#if defined(__APPLE__) && !TARGET_OS_OSX
+  if (config->session_cache_capacity && !config->ca_file && !config->ca_path && !config->ca_data)
+    return CRYPTO_TLS_STREAM_ENOTSUP;
+#endif
+  status = crypto_tls_stream_identities_validate(config->identities, config->identity_count, false);
+  if (status != CRYPTO_TLS_STREAM_OK) return status;
+  if (config->identity_count) {
+    if (config->cert_file || config->key_file || config->key_password || config->credentials)
+      return CRYPTO_TLS_STREAM_EINVAL;
+    if (config->security_profile == CRYPTO_TLS_STREAM_SECURITY_PROFILE_TLCP11)
+      return CRYPTO_TLS_STREAM_ENOTSUP;
+    selected = *config;
+    selected.cert_file = config->identities[0].cert_file;
+    selected.key_file = config->identities[0].key_file;
+    selected.key_password = config->identities[0].key_password;
+    selected.credentials = config->identities[0].credentials;
+    config = &selected;
+  }
   if (config->size != sizeof(*config) ||
       !crypto_tls_stream_optional_path_valid(config->ca_file) ||
       !crypto_tls_stream_optional_path_valid(config->ca_path) ||
@@ -892,15 +1314,32 @@ int crypto_tls_stream_client_context_create(const crypto_tls_stream_client_confi
        config->security_profile != CRYPTO_TLS_STREAM_SECURITY_PROFILE_TLCP11))
     return CRYPTO_TLS_STREAM_EINVAL;
   if (config->security_profile == CRYPTO_TLS_STREAM_SECURITY_PROFILE_TLCP11 &&
-      config->cert_file != NULL)
+      (config->cert_file != NULL || config->credentials != NULL))
     return CRYPTO_TLS_STREAM_ENOTSUP;
 
   status = crypto_tls_stream_context_create_common(
       false, true, config->ca_file, config->ca_path, config->cert_file,
       config->key_file, config->key_password, CRYPTO_TLS_STREAM_CLIENT_AUTH_NONE,
       config->alpn_protocols, config->alpn_protocol_count,
-      config->security_profile, &context);
+      config->security_profile, config->peer_policy, config->key_update_record_limit, config->key_update_byte_limit, config->key_update_interval_ms,
+      config->peer_key_update_limit, config->peer_key_update_min_interval_ms, config->peer_key_update_min_bytes, config->ca_data, config->credentials,
+      config->minimum_version, config->maximum_version, config->verification_depth,
+      config->verification_time,
+      config->cipher_suites, config->cipher_suite_count,
+      config->signature_algorithms, config->signature_algorithm_count,
+      config->certificate_signature_algorithms, config->certificate_signature_algorithm_count,
+      config->supported_groups, config->supported_group_count, &context);
   if (status != CRYPTO_TLS_STREAM_OK) return status;
+  if (config->session_cache_capacity) {
+    status = crypto_tls_session_cache_create(config->session_cache_capacity,
+        crypto_tls_stream_key_update_clock,NULL,&context->session_cache);
+    if (status != CRYPTO_TLS_STREAM_OK) { crypto_tls_stream_context_release(context); return status; }
+  }
+  status = crypto_tls_stream_identities_append(context, config->identities, config->identity_count);
+  if (status != CRYPTO_TLS_STREAM_OK) {
+    crypto_tls_stream_context_release(context);
+    return status;
+  }
   if (config->server_name != NULL)
     crypto_tls_stream_copy(CRYPTO_TLS_TEST_COPY_METADATA, context->client_server_name, config->server_name,
            strlen(config->server_name) + 1u);
@@ -911,15 +1350,42 @@ int crypto_tls_stream_client_context_create(const crypto_tls_stream_client_confi
 int crypto_tls_stream_server_context_create(const crypto_tls_stream_server_config *config,
                                      crypto_tls_stream_context **out_context) {
   crypto_tls_stream_context *context = NULL;
+  crypto_tls_stream_server_config selected;
   int status;
 
   if (out_context == NULL) return CRYPTO_TLS_STREAM_EINVAL;
   *out_context = NULL;
   if (config == NULL) return CRYPTO_TLS_STREAM_EINVAL;
   if (config->size != sizeof(*config) ||
+      (config->identities == NULL) != (config->identity_count == 0u) ||
+      config->identity_count > CRYPTO_TLS_SERVER_IDENTITY_MAX_COUNT)
+    return CRYPTO_TLS_STREAM_EINVAL;
+  if (config->session_ticket_capacity > CRYPTO_TLS_SESSION_CACHE_MAX ||
+      config->session_ticket_lifetime_seconds > 604800u ||
+      (!config->session_ticket_capacity != !config->session_ticket_lifetime_seconds))
+    return CRYPTO_TLS_STREAM_EINVAL;
+  if (config->session_ticket_capacity &&
+      (config->security_profile == CRYPTO_TLS_STREAM_SECURITY_PROFILE_TLCP11 ||
+       (config->security_profile == CRYPTO_TLS_STREAM_SECURITY_PROFILE_STANDARD &&
+        (config->minimum_version != CRYPTO_TLS_STREAM_PROTOCOL_VERSION_1_3 ||
+         config->maximum_version != CRYPTO_TLS_STREAM_PROTOCOL_VERSION_1_3)))) return CRYPTO_TLS_STREAM_ENOTSUP;
+  if (config->identity_count) {
+    if (config->cert_file || config->key_file || config->key_password || config->credentials)
+      return CRYPTO_TLS_STREAM_EINVAL;
+    status = crypto_tls_stream_identities_validate(config->identities, config->identity_count,
+        config->security_profile == CRYPTO_TLS_STREAM_SECURITY_PROFILE_TLCP11);
+    if (status != CRYPTO_TLS_STREAM_OK) return status;
+    selected = *config;
+    selected.cert_file = config->identities[0].cert_file;
+    selected.key_file = config->identities[0].key_file;
+    selected.key_password = config->identities[0].key_password;
+    selected.credentials = config->identities[0].credentials;
+    config = &selected;
+  }
+  if (config->size != sizeof(*config) ||
       !crypto_tls_stream_optional_path_valid(config->cert_file) ||
       !crypto_tls_stream_optional_path_valid(config->key_file) ||
-      config->cert_file == NULL || config->key_file == NULL ||
+      (config->credentials == NULL && (config->cert_file == NULL || config->key_file == NULL)) ||
       !crypto_tls_stream_optional_path_valid(config->ca_file) ||
       !crypto_tls_stream_optional_path_valid(config->ca_path) ||
       !crypto_tls_stream_bounded_string(config->key_password,
@@ -927,9 +1393,9 @@ int crypto_tls_stream_server_context_create(const crypto_tls_stream_server_confi
       (config->client_auth != CRYPTO_TLS_STREAM_CLIENT_AUTH_NONE &&
        config->client_auth != CRYPTO_TLS_STREAM_CLIENT_AUTH_REQUIRED) ||
       (config->client_auth == CRYPTO_TLS_STREAM_CLIENT_AUTH_REQUIRED &&
-       config->ca_file == NULL && config->ca_path == NULL) ||
+       config->ca_file == NULL && config->ca_path == NULL && config->ca_data == NULL) ||
       (config->client_auth == CRYPTO_TLS_STREAM_CLIENT_AUTH_NONE &&
-       (config->ca_file != NULL || config->ca_path != NULL)) ||
+       (config->ca_file != NULL || config->ca_path != NULL || config->ca_data != NULL)) ||
       (config->security_profile != CRYPTO_TLS_STREAM_SECURITY_PROFILE_STANDARD &&
        config->security_profile != CRYPTO_TLS_STREAM_SECURITY_PROFILE_SHANGMI_TLS13 &&
        config->security_profile != CRYPTO_TLS_STREAM_SECURITY_PROFILE_TLCP11))
@@ -942,8 +1408,26 @@ int crypto_tls_stream_server_context_create(const crypto_tls_stream_server_confi
       true, config->client_auth == CRYPTO_TLS_STREAM_CLIENT_AUTH_REQUIRED,
       config->ca_file, config->ca_path, config->cert_file, config->key_file,
       config->key_password, config->client_auth, config->alpn_protocols,
-      config->alpn_protocol_count, config->security_profile, &context);
+      config->alpn_protocol_count, config->security_profile, config->peer_policy,
+      config->key_update_record_limit, config->key_update_byte_limit, config->key_update_interval_ms, config->peer_key_update_limit, config->peer_key_update_min_interval_ms, config->peer_key_update_min_bytes, config->ca_data, config->credentials,
+      config->minimum_version, config->maximum_version, config->verification_depth,
+      config->verification_time,
+      config->cipher_suites, config->cipher_suite_count,
+      config->signature_algorithms, config->signature_algorithm_count,
+      config->certificate_signature_algorithms, config->certificate_signature_algorithm_count,
+      config->supported_groups, config->supported_group_count, &context);
   if (status != CRYPTO_TLS_STREAM_OK) return status;
+  status = crypto_tls_stream_identities_append(context, config->identities, config->identity_count);
+  if (status != CRYPTO_TLS_STREAM_OK) {
+    crypto_tls_stream_context_release(context);
+    return status;
+  }
+  if (config->session_ticket_capacity) {
+    status = crypto_tls_session_cache_create(config->session_ticket_capacity,
+        crypto_tls_stream_key_update_clock,NULL,&context->session_cache);
+    if (status != CRYPTO_TLS_STREAM_OK) { crypto_tls_stream_context_release(context); return status; }
+    context->session_ticket_lifetime = config->session_ticket_lifetime_seconds;
+  }
   *out_context = context;
   return CRYPTO_TLS_STREAM_OK;
 }
@@ -1172,6 +1656,113 @@ static int crypto_tls_stream_verify_ip_subject_alt_name(const TLS_CONNECT *conne
   }
 }
 
+static int crypto_tls_stream_receive_session(void *user, int cipher, const uint8_t psk[32],
+    uint32_t lifetime, uint32_t age_add, const uint8_t *ticket, size_t ticket_size) {
+  crypto_tls_stream *state = user;
+  crypto_tls_stream_gmssl_state *e = CRYPTO_TLS_STREAM_ENGINE(state);
+  crypto_tls_cached_session value = {0};
+  int result = -1;
+  if (!state->handshake_complete || state->terminal_error || state->server ||
+      !state->context->session_cache || !e->connection.peer_cert_chain_len ||
+      e->connection.peer_cert_chain_len > sizeof(value.chain) || !ticket_size ||
+      ticket_size > sizeof(value.ticket) || !lifetime || lifetime > 604800u ||
+      crypto_tls_stream_key_update_clock(NULL,&value.received_ms) != 1) goto end;
+  value.cipher = cipher; value.lifetime_seconds = lifetime; value.age_add = age_add;
+  value.ticket_size = ticket_size; value.chain_size = e->connection.peer_cert_chain_len;
+  value.alpn_size = state->negotiated_alpn_size;
+  memcpy(value.hostname,e->server_name,strlen(e->server_name)+1u);
+  memcpy(value.psk,psk,32u); memcpy(value.ticket,ticket,ticket_size);
+  memcpy(value.chain,e->connection.peer_cert_chain,value.chain_size);
+  memcpy(value.alpn,state->negotiated_alpn,value.alpn_size);
+  if (crypto_tls_session_cache_put(state->context->session_cache,&value) == CRYPTO_TLS_STREAM_OK) result = 1;
+end:
+  salts_crypto_secure_zero(&value,sizeof(value));
+  return result;
+}
+static int crypto_tls_stream_local_leaf_digest(TLS_CONNECT *c, uint8_t out[32]) {
+  const uint8_t *der = NULL; size_t size = 0u;
+  if (!c->cert_chain || x509_certs_get_cert_by_index(c->cert_chain,c->cert_chain_len,0,&der,&size) != 1)
+    return -1;
+  return salts_crypto_sha256(der,size,out) == SALTS_CRYPTO_OK ? 1 : -1;
+}
+static int crypto_tls_stream_issue_session(void *user, const uint8_t psk[32], uint32_t age_add,
+    uint32_t *lifetime, uint8_t *ticket, size_t capacity, size_t *ticket_size) {
+  crypto_tls_stream *state = user;
+  crypto_tls_stream_gmssl_state *e = CRYPTO_TLS_STREAM_ENGINE(state);
+  crypto_tls_pending_ticket *p = e->issued;
+  if (!state->server || !p || p->valid || capacity < sizeof(p->ticket) ||
+      crypto_tls_stream_key_update_clock(NULL,&p->received_ms) != 1 ||
+      rand_bytes(p->ticket,sizeof(p->ticket)) != 1) return -1;
+  memcpy(p->psk,psk,sizeof(p->psk));
+  p->lifetime = state->context->session_ticket_lifetime; p->age_add = age_add; p->valid = true;
+  memcpy(ticket,p->ticket,sizeof(p->ticket)); *ticket_size = sizeof(p->ticket); *lifetime = p->lifetime;
+  return 1;
+}
+static int crypto_tls_stream_find_session(void *user, int cipher, const uint8_t *ticket,
+    size_t ticket_size, uint32_t age, uint8_t psk[32]) {
+  crypto_tls_stream *state = user;
+  crypto_tls_stream_gmssl_state *e = CRYPTO_TLS_STREAM_ENGINE(state);
+  TLS_CONNECT *c = &e->connection;
+  crypto_tls_cached_session *r = e->resume;
+  uint64_t now; uint8_t leaf[32];
+  if (!state->server || !r) return -1;
+  salts_crypto_secure_zero(r,sizeof(*r));
+  if (ticket_size != 32u) return 0;
+  int result = crypto_tls_session_cache_find(state->context->session_cache,ticket,ticket_size,&now,r);
+  if (result == CRYPTO_TLS_STREAM_ENOENT) return 0;
+  if (result != CRYPTO_TLS_STREAM_OK) return -1;
+  const size_t alpn_size = c->alpn_selected ? strlen(c->alpn_selected) : 0u;
+  if (crypto_tls_stream_local_leaf_digest(c,leaf) != 1) return -1;
+  const bool match = r->cipher == cipher &&
+      (r->chain_size != 0u) == state->context->verify_peer &&
+      c->host_name_len == strlen(r->hostname) && !memcmp(c->host_name,r->hostname,c->host_name_len) &&
+      alpn_size == r->alpn_size && (!alpn_size || !memcmp(c->alpn_selected,r->alpn,alpn_size)) &&
+      !memcmp(leaf,r->local_leaf_sha256,sizeof(leaf)) &&
+      (uint32_t)(age-r->age_add) < (uint64_t)r->lifetime_seconds*1000u;
+  if (!match) { salts_crypto_secure_zero(r,sizeof(*r)); return 0; }
+  memcpy(psk,r->psk,32u);
+  return 1;
+}
+static int crypto_tls_stream_publish_session(crypto_tls_stream *state) {
+  crypto_tls_stream_gmssl_state *e = CRYPTO_TLS_STREAM_ENGINE(state);
+  if (!e->issued || !e->issued->valid) return CRYPTO_TLS_STREAM_OK;
+  crypto_tls_cached_session s = {0};
+  TLS_CONNECT *c = &e->connection;
+  int result = CRYPTO_TLS_STREAM_EPROTO;
+  if (c->host_name_len >= sizeof(s.hostname) ||
+      memchr(c->host_name,0,c->host_name_len) || c->peer_cert_chain_len > sizeof(s.chain) ||
+      (state->context->verify_peer && !c->peer_cert_chain_len) ||
+      crypto_tls_stream_local_leaf_digest(c,s.local_leaf_sha256) != 1) goto end;
+  s.server_ticket = true; s.cipher = c->cipher_suite;
+  s.received_ms = e->issued->received_ms; s.lifetime_seconds = e->issued->lifetime; s.age_add = e->issued->age_add;
+  memcpy(s.psk,e->issued->psk,32u); memcpy(s.ticket,e->issued->ticket,32u); s.ticket_size = 32u;
+  memcpy(s.hostname,c->host_name,c->host_name_len);
+  s.alpn_size = state->negotiated_alpn_size; memcpy(s.alpn,state->negotiated_alpn,s.alpn_size);
+  s.chain_size = c->peer_cert_chain_len; memcpy(s.chain,c->peer_cert_chain,s.chain_size);
+  result = crypto_tls_session_cache_put(state->context->session_cache,&s);
+end:
+  salts_crypto_secure_zero(&s,sizeof(s)); salts_crypto_secure_zero(e->issued,sizeof(*e->issued));
+  return result;
+}
+static int crypto_tls_stream_offer_session(crypto_tls_stream *state) {
+  crypto_tls_stream_gmssl_state *e = CRYPTO_TLS_STREAM_ENGINE(state);
+  if (!state->context->session_cache || state->server) return CRYPTO_TLS_STREAM_OK;
+  /* Advertise psk_dhe_ke even on the first full handshake so the peer may
+   * issue tickets. The PSK identity extension is offered only on a hit. */
+  e->connection.key_exchange_modes = TLS_KE_PSK_DHE|TLS_KE_CERT_DHE;
+  uint64_t now;
+  int status = crypto_tls_session_cache_take(state->context->session_cache,e->server_name,&now,e->resume);
+  if (status == CRYPTO_TLS_STREAM_ENOENT) return CRYPTO_TLS_STREAM_OK;
+  if (status != CRYPTO_TLS_STREAM_OK) return status;
+  const uint32_t age = (uint32_t)(now-e->resume->received_ms)+e->resume->age_add; /* RFC8446 modulo 2^32. */
+  if (tls13_add_pre_shared_key(&e->connection,e->resume->ticket,e->resume->ticket_size,
+      e->resume->psk,32u,e->resume->cipher,age) != 1) return CRYPTO_TLS_STREAM_EPROTO;
+  e->connection.psk_identity_types[0] = TLS13_PSK_IDENTITY_RESUMPTION;
+  e->connection.pre_shared_key = 1;
+  e->connection.key_exchange_modes = TLS_KE_PSK_DHE|TLS_KE_CERT_DHE;
+  return CRYPTO_TLS_STREAM_OK;
+}
+
 static int crypto_tls_stream_engine_init_connection(crypto_tls_stream *state,
                                            crypto_tls_stream_variant variant) {
   crypto_tls_stream_gmssl_state *engine;
@@ -1195,6 +1786,16 @@ static int crypto_tls_stream_engine_init_connection(crypto_tls_stream *state,
   tls = &state->context->tls[variant];
   if (tls_init(&engine->connection, tls) != 1) return CRYPTO_TLS_STREAM_EIO;
   engine->connection_ready = true;
+  if (state->context->session_cache && !state->server) {
+    engine->connection.session_received = crypto_tls_stream_receive_session;
+    engine->connection.session_received_user = state;
+  } else if (state->context->session_cache) {
+    engine->connection.session_issue = crypto_tls_stream_issue_session;
+    engine->connection.session_lookup = crypto_tls_stream_find_session;
+    engine->connection.session_server_user = state;
+    engine->connection.key_exchange_modes = TLS_KE_CERT_DHE|TLS_KE_PSK_DHE;
+    engine->connection.new_session_ticket = 1;
+  }
   engine->variant = variant;
   engine->io.user = engine;
   engine->io.send = crypto_tls_stream_io_send;
@@ -1267,12 +1868,10 @@ static int crypto_tls_stream_init(crypto_tls_stream *state, crypto_tls_stream_co
   state->io_buffer_bytes = io_buffer_bytes;
   state->server = server;
 
-  status = crypto_tls_stream_engine_init_connection(
-      state, context->security_profile == CRYPTO_TLS_STREAM_SECURITY_PROFILE_SHANGMI_TLS13
-                 ? CRYPTO_TLS_STREAM_VARIANT_SHANGMI_TLS13
-             : context->security_profile == CRYPTO_TLS_STREAM_SECURITY_PROFILE_TLCP11
-                 ? CRYPTO_TLS_STREAM_VARIANT_TLCP11
-                 : CRYPTO_TLS_STREAM_VARIANT_RANGE);
+  if (context->session_cache) engine->resume = crypto_tls_stream_calloc(1u,sizeof(*engine->resume));
+  if (context->session_cache && server) engine->issued = crypto_tls_stream_calloc(1u,sizeof(*engine->issued));
+  status = context->session_cache && (!engine->resume || (server && !engine->issued)) ? CRYPTO_TLS_STREAM_ENOMEM :
+      crypto_tls_stream_engine_init_connection(state, context->initial_variant);
   if (status != CRYPTO_TLS_STREAM_OK) {
     state->context = NULL;
     state->engine = NULL;
@@ -1281,6 +1880,8 @@ static int crypto_tls_stream_init(crypto_tls_stream *state, crypto_tls_stream_co
     state->io_buffer_bytes = 0u;
     state->server = false;
     if (engine->connection_ready) tls_cleanup(&engine->connection);
+    crypto_tls_stream_free(engine->resume);
+    crypto_tls_stream_free(engine->issued);
     crypto_tls_stream_free(write_buffer);
     crypto_tls_stream_free(read_buffer);
     crypto_tls_stream_free(engine);
@@ -1297,6 +1898,14 @@ void crypto_tls_stream_destroy(crypto_tls_stream *state) {
   engine = CRYPTO_TLS_STREAM_ENGINE(state);
   if (engine != NULL && engine->connection_ready)
     tls_cleanup(&engine->connection);
+  if (engine && engine->resume) {
+    salts_crypto_secure_zero(engine->resume,sizeof(*engine->resume));
+    crypto_tls_stream_free(engine->resume);
+  }
+  if (engine && engine->issued) {
+    salts_crypto_secure_zero(engine->issued,sizeof(*engine->issued));
+    crypto_tls_stream_free(engine->issued);
+  }
   crypto_tls_stream_free(engine);
   crypto_tls_stream_free(state->write_buffer);
   crypto_tls_stream_free(state->read_buffer);
@@ -1410,6 +2019,40 @@ static int crypto_tls_stream_peer_leaf(const TLS_CONNECT *connection,
   return x509_certs_get_cert_by_index(chain, chain_size, 0, certificate, size);
 }
 
+static int crypto_tls_stream_fail_handshake(crypto_tls_stream *state, int status,
+    crypto_tls_failure_reason reason, size_t index) {
+  if (state->diagnostic.reason == CRYPTO_TLS_FAILURE_NONE)
+    state->diagnostic = (crypto_tls_diagnostic){reason, index};
+  return status;
+}
+
+static crypto_tls_failure_reason crypto_tls_stream_verify_reason(int result) {
+  switch (result) {
+    case X509_verify_err_certificate: return CRYPTO_TLS_FAILURE_CERTIFICATE;
+    case X509_verify_err_not_yet_valid: return CRYPTO_TLS_FAILURE_NOT_YET_VALID;
+    case X509_verify_err_expired: return CRYPTO_TLS_FAILURE_EXPIRED;
+    case X509_verify_err_purpose: return CRYPTO_TLS_FAILURE_PURPOSE;
+    case X509_verify_err_cert_chain: return CRYPTO_TLS_FAILURE_CHAIN_SIGNATURE;
+    case X509_verify_err_trust_anchor: return CRYPTO_TLS_FAILURE_TRUST_ANCHOR;
+    case X509_verify_err_depth: return CRYPTO_TLS_FAILURE_DEPTH;
+    case X509_verify_err_crl: return CRYPTO_TLS_FAILURE_CRL;
+    case X509_verify_err_ocsp: return CRYPTO_TLS_FAILURE_OCSP;
+    case X509_verify_err_constraints: return CRYPTO_TLS_FAILURE_CONSTRAINTS;
+    case X509_verify_err_tls_extensions: return CRYPTO_TLS_FAILURE_CERTIFICATE_EXTENSIONS;
+    case X509_verify_err_hostname: return CRYPTO_TLS_FAILURE_IDENTITY;
+    default: return CRYPTO_TLS_FAILURE_HANDSHAKE;
+  }
+}
+
+int crypto_tls_stream_get_diagnostic(const crypto_tls_stream *state,
+    crypto_tls_diagnostic *out_diagnostic) {
+  if (!out_diagnostic) return CRYPTO_TLS_STREAM_EINVAL;
+  *out_diagnostic = (crypto_tls_diagnostic){0};
+  if (!state) return CRYPTO_TLS_STREAM_EINVAL;
+  *out_diagnostic = state->diagnostic;
+  return state->diagnostic.reason == CRYPTO_TLS_FAILURE_NONE ? CRYPTO_TLS_STREAM_ENOENT : CRYPTO_TLS_STREAM_OK;
+}
+
 static int crypto_tls_stream_finish_handshake(crypto_tls_stream *state,
                                      bool *out_complete) {
   crypto_tls_stream_gmssl_state *engine = CRYPTO_TLS_STREAM_ENGINE(state);
@@ -1425,12 +2068,31 @@ static int crypto_tls_stream_finish_handshake(crypto_tls_stream *state,
   if (state->context->security_profile == CRYPTO_TLS_STREAM_SECURITY_PROFILE_SHANGMI_TLS13 &&
       (engine->connection.protocol != TLS_protocol_tls13 ||
        engine->connection.cipher_suite != TLS_cipher_sm4_gcm_sm3))
-    return CRYPTO_TLS_STREAM_EPROTO;
+    return crypto_tls_stream_fail_handshake(state, CRYPTO_TLS_STREAM_EPROTO, CRYPTO_TLS_FAILURE_PROFILE, SIZE_MAX);
   if (state->context->security_profile == CRYPTO_TLS_STREAM_SECURITY_PROFILE_TLCP11 &&
       (engine->connection.protocol != TLS_protocol_tlcp ||
        engine->connection.cipher_suite != TLS_cipher_ecc_sm4_gcm_sm3))
-    return CRYPTO_TLS_STREAM_EPROTO;
+    return crypto_tls_stream_fail_handshake(state, CRYPTO_TLS_STREAM_EPROTO, CRYPTO_TLS_FAILURE_PROFILE, SIZE_MAX);
 
+  const bool resumed = engine->connection.key_exchange_modes == TLS_KE_PSK_DHE;
+  if (resumed) {
+    crypto_tls_cached_session *r = engine->resume;
+    TLS_CTX *ctx = &state->context->tls[engine->variant];
+    if (!r || !r->ticket_size || r->server_ticket != state->server || r->cipher != engine->connection.cipher_suite)
+      return crypto_tls_stream_fail_handshake(state,CRYPTO_TLS_STREAM_EPROTO,CRYPTO_TLS_FAILURE_PROFILE,SIZE_MAX);
+    memcpy(engine->connection.peer_cert_chain,r->chain,r->chain_size);
+    engine->connection.peer_cert_chain_len = r->chain_size;
+    const int *cert_schemes = ctx->certificate_signature_algorithms_cnt ? ctx->certificate_signature_algorithms : ctx->signature_algorithms;
+    const size_t cert_count = ctx->certificate_signature_algorithms_cnt ? ctx->certificate_signature_algorithms_cnt : ctx->signature_algorithms_cnt;
+    if (state->context->verify_peer && tls_cert_chain_verify_ex(TLS_protocol_tls13,
+        state->server ? X509_cert_chain_client : X509_cert_chain_server,engine->connection.cipher_suite,
+        ctx->cacertslen ? 1 : 0,r->chain,r->chain_size,ctx->cacerts,ctx->cacertslen,NULL,0u,NULL,0u,
+        ctx->verify_depth,ctx->supported_groups,ctx->supported_groups_cnt,ctx->signature_algorithms,ctx->signature_algorithms_cnt,
+        cert_schemes,cert_count,NULL,0u,NULL,0u,
+        state->server ? NULL : engine->connection.host_name,state->server ? 0u : engine->connection.host_name_len,
+        &engine->connection.verify_result,NULL,&engine->connection.verify_certificate_index,
+        ctx->certificate_time_set ? &ctx->certificate_time : NULL) != 1) return CRYPTO_TLS_STREAM_ECONNABORTED;
+  }
   if (state->context->verify_peer) {
     result = tls_get_verify_result(&engine->connection, &verify_result);
     if (result != 1 || verify_result != X509_verify_ok)
@@ -1444,17 +2106,20 @@ static int crypto_tls_stream_finish_handshake(crypto_tls_stream *state,
       result = crypto_tls_stream_peer_leaf(
           &engine->connection, &peer_cert, &peer_cert_size);
       if (result != 1 || peer_cert == NULL || peer_cert_size == 0u)
-        return CRYPTO_TLS_STREAM_ECONNABORTED;
+        return crypto_tls_stream_fail_handshake(state, CRYPTO_TLS_STREAM_ECONNABORTED,
+            CRYPTO_TLS_FAILURE_MISSING_CERTIFICATE, SIZE_MAX);
     }
     if (!state->server && crypto_tls_stream_ip_literal(engine->server_name)) {
       result = crypto_tls_stream_verify_ip_subject_alt_name(
           &engine->connection, engine->server_name);
-      if (result != CRYPTO_TLS_STREAM_OK) return result;
+      if (result != CRYPTO_TLS_STREAM_OK)
+        return crypto_tls_stream_fail_handshake(state, result, CRYPTO_TLS_FAILURE_IDENTITY, 0u);
     }
 #if defined(__APPLE__) && !TARGET_OS_OSX
     if (state->context->native_system_trust) {
       result = crypto_tls_stream_verify_apple_system_trust(engine);
-      if (result != CRYPTO_TLS_STREAM_OK) return result;
+      if (result != CRYPTO_TLS_STREAM_OK)
+        return crypto_tls_stream_fail_handshake(state, result, CRYPTO_TLS_FAILURE_PLATFORM_TRUST, SIZE_MAX);
     }
 #endif
   }
@@ -1468,6 +2133,29 @@ static int crypto_tls_stream_finish_handshake(crypto_tls_stream *state,
     state->negotiated_alpn_size = alpn_size;
   }
 
+  if (resumed && (state->negotiated_alpn_size != engine->resume->alpn_size ||
+      memcmp(state->negotiated_alpn,engine->resume->alpn,state->negotiated_alpn_size)))
+    return crypto_tls_stream_fail_handshake(state,CRYPTO_TLS_STREAM_EPROTO,CRYPTO_TLS_FAILURE_PROFILE,SIZE_MAX);
+  if (state->context->peer_policy.check != NULL) {
+    const uint8_t *der = NULL;
+    size_t size = 0u;
+    crypto_tls_stream_peer_certificate_chain chain;
+    if (crypto_tls_stream_peer_chain(&engine->connection, &der, &size) != 1 ||
+        crypto_tls_stream_peer_certificate_chain_parse(der, size, &chain) != CRYPTO_TLS_STREAM_OK ||
+        chain.count == 0u)
+      return crypto_tls_stream_fail_handshake(state, CRYPTO_TLS_STREAM_ECONNABORTED,
+          CRYPTO_TLS_FAILURE_CERTIFICATE, SIZE_MAX);
+    if (state->context->peer_policy.check(state->context->peer_policy.context,
+        &chain, !state->server, state->context->security_profile) != CRYPTO_TLS_STREAM_OK)
+      return crypto_tls_stream_fail_handshake(state, CRYPTO_TLS_STREAM_ECONNABORTED,
+          CRYPTO_TLS_FAILURE_PEER_POLICY, SIZE_MAX);
+  }
+
+  result = crypto_tls_stream_publish_session(state);
+  if (result != CRYPTO_TLS_STREAM_OK)
+    return crypto_tls_stream_fail_handshake(state,result,CRYPTO_TLS_FAILURE_HANDSHAKE,SIZE_MAX);
+  state->session_reused = resumed;
+  if (engine->resume) salts_crypto_secure_zero(engine->resume,sizeof(*engine->resume));
   state->handshake_complete = true;
   *out_complete = true;
   return CRYPTO_TLS_STREAM_OK;
@@ -1481,19 +2169,42 @@ int crypto_tls_stream_handshake(crypto_tls_stream *state, bool *out_complete) {
       (engine = CRYPTO_TLS_STREAM_ENGINE(state)) == NULL ||
       !engine->connection_ready)
     return CRYPTO_TLS_STREAM_EINVAL;
+  *out_complete = false;
+  if (state->terminal_error != CRYPTO_TLS_STREAM_OK) return state->terminal_error;
   *out_complete = state->handshake_complete;
   if (state->handshake_complete) return CRYPTO_TLS_STREAM_OK;
+  if (state->handshake_error != CRYPTO_TLS_STREAM_OK) return state->handshake_error;
 
+  if (!state->handshake_started) {
+    status = crypto_tls_stream_offer_session(state);
+    if (status != CRYPTO_TLS_STREAM_OK)
+      return crypto_tls_stream_fail_handshake(state,status,CRYPTO_TLS_FAILURE_HANDSHAKE,SIZE_MAX);
+  }
   state->handshake_started = true;
   result = tls_do_handshake(&engine->connection);
-  if (result != 1 && !crypto_tls_stream_retryable(result))
-    return CRYPTO_TLS_STREAM_ECONNABORTED;
-  status = crypto_tls_stream_finish_handshake(state, out_complete);
+  if (result != 1 && !crypto_tls_stream_retryable(result)) {
+    state->handshake_error = CRYPTO_TLS_STREAM_ECONNABORTED;
+    status = state->handshake_error;
+  } else status = crypto_tls_stream_finish_handshake(state, out_complete);
+  if (status != CRYPTO_TLS_STREAM_OK) state->handshake_error = status;
+  if (status != CRYPTO_TLS_STREAM_OK) {
+    /* The provider's public getter only works after success. Its connection
+     * result is also set on failed verification and remains internal here. */
+    crypto_tls_failure_reason reason = crypto_tls_stream_verify_reason(engine->connection.verify_result);
+    size_t certificate_index = reason == CRYPTO_TLS_FAILURE_IDENTITY ? 0u : SIZE_MAX;
+    if (reason == CRYPTO_TLS_FAILURE_EXPIRED || reason == CRYPTO_TLS_FAILURE_NOT_YET_VALID ||
+        reason == CRYPTO_TLS_FAILURE_PURPOSE || reason == CRYPTO_TLS_FAILURE_CHAIN_SIGNATURE ||
+        reason == CRYPTO_TLS_FAILURE_DEPTH)
+      certificate_index = engine->connection.verify_certificate_index;
+    crypto_tls_stream_fail_handshake(state, status, reason,
+        certificate_index);
+  }
   return status;
 }
 
 bool crypto_tls_stream_handshake_complete(const crypto_tls_stream *state) {
-  return state != NULL && state->handshake_complete;
+  return state != NULL && state->handshake_complete &&
+         state->terminal_error == CRYPTO_TLS_STREAM_OK;
 }
 
 static int crypto_tls_stream_select_variant(crypto_tls_stream_protocol_version minimum,
@@ -1538,9 +2249,9 @@ int crypto_tls_stream_set_protocol_range(crypto_tls_stream *state,
     return CRYPTO_TLS_STREAM_EINVAL;
   if (state->context->security_profile == CRYPTO_TLS_STREAM_SECURITY_PROFILE_SHANGMI_TLS13) {
     /* A configured SM-only TLS 1.3 connection can never switch to range/TLS1.2. */
-    return ((minimum == CRYPTO_TLS_STREAM_PROTOCOL_VERSION_DEFAULT &&
-             maximum == CRYPTO_TLS_STREAM_PROTOCOL_VERSION_DEFAULT) ||
-            (minimum == CRYPTO_TLS_STREAM_PROTOCOL_VERSION_1_3 &&
+    return ((minimum == CRYPTO_TLS_STREAM_PROTOCOL_VERSION_DEFAULT ||
+             minimum == CRYPTO_TLS_STREAM_PROTOCOL_VERSION_1_3) &&
+            (maximum == CRYPTO_TLS_STREAM_PROTOCOL_VERSION_DEFAULT ||
              maximum == CRYPTO_TLS_STREAM_PROTOCOL_VERSION_1_3))
                ? CRYPTO_TLS_STREAM_OK : CRYPTO_TLS_STREAM_EINVAL;
   }
@@ -1550,7 +2261,12 @@ int crypto_tls_stream_set_protocol_range(crypto_tls_stream *state,
                    maximum == CRYPTO_TLS_STREAM_PROTOCOL_VERSION_DEFAULT
                ? CRYPTO_TLS_STREAM_OK : CRYPTO_TLS_STREAM_EINVAL;
   }
+  if (minimum == CRYPTO_TLS_STREAM_PROTOCOL_VERSION_DEFAULT) minimum = state->context->minimum_version;
+  if (maximum == CRYPTO_TLS_STREAM_PROTOCOL_VERSION_DEFAULT) maximum = state->context->maximum_version;
   status = crypto_tls_stream_select_variant(minimum, maximum, &variant);
+  if (status == CRYPTO_TLS_STREAM_OK &&
+      (minimum < state->context->minimum_version || maximum > state->context->maximum_version))
+    return CRYPTO_TLS_STREAM_ENOTSUP;
   if (status != CRYPTO_TLS_STREAM_OK) return status;
   if (CRYPTO_TLS_STREAM_ENGINE(state)->variant == variant) return CRYPTO_TLS_STREAM_OK;
   state->negotiated_alpn_size = 0u;
@@ -1576,6 +2292,12 @@ size_t crypto_tls_stream_cipher_input_capacity(const crypto_tls_stream *state) {
   return engine != NULL && engine->input_size <= engine->capacity
              ? engine->capacity - engine->input_size
              : 0u;
+}
+
+bool crypto_tls_stream_cipher_output_empty(const crypto_tls_stream *state) {
+  const crypto_tls_stream_gmssl_state *engine =
+      state != NULL ? CRYPTO_TLS_STREAM_ENGINE(state) : NULL;
+  return engine != NULL && engine->output_size == 0u;
 }
 
 int crypto_tls_stream_feed_cipher(crypto_tls_stream *state, const void *data, size_t size) {
@@ -1627,6 +2349,19 @@ int crypto_tls_stream_take_cipher(crypto_tls_stream *state, void *buffer,
   return CRYPTO_TLS_STREAM_OK;
 }
 
+/* Owner-only terminal transition. Release logical borrows, not native storage:
+ * transport buffers and queued ciphertext remain valid until the host drains
+ * actual native completions and destroys the stream. No provider reentry after
+ * this point, even when the caller retries through a different progress API. */
+static int crypto_tls_stream_fail(crypto_tls_stream *state, int status) {
+  crypto_tls_stream_gmssl_state *engine = CRYPTO_TLS_STREAM_ENGINE(state);
+  if (state->terminal_error == CRYPTO_TLS_STREAM_OK) state->terminal_error = status;
+  engine->write_source = NULL;
+  engine->write_size = engine->write_offset = 0u;
+  engine->plaintext_pending_size = engine->plaintext_pending_offset = 0u;
+  return state->terminal_error;
+}
+
 int crypto_tls_stream_write(crypto_tls_stream *state, const void *data, size_t size,
                    bool *out_complete) {
   crypto_tls_stream_gmssl_state *engine;
@@ -1636,7 +2371,8 @@ int crypto_tls_stream_write(crypto_tls_stream *state, const void *data, size_t s
       (engine = CRYPTO_TLS_STREAM_ENGINE(state)) == NULL)
     return CRYPTO_TLS_STREAM_EINVAL;
   *out_complete = false;
-  if (!state->handshake_complete || state->close_notify_started)
+  if (state->terminal_error != CRYPTO_TLS_STREAM_OK) return state->terminal_error;
+  if (!state->handshake_complete || state->shutdown_started)
     return CRYPTO_TLS_STREAM_ENOTCONN;
 
   if (engine->write_size == 0u) {
@@ -1655,15 +2391,13 @@ int crypto_tls_stream_write(crypto_tls_stream *state, const void *data, size_t s
                           engine->write_source + engine->write_offset,
                           remaining, &sent_size);
     if (result == 1) {
-      if (sent_size == 0u || sent_size > remaining) return CRYPTO_TLS_STREAM_EPROTO;
+      if (sent_size == 0u || sent_size > remaining)
+        return crypto_tls_stream_fail(state, CRYPTO_TLS_STREAM_EPROTO);
       engine->write_offset += sent_size;
       continue;
     }
     if (crypto_tls_stream_retryable(result)) return CRYPTO_TLS_STREAM_OK;
-    engine->write_source = NULL;
-    engine->write_size = 0u;
-    engine->write_offset = 0u;
-    return CRYPTO_TLS_STREAM_EPROTO;
+    return crypto_tls_stream_fail(state, CRYPTO_TLS_STREAM_EPROTO);
   }
 
   engine->write_source = NULL;
@@ -1707,6 +2441,7 @@ int crypto_tls_stream_read(crypto_tls_stream *state, void *buffer, size_t capaci
   if (state == NULL || buffer == NULL || capacity == 0u ||
       (engine = CRYPTO_TLS_STREAM_ENGINE(state)) == NULL)
     return CRYPTO_TLS_STREAM_EINVAL;
+  if (state->terminal_error != CRYPTO_TLS_STREAM_OK) return state->terminal_error;
   if (!state->handshake_complete) return CRYPTO_TLS_STREAM_ENOTCONN;
   if (state->peer_close_notify) {
     *out_peer_closed = true;
@@ -1728,13 +2463,14 @@ int crypto_tls_stream_read(crypto_tls_stream *state, void *buffer, size_t capaci
   if (engine->write_size != 0u) return CRYPTO_TLS_STREAM_OK;
 
   status = crypto_tls_stream_cipher_record_ready(engine, &record_ready);
-  if (status != CRYPTO_TLS_STREAM_OK) return status;
+  if (status != CRYPTO_TLS_STREAM_OK) return crypto_tls_stream_fail(state, status);
   if (!record_ready) return CRYPTO_TLS_STREAM_OK;
 
   result = tls_recv(&engine->connection, engine->plaintext,
                     state->io_buffer_bytes, &received_size);
   if (result == 1) {
-    if (received_size > state->io_buffer_bytes) return CRYPTO_TLS_STREAM_EPROTO;
+    if (received_size > state->io_buffer_bytes)
+      return crypto_tls_stream_fail(state, CRYPTO_TLS_STREAM_EPROTO);
     copy_size = capacity < received_size ? capacity : received_size;
     if (copy_size != 0u) crypto_tls_stream_copy(CRYPTO_TLS_TEST_COPY_PLAINTEXT, buffer, engine->plaintext, copy_size);
     *out_size = copy_size;
@@ -1747,14 +2483,14 @@ int crypto_tls_stream_read(crypto_tls_stream *state, void *buffer, size_t capaci
   if (result == 0 || result == TLS_ERROR_TCP_CLOSED) {
     int received = 0;
     if (tls_get_peer_close_notify(&engine->connection, &received) != 1)
-      return CRYPTO_TLS_STREAM_EIO;
-    if (received != 1) return CRYPTO_TLS_STREAM_ECONNABORTED;
+      return crypto_tls_stream_fail(state, CRYPTO_TLS_STREAM_EIO);
+    if (received != 1) return crypto_tls_stream_fail(state, CRYPTO_TLS_STREAM_ECONNABORTED);
     state->peer_close_notify = true;
     *out_peer_closed = true;
     return CRYPTO_TLS_STREAM_OK;
   }
   if (crypto_tls_stream_retryable(result)) return CRYPTO_TLS_STREAM_OK;
-  return CRYPTO_TLS_STREAM_EPROTO;
+  return crypto_tls_stream_fail(state, CRYPTO_TLS_STREAM_EPROTO);
 }
 
 int crypto_tls_stream_probe_peer_close(crypto_tls_stream *state, bool *out_peer_closed,
@@ -1770,6 +2506,7 @@ int crypto_tls_stream_probe_peer_close(crypto_tls_stream *state, bool *out_peer_
   *out_plaintext_pending = false;
   if (state == NULL || (engine = CRYPTO_TLS_STREAM_ENGINE(state)) == NULL)
     return CRYPTO_TLS_STREAM_EINVAL;
+  if (state->terminal_error != CRYPTO_TLS_STREAM_OK) return state->terminal_error;
   if (!state->handshake_complete) return CRYPTO_TLS_STREAM_ENOTCONN;
   if (state->peer_close_notify) {
     *out_peer_closed = true;
@@ -1784,13 +2521,15 @@ int crypto_tls_stream_probe_peer_close(crypto_tls_stream *state, bool *out_peer_
   {
     bool record_ready = false;
     int status = crypto_tls_stream_cipher_record_ready(engine, &record_ready);
-    if (status != CRYPTO_TLS_STREAM_OK) return status;
+    if (status != CRYPTO_TLS_STREAM_OK) return crypto_tls_stream_fail(state, status);
     if (!record_ready) return CRYPTO_TLS_STREAM_OK;
   }
 
   result = tls_recv(&engine->connection, engine->plaintext,
                     state->io_buffer_bytes, &received_size);
   if (result == 1 && received_size != 0u) {
+    if (received_size > state->io_buffer_bytes)
+      return crypto_tls_stream_fail(state, CRYPTO_TLS_STREAM_EPROTO);
     engine->plaintext_pending_offset = 0u;
     engine->plaintext_pending_size = received_size;
     *out_plaintext_pending = true;
@@ -1798,16 +2537,17 @@ int crypto_tls_stream_probe_peer_close(crypto_tls_stream *state, bool *out_peer_
   }
   if (result == 0 || result == TLS_ERROR_TCP_CLOSED) {
     if (tls_get_peer_close_notify(&engine->connection, &received) != 1)
-      return CRYPTO_TLS_STREAM_EIO;
-    if (received != 1) return CRYPTO_TLS_STREAM_ECONNABORTED;
+      return crypto_tls_stream_fail(state, CRYPTO_TLS_STREAM_EIO);
+    if (received != 1) return crypto_tls_stream_fail(state, CRYPTO_TLS_STREAM_ECONNABORTED);
     state->peer_close_notify = true;
     *out_peer_closed = true;
     return CRYPTO_TLS_STREAM_OK;
   }
-  if (!crypto_tls_stream_retryable(result) && result != 1) return CRYPTO_TLS_STREAM_EPROTO;
+  if (!crypto_tls_stream_retryable(result) && result != 1)
+    return crypto_tls_stream_fail(state, CRYPTO_TLS_STREAM_EPROTO);
 
   if (tls_get_peer_close_notify(&engine->connection, &received) != 1)
-    return CRYPTO_TLS_STREAM_EIO;
+    return crypto_tls_stream_fail(state, CRYPTO_TLS_STREAM_EIO);
   if (received) {
     state->peer_close_notify = true;
     *out_peer_closed = true;
@@ -1825,10 +2565,16 @@ int crypto_tls_stream_shutdown(crypto_tls_stream *state, bool *out_notify_genera
       out_peer_notify_received == NULL ||
       (engine = CRYPTO_TLS_STREAM_ENGINE(state)) == NULL)
     return CRYPTO_TLS_STREAM_EINVAL;
-  *out_notify_generated = state->close_notify_started;
+  *out_notify_generated = false;
   *out_peer_notify_received = false;
+  if (state->terminal_error != CRYPTO_TLS_STREAM_OK) return state->terminal_error;
+  *out_notify_generated = state->close_notify_started;
   if (!state->handshake_complete) return CRYPTO_TLS_STREAM_ENOTCONN;
+  /* tls_shutdown shares the provider's record scratch with tls_send.
+   * Never let it flush an application record as if it were close_notify. */
+  if (engine->write_size != 0u) return CRYPTO_TLS_STREAM_EBUSY;
 
+  state->shutdown_started = true;
   output_before = engine->output_size;
   result = tls_shutdown(&engine->connection);
   if (engine->output_size > output_before) state->close_notify_started = true;
@@ -1836,16 +2582,25 @@ int crypto_tls_stream_shutdown(crypto_tls_stream *state, bool *out_notify_genera
 
   if (result != 1 && result != TLS_ERROR_TCP_CLOSED &&
       !crypto_tls_stream_retryable(result))
-    return CRYPTO_TLS_STREAM_EPROTO;
+    return crypto_tls_stream_fail(state, CRYPTO_TLS_STREAM_EPROTO);
 
   /* The TLS protocol owner alone authenticates close_notify. GmSSL may
    * complete its shutdown API after raw TCP closure, but EOF cannot count
    * as a reciprocal close_notify when our local application initiated it.
    * Do not infer authentication from output flushing or socket status. */
   if (tls_get_peer_close_notify(&engine->connection, &received) != 1)
-    return CRYPTO_TLS_STREAM_EIO;
+    return crypto_tls_stream_fail(state, CRYPTO_TLS_STREAM_EIO);
   if (received) state->peer_close_notify = true;
   *out_peer_notify_received = received != 0;
+  return CRYPTO_TLS_STREAM_OK;
+}
+
+int crypto_tls_stream_session_reused(const crypto_tls_stream *state, bool *out) {
+  if (!out) return CRYPTO_TLS_STREAM_EINVAL;
+  *out = false;
+  if (!state || !state->engine) return CRYPTO_TLS_STREAM_EINVAL;
+  if (!state->handshake_complete) return CRYPTO_TLS_STREAM_ENOTCONN;
+  *out = state->session_reused;
   return CRYPTO_TLS_STREAM_OK;
 }
 
@@ -2042,8 +2797,18 @@ int crypto_tls_stream_server_end_point_binding(
       !state->handshake_complete)
     return CRYPTO_TLS_STREAM_ENOTCONN;
 
-  result = crypto_tls_stream_peer_leaf(&CRYPTO_TLS_STREAM_ENGINE(state)->connection,
-                                    &certificate, &certificate_size);
+  if (state->server) {
+    const TLS_CONNECT *connection = &CRYPTO_TLS_STREAM_ENGINE(state)->connection;
+    /* This is the selected local chain used by the handshake, not the
+     * client's mTLS identity or the first configured certificate. */
+    result = connection->cert_chain != NULL && connection->cert_chain_len != 0u
+        ? x509_certs_get_cert_by_index(connection->cert_chain,
+              connection->cert_chain_len, 0, &certificate, &certificate_size)
+        : 0;
+  } else {
+    result = crypto_tls_stream_peer_leaf(&CRYPTO_TLS_STREAM_ENGINE(state)->connection,
+                                        &certificate, &certificate_size);
+  }
   if (result < 0) return CRYPTO_TLS_STREAM_EIO;
   if (result == 0) return CRYPTO_TLS_STREAM_ENOENT;
   return crypto_tls_stream_server_end_point_binding_from_certificate(

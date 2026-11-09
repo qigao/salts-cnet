@@ -94,8 +94,9 @@ source and reviewed patches, and `crypto/tools/check_local_native_source.py`
 checks the raw Git blob bytes without newline normalization.
 
 The unified LLVM workflow `.github/workflows/ci.yml` restores that manifest
-through the pinned curl-only vcpkg-cache action and selects the checked-in
-`ci-native` preset. It compiles the complete graph once and runs the formal
+through the pinned curl-only vcpkg-cache action and selects the same public
+presets used locally: `native-release-user` on Windows and
+`llvm-native-release-user` on POSIX. It compiles the complete graph once and runs the formal
 CTest suite on Linux, macOS and Windows x64/ARM64. It does not create a second
 installed-consumer project. Exact-head success is still required before CNet
 can be called provider-qualified.

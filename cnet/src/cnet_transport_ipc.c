@@ -87,8 +87,8 @@ int cnet_transport_ipc_address(const char *name, void *address, size_t capacity,
 
 int cnet_transport_close_ipc(uintptr_t native_handle) {
 #if defined(_WIN32)
-  cmeta_ipc_pipe_endpoint endpoint = {native_handle, NATIVE_IO_PIPE_ENDPOINT_ASYNC_CAPABLE};
-  return cmeta_ipc_pipe_endpoint_close(&endpoint);
+  ipc_pipe_endpoint endpoint = {native_handle, NATIVE_IO_PIPE_ENDPOINT_ASYNC_CAPABLE};
+  return ipc_pipe_endpoint_close(&endpoint);
 #else
   return close((int)native_handle) == 0 ? SALTS_OK : -errno;
 #endif
@@ -114,7 +114,7 @@ int cnet_transport_ipc_prepare_connect(cnet_transport *transport, native_io_back
   *out_immediate = false;
 #if defined(_WIN32)
   char *native_name = NULL;
-  cmeta_ipc_pipe_endpoint endpoint;
+  ipc_pipe_endpoint endpoint;
   int status;
   (void)address;
   (void)address_length;
@@ -122,8 +122,8 @@ int cnet_transport_ipc_prepare_connect(cnet_transport *transport, native_io_back
   if (backend_kind != NATIVE_IO_BACKEND_IOCP) return SALTS_ENOTSUP;
   status = cnet_transport_ipc_native_name(name, &native_name);
   if (status != SALTS_OK) return status;
-  cmeta_ipc_pipe_endpoint_init(&endpoint);
-  status = cmeta_ipc_named_pipe_connect(native_name, SALTS_IPC_PIPE_DUPLEX, &endpoint);
+  ipc_pipe_endpoint_init(&endpoint);
+  status = ipc_named_pipe_connect(native_name, SALTS_IPC_PIPE_DUPLEX, &endpoint);
   free(native_name);
   *out_immediate = true;
   if (status != SALTS_OK) return status;

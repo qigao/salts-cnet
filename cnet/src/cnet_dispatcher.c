@@ -1,8 +1,8 @@
 #include "cnet_resources.h"
 #include "cnet_dispatcher.h"
 
-#include <clock.h>
-#include <thread.h>
+#include <salts/clock.h>
+#include <threads/threads.h>
 
 #include <stdatomic.h>
 #include <stdbool.h>
@@ -59,13 +59,13 @@ static cnet_dispatcher_impl *cnet_dispatcher_get(cnet_dispatcher *dispatcher) {
 
 #if defined(CNET_INTERNAL_PROFILING)
 static uint64_t cnet_dispatcher_profile_start(const cnet_dispatcher_impl *impl) {
-  return impl->profile_active ? cmeta_hrtime() : 0u;
+  return impl->profile_active ? hrtime() : 0u;
 }
 
 static void cnet_dispatcher_profile_finish(cnet_dispatcher_impl *impl, uint64_t started,
                                            uint64_t *total_ns, uint64_t *calls) {
   if (started == 0u) return;
-  *total_ns += cmeta_hrtime() - started;
+  *total_ns += hrtime() - started;
   ++*calls;
 }
 #endif
@@ -140,7 +140,7 @@ static int cnet_dispatcher_release_lease(void *context, const cnet_dispatch_view
   impl = entry->dispatcher;
   if (impl == NULL) return SALTS_EINVAL;
   event = (cnet_event_view){view->kind, view->session, view->state,    view->status, view->stage,
-                            view->data, view->size,    view->argument, token, view->backing};
+                            view->data, view->size,    view->argument, token, view->backing, view->tls};
   terminal_event = view->kind == CNET_EVENT_STATE && cnet_dispatcher_terminal_state(view->state);
   status = cnet_shards_release_event(impl->shards, entry->connection.shard, &event);
   if (status != SALTS_OK || !terminal_event) {
@@ -177,7 +177,7 @@ static int cnet_dispatcher_prepare(cnet_dispatcher_impl *impl, uint32_t shard,
                                    .context = entry->observer_context,
                                    .event = {event->kind, event->session, event->state, event->status,
                                              event->stage, event->data, event->size, event->argument,
-                                             event->backing},
+                                             event->backing, event->tls},
                                    .release = release,
                                    .release_context = entry,
                                    .release_token = release_token};
@@ -192,7 +192,7 @@ static int cnet_dispatcher_prepare(cnet_dispatcher_impl *impl, uint32_t shard,
 static int cnet_dispatcher_invoke(cnet_dispatcher_impl *impl, const cnet_dispatch_job *job) {
   const cnet_dispatch_view view = {job->event.kind,   job->event.session, job->event.state,
                                    job->event.status, job->event.stage,   job->event.data,
-                                   job->event.size,   job->event.argument, job->event.backing};
+                                   job->event.size,   job->event.argument, job->event.backing, job->event.tls};
   int status = SALTS_OK;
 #if defined(CNET_INTERNAL_PROFILING)
   const uint64_t invoke_started = cnet_dispatcher_profile_start(impl);
@@ -325,7 +325,7 @@ int cnet_dispatcher_drive(cnet_dispatcher *dispatcher, uint32_t shard) {
   if (status == SALTS_OK) {
     const cnet_event event = {lane->event.kind,   lane->event.session, lane->event.state,
                               lane->event.status, lane->event.stage,   lane->event.data,
-                              lane->event.size,   lane->event.argument, lane->event.backing};
+                              lane->event.size,   lane->event.argument, lane->event.backing, lane->event.tls};
     status = cnet_dispatcher_prepare(impl, shard, &event, cnet_dispatcher_release_lease,
                                      lane->event._sequence, &job);
   }
@@ -363,7 +363,7 @@ static int cnet_dispatcher_drive_all(cnet_dispatcher_impl *impl) {
 
 int cnet_dispatcher_wait_idle(cnet_dispatcher *dispatcher, uint32_t timeout_ms) {
   cnet_dispatcher_impl *impl = cnet_dispatcher_get(dispatcher);
-  const uint64_t started_ms = cmeta_monotonic_ms();
+  const uint64_t started_ms = monotonic_ms();
   if (impl == NULL) return SALTS_EINVAL;
   for (;;) {
     const int error = atomic_load_explicit(&impl->first_error, memory_order_acquire);
@@ -372,8 +372,8 @@ int cnet_dispatcher_wait_idle(cnet_dispatcher *dispatcher, uint32_t timeout_ms) 
     status = cnet_dispatcher_drive_all(impl);
     if (status != SALTS_OK && status != SALTS_ETIMEDOUT) return status;
     if (cnet_dispatcher_is_idle(impl)) return SALTS_OK;
-    if (cmeta_monotonic_ms() - started_ms >= timeout_ms) return SALTS_ETIMEDOUT;
-    cmeta_sleep_ms(1u);
+    if (monotonic_ms() - started_ms >= timeout_ms) return SALTS_ETIMEDOUT;
+    sleep_ms(1u);
   }
 }
 
@@ -412,7 +412,7 @@ static int cnet_dispatcher_request_closes(cnet_dispatcher_impl *impl) {
 
 int cnet_dispatcher_drain(cnet_dispatcher *dispatcher, uint32_t timeout_ms) {
   cnet_dispatcher_impl *impl = cnet_dispatcher_get(dispatcher);
-  const uint64_t started_ms = cmeta_monotonic_ms();
+  const uint64_t started_ms = monotonic_ms();
   int first_status;
   if (impl == NULL) return SALTS_EINVAL;
   if (impl->drained) return SALTS_EALREADY;
@@ -432,7 +432,7 @@ int cnet_dispatcher_drain(cnet_dispatcher *dispatcher, uint32_t timeout_ms) {
     status = atomic_load_explicit(&impl->first_error, memory_order_acquire);
     if (status != SALTS_OK && first_status == SALTS_OK) first_status = status;
     if (cnet_dispatcher_is_idle(impl)) break;
-    if (cmeta_monotonic_ms() - started_ms >= timeout_ms) return SALTS_ETIMEDOUT;
+    if (monotonic_ms() - started_ms >= timeout_ms) return SALTS_ETIMEDOUT;
   }
   impl->drained = true;
   return first_status;

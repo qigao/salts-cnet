@@ -9,9 +9,16 @@
         "aklomp-base64",
         "c-ares",
         "zstd",
-        "gmssl",
-        "vcpkg-make",
-        "miniaudio"
+        "vcpkg-make"
+      ]
+    },
+    {
+      "kind": "git",
+      "repository": "https://github.com/qigao/vcpkg-cache",
+      "reference": "v0.1.1",
+      "baseline": "4ac631f89e07cebfd347848af642f31fe8c4edec",
+      "packages": [
+        "gmssl"
       ]
     }
   ]
