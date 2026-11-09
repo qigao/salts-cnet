@@ -78,8 +78,12 @@ func TestTLS13SessionResumption(t *testing.T) {
 						conn := tls.Server(raw, selectedConfig)
 						if mode == "expired" && i != 0 {
 							time.Sleep(time.Until(id.leaf.NotAfter.Add(time.Second)))
+							t.Logf("expiry boundary: not_after=%s handshake_start=%s", id.leaf.NotAfter.UTC().Format(time.RFC3339Nano), time.Now().UTC().Format(time.RFC3339Nano))
 						}
 						handshakeErr := conn.Handshake()
+						if mode == "expired" && i != 0 {
+							t.Logf("expiry handshake end=%s error=%v", time.Now().UTC().Format(time.RFC3339Nano), handshakeErr)
+						}
 						want := i != 0 && mode != "disabled" && mode != "server-refuses"
 						if state := conn.ConnectionState(); state.DidResume != want {
 							return fmt.Errorf("connection %d reused=%v want=%v handshake=%v", i, state.DidResume, want, handshakeErr)

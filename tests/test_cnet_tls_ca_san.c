@@ -17,6 +17,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #if defined(_WIN32)
 #include <windows.h>
 #else
@@ -1111,7 +1112,9 @@ static int run_external_tls_server(const char *port_text,
     owned_policy->release(owned_policy->context);
     memset(owned_policy, 0, sizeof(*owned_policy));
   }
-  deadline = cmeta_monotonic_ms() + handshake_budget;
+  const time_t handshake_started_utc = time(NULL);
+  const uint64_t handshake_started_ms = cmeta_monotonic_ms();
+  deadline = handshake_started_ms + handshake_budget;
   while (!probe.connected_count && !probe.terminal_count &&
          cmeta_monotonic_ms() < deadline)
     REQUIRE(cnet_client_poll(&client, 1u, &events) == SALTS_OK);
@@ -1119,6 +1122,13 @@ static int run_external_tls_server(const char *port_text,
   if (!approved_identity) {
     /* This must be a post-TCP handshake authentication rejection, not
      * a timeout, refused connect, or successful encrypted connection. */
+    if (probe.terminal_count != 1u || probe.connected_count != 0u)
+      fprintf(stderr, "TLS rejection observation: connected=%u terminal=%u failed=%u state=%d error=%d native=%d reason=%d start_utc=%lld end_utc=%lld elapsed_ms=%llu\n",
+          probe.connected_count, probe.terminal_count, probe.failed,
+          probe.last_connection_state, probe.last_error_status,
+          probe.last_native_status, (int)probe.tls_diagnostic.reason,
+          (long long)handshake_started_utc, (long long)time(NULL),
+          (unsigned long long)(cmeta_monotonic_ms() - handshake_started_ms));
     REQUIRE(probe.terminal_count == 1u);
     REQUIRE(probe.failed != 0u);
     REQUIRE(probe.last_error_status != SALTS_ETIMEDOUT);
