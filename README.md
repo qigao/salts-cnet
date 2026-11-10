@@ -1,4 +1,41 @@
-# SaltsCore network SDK
+# Salts CNet
+
+[![CI](https://github.com/qigao/salts-cnet/actions/workflows/ci.yml/badge.svg?branch=master)](https://github.com/qigao/salts-cnet/actions/workflows/ci.yml)
+[![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
+
+**Networking, TLS/DTLS and cryptography for the Salts C ecosystem.**
+
+## Features and modules
+
+| Module | Responsibility |
+| --- | --- |
+| [CNet](cnet/) | TCP, UDP, IPC, WebSocket, DNS and connection management |
+| [Crypto](crypto/README.md) | Cryptographic provider integration and TLS/DTLS |
+| [SCTP](sctp/README.md) | SCTP association, reliability and DTLS integration |
+
+## Quick start
+
+```sh
+git clone https://github.com/qigao/salts-cnet.git
+cd salts-cnet
+```
+
+Start with [.env.example](.env.example), restore matching upstream SDKs and
+load your local `.env` into the parent shell. Follow the
+[build instructions](#build-and-test) for your compiler's CMake user preset.
+CMake does not load dotenv files or restore SDKs implicitly.
+
+## Salts ecosystem
+
+- [SaltsBase](https://github.com/qigao/salts-base): native primitives, NativeIO, parsers and foundational utilities.
+- [CMeta](https://github.com/qigao/cmeta): reflection, components, CFlow and containers.
+- [Salts CNet](https://github.com/qigao/salts-cnet): networking, TLS/DTLS and cryptography.
+- [SaltsUtils](https://github.com/qigao/salts-utils): templates, IDL/Schema, DataBind and language bindings.
+
+This repository was renamed from `salts-core`. The installed CMake package
+remains `SaltsCore`, and existing `Salts::*` targets retain their names.
+Native socket operations belong to SaltsBase NativeIO; CNet owns connection
+and protocol policy.
 
 ## Upstream dependency versions
 
@@ -57,7 +94,7 @@ cannot retain the previous installation. Normal builds do not clear caches.
 
 This checkout builds the `SaltsNet` CMake project. It owns Crypto, CNet and
 SCTP. The installed package remains `SaltsCore` with the existing `Salts::*`
-targets. The integration branch is `chore-housing-keeping`.
+targets.
 
 The foundation modules now belong to [SaltsBase](https://github.com/qigao/salts-base).
 They are consumed as an installed SDK; this repository does not rebuild or copy
@@ -272,3 +309,15 @@ qualification claim. Issues #188/#219/#276 retain their independent gates.
 Rollback the repository split as a coordinated SDK/configuration change, with
 separate installation prefixes. Do not restore removed modules beside their
 SaltsBase owners or install parallel compatibility implementations.
+
+## Contributing
+
+Open an issue for bugs or design proposals. Keep pull requests focused and
+include reproduction steps and relevant CTest results. Follow
+[AGENTS.md](AGENTS.md), keep tests with their owning module, and update API
+documentation when behavior changes.
+
+## License
+
+First-party code is licensed under [Apache 2.0](LICENSE). Third-party code
+retains its upstream licenses; see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
