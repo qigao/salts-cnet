@@ -1,8 +1,9 @@
 {
   "schema": 1,
   "source": {
-    "kind": "url",
-    "url": "https://github.com/qigao/vcpkg-cache/releases/download/v0.1.2/installed-arm64-linux.tar.xz"
-  },
-  "sha256": "55540fcf64581ce7f51831b977100aee29dbf6e7d42edb512feb635f5ec166da"
+    "kind": "github-release",
+    "repository": "qigao/vcpkg-cache",
+    "version_env": "VCPKG_CACHE_VERSION",
+    "asset": "installed-arm64-linux.tar.xz"
+  }
 }

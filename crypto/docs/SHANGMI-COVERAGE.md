@@ -2839,3 +2839,38 @@ CTests passed in 29.78 seconds and 29.99 seconds respectively. Reproduce with
 the corresponding build preset and `ctest --preset <preset> -R
 'session_resumption$' --output-on-failure`. Hosted cross-platform/sanitizer
 qualification is separate from these local results.
+
+## GmSSL validity diagnostic qualification (2026-11-10)
+
+The matching SaltsBase 0.1.2 TSan SDK exposes the foundation's atomic handoffs.
+With that SDK, the retained release-input CI
+[42730173176](https://github.com/qigao/salts-core/actions/runs/42730173176)
+isolated a separate `x509_validity_print` race in libc `ctime` storage.
+The new module-owned ABI cases compare exact serialized libc text, exercise
+16 workers with independent date pairs and files, reject truncated DER, and
+on Windows reject dates outside the CRT range. The old-provider baseline
+[42734464725](https://github.com/qigao/salts-core/actions/runs/42734464725)
+reported five TSan races directly from the diagnostic workers.
+
+The repair belongs to [vcpkg-cache #315](https://github.com/qigao/vcpkg-cache/pull/315),
+GmSSL 3.2.0 port revision 45. Caller-owned `ctime_r`/`ctime_s` text preserves
+local-time formatting, labels and newlines; conversion errors propagate.
+It changes neither public ABI nor TLS verification policy. Candidate full
+CTest suites passed on Linux TSan/macOS ARM64 (104/104 each,
+[42735560584](https://github.com/qigao/salts-core/actions/runs/42735560584))
+and Windows MSVC/LLVM-MinGW (103/103 each,
+[42736716536](https://github.com/qigao/salts-core/actions/runs/42736716536)),
+including a second-timezone ABI run per platform.
+
+[vcpkg-cache v0.1.3](https://github.com/qigao/vcpkg-cache/releases/tag/v0.1.3)
+publishes that repair from `b1febdf10867f0e2cfcd3751bf83acaba3073280` after
+[producer 42745308567](https://github.com/qigao/vcpkg-cache/actions/runs/42745308567)
+passed all nine platforms. All 283 release assets were checked against their
+original SHA-256 and size. Consumer CI selects `VCPKG_CACHE_VERSION` and
+`SALTS_BASE_VERSION`; TSan requires `linux-clang-x64-tsan` rather than an
+uninstrumented foundation. Public-release consumption still requires the
+final exact-head consumer CI; the candidate runs do not establish that result.
+
+Other OCSP/CRL/TLS-trace `ctime` callers remain outside this bounded repair.
+Neither this diagnostic qualification nor a successful matrix resolves #276's
+original intermittent terminal-counter failure or the remaining #219 gates.

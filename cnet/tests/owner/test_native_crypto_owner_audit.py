@@ -245,7 +245,7 @@ class NativeCryptoOwnerAudit(unittest.TestCase):
         self.assertEqual(
             audit.dependencies("Import {\n  Name: KERNEL32.dll\n}\n", "Windows"),
             ["KERNEL32.dll"])
-        audit.validate_dependencies(["libsaltscore_cnet.so.0.1", "bcrypt.dll", "crypt32.dll"])
+        audit.validate_dependencies(["libsalts.so", "bcrypt.dll", "crypt32.dll"])
 
 
 if __name__ == "__main__":

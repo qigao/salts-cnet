@@ -6,14 +6,14 @@
 #include <tinytest.h>
 #include <string.h>
 
-int saltscore_cnet_m6_legacy_main(int argc, char **argv);
+int cnet_m6_legacy_main(int argc, char **argv);
 
 static int loader_argc;
 static char **loader_argv;
 
 spec("Original CNet two-plugin single Crypto DSO") {
   it("validates eight real provider epochs and unload/reload across threads") {
-    const int status = saltscore_cnet_m6_legacy_main(loader_argc, loader_argv);
+    const int status = cnet_m6_legacy_main(loader_argc, loader_argv);
     check(status == 0, "CNet M6 two-plugin DSO owner returned %d", status);
   }
 }
@@ -22,7 +22,7 @@ int main(int argc, char **argv) {
   if (!argv || argc < 1 || !argv[0]) return 2;
   if (argc > 1 && argv[1] && strcmp(argv[1], "--mtls") == 0) {
     /* External Python peer mode: keep exact IO, exit and child behavior. */
-    return saltscore_cnet_m6_legacy_main(argc, argv);
+    return cnet_m6_legacy_main(argc, argv);
   }
   if (argc != 3 || !argv[1] || !argv[2]) return 2;
   loader_argc = argc;

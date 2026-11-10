@@ -1,8 +1,9 @@
 {
   "schema": 1,
   "source": {
-    "kind": "url",
-    "url": "https://github.com/qigao/vcpkg-cache/releases/download/v0.1.2/installed-x64-android.tar.xz"
-  },
-  "sha256": "1025504a0c18643aff3b07fcb7db265c765b0203b081343906b6b3664f7116f1"
+    "kind": "github-release",
+    "repository": "qigao/vcpkg-cache",
+    "version_env": "VCPKG_CACHE_VERSION",
+    "asset": "installed-x64-android.tar.xz"
+  }
 }

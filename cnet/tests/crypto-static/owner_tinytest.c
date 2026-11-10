@@ -7,14 +7,14 @@
 #include <tinytest.h>
 #include <string.h>
 
-int saltscore_cnet_crypto_legacy_main(int argc, char **argv);
+int cnet_crypto_legacy_main(int argc, char **argv);
 
 static int owner_argc;
 static char **owner_argv;
 
 spec("Original CNet single static Crypto owner") {
   it("qualifies real TLS 1.2/1.3, strict CA/SAN and owner admission") {
-    const int status = saltscore_cnet_crypto_legacy_main(owner_argc, owner_argv);
+    const int status = cnet_crypto_legacy_main(owner_argc, owner_argv);
     check(status == 0, "CNet static owner native integration returned %d", status);
   }
 }
@@ -26,7 +26,7 @@ int main(int argc, char **argv) {
        strcmp(argv[1], "--external-san") == 0)) {
     /* Python TLS/mTLS peers require the original byte-exact process protocol.
      * Their command-line modes must bypass TinyTest output entirely. */
-    return saltscore_cnet_crypto_legacy_main(argc, argv);
+    return cnet_crypto_legacy_main(argc, argv);
   }
   char *native_argv[] = {argv[0]};
   owner_argc = 1;

@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: Apache-2.0
  * PRIVATE / QUALIFICATION-ONLY CNet policy -> opaque Crypto TLS admission.
  *
- * This header is never installed, never linked into saltscore_cnet, and
+ * This header is never installed, never linked into cnet, and
  * never enables a fallback or changes the production GmSSL backend.
  * It consumes the actual public CNet TLS configs, not a surrogate struct.
  */

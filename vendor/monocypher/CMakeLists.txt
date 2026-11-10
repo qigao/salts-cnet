@@ -1,12 +1,12 @@
 # Independent vendored Monocypher C11 static library.
 # This is deliberately NOT a Salts::Crypto internal object, and it is not a
 # second TLS provider. Preserve the CNet-private symbol namespace unchanged.
-add_library(saltscore_cnet_monocypher STATIC monocypher.c)
-add_library(Monocypher::Monocypher ALIAS saltscore_cnet_monocypher)
-target_compile_features(saltscore_cnet_monocypher PUBLIC c_std_11)
-target_include_directories(saltscore_cnet_monocypher PUBLIC
+add_library(monocypher STATIC monocypher.c)
+add_library(Monocypher::Monocypher ALIAS monocypher)
+target_compile_features(monocypher PUBLIC c_std_11)
+target_include_directories(monocypher PUBLIC
   "${CMAKE_CURRENT_SOURCE_DIR}")
-set_target_properties(saltscore_cnet_monocypher PROPERTIES
+set_target_properties(monocypher PROPERTIES
   POSITION_INDEPENDENT_CODE ON C_VISIBILITY_PRESET hidden
   C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
 
@@ -67,6 +67,6 @@ set(_cnet_monocypher_symbols
   crypto_x25519_public_key
   crypto_x25519_to_eddsa)
 foreach(_symbol IN LISTS _cnet_monocypher_symbols)
-  target_compile_definitions(saltscore_cnet_monocypher PUBLIC
+  target_compile_definitions(monocypher PUBLIC
     "${_symbol}=salts_cnet_private_${_symbol}")
 endforeach()

@@ -7,11 +7,15 @@ $matrix = Get-Content .github/ci/sdk-matrix.json -Raw | ConvertFrom-Json
 
 if ($Resolve) {
   New-Item -ItemType Directory -Path $root -Force | Out-Null
-  $reply = & gh api repos/qigao/salts-base/releases/latest
+  if ($env:SALTS_BASE_VERSION -cnotmatch '^\d+\.\d+\.\d+$') {
+    throw 'SALTS_BASE_VERSION must select an exact stable version without the v prefix'
+  }
+  $reply = & gh api "repos/qigao/salts-base/releases/tags/v$env:SALTS_BASE_VERSION"
   if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
   $release = $reply | ConvertFrom-Json
   $stable = $release.tag_name -match '^v(\d+\.\d+\.\d+)$'
-  if ($release.draft -or $release.prerelease -or -not $stable) {
+  if ($release.draft -or $release.prerelease -or -not $stable -or
+      $release.tag_name -cne "v$env:SALTS_BASE_VERSION") {
     throw 'A stable SaltsBase semantic-version release is required'
   }
   $version = $Matches[1]
@@ -77,7 +81,10 @@ foreach ($profile in ($matrix.include.sdk | Sort-Object -Unique)) {
 }
 
 foreach ($triplet in ($matrix.include.triplet | Sort-Object -Unique)) {
-  & python $reader download "cmake/dependencies/$triplet.lock.json" --destination "$root/blobs"
+  & python $reader resolve-release "cmake/dependencies/$triplet.lock.json" `
+    --output-lock "$root/locks/$triplet.lock.json"
+  if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+  & python $reader download "$root/locks/$triplet.lock.json" --destination "$root/blobs"
   if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 }
 
