@@ -332,7 +332,6 @@ jobs:
           key: ${{ steps.compiler-cache.outputs.cache-primary-key }}
 
       - name: Install release SDK
-        if: matrix.package && (github.ref == 'refs/tags/v0.1.002' || matrix.android_abi != '')
         shell: pwsh
         run: |
           if ($IsWindows) {
