@@ -121,6 +121,15 @@
       "cacheVariables": {
         "BUILD_BENCHMARK": "ON"
       }
+    },
+    {
+      "name": "gcc-arm64-release-user",
+      "displayName": "Linux ARM64 GCC Release",
+      "inherits": [
+        "gcc-environment",
+        "linux-gcc-arm64",
+        "full-native"
+      ]
     }
   ],
   "buildPresets": [
@@ -313,6 +322,22 @@
         "build-windows"
       ],
       "configurePreset": "native-benchmark-user"
+    },
+    {
+      "name": "gcc-arm64-release-user",
+      "inherits": [
+        "base-build",
+        "build-linux"
+      ],
+      "configurePreset": "gcc-arm64-release-user"
+    },
+    {
+      "name": "install-gcc-arm64-release-user",
+      "inherits": [
+        "base-install",
+        "build-linux"
+      ],
+      "configurePreset": "gcc-arm64-release-user"
     }
   ],
   "testPresets": [
@@ -379,6 +404,14 @@
         "test-windows"
       ],
       "configurePreset": "native-benchmark-user"
+    },
+    {
+      "name": "gcc-arm64-release-user",
+      "inherits": [
+        "base-test",
+        "test-linux"
+      ],
+      "configurePreset": "gcc-arm64-release-user"
     }
   ]
 }
