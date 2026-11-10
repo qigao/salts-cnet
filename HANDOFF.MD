@@ -1,5 +1,33 @@
 # 已验证的排障记录
 
+## GmSSL 有效期诊断：ctime 共享存储竞争（2026-11-10）
+
+- 正式 v0.1.2 输入的 CI 42730173176 通过八条 lane，TSan 在 M6 中复现
+  GmSSL `x509_validity_print` 两次 `ctime` 调用的共享存储竞争。恢复场景仍
+  通过；这是诊断格式化路径，不能通过串行化 worker 或关闭日志消除告警。
+- 修复归属 vcpkg-cache PR #315，合并 `b011cda4`，GmSSL 3.2.0#45，
+  port tree `ccf6fbdbef7b429574c607d4f377b50e2f0c8899`。私有 helper 使用
+  栈文本和 POSIX `ctime_r` / Windows `ctime_s`，保留本地时区、日期布局、
+  标签、缩进与换行。Windows 原生不支持的日期在进入 CRT 参数处理器前失败，
+  转换错误沿既有返回路径传播。没有改变认证、时间校验、公开 API 或 TinyTest。
+- 正式 `saltscore.gmssl_tls_io_abi` 增加串行 libc 文本 oracle、16 worker
+  各 128 次独立日期对、截断 DER 和 Windows CRT 范围回归。预期文本在 worker
+  创建前逐次复制；各 worker 独占 DER、FILE 和结果，进程 TZ 在执行中不修改。
+- 旧库基线：本地 MSVC 530 用例中 529 通过，CRT 范围拒绝失败；CI
+  42734464725 的 Linux TSan 直接从新 worker 用例捕获五条报告。其 529 个
+  功能用例、28635 个断言均通过，但 CTest 仍按 TSan 非零退出正确失败。
+- 候选 SDK 来自正常生产者完整安装树，校验归档 SHA-256 及 #45 元数据。
+  CI 42735560584：Linux TSan、macOS 各 104/104 CTest 通过，耗时
+  365.86/271.76 秒；CI 42736716536：LLVM-MinGW、MSVC 各 103/103 通过，
+  耗时 345.99/328.03 秒。四条 lane 的原 M6 并发 mTLS 和第二时区
+  `TZ=JST-9` ABI 复核均通过，没有屏蔽报告、跳过场景或放宽超时。
+- 临时 workflow/分支已清理；原失败及 SDK 摘要保留在 GitHub 和本地
+  `build/issue219-evidence/`。正式 master 生产者 42745308567 已通过九平台，
+  源码 `b1febdf1`；vcpkg-cache v0.1.3 已发布，283 个资产的摘要和大小已核对。
+  旧 v0.1.2 保持不变；长期消费配置选择公开发布版本，不使用临时 Actions 产物。
+- 范围限制：OCSP、CRL、TLS trace 中其他 `ctime` 诊断调用不在本次修复内；
+  不据此宣称整个 GmSSL 线程安全。#276 的原始间歇性故障仍未归因。
+
 ## Linux TSan：使用匹配的 SaltsBase SDK（2026-11-10）
 
 - 触发：PR #280 的 CI 42721872933 在 M6 并发 mTLS 中报告两个 worker
