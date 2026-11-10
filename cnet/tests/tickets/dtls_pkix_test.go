@@ -10,6 +10,7 @@ import (
 	"crypto/x509/pkix"
 	"encoding/asn1"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"github.com/pion/dtls/v3"
 	curve "github.com/pion/dtls/v3/pkg/crypto/elliptic"
@@ -21,6 +22,20 @@ import (
 	"testing"
 	"time"
 )
+
+func dtlsPKIXDNSConstraints(c *x509.Certificate, variant, owner string) {
+	switch variant {
+	case owner + "-permitted", owner + "-permitted-altname", owner + "-permitted-mixed":
+		c.PermittedDNSDomainsCritical = true
+		c.PermittedDNSDomains = []string{"localhost"}
+	case owner + "-excluded":
+		c.PermittedDNSDomainsCritical = true
+		c.ExcludedDNSDomains = []string{"localhost"}
+	case owner + "-excluded-altname":
+		c.PermittedDNSDomainsCritical = true
+		c.ExcludedDNSDomains = []string{"blocked.example"}
+	}
+}
 
 // Go signs/parses/verifies this chain independently of the native verifier.
 func dtlsPKIXIdentity(t *testing.T, variant string, server bool) (identity, bool) {
@@ -42,6 +57,12 @@ func dtlsPKIXIdentity(t *testing.T, variant string, server bool) (identity, bool
 	if variant == "root-constraints" {
 		root.PermittedDNSDomainsCritical = true
 		root.PermittedDNSDomains = []string{"allowed.example"}
+	}
+	dtlsPKIXDNSConstraints(root, variant, "root")
+	if variant == "expired-root" {
+		root.NotBefore, root.NotAfter = now.Add(-2*time.Hour), now.Add(-time.Hour)
+	} else if variant == "future-root" {
+		root.NotBefore, root.NotAfter = now.Add(time.Hour), now.Add(2*time.Hour)
 	}
 	sign := func(c, p *x509.Certificate, k, issuer *ecdsa.PrivateKey) ([]byte, *x509.Certificate) {
 		d, e := x509.CreateCertificate(rand.Reader, c, p, &k.PublicKey, issuer)
@@ -79,7 +100,16 @@ func dtlsPKIXIdentity(t *testing.T, variant string, server bool) (identity, bool
 	for depth := 0; depth < 2; depth++ {
 		k := key()
 		c := &x509.Certificate{SerialNumber: big.NewInt(int64(20 + depth)), Subject: pkix.Name{CommonName: fmt.Sprintf("PKIX CA %d", depth)}, NotBefore: now.Add(-time.Hour), NotAfter: now.Add(time.Hour), BasicConstraintsValid: true, IsCA: true, KeyUsage: x509.KeyUsageCertSign, MaxPathLen: 1 - depth, MaxPathLenZero: depth == 1}
+		switch variant {
+		case fmt.Sprintf("expired-ca%d", depth):
+			c.NotBefore, c.NotAfter = now.Add(-2*time.Hour), now.Add(-time.Hour)
+		case fmt.Sprintf("future-ca%d", depth):
+			c.NotBefore, c.NotAfter = now.Add(time.Hour), now.Add(2*time.Hour)
+		case fmt.Sprintf("unknown-critical-ca%d", depth):
+			c.ExtraExtensions = []pkix.Extension{{Id: asn1.ObjectIdentifier{1, 2, 3, 444}, Critical: true, Value: []byte{5, 0}}}
+		}
 		if depth == 0 {
+			dtlsPKIXDNSConstraints(c, variant, "ca")
 			switch variant {
 			case "not-ca":
 				c.IsCA = false
@@ -103,6 +133,14 @@ func dtlsPKIXIdentity(t *testing.T, variant string, server bool) (identity, bool
 	}
 	leafKey := key()
 	leaf := &x509.Certificate{SerialNumber: big.NewInt(50), Subject: pkix.Name{CommonName: "PKIX peer"}, DNSNames: []string{"localhost"}, NotBefore: now.Add(-time.Hour), NotAfter: now.Add(time.Hour), BasicConstraintsValid: true, KeyUsage: x509.KeyUsageDigitalSignature, ExtKeyUsage: []x509.ExtKeyUsage{wanted}}
+	switch variant {
+	case "ca-permitted-altname", "root-permitted-altname":
+		leaf.DNSNames = append(leaf.DNSNames, "preview.localhost")
+	case "ca-permitted-mixed", "root-permitted-mixed", "ca-excluded-altname", "root-excluded-altname":
+		// The connection still authenticates localhost; a different SAN must not
+		// escape the issuer's constraints merely because it was not requested.
+		leaf.DNSNames = append(leaf.DNSNames, "blocked.example")
+	}
 	switch variant {
 	case "expired":
 		leaf.NotBefore = now.Add(-2 * time.Hour)
@@ -153,11 +191,31 @@ func dtlsPKIXIdentity(t *testing.T, variant string, server bool) (identity, bool
 		opts.DNSName = "localhost"
 	}
 	_, verifyError := parsed.Verify(opts)
-	valid := variant == "valid" || variant == "same-name-anchors"
+	valid := variant == "valid" || variant == "same-name-anchors" ||
+		variant == "ca-permitted" || variant == "root-permitted" ||
+		variant == "ca-permitted-altname" || variant == "root-permitted-altname"
 	// Go's path oracle checks EKU; the protocol's signing-KeyUsage admission is
 	// a separate native TLS requirement, not claimed as a Go path rejection.
 	if (verifyError == nil) != (valid || variant == "leaf-key-usage") {
 		t.Fatalf("independent PKIX fixture %s: %v", variant, verifyError)
+	}
+	// Prove each new negative fixture fails at the intended boundary rather
+	// than accepting any unrelated signing or construction error as evidence.
+	if strings.HasPrefix(variant, "expired-") || strings.HasPrefix(variant, "future-") {
+		var invalid x509.CertificateInvalidError
+		if !errors.As(verifyError, &invalid) || invalid.Reason != x509.Expired {
+			t.Fatalf("expected certificate time rejection for %s: %v", variant, verifyError)
+		}
+	} else if strings.Contains(variant, "-excluded") || strings.HasSuffix(variant, "-permitted-mixed") {
+		var invalid x509.CertificateInvalidError
+		if !errors.As(verifyError, &invalid) || invalid.Reason != x509.CANotAuthorizedForThisName {
+			t.Fatalf("expected DNS constraint rejection for %s: %v", variant, verifyError)
+		}
+	} else if strings.HasPrefix(variant, "unknown-critical-ca") {
+		var critical x509.UnhandledCriticalExtension
+		if !errors.As(verifyError, &critical) {
+			t.Fatalf("expected issuer critical-extension rejection for %s: %v", variant, verifyError)
+		}
 	}
 	dir := t.TempDir()
 	id := identity{roots: pool, cert: tls.Certificate{Certificate: chain, PrivateKey: leafKey}, caFile: filepath.Join(dir, "ca.pem"), certFile: filepath.Join(dir, "cert.pem"), keyFile: filepath.Join(dir, "key.pem")}
@@ -179,6 +237,10 @@ func dtlsPKIXIdentity(t *testing.T, variant string, server bool) (identity, bool
 }
 func TestDTLSNativePKIX(t *testing.T) {
 	variants := []string{"valid", "same-name-anchors", "expired", "future", "path-length", "not-ca", "ca-key-usage", "ca-purpose", "ca-constraints", "root-constraints", "leaf-key-usage", "leaf-purpose", "unknown-critical", "signature", "policy-required"}
+	variants = append(variants, "expired-ca0", "future-ca0", "expired-ca1", "future-ca1", "expired-root", "future-root",
+		"ca-permitted", "root-permitted", "ca-excluded", "root-excluded", "ca-permitted-altname", "root-permitted-altname",
+		"ca-permitted-mixed", "root-permitted-mixed", "ca-excluded-altname", "root-excluded-altname",
+		"unknown-critical-ca0", "unknown-critical-ca1")
 	for _, mode := range []string{"owned", "external"} {
 		for _, role := range []string{"client", "server"} {
 			for _, variant := range variants {
