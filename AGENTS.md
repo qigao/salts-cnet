@@ -64,6 +64,14 @@
 
 引入外部库前说明既有能力为何不足、替代方案和不引入的代价；检查许可证、维护与安全记录、版本、平台、ABI、线程模型、依赖体积、构建和测试。通过既有依赖入口接入并保留来源、版本、许可与本地修改记录，不复制来源不明的实现，不新增重复工具框架。
 
+## 上游 SDK 与本地 `.env`
+
+- `VCPKG_CACHE_VERSION`、`SALTS_BASE_VERSION` 由加载后的父环境或本地 `.env` 选择精确发布版本（不带 `v`）；同步维护 `.env.example` 和同名 CI variables。CMake 不隐式读取 `.env`，API 兼容性下限不等于当前选用版本。
+- 升级时只读取、更新相关非密钥字段，保留凭据和其他机器设置，不输出完整 `.env`，不提交 `.env`。基础设施 checkout 必须对应所选发布；已有脏 checkout 保留原状，不用 reset/覆盖方式升级。
+- vcpkg-cache 使用共享 `resolve-release` 将平台发布描述解析成构建目录内的 URL/SHA-256 锁，再以 `locked` 恢复；SDK 根取自返回的 `root`/回执。SaltsBase 使用所选公开发布清单核对版本、平台、生产者 CI、大小和摘要，然后恢复原始 SDK。入口见 [README](README.md#upstream-dependency-versions)，不复制下载框架或用旧 SDK 兜底。
+- 同步更新 `.env` 的 `VCPKG_CACHE_REPOSITORY_ROOT`、`VCPKG_INSTALLED_DIR`、`SALTS_BASE_ROOT` 及相应版本变量，使它们属于同一轮匹配编译器/triplet 的恢复结果。使用版本独立的安装目录，不覆盖旧 SDK；缺少发布资产、变量或摘要不符即失败。
+- SDK、编译器或 triplet 变更后，显式以 `cmake --fresh --preset <user-preset>` 重新配置，清除旧 `GmSSL_DIR`、JPEG 等包查找缓存；普通构建不自动清缓存。随后用既有完整 build graph 和正式 CTest 验证。Android 的 ELF 对齐检查属于构建/安装验收，不能据此宣称设备运行通过。
+
 ## 构建与验证
 
 使用 `cmake-presets` 执行构建、测试、安装与打包；使用 `tinytest` 编写或修改 C/C++ 测试、benchmark 和 Mock。现有脚本测试沿用所属模块的正式测试入口。准确的 preset、target、测试名及 helper 签名以当前 checkout 为准。

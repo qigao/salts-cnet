@@ -45,6 +45,15 @@ back, choose the previous exact release and restore into its own directory.
 installed `SALTS_BASE_ROOT` exactly. The API compatibility floor stays
 0.1.1; CI still validates the release manifest and successful producer.
 
+The current example selects SaltsBase 0.1.3 and vcpkg-cache 0.1.3. When
+upgrading, update the relevant nonsecret `.env` version and SDK-root fields
+together, preserving credentials and other machine settings. The infrastructure
+checkout must match its selected release; a dirty older checkout is not reset
+or overwritten. Restore into a version-specific directory and use the reported
+SDK root. After changing an SDK, compiler or triplet, configure explicitly with
+`cmake --fresh --preset <user-preset>` so cached GmSSL/JPEG package locations
+cannot retain the previous installation. Normal builds do not clear caches.
+
 
 This checkout builds the `SaltsNet` CMake project. It owns Crypto, CNet and
 SCTP. The installed package remains `SaltsCore` with the existing `Salts::*`
@@ -153,7 +162,7 @@ and `LLVM_MINGW_ARM64_INSTALL_PREFIX` in the parent environment. Both SDKs must
 target Windows ARM64; the preset selects `qigao-arm64-windows-llvm-mingw`
 and `aarch64-w64-mingw32` independently of native x64 settings. Restore the
 vcpkg SDK with `cmake/dependencies/qigao-arm64-windows-llvm-mingw.lock.json`.
-SaltsBase v0.1.1 has no Windows ARM64 release asset, so a matching SDK must be
+SaltsBase v0.1.3 has no Windows ARM64 release asset, so a matching SDK must be
 provided separately. After changing dependency roots, configure with
 `cmake/WithVs.cmd cmake --fresh --preset llvm-mingw-arm64-release-user`
 before building that same preset.
@@ -177,7 +186,7 @@ installation steps. This reduces duplicate source requests without adding
 workflow/job retries or alternate-source recovery. The released downloader's
 existing bounded transfer policy remains in effect; terminal failures stop preparation.
 
-Release 0.1.1 provides Windows x64 MSVC/LLVM-MinGW, Linux x64 and ARM64
+Release 0.1.3 provides Windows x64 MSVC/LLVM-MinGW, Linux x64 and ARM64
 Clang/GCC, macOS ARM64, and Android arm64/x64 SDKs. It includes the public
 NativeIO socket/transport/accept headers and the retained startup repairs. Its Core headers use `<core/...>`, ASN1 uses
 `<asn1.h>` and `<asn1_value.h>`, and coroutine headers use `<salts/coro_*.h>`.
@@ -193,6 +202,12 @@ instruments this network graph; that does not qualify the prebuilt foundation
 under ASan/UBSan. TSan requires the matching `linux-clang-x64-tsan` SDK,
 published in SaltsBase 0.1.2, so its shared synchronization is instrumented too.
 There are nine qualification jobs covering eight released SDK profiles.
+
+Android links Core's own `libcnet.so` with explicit 16 KiB maximum/common
+page alignment, matching the Base 0.1.3 SDK. Both Android CI profiles install
+through their existing user presets and inspect every installed ELF LOAD
+segment for alignment of at least 16384 bytes. This checks SDK layout; Android
+device execution and full application packaging remain separate qualification.
 
 The historical fixed-tag `v0.1.002` eight-RID NuGet publisher has a broader
 packaging contract and is not qualified by this seven-SDK matrix. It requires
