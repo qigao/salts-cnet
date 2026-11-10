@@ -332,7 +332,7 @@ jobs:
           key: ${{ steps.compiler-cache.outputs.cache-primary-key }}
 
       - name: Install release SDK
-        if: matrix.package && github.ref == 'refs/tags/v0.1.002'
+        if: matrix.package && (github.ref == 'refs/tags/v0.1.002' || matrix.android_abi != '')
         shell: pwsh
         run: |
           if ($IsWindows) {
@@ -341,6 +341,23 @@ jobs:
             & cmake --build --preset "install-${{ matrix.preset }}"
           }
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Verify installed Android ELF load alignment
+        if: matrix.android_abi != ''
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $readelf = Join-Path $env:ANDROID_NDK_HOME 'toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf'
+          $library = 'package/sdk/${{ matrix.rid }}/lib/libcnet.so'
+          $headers = & $readelf --program-headers --wide $library
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $loads = $headers | Select-String '^\s*LOAD\s+.+\s0x([0-9a-fA-F]+)\s*$'
+          if (!$loads) { throw "No ELF LOAD segments in $library" }
+          foreach ($load in $loads) {
+            $alignment = [Convert]::ToInt32($load.Matches[0].Groups[1].Value, 16)
+            if ($alignment -lt 16384) { throw "$library has a LOAD segment aligned to $alignment bytes" }
+          }
+          Write-Host 'Installed libcnet.so uses at least 16 KiB alignment for each LOAD segment'
 
       - name: Record immutable SDK provenance
         if: matrix.package && github.ref == 'refs/tags/v0.1.002'

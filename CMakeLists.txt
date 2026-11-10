@@ -11,6 +11,11 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_C_EXTENSIONS OFF)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+if(CMAKE_SYSTEM_NAME STREQUAL "Android")
+  # Core's own shared SDK must match Base's supported 4 KiB/16 KiB loaders.
+  add_link_options("LINKER:-z,max-page-size=16384" "LINKER:-z,common-page-size=16384")
+endif()
+
 if(WIN32)
   set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/bin")
   # Keep the published DLL identity independent of the selected LLVM driver.
