@@ -7,5 +7,5 @@ linux-x64,1eed97774becdfbc4c2ee237a13c9498295e1747,41796177710,5f4012610a3dc2566
 linux-x64,1eed97774becdfbc4c2ee237a13c9498295e1747,41796177710,5f8ec4212ea45816514d2cd616253ce3a5146c02,[vdso]
 linux-x64,1eed97774becdfbc4c2ee237a13c9498295e1747,41796177710,76cb5fe63b8596d0d4f73e21190b9fc6b5b53eb3,/home/runner/work/salts-core/salts-core/build/ci-native/concurrency/libsaltscore_concurrency.so.0.1.2
 linux-x64,1eed97774becdfbc4c2ee237a13c9498295e1747,41796177710,a4a7992a8e66555c8141ab2a08a8465ff6e0ea65,/usr/lib/x86_64-linux-gnu/libc.so.6
-linux-x64,1eed97774becdfbc4c2ee237a13c9498295e1747,41796177710,ced1cf698dc9d82ea17a7e59a2179d343ec2bee8,/home/runner/work/salts-core/salts-core/build/ci-native/cnet/libsaltscore_cnet.so.0.1.2
-linux-x64,1eed97774becdfbc4c2ee237a13c9498295e1747,41796177710,e1d52ec2ee056103639bd9f58cd1301880934bb6,/home/runner/work/salts-core/salts-core/build/ci-native/tests/saltscore_cnet_tls_ca_san_test
+linux-x64,1eed97774becdfbc4c2ee237a13c9498295e1747,41796177710,ced1cf698dc9d82ea17a7e59a2179d343ec2bee8,/home/runner/work/salts-core/salts-core/build/ci-native/cnet/libcnet.so.0.1.2
+linux-x64,1eed97774becdfbc4c2ee237a13c9498295e1747,41796177710,e1d52ec2ee056103639bd9f58cd1301880934bb6,/home/runner/work/salts-core/salts-core/build/ci-native/tests/cnet_tls_ca_san_test

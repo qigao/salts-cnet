@@ -377,7 +377,8 @@ def inspect(args):
     # Both modules must directly load the real CNet shared image. The loader
     # intentionally has no CNet import and opens those modules at runtime.
     for path in args.peer[:2]:
-        require(any(re.search(r"(?:lib)?saltscore_cnet(?:[-.]|$)", name, re.I)
+        require(any(re.fullmatch(re.escape(args.runtime.name), name,
+                                 re.I if args.system == "Windows" else 0)
                     for name in imports[str(path)]),
                 "production plugin does not import the real CNet owner: " + str(path))
     return {"ok": True, "crypto_archive": str(args.archive),

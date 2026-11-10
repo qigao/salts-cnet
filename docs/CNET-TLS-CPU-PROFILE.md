@@ -19,7 +19,7 @@ record the observed CPU distribution, coverage limits and scratch decision.
 
 First preserve the ordinary full native suite and its 25 measurement cases on
 Linux x64. Then reconfigure/build the same full graph with
-`SALTSCORE_CNET_TLS_MIXED_PERF=ON` and run the existing measurement CTest label.
+`cnet_TLS_MIXED_PERF=ON` and run the existing measurement CTest label.
 The option requires Linux, measurements and an unsanitized graph, and rejects
 heaptrack or source-copy instrumentation. Missing tools or unsupported
 sampling/permissions fail explicitly. The default remains off.

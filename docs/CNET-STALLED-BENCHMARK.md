@@ -56,14 +56,14 @@ backing. Failure to establish the real pressure gate fails the scenario.
 Each fresh sample warms eight control exchanges with a complete pressure/drain
 cycle, then repeats the cycle for measurement. Existing formal TCP tests run
 eight measured exchanges for each mode. Larger local measurements opt in with
-`SALTSCORE_CNET_STALLED_BENCHMARK=1`, using five rotated repetitions of 4,096
+`cnet_STALLED_BENCHMARK=1`, using five rotated repetitions of 4,096
 exchanges per mode. Other flag values fail. Use the full build and existing
 `saltscore.cnet_tcp_loopback` CTest; no extra project, target or workflow.
 
 ```powershell
-$env:SALTSCORE_CNET_STALLED_BENCHMARK = '1'
+$env:cnet_STALLED_BENCHMARK = '1'
 ctest --preset native-release-user -R '^saltscore\.cnet_tcp_loopback$' -V
-Remove-Item Env:SALTSCORE_CNET_STALLED_BENCHMARK
+Remove-Item Env:cnet_STALLED_BENCHMARK
 ```
 
 `CNET_STALLED_CSV` records mode/repetition, exchange count, bulk write bytes,

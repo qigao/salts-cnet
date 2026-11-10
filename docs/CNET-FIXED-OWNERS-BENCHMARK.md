@@ -51,13 +51,13 @@ Warm each fresh sample for eight exchanges and drain fully, then measure 4,096.
 Five repetitions rotate mode order and alternate topology order. Depth 1 has
 three modes, depth 8 two, producing 50 rows in the optional run. Existing TCP
 formal tests run the five short paired scenarios. Timings use
-`SALTSCORE_CNET_OWNERS_BENCHMARK=1` and the existing full build/CTest presets;
+`cnet_OWNERS_BENCHMARK=1` and the existing full build/CTest presets;
 no target, workflow or external project is added.
 
 ```powershell
-$env:SALTSCORE_CNET_OWNERS_BENCHMARK = '1'
+$env:cnet_OWNERS_BENCHMARK = '1'
 ctest --preset native-release-user -R '^saltscore\.cnet_tcp_loopback$' -V
-Remove-Item Env:SALTSCORE_CNET_OWNERS_BENCHMARK
+Remove-Item Env:cnet_OWNERS_BENCHMARK
 ```
 
 `CNET_SINGLE_OWNER_CSV` has the mixed-workload columns, but belongs to this

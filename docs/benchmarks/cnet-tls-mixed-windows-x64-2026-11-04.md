@@ -35,10 +35,10 @@ exactly one selected long case and data row. For example:
 
 ```powershell
 $env:SALTSCORE_NATIVE_TLS_MIXED_BENCHMARK = '1'
-$env:SALTSCORE_CNET_TLS_MIXED_BENCHMARK = '1'
+$env:cnet_TLS_MIXED_BENCHMARK = '1'
 & build/native-release-user/bin/saltscore_gmssl_tls_io_abi_test.exe --filter `
   'measures direct mixed TLS control, repetition 0'
-& build/native-release-user/bin/saltscore_cnet_tls_ca_san_test.exe --filter `
+& build/native-release-user/bin/cnet_tls_ca_san_test.exe --filter `
   'measures mixed TLS control, repetition 0 scenario 0'
 # CNet scenarios 1/2/3: callback depth 1, native depth 8, callback depth 8.
 ```

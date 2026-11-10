@@ -7,6 +7,13 @@ on:
       - "cnet/**"
       - "sctp/**"
       - "vendor/**"
+      - "CMake*.json"
+      - "CMakeLists.txt"
+      - "CMakeOptions.cmake"
+      - "cmake/**"
+      - "presets/**"
+      - ".github/ci/**"
+      - ".github/workflows/ci.yml"
   push:
     branches: [master]
     tags: ["v0.1.002"]
@@ -15,11 +22,22 @@ on:
       - "cnet/**"
       - "sctp/**"
       - "vendor/**"
+      - "CMake*.json"
+      - "CMakeLists.txt"
+      - "CMakeOptions.cmake"
+      - "cmake/**"
+      - "presets/**"
+      - ".github/ci/**"
+      - ".github/workflows/ci.yml"
   workflow_dispatch:
 
 permissions:
   contents: read
   packages: read
+
+env:
+  VCPKG_CACHE_VERSION: ${{ vars.VCPKG_CACHE_VERSION }}
+  SALTS_BASE_VERSION: ${{ vars.SALTS_BASE_VERSION }}
 
 concurrency:
   group: saltscore-ci-${{ github.event.pull_request.number || github.ref }}
@@ -43,7 +61,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: qigao/vcpkg-cache
-          ref: v0.1.2
+          ref: v${{ env.VCPKG_CACHE_VERSION }}
           path: build/ci-infrastructure/vcpkg-cache
           persist-credentials: false
       - uses: actions/setup-python@v5
@@ -58,8 +76,10 @@ jobs:
         uses: actions/cache@v4
         with:
           path: build/ci-inputs/blobs
-          key: sdk-inputs-v1-${{ steps.release.outputs.manifest_sha256 }}-${{ hashFiles('.github/ci/sdk-matrix.json', 'cmake/dependencies/*.lock.json', 'build/ci-infrastructure/vcpkg-cache/compiler-contracts/release-obfuscation.json') }}
+          key: sdk-inputs-v2-${{ env.VCPKG_CACHE_VERSION }}-${{ steps.release.outputs.manifest_sha256 }}-${{ hashFiles('.github/ci/sdk-matrix.json', 'cmake/dependencies/*.lock.json', 'build/ci-infrastructure/vcpkg-cache/compiler-contracts/release-obfuscation.json') }}
       - name: Download the locked SDK and compiler inputs
+        env:
+          GH_TOKEN: ${{ secrets.VCPKG_CACHE_READ_TOKEN || github.token }}
         run: .github/ci/prepare-sdk-inputs.ps1
       - name: Archive the same infrastructure sources for every runner
         run: |
@@ -155,7 +175,7 @@ jobs:
           QIGAO_PREPARED_INPUTS: ${{ github.workspace }}/build/ci-inputs
         run: |
           & python build/ci-infrastructure/vcpkg-cache/scripts/restore-native-dependency.py `
-            locked "cmake/dependencies/${{ matrix.triplet }}.lock.json" `
+            locked "build/ci-inputs/locks/${{ matrix.triplet }}.lock.json" `
             --destination "build/dependencies/vcpkg-${{ matrix.rid }}" `
             --payload vcpkg_installed --github-output
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
@@ -247,7 +267,7 @@ jobs:
 
       - name: Install native ccache
         id: ccache
-        uses: qigao/vcpkg-cache/.github/actions/setup-ccache@v0.1.2
+        uses: ./build/ci-infrastructure/vcpkg-cache/.github/actions/setup-ccache
 
       - name: Restore compiler cache
         id: compiler-cache

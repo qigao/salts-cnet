@@ -87,13 +87,13 @@ depth 1 with complete/4-KiB-bounded native sends) belong to the existing formal
 TCP CTest. The bounded direct case validates real multi-request continuation;
 it is not a fabricated short completion or kernel-pressure measurement.
 Larger measurements opt in with
-`SALTSCORE_CNET_MIXED_BENCHMARK=1`; other values fail. No CMake target, dependency,
+`cnet_MIXED_BENCHMARK=1`; other values fail. No CMake target, dependency,
 preset or workflow is added. Use the normal full build preset, then:
 
 ```powershell
-$env:SALTSCORE_CNET_MIXED_BENCHMARK = '1'
+$env:cnet_MIXED_BENCHMARK = '1'
 ctest --preset native-release-user -R '^saltscore\.cnet_tcp_loopback$' -V
-Remove-Item Env:SALTSCORE_CNET_MIXED_BENCHMARK
+Remove-Item Env:cnet_MIXED_BENCHMARK
 ```
 
 Five repetitions rotate all three modes at depth 1 and alternate native/callback

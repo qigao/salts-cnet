@@ -5262,9 +5262,9 @@ spec("CNet real TCP loopback and retained slice") {
       }
     }
   }
-  if (getenv("SALTSCORE_CNET_OWNERS_BENCHMARK") != NULL) {
+  if (getenv("cnet_OWNERS_BENCHMARK") != NULL) {
     it("measures one and two fixed Owners with matched aggregate resources") {
-      check_equal(getenv("SALTSCORE_CNET_OWNERS_BENCHMARK"), "1");
+      check_equal(getenv("cnet_OWNERS_BENCHMARK"), "1");
       printf("CNET_SINGLE_OWNER_CSV,mode,repeat,bulk_depth,exchanges,elapsed_ns,cpu_ns,p50_rtt_ns,p95_rtt_ns,p99_rtt_ns,bulk_peer_bytes,bulk_admitted,host_rounds,rejected,policy_calls,storage_allocations,receive_acquires,peak_logical_bytes,peak_backing_bytes,physical_source_bytes,native_submissions,bulk_drain_ns,close_ns,warm_receive_acquires\n");
       printf("CNET_FIXED_OWNERS_CSV,mode,repeat,bulk_depth,exchanges,control_elapsed_ns,process_cpu_ns,p50_rtt_ns,p95_rtt_ns,p99_rtt_ns,bulk_peer_bytes,bulk_elapsed_ns,bulk_admitted,bulk_host_rounds,control_host_rounds,rejected,policy_calls,storage_allocations,receive_acquires,peak_logical_bound,peak_backing_bound,physical_source_bytes,bulk_native_submissions,control_native_submissions,bulk_drain_ns,close_ns,bulk_start_minus_control_ns,stop_observation_lag_ns\n");
       for (unsigned repetition = 0u; repetition < 5u; ++repetition)
@@ -5280,9 +5280,9 @@ spec("CNet real TCP loopback and retained slice") {
           }
     }
   }
-  if (getenv("SALTSCORE_CNET_STALLED_BENCHMARK") != NULL) {
+  if (getenv("cnet_STALLED_BENCHMARK") != NULL) {
     it("measures control RTT during a verified kernel bulk stall") {
-      check_equal(getenv("SALTSCORE_CNET_STALLED_BENCHMARK"), "1");
+      check_equal(getenv("cnet_STALLED_BENCHMARK"), "1");
       printf("CNET_STALLED_CSV,mode,repeat,exchanges,bulk_write_bytes,prime_admitted,prime_native_submissions,prime_ns,empty_observations,send_buffer_bytes,peer_receive_buffer_bytes,control_elapsed_ns,control_cpu_ns,p50_rtt_ns,p95_rtt_ns,p99_rtt_ns,interval_native_submissions,bulk_peer_bytes_during_control,host_rounds,control_policy_calls,storage_allocations,receive_acquires,peak_logical_bytes,peak_backing_bytes,physical_source_bytes,resume_bytes,resume_ns,resume_native_submissions,close_ns,bulk_native_completions,bulk_native_bytes,bulk_request_changed\n");
       for (unsigned repetition = 0u; repetition < 5u; ++repetition)
         for (unsigned order = 0u; order < 3u; ++order) {
@@ -5292,9 +5292,9 @@ spec("CNet real TCP loopback and retained slice") {
         }
     }
   }
-  if (getenv("SALTSCORE_CNET_MIXED_BENCHMARK") != NULL) {
+  if (getenv("cnet_MIXED_BENCHMARK") != NULL) {
     it("measures independent control RTT with sustained bulk") {
-      check_equal(getenv("SALTSCORE_CNET_MIXED_BENCHMARK"), "1");
+      check_equal(getenv("cnet_MIXED_BENCHMARK"), "1");
       printf("CNET_MIXED_CSV,mode,repeat,bulk_depth,exchanges,elapsed_ns,cpu_ns,p50_rtt_ns,p95_rtt_ns,p99_rtt_ns,bulk_peer_bytes,bulk_admitted,host_rounds,rejected,policy_calls,storage_allocations,receive_acquires,peak_logical_bytes,peak_backing_bytes,physical_source_bytes,native_submissions,bulk_drain_ns,close_ns,warm_receive_acquires\n");
       for (unsigned repetition = 0u; repetition < 5u; ++repetition)
         for (size_t depth = 1u; depth <= 8u; depth *= 8u)
@@ -5320,9 +5320,9 @@ spec("CNet real TCP loopback and retained slice") {
       check(result == 0, "direct NativeIO transfer returned %d", result);
     }
   }
-  if (getenv("SALTSCORE_CNET_POLICY_BENCHMARK") != NULL) {
+  if (getenv("cnet_POLICY_BENCHMARK") != NULL) {
     it("measures matched direct NativeIO and CNet TCP admission") {
-      check_equal(getenv("SALTSCORE_CNET_POLICY_BENCHMARK"), "1");
+      check_equal(getenv("cnet_POLICY_BENCHMARK"), "1");
       printf("CNET_POLICY_CSV,mode,repeat,window,operations,bytes,elapsed_ns,cpu_ns,p50_ns,p95_ns,p99_ns,rejected,peak_logical_bytes,peak_accounted_backing_bytes,physical_source_bytes,storage_allocations,policy_calls,drain_ns,native_submissions\n");
       for (unsigned repetition = 0u; repetition < 5u; ++repetition)
         for (size_t window = 1u; window <= 8u; window *= 8u)

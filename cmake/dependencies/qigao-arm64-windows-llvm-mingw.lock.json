@@ -1,8 +1,9 @@
 {
   "schema": 1,
   "source": {
-    "kind": "url",
-    "url": "https://github.com/qigao/vcpkg-cache/releases/download/v0.1.2/installed-qigao-arm64-windows-llvm-mingw.tar.xz"
-  },
-  "sha256": "e425efa1b961a6d54c1481272e5db55ac514bcead581705fab21b5b211f31a9b"
+    "kind": "github-release",
+    "repository": "qigao/vcpkg-cache",
+    "version_env": "VCPKG_CACHE_VERSION",
+    "asset": "installed-qigao-arm64-windows-llvm-mingw.tar.xz"
+  }
 }

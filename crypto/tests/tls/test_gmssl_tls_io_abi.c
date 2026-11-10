@@ -15,6 +15,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+#include <time.h>
 #include <native_io.h>
 #include <core/clock.h>
 #include <memory/buffer.h>
@@ -54,6 +55,28 @@ static crypto_tls_stream *stream_pair[2];
 
 #include "tls_memory_credentials_cases.h"
 #include "tls_hrr_padding_cases.h"
+#include "x509_validity_print_cases.h"
+
+spec("GmSSL certificate validity diagnostics") {
+  it("preserves libc local dates, labels, indentation and trailing newlines") {
+    const int status = validity_print_serial();
+    check(status == 0, "validity format contract failed at helper line %d", status);
+  }
+  it("prints independent date pairs concurrently without shared time storage") {
+    const int status = validity_print_concurrent();
+    check(status == 0, "validity concurrent contract failed at helper line %d", status);
+  }
+  it("propagates a truncated DER time error") {
+    const int status = validity_print_malformed();
+    check(status == 0, "validity malformed contract failed at helper line %d", status);
+  }
+#if defined(_WIN32)
+  it("returns an error for dates unsupported by the Windows CRT") {
+    const int status = validity_print_unsupported_crt_date();
+    check(status == 0, "validity CRT range contract failed at helper line %d", status);
+  }
+#endif
+}
 
 spec("GmSSL purpose diagnostics preserve parsing and prior results") {
   it("missing extensions and other constraints keep their original categories") {

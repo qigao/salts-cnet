@@ -11,7 +11,7 @@ frequency or background-load control. LLVM-MinGW 20261020, Clang 23.1.4
 (`7a941dfb2877a0b8cf30323fefa85ad019e0b0f5`), x86_64-w64-windows-gnu,
 `native-release-user` Release, GmSSL 3.2.0#18. Collection was 2026-11-04
 Asia/Shanghai. Full graph build followed by the existing TLS CTest with
-`SALTSCORE_CNET_TLS_BENCHMARK=1` passed all 27 TinyTest cases, including the
+`cnet_TLS_BENCHMARK=1` passed all 27 TinyTest cases, including the
 20 long samples, in 57.68 seconds. Five separate existing CNet TLS/mTLS CTests
 also passed in 8.83 seconds, including independent Python TLS 1.2/1.3 peers.
 

@@ -971,6 +971,7 @@ typedef struct tls_resumption_case {
   cnet_tls_client *client;
   bool expected_reused, release_early;
   crypto_tls_failure_reason expected_failure;
+  size_t expected_failure_index;
 } tls_resumption_case;
 static int run_external_tls_server(const char *port_text,
                                  const char *protocol,
@@ -1136,7 +1137,20 @@ static int run_external_tls_server(const char *port_text,
     REQUIRE(probe.received_count == 0u && probe.sent_count == 0u);
     REQUIRE(strcmp(probe.failure_stage, "handshake") == 0);
     REQUIRE(tls_probe_expected_validity(&probe));
-    if (resumption) REQUIRE(probe.tls_diagnostic.reason == resumption->expected_failure);
+    if (resumption) {
+      REQUIRE(probe.tls_diagnostic.reason == resumption->expected_failure);
+      if (resumption->expected_failure == CRYPTO_TLS_FAILURE_EXPIRED)
+        REQUIRE(probe.tls_diagnostic.certificate_index == resumption->expected_failure_index);
+    }
+    /* A rejected resumed owner has drained before its terminal publication.
+     * Another nonblocking poll must not publish READY, data or a second terminal. */
+    if (resumption) {
+      REQUIRE(cnet_client_poll(&client, 0u, &events) == SALTS_OK);
+      REQUIRE(probe.terminal_count == 1u && probe.connected_count == 0u);
+      REQUIRE(probe.received_count == 0u && probe.sent_count == 0u);
+      REQUIRE(probe.failed == 1u);
+      REQUIRE(probe.last_connection_state == CNET_CONNECTION_FAILED);
+    }
   } else {
     char digest[CNET_TLS_PEER_CERTIFICATE_SHA256_CAPACITY] = {0};
     REQUIRE(probe.connected_count == 1u && probe.failed == 0u);
@@ -1762,6 +1776,14 @@ static int run_cnet_resumption(char **argv) {
   const bool reject_policy = strcmp(argv[6],"policy") == 0;
   const bool reject_alpn = strcmp(argv[6],"alpn") == 0;
   const bool reject_expired = strcmp(argv[6],"expired") == 0;
+  size_t expiry_index = 0u;
+  const char *expiry_text = getenv("SALTS_TEST_TLS_RESUMPTION_EXPIRY_INDEX");
+  if (expiry_text) {
+    if (expiry_text[0] == '\0') expiry_index = SIZE_MAX; /* Local trust anchor. */
+    else if (expiry_text[0] >= '0' && expiry_text[0] <= '4' && expiry_text[1] == '\0')
+      expiry_index = (size_t)(expiry_text[0] - '0');
+    else return 2;
+  }
   const unsigned rounds = reject_policy || reject_alpn || reject_expired ? 2u : 3u;
   peer_policy_probe p;
   peer_policy_init(&p,true);
@@ -1779,7 +1801,8 @@ static int run_cnet_resumption(char **argv) {
     const bool reject = i != 0u && (reject_policy || reject_alpn || reject_expired);
     if (reject && reject_policy) p.decision = CRYPTO_TLS_STREAM_ECONNABORTED;
     tls_resumption_case options = {&context,i != 0u && !disabled && !refused,i == rounds-1u,
-        reject_policy ? CRYPTO_TLS_FAILURE_PEER_POLICY : reject_expired ? CRYPTO_TLS_FAILURE_EXPIRED : CRYPTO_TLS_FAILURE_PROFILE};
+        reject_policy ? CRYPTO_TLS_FAILURE_PEER_POLICY : reject_expired ? CRYPTO_TLS_FAILURE_EXPIRED : CRYPTO_TLS_FAILURE_PROFILE,
+        expiry_index};
     REQUIRE(run_external_tls_server(argv[2],argv[3],argv[4],argv[5],!reject,NULL,NULL,NULL,NULL,&options) == 0);
   }
   REQUIRE(peer_policy_finished(&p,reject_alpn || reject_expired ? 1u : rounds));
@@ -2531,7 +2554,7 @@ spec("CNet real TLS CA SAN mTLS Python peer interoperability") {
         check(result == 0, "TLS mixed correctness returned %d", result);
       }
     }
-    const char *mixed_measure = getenv("SALTSCORE_CNET_TLS_MIXED_BENCHMARK");
+    const char *mixed_measure = getenv("cnet_TLS_MIXED_BENCHMARK");
     if (mixed_measure != NULL) {
       it("uses the explicit CNet TLS mixed benchmark switch") { check_equal(mixed_measure, "1"); }
       if (strcmp(mixed_measure, "1") == 0)
@@ -2550,7 +2573,7 @@ spec("CNet real TLS CA SAN mTLS Python peer interoperability") {
         check(result == 0, "TLS policy correctness returned %d", result);
       }
     }
-    const char *measure = getenv("SALTSCORE_CNET_TLS_BENCHMARK");
+    const char *measure = getenv("cnet_TLS_BENCHMARK");
     if (measure != NULL) {
       it("uses the explicit CNet TLS benchmark switch") {
         check_equal(measure, "1");

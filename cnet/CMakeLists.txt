@@ -1,7 +1,10 @@
 # Provider-free C11 WebSocket frame parser. This is a private component of
 # the always-assembled CNet owner, not a separately exported SDK target.
-add_library(saltscore_wsparser OBJECT
-  src/wsparser/websocket_frame_parser.c)
+cmake_add_source(wsparser_sources DIRS src/wsparser)
+source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES ${wsparser_sources})
+add_library(saltscore_wsparser OBJECT ${wsparser_sources})
+cmake_config_target(saltscore_wsparser FOLDER "cnet")
+
 target_compile_features(saltscore_wsparser PUBLIC c_std_11)
 set_target_properties(saltscore_wsparser PROPERTIES
   C_STANDARD_REQUIRED ON C_EXTENSIONS OFF POSITION_INDEPENDENT_CODE ON C_VISIBILITY_PRESET hidden)
@@ -17,21 +20,15 @@ find_package(kcp CONFIG REQUIRED)
 cmake_add_source(cnet_sources DIRS src include/cnet
   EXCLUDES src/cnet_tls_crypto_qualification.c)
 source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES ${cnet_sources})
-add_library(saltscore_cnet SHARED ${cnet_sources} $<TARGET_OBJECTS:saltscore_wsparser>)
-cmake_config_target(saltscore_wsparser FOLDER "cnet")
-cmake_config_target(saltscore_cnet ALIAS Salts::CNet FOLDER "cnet")
-target_compile_features(saltscore_cnet PUBLIC c_std_11)
-cmake_config_target(saltscore_cnet
-  VERSION "${PROJECT_VERSION}"
-  SOVERSION "${SALTSCORE_NATIVE_SOVERSION}"
-  EXPORT_NAME CNet)
-set_target_properties(saltscore_cnet PROPERTIES
+add_library(cnet SHARED ${cnet_sources} $<TARGET_OBJECTS:saltscore_wsparser>)
+cmake_config_target(cnet
+  ALIAS Salts::CNet FOLDER "cnet" EXPORT_NAME CNet OUTPUT_NAME cnet)
+
+target_compile_features(cnet PUBLIC c_std_11)
+set_target_properties(cnet PROPERTIES
   C_STANDARD_REQUIRED ON C_EXTENSIONS OFF WINDOWS_EXPORT_ALL_SYMBOLS ON)
-if(WIN32)
-  cmake_config_target(saltscore_cnet
-    OUTPUT_NAME "saltscore_cnet-${SALTSCORE_NATIVE_SOVERSION}")
-endif()
-target_include_directories(saltscore_cnet
+
+target_include_directories(cnet
   PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
     $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/crypto/include>
@@ -41,22 +38,21 @@ target_include_directories(saltscore_cnet
     "${CMAKE_CURRENT_SOURCE_DIR}/src/wsparser"
     "${PROJECT_SOURCE_DIR}/vendor/monocypher"
     "${PROJECT_SOURCE_DIR}/vendor/reed")
-target_link_libraries(saltscore_cnet
+target_link_libraries(cnet
   PUBLIC
-    Salts::Core
     Salts::NativeIO
-    Salts::Core
+
   PRIVATE
     Salts::URI
     Salts::SIMD
     Salts::Core
-    saltscore_cnet_monocypher
-    saltscore_cnet_reed
+    monocypher
+    reed
     c-ares::cares
     kcp::kcp
     Salts::Crypto)
 
-install(TARGETS saltscore_cnet EXPORT SaltsCoreTargets
+install(TARGETS cnet EXPORT SaltsCoreTargets
   RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
   LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
   ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR})
@@ -66,12 +62,12 @@ install(DIRECTORY include/cnet
 
 if(BUILD_TESTS)
   # Private counters in the same production Crypto instance; no extra runtime.
-  target_compile_definitions(saltscore_cnet PRIVATE CNET_TLS_MEMORY_TESTING)
-  target_include_directories(saltscore_cnet PRIVATE "${PROJECT_SOURCE_DIR}/crypto/src")
+  target_compile_definitions(cnet PRIVATE CNET_TLS_MEMORY_TESTING)
+  target_include_directories(cnet PRIVATE "${PROJECT_SOURCE_DIR}/crypto/src")
   # Link maps retain physical GmSSL and Crypto archive members even when symbols
   # are hidden or stripped from a PE export table. They are test evidence,
   # never an additional library or an installed SDK artifact.
-  function(saltscore_cnet_owner_link_map target)
+  function(cnet_owner_link_map target)
     file(MAKE_DIRECTORY "${PROJECT_BINARY_DIR}/cnet-owner-maps")
     set(_map "${PROJECT_BINARY_DIR}/cnet-owner-maps/${target}-$<CONFIG>.map")
     if(MSVC)
@@ -82,7 +78,7 @@ if(BUILD_TESTS)
       target_link_options(${target} PRIVATE "LINKER:-Map,${_map}")
     endif()
   endfunction()
-  saltscore_cnet_owner_link_map(saltscore_cnet)
+  cnet_owner_link_map(cnet)
   find_package(Python3 COMPONENTS Interpreter REQUIRED)
   if(MSVC)
     get_filename_component(_cnet_owner_linker_dir "${CMAKE_LINKER}" DIRECTORY)
@@ -113,8 +109,8 @@ if(BUILD_TESTS)
       "${PROJECT_SOURCE_DIR}/cnet/tests/owner/audit_native_crypto_owner.py"
       --archive "$<TARGET_FILE:salts_crypto>"
       --gmssl-archive "$<TARGET_FILE:GmSSL::GmSSL>"
-      --runtime "$<TARGET_FILE:saltscore_cnet>"
-      --map "${PROJECT_BINARY_DIR}/cnet-owner-maps/saltscore_cnet-$<CONFIG>.map"
+      --runtime "$<TARGET_FILE:cnet>"
+      --map "${PROJECT_BINARY_DIR}/cnet-owner-maps/cnet-$<CONFIG>.map"
       --system "${CMAKE_SYSTEM_NAME}"
       --nm "${_cnet_owner_symbol_reader}" --readelf "${CMAKE_READELF}"
       --readobj "${_cnet_owner_object_reader}"
