@@ -68,8 +68,9 @@ LLVM-MinGW uses explicit target drivers, native LLVM uses `clang` from PATH,
 and Android uses CMake's NDK support.
 
 CNet remains the shared runtime owner of its linked Crypto/GmSSL implementation.
-Its library output name is `salts`, without a version suffix (`salts.dll` on
-Windows, `libsalts.so` on Linux, `libsalts.dylib` on macOS). Link through the
+Its library output name is `cnet`, without a version suffix (`cnet.dll` on
+Windows, `libcnet.so` on Linux, `libcnet.dylib` on macOS). This keeps it distinct
+from SaltsBase's `salts` library. Link through the
 existing `Salts::CNet` CMake target.
 SCTP stays provider-independent; the explicit `SCTPDTLS` target composes it with
 CNet. TLS verification, retained buffers, completion ownership, cancel/drain

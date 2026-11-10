@@ -22,7 +22,7 @@ cmake_add_source(cnet_sources DIRS src include/cnet
 source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES ${cnet_sources})
 add_library(cnet SHARED ${cnet_sources} $<TARGET_OBJECTS:saltscore_wsparser>)
 cmake_config_target(cnet
-  ALIAS Salts::CNet FOLDER "cnet" EXPORT_NAME CNet OUTPUT_NAME salts)
+  ALIAS Salts::CNet FOLDER "cnet" EXPORT_NAME CNet OUTPUT_NAME cnet)
 
 target_compile_features(cnet PUBLIC c_std_11)
 set_target_properties(cnet PROPERTIES
