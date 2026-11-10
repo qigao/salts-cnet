@@ -2874,3 +2874,41 @@ final exact-head consumer CI; the candidate runs do not establish that result.
 Other OCSP/CRL/TLS-trace `ctime` callers remain outside this bounded repair.
 Neither this diagnostic qualification nor a successful matrix resolves #276's
 original intermittent terminal-counter failure or the remaining #219 gates.
+
+## DTLS issuer validity and DNS constraint qualification (2026-11-10)
+
+The module-owned `saltscore.cnet_dtls_native` extends its supplied-chain PKIX
+matrix from 15 to 33 profiles: 33 profiles x two native roles x ordinary/external
+progress = 132 actual handshake cases, including 72 new cases. The additional
+profiles cover expired/not-yet-valid certificates at both intermediate levels
+and the configured local anchor, unknown critical extensions at both
+intermediate levels, and permitted/excluded DNS subtrees at an intermediate CA
+or the local anchor. Anchor validity/constraints follow this repository's
+existing explicit-anchor policy; they are not a claim about every PKIX policy.
+
+Positive constraint cases admit `localhost` alone and together with
+`preview.localhost`. Negative cases reject an excluded requested name, an
+excluded second SAN, and a second SAN outside a permitted subtree even though
+the requested `localhost` identity is allowed. This exercises constraints on
+all presented names rather than hostname matching alone; see
+[RFC 5280 section 4.2.1.10](https://www.rfc-editor.org/rfc/rfc5280#section-4.2.1.10).
+Go independently signs/parses/verifies each fixture. New negative oracles check
+the specific time, DNS-constraint or unknown-critical-extension error category,
+so an unrelated fixture failure cannot satisfy the intended rejection case.
+
+Existing native assertions remain: positives require READY and exactly one
+peer-policy admission; negatives require no READY or peer-policy admission,
+the actual CertificateUnknown fatal at the independent peer, drained native
+output and successful association/listener teardown. No verification bypass,
+timeout change, new public API, provider patch or TinyTest change was needed.
+This is bounded supplied-chain qualification, not path discovery, policy-tree
+processing, full RFC 8261/browser interoperability or resolution of #276.
+
+With released SaltsBase/vcpkg-cache 0.1.3, the complete `native-release-user`
+graph built successfully on Windows x64 LLVM-MinGW. Its three existing DTLS
+CTests (C++17 headers, CNet native DTLS and SCTP/DTLS native composition) passed
+in 23.73 seconds; the adjacent TLS PKIX name-constraint CTest passed in 1.17
+seconds. Reproduce with `cmake/WithVs.cmd cmake --build --preset
+native-release-user`, then the same test preset with `-R
+'^saltscore[.].*dtls'` and separately `-R 'name_constraints$'`. Hosted CI and
+Android device execution are separate evidence; #188/#219 remain open.
