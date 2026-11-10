@@ -1298,6 +1298,10 @@ int cnet_receive(cnet_client *client, cnet_connection connection, size_t demand)
 
 /**
  * Asynchronously begins an idempotence-checked close transition.
+ * An established TLS connection waits for the peer's authenticated
+ * close_notify after flushing its own. When application read deadlines are
+ * disabled, a 500 ms shutdown deadline bounds this wait. Expiry reports
+ * `CNET_CONNECTION_FAILED` with `SALTS_ETIMEDOUT` at the shutdown stage.
  * @return `SALTS_OK`, `SALTS_EALREADY`, `SALTS_ENOENT`, `SALTS_ESHUTDOWN`, or
  * a bounded queue error.
  */
