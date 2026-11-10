@@ -16,7 +16,7 @@ and [all 20 raw samples](cnet-admission-windows-x64-2026-11-03.csv).
 - LLVM-MinGW 20261020; Clang 23.1.4, LLVM source
   `7a941dfb2877a0b8cf30323fefa85ad019e0b0f5`, target x86_64-w64-windows-gnu.
 - `native-release-user`, Release, full graph build; existing TCP CTest with
-  `SALTSCORE_CNET_POLICY_BENCHMARK=1`. Existing timeout unchanged.
+  `cnet_POLICY_BENCHMARK=1`. Existing timeout unchanged.
 - IOCP; one fixed caller Owner, one CNet client/connection, one backend with
   2 endpoint slots, 4 requests and completion batch 4. Native peer shares the
   caller thread; no affinity, CPU-frequency or system-background-load control.

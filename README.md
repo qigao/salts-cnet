@@ -68,6 +68,9 @@ LLVM-MinGW uses explicit target drivers, native LLVM uses `clang` from PATH,
 and Android uses CMake's NDK support.
 
 CNet remains the shared runtime owner of its linked Crypto/GmSSL implementation.
+Its library output name is `salts`, without a version suffix (`salts.dll` on
+Windows, `libsalts.so` on Linux, `libsalts.dylib` on macOS). Link through the
+existing `Salts::CNet` CMake target.
 SCTP stays provider-independent; the explicit `SCTPDTLS` target composes it with
 CNet. TLS verification, retained buffers, completion ownership, cancel/drain
 and exact mode semantics are preserved. See [Crypto coverage](crypto/docs/SHANGMI-COVERAGE.md)
@@ -96,6 +99,17 @@ POSIX LLVM uses `llvm-native-release-user`; existing sanitizer and Android
 profiles remain in the user presets. CI configures the complete graph, builds
 it without target filtering, and runs the formal tests through CTest. Android
 is build-only unless an explicit device runner is provided.
+
+For `llvm-mingw-arm64-release-user`, supply
+`LLVM_MINGW_ARM64_SALTS_BASE_ROOT`, `LLVM_MINGW_ARM64_VCPKG_INSTALLED_DIR`,
+and `LLVM_MINGW_ARM64_INSTALL_PREFIX` in the parent environment. Both SDKs must
+target Windows ARM64; the preset selects `qigao-arm64-windows-llvm-mingw`
+and `aarch64-w64-mingw32` independently of native x64 settings. Restore the
+vcpkg SDK with `cmake/dependencies/qigao-arm64-windows-llvm-mingw.lock.json`.
+SaltsBase v0.1.1 has no Windows ARM64 release asset, so a matching SDK must be
+provided separately. After changing dependency roots, configure with
+`cmake/WithVs.cmd cmake --fresh --preset llvm-mingw-arm64-release-user`
+before building that same preset.
 
 CI resolves the latest stable [SaltsBase release](https://github.com/qigao/salts-base/releases/latest).
 The independent `prepare` job resolves it once, checks the release API's

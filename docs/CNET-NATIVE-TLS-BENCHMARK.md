@@ -44,7 +44,7 @@ not instrument Crypto/NativeIO/global allocations or copies.
 
 Normal formal tests use eight warm and sixteen measured writes. Opt in with
 `SALTSCORE_NATIVE_TLS_BENCHMARK=1` for five long direct samples; CNet retains
-`SALTSCORE_CNET_TLS_BENCHMARK=1`. Use each existing TinyTest executable's
+`cnet_TLS_BENCHMARK=1`. Use each existing TinyTest executable's
 `--filter` to select one long repetition/scenario, rotating direct/native/
 callback order over five repetitions. Match depth 1 only; raw depth 8 would
 need a different application queue contract. Retain all raw CSV rows, exact

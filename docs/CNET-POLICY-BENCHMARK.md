@@ -95,20 +95,20 @@ broader platform measurements. This first slice does not close that issue.
 
 The existing `saltscore.cnet_tcp_loopback` CTest always runs four small CNet
 cases and two direct NativeIO cases. No target, dependency or workflow is added. To opt in
-to measurements, set `SALTSCORE_CNET_POLICY_BENCHMARK=1` in the parent process
+to measurements, set `cnet_POLICY_BENCHMARK=1` in the parent process
 and use the existing user build/test presets. Other nonempty values fail.
 
 ```powershell
 # Use the normal project toolchain/VsDevCmd environment.
 cmake --build --preset native-release-user
-$env:SALTSCORE_CNET_POLICY_BENCHMARK = '1'
+$env:cnet_POLICY_BENCHMARK = '1'
 ctest --preset native-release-user -R '^saltscore\.cnet_tcp_loopback$' -V
-Remove-Item Env:SALTSCORE_CNET_POLICY_BENCHMARK
+Remove-Item Env:cnet_POLICY_BENCHMARK
 ```
 
 ```sh
 cmake --build --preset native-release-user
-SALTSCORE_CNET_POLICY_BENCHMARK=1 ctest --preset native-release-user \
+cnet_POLICY_BENCHMARK=1 ctest --preset native-release-user \
   -R '^saltscore\.cnet_tcp_loopback$' -V
 ```
 

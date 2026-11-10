@@ -80,10 +80,14 @@
       "name": "llvm-mingw-arm64-release-user",
       "displayName": "llvm-mingw Windows ARM64 Release",
       "inherits": [
-        "llvm-mingw-arm64-environment",
         "target-llvm-mingw-arm64",
+        "llvm-mingw-arm64-environment",
         "release-mode"
-      ]
+      ],
+      "environment": {
+        "SALTS_BASE_ROOT": "$penv{LLVM_MINGW_ARM64_SALTS_BASE_ROOT}",
+        "VCPKG_INSTALLED_DIR": "$penv{LLVM_MINGW_ARM64_VCPKG_INSTALLED_DIR}"
+      }
     },
     {
       "name": "android-arm64-release-user",

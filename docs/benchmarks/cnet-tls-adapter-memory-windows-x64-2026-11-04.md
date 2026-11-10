@@ -25,7 +25,7 @@ byte/copy accounting and phase-local allocation behavior.
 
 Use the existing opt-in TinyTest cases and filters described in the protocol:
 `SALTSCORE_NATIVE_TLS_MIXED_BENCHMARK=1` and
-`SALTSCORE_CNET_TLS_MIXED_BENCHMARK=1`. Five fresh-process repetitions rotate
+`cnet_TLS_MIXED_BENCHMARK=1`. Five fresh-process repetitions rotate
 direct depth 1, native depth 1, callback depth 1, native depth 8 and callback
 depth 8. Each sample warms eight control exchanges, drains, then measures 512.
 All 25 selected formal cases passed; direct invocations filter 25 other cases,

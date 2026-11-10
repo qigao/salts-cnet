@@ -13,7 +13,7 @@ CPU-frequency or background-load control. LLVM-MinGW 20261020, Clang 23.1.4
 (`7a941dfb2877a0b8cf30323fefa85ad019e0b0f5`), x86_64-w64-windows-gnu,
 `native-release-user` Release. Local collection was 2026-11-04 Asia/Shanghai.
 The full graph built, then the existing TCP CTest ran with
-`SALTSCORE_CNET_STALLED_BENCHMARK=1`; other benchmark flags were unset.
+`cnet_STALLED_BENCHMARK=1`; other benchmark flags were unset.
 All 58 TinyTest cases passed in 6.08 seconds, including all 15 long samples.
 
 One fixed caller Owner/backend (2 endpoints, 8 requests, batch 4) serves two

@@ -26,13 +26,13 @@ exactly one selected long case and one data row from each invocation:
 
 ```powershell
 $env:SALTSCORE_NATIVE_TLS_BENCHMARK = '1'
-$env:SALTSCORE_CNET_TLS_BENCHMARK = '1'
+$env:cnet_TLS_BENCHMARK = '1'
 # Repetition 0; subsequent repetitions rotate this order and change the index.
 & build/native-release-user/bin/saltscore_gmssl_tls_io_abi_test.exe --filter `
   'measures direct NativeIO TLS transfer repetition 0'
-& build/native-release-user/bin/saltscore_cnet_tls_ca_san_test.exe --filter `
+& build/native-release-user/bin/cnet_tls_ca_san_test.exe --filter `
   'measures verified TLS policy traffic, repetition 0 scenario 0'
-& build/native-release-user/bin/saltscore_cnet_tls_ca_san_test.exe --filter `
+& build/native-release-user/bin/cnet_tls_ca_san_test.exe --filter `
   'measures verified TLS policy traffic, repetition 0 scenario 1'
 ```
 

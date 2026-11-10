@@ -2531,7 +2531,7 @@ spec("CNet real TLS CA SAN mTLS Python peer interoperability") {
         check(result == 0, "TLS mixed correctness returned %d", result);
       }
     }
-    const char *mixed_measure = getenv("SALTSCORE_CNET_TLS_MIXED_BENCHMARK");
+    const char *mixed_measure = getenv("cnet_TLS_MIXED_BENCHMARK");
     if (mixed_measure != NULL) {
       it("uses the explicit CNet TLS mixed benchmark switch") { check_equal(mixed_measure, "1"); }
       if (strcmp(mixed_measure, "1") == 0)
@@ -2550,7 +2550,7 @@ spec("CNet real TLS CA SAN mTLS Python peer interoperability") {
         check(result == 0, "TLS policy correctness returned %d", result);
       }
     }
-    const char *measure = getenv("SALTSCORE_CNET_TLS_BENCHMARK");
+    const char *measure = getenv("cnet_TLS_BENCHMARK");
     if (measure != NULL) {
       it("uses the explicit CNet TLS benchmark switch") {
         check_equal(measure, "1");

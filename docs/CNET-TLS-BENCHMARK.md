@@ -36,7 +36,7 @@ capacity, payload and closed-loop offering rules.
 Fresh samples warm/drain 64 writes, then measure 2,048 writes. Five repetitions
 rotate the four mode/depth scenarios. Default CI uses four short correctness
 cases with eight warm and sixteen measured writes. Set
-`SALTSCORE_CNET_TLS_BENCHMARK=1` for the long TinyTest `benchmark_io` samples.
+`cnet_TLS_BENCHMARK=1` for the long TinyTest `benchmark_io` samples.
 Use the established full configure/build/test presets; no extra target is needed.
 
 Transfer timing ends only after all local terminals and verified peer bytes.

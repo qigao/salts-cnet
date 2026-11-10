@@ -61,7 +61,7 @@ package selection and compiler-cache validation are not bypassed.
 The same manual dispatch then profiles those 25 formal cases on Linux x64,
 after the unprofiled results have been preserved. `heaptrack` is an analysis
 tool installed on that runner, not a product/vcpkg dependency. Reconfigure the
-same full native graph with `SALTSCORE_CNET_TLS_MIXED_HEAPTRACK=ON`, build through
+same full native graph with `cnet_TLS_MIXED_HEAPTRACK=ON`, build through
 the same preset and select the same CTest label. Missing heaptrack or unsupported
 requested configurations fail explicitly. The profiling option requires Linux,
 measurements and an unsanitized graph; it never silently falls back.

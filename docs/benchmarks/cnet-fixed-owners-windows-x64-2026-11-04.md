@@ -14,7 +14,7 @@ CPU-frequency or background-load control. LLVM-MinGW 20261020, Clang 23.1.4
 (`7a941dfb2877a0b8cf30323fefa85ad019e0b0f5`), x86_64-w64-windows-gnu,
 `native-release-user` Release. Local collection was 2026-11-04 Asia/Shanghai.
 The full graph built, then the existing TCP CTest ran with
-`SALTSCORE_CNET_OWNERS_BENCHMARK=1`; other benchmark flags were unset.
+`cnet_OWNERS_BENCHMARK=1`; other benchmark flags were unset.
 All 63 TinyTest cases passed in 15.27 seconds, including all 50 long samples.
 
 One caller Owner advances both connections. Two fixed SG Owners place bulk on

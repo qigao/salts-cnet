@@ -15,7 +15,7 @@ Windows 11 10.0.26200, AMD Ryzen 9 7940HX, 16 cores/32 threads; no affinity,
 CPU-frequency or background-load control. LLVM-MinGW 20261020, Clang 23.1.4
 (`7a941dfb2877a0b8cf30323fefa85ad019e0b0f5`), x86_64-w64-windows-gnu,
 `native-release-user` Release. The full build and existing TCP formal CTest ran
-with `SALTSCORE_CNET_MIXED_BENCHMARK=1`; other benchmark flags were unset.
+with `cnet_MIXED_BENCHMARK=1`; other benchmark flags were unset.
 All 53 TinyTest cases passed in 5.49 seconds, including the 20 main samples.
 
 One fixed caller Owner advances two independent external CNet clients sharing
