@@ -33,8 +33,18 @@ list(PREPEND CMAKE_PREFIX_PATH
      "${SALTS_DEPENDENCY_PREFIX}")
 find_package(Threads REQUIRED)
 unset(SaltsBase_DIR CACHE)
+if(NOT "$ENV{SALTS_BASE_VERSION}" MATCHES "^[0-9]+[.][0-9]+[.][0-9]+$")
+  message(FATAL_ERROR "SALTS_BASE_VERSION must select an exact SDK version without the v prefix")
+endif()
+# This is the API compatibility floor, not the selected upstream version.
+set(SALTS_BASE_REQUIRED_VERSION 0.1.1)
+if("$ENV{SALTS_BASE_VERSION}" VERSION_LESS "${SALTS_BASE_REQUIRED_VERSION}")
+  message(FATAL_ERROR "SaltsBase ${SALTS_BASE_REQUIRED_VERSION} or newer is required")
+endif()
 find_package(
   SaltsBase
+  $ENV{SALTS_BASE_VERSION}
+  EXACT
   CONFIG
   REQUIRED
   PATHS

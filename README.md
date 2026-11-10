@@ -1,5 +1,51 @@
 # SaltsCore network SDK
 
+## Upstream dependency versions
+
+Select the upstream SDK release through `VCPKG_CACHE_VERSION` in the parent
+environment (for example, by loading the local `.env`). Use the same version
+for the `VCPKG_CACHE_REPOSITORY_ROOT` checkout. Values contain the version
+without the `v` prefix; missing variables fail rather than choosing `latest`.
+The shared `resolve-release` entry point is required (not present in v0.1.2).
+
+The per-triplet files in `cmake/dependencies/` are release descriptors. Their
+historical `.lock.json` suffix is retained; `source.kind=github-release`
+distinguishes them from generated literal URL/hash locks. Resolve the selected
+release into the build directory before restoring it:
+
+```sh
+python "$VCPKG_CACHE_REPOSITORY_ROOT/scripts/restore-native-dependency.py" resolve-release \
+  "cmake/dependencies/$VCPKG_TARGET_TRIPLET.lock.json" \
+  --output-lock "build/dependencies/$VCPKG_TARGET_TRIPLET.lock.json"
+python "$VCPKG_CACHE_REPOSITORY_ROOT/scripts/restore-native-dependency.py" locked \
+  "build/dependencies/$VCPKG_TARGET_TRIPLET.lock.json" \
+  --destination "build/dependencies/$VCPKG_TARGET_TRIPLET-$VCPKG_CACHE_VERSION" \
+  --payload vcpkg_installed
+```
+
+Set `VCPKG_INSTALLED_DIR` to the reported root for the selected preset. The
+resolver requires the published asset's SHA-256 digest; the existing restore
+checks downloaded bytes and preserves immutable installations. Changing a
+version never overwrites an old SDK. CMake does not load `.env` or download
+the dependency SDK implicitly. Existing host-tool package locks remain exact.
+
+CI uses the same named repository Actions variables and selects local shared
+actions from the chosen infrastructure checkout. SaltsBase and SaltsCore
+prepare jobs resolve once, then distribute generated locks and verified blobs
+to all matrix workers. Set the CI variables before enabling these changes;
+the selected infrastructure release must contain `resolve-release`.
+
+This keeps consumer version policy in the environment, asset digests in the
+upstream release, and generated restore locks in build inputs. Updating a
+release no longer requires editing a digest table for every platform. SDK
+manifests, compiler/ABI selection and product tests remain mandatory. To roll
+back, choose the previous exact release and restore into its own directory.
+
+`SALTS_BASE_VERSION` selects the SaltsBase release and must match the
+installed `SALTS_BASE_ROOT` exactly. The API compatibility floor stays
+0.1.1; CI still validates the release manifest and successful producer.
+
+
 This checkout builds the `SaltsNet` CMake project. It owns Crypto, CNet and
 SCTP. The installed package remains `SaltsCore` with the existing `Salts::*`
 targets. The integration branch is `chore-housing-keeping`.
@@ -40,24 +86,24 @@ into separate installation prefixes.
 
 Crypto links the required vcpkg `GmSSL::GmSSL` provider (`3.2.0#44`), including
 the reviewed extensions pinned by `crypto/gmssl-extensions/source-lock.json`.
-Like SaltsBase, this checkout consumes the preinstalled SDK published by
-[qigao/vcpkg-cache v0.1.2](https://github.com/qigao/vcpkg-cache/releases/tag/v0.1.2).
-Each supported triplet has a URL/SHA-256 lock in `cmake/dependencies/`.
-Restore that lock with the release's `scripts/restore-native-dependency.py`;
+Like SaltsBase, this checkout consumes the preinstalled SDK selected by
+`VCPKG_CACHE_VERSION` from [qigao/vcpkg-cache](https://github.com/qigao/vcpkg-cache/releases).
+Each supported triplet has an environment-selected descriptor in `cmake/dependencies/`.
+Resolve it as described above, then restore the generated lock;
 set `VCPKG_INSTALLED_DIR` to the reported payload root and select its exact
 `VCPKG_TARGET_TRIPLET`. For example, from this checkout:
 
 ```powershell
-python "$env:VCPKG_CACHE_REPOSITORY_ROOT/scripts/restore-native-dependency.py" locked cmake/dependencies/qigao-x64-windows-llvm-mingw.lock.json --destination build/dependencies/vcpkg-windows-x64 --payload vcpkg_installed
+python "$env:VCPKG_CACHE_REPOSITORY_ROOT/scripts/restore-native-dependency.py" locked build/dependencies/qigao-x64-windows-llvm-mingw.lock.json --destination build/dependencies/vcpkg-windows-x64 --payload vcpkg_installed
 ```
 
 Use the printed `root` value as `VCPKG_INSTALLED_DIR`. The restore validates
 SHA-256, safely extracts the archive and records its provenance. This prefix
-contains GmSSL 3.2.0#44, c-ares, KCP, zstd, SIMDe and SaltsBase's JPEG/libyuv
+contains GmSSL, c-ares, KCP, zstd, SIMDe and SaltsBase's JPEG/libyuv
 imports. `vcpkg.json` and `vcpkg-configuration.json` retain the dependency and
 source inventory; configure no longer runs a vcpkg resolver or builds ports.
 Missing packages fail configuration. Refreshing dependencies means reviewing
-and updating the locks; there is no port-build fallback.
+and selecting an exact upstream release; there is no port-build fallback.
 
 This uses the same prebuilt dependency owner as SaltsBase instead of rebuilding
 an overlapping graph or depending on cache hits. It trades automatic manifest
@@ -112,7 +158,7 @@ provided separately. After changing dependency roots, configure with
 `cmake/WithVs.cmd cmake --fresh --preset llvm-mingw-arm64-release-user`
 before building that same preset.
 
-CI resolves the latest stable [SaltsBase release](https://github.com/qigao/salts-base/releases/latest).
+CI resolves the exact stable SaltsBase release selected by `SALTS_BASE_VERSION`.
 The independent `prepare` job resolves it once, checks the release API's
 manifest digest, and downloads the required SDKs from the canonical public
 release asset URLs. The matrix lives in `.github/ci/sdk-matrix.json` and is

@@ -8,6 +8,8 @@
       "name": "vcpkg-cache",
       "hidden": true,
       "environment": {
+        "VCPKG_CACHE_VERSION": "$penv{VCPKG_CACHE_VERSION}",
+        "SALTS_BASE_VERSION": "$penv{SALTS_BASE_VERSION}",
         "VCPKG_INSTALLED_DIR": "$penv{VCPKG_INSTALLED_DIR}",
         "VCPKG_TARGET_TRIPLET": "$penv{VCPKG_TARGET_TRIPLET}",
         "SALTS_BASE_ROOT": "$penv{SALTS_BASE_ROOT}"
