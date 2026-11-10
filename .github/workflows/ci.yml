@@ -359,32 +359,23 @@ jobs:
           }
           Write-Host 'Installed libcnet.so uses at least 16 KiB alignment for each LOAD segment'
 
-      - name: Record immutable SDK provenance
-        if: matrix.package && github.ref == 'refs/tags/v0.1.002'
+      - name: Archive qualified SDK
         shell: pwsh
         run: |
-          $ErrorActionPreference = 'Stop'
-          $prefix = Join-Path $env:GITHUB_WORKSPACE 'package/sdk/${{ matrix.rid }}'
-          if (-not (Test-Path "$prefix/lib/cmake/SaltsCore/SaltsCoreConfig.cmake")) {
-            throw 'SaltsCore SDK installation is missing'
-          }
-          @(
-            'release=0.1.002'
-            'package=0.1.2'
-            "commit=$env:GITHUB_SHA"
-            'rid=${{ matrix.rid }}'
-            'profile=release'
-            'compiler=llvm'
-            'protection=none'
-          ) | Set-Content -Encoding utf8 "$prefix/saltscore-sdk-manifest.txt"
-
+          $prefix = [IO.Path]::GetFullPath('package/sdk/${{ matrix.rid }}')
+          @{schema=1; source=$env:GITHUB_SHA; profile='${{ matrix.rid }}';
+            preset='${{ matrix.preset }}'; base_version=$env:SALTS_BASE_VERSION;
+            cache_version=$env:VCPKG_CACHE_VERSION; native_tests=('${{ matrix.android_abi }}' -eq '')} |
+            ConvertTo-Json | Set-Content "$prefix/salts-cnet-sdk-manifest.json" -Encoding utf8
+          $archive = [IO.Path]::GetFullPath('build/salts-cnet-sdk.tar')
+          tar cf $archive -C $prefix .
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - uses: actions/upload-artifact@v4
-        if: matrix.package && github.ref == 'refs/tags/v0.1.002'
         with:
-          name: saltscore-sdk-${{ matrix.rid }}
-          path: package
+          name: salts-cnet-sdk-${{ matrix.rid }}-${{ github.sha }}
+          path: build/salts-cnet-sdk.tar
+          compression-level: 0
           if-no-files-found: error
-          retention-days: 14
 
   package:
     name: Publish SaltsCore.Native 0.1.2
