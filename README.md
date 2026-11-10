@@ -188,10 +188,11 @@ Clang, and Android arm64/x64 NDK. Each lane selects its exact manifest entry;
 no architecture or compiler substitution is performed. The two Linux ARM64 SDKs
 passed producer CI; consumer ARM64 qualification is not yet in this matrix.
 Windows ARM64 and macOS x64 still require producer SDKs.
-The existing ASan/UBSan and TSan lanes additionally use the Linux x64 Clang
-foundation and instrument this network graph; that does not qualify the
-prebuilt foundation itself under sanitizers. There are nine qualification
-jobs covering seven released SDKs.
+ASan/UBSan additionally uses the ordinary Linux x64 Clang foundation and
+instruments this network graph; that does not qualify the prebuilt foundation
+under ASan/UBSan. TSan requires the matching `linux-clang-x64-tsan` SDK,
+published in SaltsBase 0.1.2, so its shared synchronization is instrumented too.
+There are nine qualification jobs covering eight released SDK profiles.
 
 The historical fixed-tag `v0.1.002` eight-RID NuGet publisher has a broader
 packaging contract and is not qualified by this seven-SDK matrix. It requires
