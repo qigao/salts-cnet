@@ -284,6 +284,7 @@ typedef struct tls_case_options {
   cnet_tls_peer_policy *release_peer_policy;
   bool stream_transfer;
   bool pool_reuse;
+  bool stop_with_idle_peer;
   cnet_tls_protocol_version client_minimum, client_maximum;
   cnet_tls_protocol_version server_minimum, server_maximum;
   const char *expected_version;
@@ -414,6 +415,7 @@ static int run_case(const tls_case_options *options) {
   server_probe.client = &server;
   client_probe.pool_reuse = options->pool_reuse;
   server_probe.pool_reuse = options->pool_reuse;
+  if (options->stop_with_idle_peer) client_cfg.read_timeout_ms = 0u;
   if (options->stream_transfer) {
     client_cfg.max_send_bytes = TLS_STREAM_BULK_BYTES;
     client_probe.stream_transfer = true;
@@ -785,6 +787,18 @@ static int run_case(const tls_case_options *options) {
                         &server_probe, &accepted) == SALTS_OK);
         REQUIRE(client_probe.received_count == 1u && client_probe.received_byte == 0x47u);
         REQUIRE(server_probe.sent_count == 1u && client_probe.failed == 0u && server_probe.failed == 0u);
+      }
+      if (options->stop_with_idle_peer) {
+        /* Only this owner progresses during stop. The verified peer remains
+         * connected, but cannot send its reciprocal alert. */
+        REQUIRE(cnet_client_stop(&client, 1500u) == SALTS_OK);
+        REQUIRE(client_probe.terminal_count == 1u && client_probe.failed == 1u);
+        REQUIRE(client_probe.last_error_status == SALTS_ETIMEDOUT);
+        REQUIRE(strcmp(client_probe.failure_stage, "shutdown") == 0);
+        REQUIRE(server_probe.terminal_count == 0u);
+        REQUIRE(cnet_client_destroy(&client) == SALTS_OK);
+        client_live = false;
+        goto cleanup;
       }
       REQUIRE(cnet_close(&client, outbound) == SALTS_OK);
     }
@@ -2146,26 +2160,27 @@ static int tls_bench_compare(const void *a, const void *b) {
   const uint64_t x = *(const uint64_t *)a, y = *(const uint64_t *)b;
   return (x > y) - (x < y);
 }
-static int tls_bench_progress(tls_bench_fixture *f) {
-  int first = SALTS_OK;
-  for (size_t e = 0u; e < 2u; ++e) {
-    tls_bench_end *end = &f->ends[e];
-    if (end->client.impl == NULL) continue;
-    native_io_completion completions[4];
-    size_t events = 0u, count = 0u;
-    int status = cnet_client_advance_external(&end->client, &events);
-    if (status != SALTS_OK && first == SALTS_OK) first = status;
-    status = native_io_backend_observe(&end->backend, completions, 4u, 0u, &count);
-    if (status != SALTS_OK && status != SALTS_ETIMEDOUT && first == SALTS_OK) first = status;
-    /* Route the entire observed batch even if an earlier completion fails. */
-    for (size_t i = 0u; i < count; ++i) {
-      bool consumed = false;
-      status = cnet_client_route_external_completion(&end->client, &completions[i], &consumed, &events);
-      if ((status != SALTS_OK || !consumed) && first == SALTS_OK)
-        first = status != SALTS_OK ? status : SALTS_EPROTO;
-    }
+static int tls_bench_progress_end(tls_bench_end *end) {
+  if (end->client.impl == NULL) return SALTS_OK;
+  native_io_completion completions[4];
+  size_t events = 0u, count = 0u;
+  int first = cnet_client_advance_external(&end->client, &events);
+  int status = native_io_backend_observe(&end->backend, completions, 4u, 0u, &count);
+  if (status != SALTS_OK && status != SALTS_ETIMEDOUT && first == SALTS_OK) first = status;
+  /* Route the entire observed batch even if an earlier completion fails. */
+  for (size_t i = 0u; i < count; ++i) {
+    bool consumed = false;
+    status = cnet_client_route_external_completion(&end->client, &completions[i], &consumed, &events);
+    if ((status != SALTS_OK || !consumed) && first == SALTS_OK)
+      first = status != SALTS_OK ? status : SALTS_EPROTO;
   }
   return first;
+}
+
+static int tls_bench_progress(tls_bench_fixture *f) {
+  const int first = tls_bench_progress_end(&f->ends[0]);
+  const int second = tls_bench_progress_end(&f->ends[1]);
+  return first != SALTS_OK ? first : second;
 }
 static int tls_bench_transfer(tls_bench_fixture *f, size_t operations, tls_bench_result *out) {
   native_io_backend_stats before[2], after[2];
@@ -2402,6 +2417,35 @@ static bool tls_bench_dispose(tls_bench_fixture *f) {
   return false; /* Retain live callback/native storage. */
 }
 
+static int tls_external_idle_peer_close(void) {
+  const char *label = "external TLS close with idle peer";
+  tls_bench_fixture *f = calloc(1u, sizeof(*f));
+  uint64_t handshake_ns = 0u;
+  native_io_backend_stats stats;
+  int result = 0;
+  if (f == NULL) return SALTS_ENOMEM;
+  tls_bench_end *end = &f->ends[0];
+  REQUIRE(tls_bench_setup(f, false, 1u, &handshake_ns) == SALTS_OK);
+  REQUIRE(cnet_close(&end->client, end->state.connection) == SALTS_OK);
+  const uint64_t deadline = monotonic_ms() + 1500u;
+  while (end->state.terminal_count == 0u && monotonic_ms() < deadline) {
+    REQUIRE(tls_bench_progress_end(end) == SALTS_OK);
+    sleep_ms(1u);
+  }
+  REQUIRE(end->state.terminal_count == 1u && end->state.failed == 1u);
+  REQUIRE(end->state.last_error_status == SALTS_ETIMEDOUT);
+  REQUIRE(strcmp(end->state.failure_stage, "shutdown") == 0);
+  REQUIRE(f->ends[1].state.terminal_count == 0u);
+  REQUIRE(cnet_client_stop_external(&end->client) == SALTS_OK);
+  REQUIRE(native_io_backend_get_stats(&end->backend, &stats));
+  REQUIRE(stats.active_requests == 0u && stats.endpoint_count == 0u);
+  REQUIRE(cnet_client_destroy(&end->client) == SALTS_OK);
+cleanup:
+  if (!tls_bench_dispose(f)) return SALTS_EBUSY;
+  free(f);
+  return result;
+}
+
 static int tls_bench_sample(bool callback, size_t window, bool report, unsigned repetition) {
   const char *label = "TLS policy benchmark";
   tls_bench_fixture *f = calloc(1u, sizeof(*f));
@@ -2590,6 +2634,18 @@ spec("CNet real TLS CA SAN mTLS Python peer interoperability") {
           }
         }
       }
+    }
+    it("stops a standalone TLS owner with an idle peer and no read deadline") {
+      const tls_case_options options = {
+          .label = "standalone TLS stop with idle peer",
+          .ca_file = CORE_TLS_TEST_P384_CA,
+          .verified_hostname = "localhost",
+          .expect_success = true,
+          .stop_with_idle_peer = true};
+      check_equal(run_case(&options), 0);
+    }
+    it("retires external TLS shutdown requests when the peer stays idle") {
+      check_equal(tls_external_idle_peer_close(), 0);
     }
     it("retains TLS small and bulk writes through FIFO terminals and final close") {
       const tls_case_options stream = {

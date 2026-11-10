@@ -55,7 +55,7 @@ typedef struct cnet_owner_session {
   bool tls_close_after_send;
   bool tls_shutdown_after_flush;
   /* Explicit locally initiated close waits for the authenticated peer alert.
-   * The TLS_READ lease/READ deadline still have a single NativeIO owner. */
+   * The TLS_READ lease remains owned by NativeIO until completion. */
   bool tls_shutdown_wait_peer;
   /** Fatal TLS handshake alert must drain through the existing bounded
    * NativeIO write owner before the failed terminal event is published. */
@@ -63,7 +63,7 @@ typedef struct cnet_owner_session {
   uint8_t tcp_shutdown_mask;
   uint8_t tcp_shutdown_applied_mask;
   bool preserve_send_on_eof;
-  deadline_id connect_deadline;
+  deadline_id session_deadline;
 } cnet_owner_session;
 
 typedef struct cnet_owner_request {
@@ -93,6 +93,7 @@ typedef struct cnet_owner_pending_event {
 
 enum {
   CNET_OWNER_RESOLVER_POLL_INTERVAL_MS = 1u,
+  CNET_OWNER_TLS_CLOSE_NOTIFY_TIMEOUT_MS = 500u,
   CNET_OWNER_DEFERRED_CONTINUATION_MAX_PASSES = 8u
 };
 
@@ -820,7 +821,7 @@ static int cnet_owner_finalize_session(cnet_owner_impl *impl, cnet_owner_session
     status = cnet_owner_discard_queued_writes(impl, session, false);
     if (status != SALTS_OK) return status;
   }
-  status = cnet_owner_cancel_deadline(impl, &session->connect_deadline);
+  status = cnet_owner_cancel_deadline(impl, &session->session_deadline);
   if (status != SALTS_OK) return status;
   if (session->transport.native_open || session->transport.attached) {
     close_status = cnet_transport_close(&session->transport, &impl->backend);
@@ -1676,7 +1677,7 @@ static int cnet_owner_tls_pump_impl(cnet_owner_impl *impl, cnet_owner_session *s
 
     status = cnet_session_table_transition(impl->sessions, session->handle, CNET_SESSION_OPEN);
     if (status != SALTS_OK) return status;
-    status = cnet_owner_cancel_deadline(impl, &session->connect_deadline);
+    status = cnet_owner_cancel_deadline(impl, &session->session_deadline);
     if (status != SALTS_OK) return status;
     session->session_deadline_stage = CNET_SESSION_STAGE_NONE;
     /* Handshake-local I/O requests may outlive the session deadline.
@@ -1816,7 +1817,18 @@ static int cnet_owner_tls_pump_impl(cnet_owner_impl *impl, cnet_owner_session *s
          * the peer still owes its own authenticated alert. Windows may emit
          * RST if closesocket races unread close_notify, causing Python
          * SSLSocket.unwrap() to fail even though our event said CLOSED.
-         * Reuse one bounded NativeIO TLS_READ (same owner, normal timeout). */
+         * With application read deadlines disabled, bound the entire wait
+         * with one session deadline. Partial peer input cannot extend it. */
+        if (session->peer.read_timeout_ms == 0u &&
+            session->session_deadline == 0u) {
+          status = deadline_queue_schedule(
+              &impl->deadlines,
+              cnet_owner_deadline_after(impl, CNET_OWNER_TLS_CLOSE_NOTIFY_TIMEOUT_MS),
+              CNET_OWNER_SESSION_DEADLINE_TOKEN | (uint64_t)session->handle.slot,
+              &session->session_deadline);
+          if (status != SALTS_OK) return status;
+          session->session_deadline_stage = CNET_SESSION_STAGE_SHUTDOWN;
+        }
         return cnet_owner_tls_start_read(impl, session);
       }
       if (session->tls_shutdown_wait_peer) {
@@ -1844,7 +1856,7 @@ static int cnet_owner_start_tls(cnet_owner_impl *impl, cnet_owner_session *sessi
     status = cnet_owner_queue_state_event(impl, session->handle, CNET_EVENT_STATE_TLS_HANDSHAKING,
                                           SALTS_OK, CNET_SESSION_STAGE_NONE);
   }
-  if (status == SALTS_OK) status = cnet_owner_cancel_deadline(impl, &session->connect_deadline);
+  if (status == SALTS_OK) status = cnet_owner_cancel_deadline(impl, &session->session_deadline);
   if (status == SALTS_OK)
     status = cnet_tls_state_init(&session->tls, session->peer.tls_context, session->peer.tls_server,
                                  session->peer.tls_server_name, session->peer.tls_io_buffer_bytes);
@@ -1854,7 +1866,7 @@ static int cnet_owner_start_tls(cnet_owner_impl *impl, cnet_owner_session *sessi
   status = deadline_queue_schedule(
       &impl->deadlines, cnet_owner_deadline_after(impl, session->peer.tls_handshake_timeout_ms),
       CNET_OWNER_SESSION_DEADLINE_TOKEN | (uint64_t)session->handle.slot,
-      &session->connect_deadline);
+      &session->session_deadline);
   if (status != SALTS_OK) return status;
   return cnet_owner_tls_pump(impl, session);
 }
@@ -1912,7 +1924,7 @@ static int cnet_owner_start_transport(cnet_owner_impl *impl, cnet_owner_session 
   if (connected_immediately) {
     if (status == SALTS_OK)
       status = cnet_session_table_transition(impl->sessions, session->handle, CNET_SESSION_OPEN);
-    if (status == SALTS_OK) status = cnet_owner_cancel_deadline(impl, &session->connect_deadline);
+    if (status == SALTS_OK) status = cnet_owner_cancel_deadline(impl, &session->session_deadline);
     if (status != SALTS_OK)
       return command != NULL
                  ? cnet_owner_fail_accepted_command(impl, session, command, status,
@@ -2068,7 +2080,7 @@ static int cnet_owner_connect(cnet_owner_impl *impl, cnet_command_view *command)
     status = deadline_queue_schedule(
         &impl->deadlines, cnet_owner_deadline_after(impl, session->peer.connect_timeout_ms),
         CNET_OWNER_SESSION_DEADLINE_TOKEN | (uint64_t)session->handle.slot,
-        &session->connect_deadline);
+        &session->session_deadline);
     if (status != SALTS_OK)
       return cnet_owner_fail_accepted_command(impl, session, command, status,
                                               session->peer.scheme == CNET_URI_TLS
@@ -2117,7 +2129,7 @@ static int cnet_owner_connect(cnet_owner_impl *impl, cnet_command_view *command)
       else {
         status = cnet_session_table_transition(impl->sessions, session->handle, CNET_SESSION_OPEN);
         if (status == SALTS_OK)
-          status = cnet_owner_cancel_deadline(impl, &session->connect_deadline);
+          status = cnet_owner_cancel_deadline(impl, &session->session_deadline);
       }
     }
     if (status != SALTS_OK)
@@ -2289,8 +2301,10 @@ static int cnet_owner_progress_close(cnet_owner_impl *impl, cnet_owner_session *
    * terminal completion/cancellation is routed; no partial resubmission. */
   session->tls_fatal_alert_draining = false;
   session->receive_demand = 0u;
-  status = cnet_owner_cancel_deadline(impl, &session->connect_deadline);
-  if (status != SALTS_OK) return status;
+  if (session->session_deadline_stage != CNET_SESSION_STAGE_SHUTDOWN) {
+    status = cnet_owner_cancel_deadline(impl, &session->session_deadline);
+    if (status != SALTS_OK) return status;
+  }
   status = cnet_owner_queue_state_event(impl, session->handle, CNET_EVENT_STATE_CLOSING, SALTS_OK,
                                         CNET_SESSION_STAGE_NONE);
   if (status != SALTS_OK) return status;
@@ -2415,7 +2429,7 @@ static int cnet_owner_complete(cnet_owner_impl *impl, cnet_owner_request *reques
       }
       status = cnet_session_table_transition(impl->sessions, session->handle, CNET_SESSION_OPEN);
       if (status != SALTS_OK) return status;
-      status = cnet_owner_cancel_deadline(impl, &session->connect_deadline);
+      status = cnet_owner_cancel_deadline(impl, &session->session_deadline);
       if (status != SALTS_OK) return status;
       return cnet_owner_queue_connected_event(impl, session);
     }
@@ -2809,8 +2823,8 @@ static int cnet_owner_process_deadlines(cnet_owner_impl *impl) {
       cnet_owner_session *session;
       if (slot == 0u || slot > impl->connection_capacity) return SALTS_EPROTO;
       session = &impl->session_records[slot - 1u];
-      if (!session->occupied || session->connect_deadline != deadline.id) return SALTS_EPROTO;
-      session->connect_deadline = 0u;
+      if (!session->occupied || session->session_deadline != deadline.id) return SALTS_EPROTO;
+      session->session_deadline = 0u;
       cnet_owner_record_failure(session, SALTS_ETIMEDOUT,
                                 session->session_deadline_stage != CNET_SESSION_STAGE_NONE
                                     ? session->session_deadline_stage
@@ -3986,7 +4000,7 @@ int cnet_owner_release_session(cnet_owner *owner, cnet_session_handle session_ha
   int status;
   if (session == NULL) return SALTS_ENOENT;
   if (session->active_requests != 0u || session->resolve_active ||
-      session->connect_deadline != 0u || cnet_transport_active(&session->transport))
+      session->session_deadline != 0u || cnet_transport_active(&session->transport))
     return SALTS_EBUSY;
   status = cnet_session_table_state(impl->sessions, session_handle, &state);
   if (status != SALTS_ENOENT) return SALTS_EBUSY;
