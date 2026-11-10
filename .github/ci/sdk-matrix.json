@@ -92,7 +92,7 @@
       "rid": "linux-x64-tsan",
       "runner": "ubuntu-24.04",
       "compiler": "clang",
-      "sdk": "linux-clang-x64",
+      "sdk": "linux-clang-x64-tsan",
       "target": "x64",
       "triplet": "x64-linux",
       "preset": "llvm-native-tsan-user",
