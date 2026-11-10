@@ -2034,7 +2034,7 @@ static int original_sctp_public_api_contract(void) {
   uint8_t packet[64] = {0};
   size_t packet_size = 0u;
   int abi_result;
-  if (CNET_SCTP_WIRE_ABI_VERSION != 1u) return 1;
+  _Static_assert(CNET_SCTP_WIRE_ABI_VERSION == 1u, "SCTP wire ABI must remain version 1");
   abi_result = rejected_abi_contract();
   if (abi_result != 0) return abi_result;
   if (cnet_sctp_wire_encode(5000u, 5001u, 0x10203040u, &chunk, 1u,
