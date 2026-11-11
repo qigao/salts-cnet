@@ -844,6 +844,225 @@ cleanup:
   return policy_lifecycle_cleanup(fixture, failure);
 }
 
+enum { POLICY_SHARED_PACKET_COUNT = 3u, POLICY_SHARED_BATCH_CAPACITY = 32u };
+
+typedef struct policy_shared_packets {
+  native_io_backend backend;
+  cnet_packet_endpoint endpoints[POLICY_SHARED_PACKET_COUNT];
+  policy_loopback_probe probes[POLICY_SHARED_PACKET_COUNT];
+  bool corrupt_cancel_terminal;
+} policy_shared_packets;
+
+static int policy_shared_packet_init(policy_shared_packets *fixture, size_t index,
+                                     cnet_packet_protocol protocol, bool secure) {
+  cnet_packet_endpoint_config config = policy_packet_config(protocol);
+  cnet_packet_terminal_config terminal = CNET_PACKET_TERMINAL_CONFIG_INIT;
+  policy_loopback_probe *probe = &fixture->probes[index];
+  probe->protocol = protocol;
+  config.datagram.send_capacity = 8u;
+  config.datagram.request_capacity = 12u;
+  config.observer = (cnet_packet_observer){policy_loopback_admit, policy_loopback_state,
+      policy_loopback_receive, policy_loopback_error, probe};
+  terminal.send_capacity = 4u;
+  terminal.on_send = policy_loopback_terminal;
+  terminal.user = probe;
+  if (secure) {
+    config.kcp.mtu = 1200u;
+    config.security.mode = CNET_KCP_SECURITY_PSK_V1;
+    config.security.pre_shared_key[0] = 0x5au;
+  }
+  return cnet_packet_endpoint_init_external(&fixture->endpoints[index], &config,
+                                             &terminal, &fixture->backend);
+}
+
+static int policy_shared_packet_step(policy_shared_packets *fixture) {
+  native_io_completion batch[POLICY_SHARED_BATCH_CAPACITY];
+  uint32_t wait_ms = 500u;
+  size_t count = 0u;
+  int first_error = SALTS_OK;
+  for (size_t i = 0u; i < POLICY_SHARED_PACKET_COUNT; ++i) {
+    cnet_packet_endpoint *endpoint = &fixture->endpoints[i];
+    size_t events;
+    uint32_t timeout;
+    if (endpoint->impl == NULL) continue;
+    int status = cnet_packet_advance_external(endpoint, 1u, &events);
+    if (status != SALTS_OK && first_error == SALTS_OK) first_error = status;
+    status = cnet_packet_external_timeout(endpoint, wait_ms, &timeout);
+    if (status != SALTS_OK && first_error == SALTS_OK) first_error = status;
+    if (status == SALTS_OK) wait_ms = timeout;
+  }
+
+  const int observed = native_io_backend_observe(&fixture->backend, batch,
+      POLICY_SHARED_BATCH_CAPACITY, wait_ms, &count);
+  if (observed == SALTS_ETIMEDOUT) return first_error;
+  if (observed != SALTS_OK) return first_error == SALTS_OK ? observed : first_error;
+  for (size_t n = 0u; n < count; ++n) {
+    size_t owners = 0u;
+    for (size_t i = 0u; i < POLICY_SHARED_PACKET_COUNT; ++i) {
+      cnet_packet_endpoint *endpoint = &fixture->endpoints[i];
+      bool consumed;
+      size_t events;
+      if (endpoint->impl == NULL) continue;
+      native_io_completion completion = batch[n];
+      const bool corrupt = i == 0u && fixture->corrupt_cancel_terminal &&
+          completion.kind == NATIVE_IO_COMPLETION_CANCELLED && completion.user_data == 0u;
+      if (corrupt) ++completion.user_data;
+      int status = cnet_packet_route_external_completion(endpoint, &completion,
+                                                          &consumed, &events);
+      if (status != SALTS_OK && first_error == SALTS_OK) first_error = status;
+      if (consumed) {
+        ++owners;
+        if (corrupt) fixture->corrupt_cancel_terminal = false;
+        status = cnet_packet_route_external_completion(endpoint, &batch[n],
+                                                        &consumed, &events);
+      }
+      if (first_error == SALTS_OK && (status != SALTS_OK || consumed || events != 0u))
+        first_error = SALTS_EPROTO;
+    }
+    if (owners != 1u && first_error == SALTS_OK) first_error = SALTS_EPROTO;
+  }
+  return first_error;
+}
+
+static int policy_shared_packet_stop(policy_shared_packets *fixture, size_t index) {
+  cnet_packet_endpoint *endpoint = &fixture->endpoints[index];
+  const uint64_t deadline = monotonic_ms() + 5000u;
+  bool stopped = false;
+  int first_error = SALTS_OK;
+  do {
+    int status = cnet_packet_endpoint_stop_external(endpoint, &stopped);
+    if (status != SALTS_OK && status != SALTS_EBUSY && first_error == SALTS_OK)
+      first_error = status;
+    if (stopped) return first_error;
+    status = policy_shared_packet_step(fixture);
+    if (status != SALTS_OK && first_error == SALTS_OK) first_error = status;
+  } while (monotonic_ms() < deadline);
+  return SALTS_ETIMEDOUT;
+}
+
+static int policy_shared_kcp(bool secure) {
+  policy_shared_packets *fixture = calloc(1u, sizeof(*fixture));
+  if (fixture == NULL) return __LINE__;
+  cnet_packet_endpoint *client = &fixture->endpoints[0];
+  cnet_packet_endpoint *server = &fixture->endpoints[1];
+  cnet_packet_endpoint *neighbor = &fixture->endpoints[2];
+  policy_loopback_probe *tx = &fixture->probes[0];
+  policy_loopback_probe *rx = &fixture->probes[1];
+  policy_loopback_probe *udp = &fixture->probes[2];
+  const native_io_backend_config config = {
+      .kind = policy_backend_kind(), .endpoint_capacity = POLICY_SHARED_PACKET_COUNT,
+      .request_capacity = 48u, .completion_batch_capacity = POLICY_SHARED_BATCH_CAPACITY};
+  const uint32_t conversation = secure ? 0u : UINT32_C(0x12345678);
+  const unsigned char data[] = {0x46u, 0x4du, 0x51u};
+  const unsigned char udp_data = 0x55u;
+  cnet_packet_session session, unacked, udp_session;
+  uint16_t port;
+  uint32_t timeout;
+  size_t events;
+  int failure = 0;
+  bool backend_open = false;
+#define SHARED_REQUIRE(expr) do { if (!(expr)) { failure = __LINE__; goto cleanup; } } while (0)
+  SHARED_REQUIRE(native_io_backend_init(&fixture->backend, &config) == SALTS_OK);
+  backend_open = true;
+  SHARED_REQUIRE(policy_shared_packet_init(fixture, 0u, CNET_PACKET_KCP, secure) == SALTS_OK);
+  SHARED_REQUIRE(policy_shared_packet_init(fixture, 1u, CNET_PACKET_KCP, secure) == SALTS_OK);
+  SHARED_REQUIRE(policy_shared_packet_init(fixture, 2u, CNET_PACKET_UDP, false) == SALTS_OK);
+  rx->conversation = conversation;
+
+  SHARED_REQUIRE(cnet_packet_poll(client, 0u, &events) == SALTS_ENOTSUP && events == 0u);
+  SHARED_REQUIRE(cnet_packet_endpoint_stop(client, 0u) == SALTS_ENOTSUP);
+  SHARED_REQUIRE(cnet_packet_advance_external(client, 0u, &events) == SALTS_EINVAL);
+  SHARED_REQUIRE(cnet_packet_external_timeout(client, 500u, &timeout) == SALTS_OK &&
+                 timeout == 500u);
+  SHARED_REQUIRE(cnet_packet_endpoint_port(server, &port) == SALTS_OK && port != 0u);
+  cnet_datagram_peer peer = policy_loopback_peer(port);
+  SHARED_REQUIRE(cnet_packet_session_open(client, &peer, conversation, &session) == SALTS_OK);
+  SHARED_REQUIRE(cnet_packet_external_timeout(client, 500u, &timeout) == SALTS_OK &&
+                 timeout < 500u);
+
+  uint64_t deadline = monotonic_ms() + 5000u;
+  if (secure) {
+    SHARED_REQUIRE(tx->connecting == 1u && tx->opened == 0u);
+    SHARED_REQUIRE(cnet_packet_send_tagged(client, session, data, sizeof(data), 11u) == SALTS_EBUSY);
+    while ((tx->opened == 0u || rx->opened == 0u) && monotonic_ms() < deadline)
+      SHARED_REQUIRE(policy_shared_packet_step(fixture) == SALTS_OK);
+    SHARED_REQUIRE(tx->opened == 1u && rx->opened == 1u);
+  }
+  SHARED_REQUIRE(cnet_packet_send_tagged(client, session, data, sizeof(data), 11u) == SALTS_OK);
+  while (rx->received == 0u && monotonic_ms() < deadline)
+    SHARED_REQUIRE(policy_shared_packet_step(fixture) == SALTS_OK);
+  SHARED_REQUIRE(rx->received == 1u && tx->terminals == 0u);
+  SHARED_REQUIRE(rx->receive_kind == CNET_MESSAGE_BYTES &&
+                 rx->receive_size == sizeof(data) &&
+                 memcmp(rx->receive_data, data, sizeof(data)) == 0);
+  while (tx->terminals == 0u && monotonic_ms() < deadline)
+    SHARED_REQUIRE(policy_shared_packet_step(fixture) == SALTS_OK);
+  SHARED_REQUIRE(tx->terminals == 1u && tx->terminal_status == SALTS_OK &&
+                 tx->terminal_tag == 11u && policy_same_session(tx->terminal_session, session));
+
+  SHARED_REQUIRE(cnet_packet_endpoint_port(neighbor, &port) == SALTS_OK && port != 0u);
+  const cnet_datagram_peer udp_peer = policy_loopback_peer(port);
+  unacked = session;
+  if (!secure)
+    SHARED_REQUIRE(cnet_packet_session_open(client, &udp_peer, conversation, &unacked) == SALTS_OK);
+  SHARED_REQUIRE(cnet_packet_send_tagged(client, unacked, data, sizeof(data), 12u) == SALTS_OK);
+  if (!secure) {
+    /* The UDP neighbor receives actual KCP PUSH packets and sends no ACK.
+     * Host waits follow CNet's deadlines while the one-slot budget rotates. */
+    deadline = monotonic_ms() + 5000u;
+    while (udp->received < 2u && monotonic_ms() < deadline)
+      SHARED_REQUIRE(policy_shared_packet_step(fixture) == SALTS_OK);
+    SHARED_REQUIRE(udp->received == 2u && tx->terminals == 1u);
+    SHARED_REQUIRE(udp->receive_kind == CNET_MESSAGE_DATAGRAM &&
+                   udp->receive_size == 24u + sizeof(data) &&
+                   memcmp(udp->receive_data + 24u, data, sizeof(data)) == 0);
+  }
+
+  SHARED_REQUIRE(cnet_packet_session_open(neighbor, &udp_peer, 0u, &udp_session) == SALTS_OK);
+  const unsigned udp_before = udp->received;
+  SHARED_REQUIRE(cnet_packet_send_tagged(neighbor, udp_session, &udp_data, 1u, 13u) == SALTS_OK);
+  SHARED_REQUIRE(cnet_packet_endpoint_destroy(client) == SALTS_EBUSY);
+  /* A malformed terminal with the right request identity still drains. The
+   * host routes the rest of the batch and stop preserves the first error. */
+  fixture->corrupt_cancel_terminal = !secure;
+  const int stop_status = secure ? SALTS_OK : SALTS_EPROTO;
+  SHARED_REQUIRE(policy_shared_packet_stop(fixture, 0u) == stop_status);
+  SHARED_REQUIRE(!fixture->corrupt_cancel_terminal);
+  bool stopped;
+  SHARED_REQUIRE(cnet_packet_endpoint_stop_external(client, &stopped) == stop_status &&
+                 stopped);
+  SHARED_REQUIRE(tx->terminals == 2u && tx->terminal_status == SALTS_ECANCELED &&
+                 tx->terminal_tag == 12u && policy_same_session(tx->terminal_session, unacked));
+  SHARED_REQUIRE(tx->closed == (secure ? 1u : 2u) && tx->terminals_at_close == 2u);
+  SHARED_REQUIRE(cnet_packet_endpoint_destroy(client) == SALTS_OK);
+
+  deadline = monotonic_ms() + 5000u;
+  while ((udp->terminals == 0u || udp->received == udp_before) && monotonic_ms() < deadline)
+    SHARED_REQUIRE(policy_shared_packet_step(fixture) == SALTS_OK);
+  SHARED_REQUIRE(udp->terminals == 1u && udp->terminal_status == SALTS_OK &&
+                 udp->terminal_tag == 13u && udp->received == udp_before + 1u &&
+                 udp->receive_size == 1u && udp->receive_data[0] == udp_data);
+  SHARED_REQUIRE(tx->errors == 0u && rx->errors == 0u && udp->errors == 0u);
+
+cleanup:
+  for (size_t i = 0u; i < POLICY_SHARED_PACKET_COUNT; ++i) {
+    if (fixture->endpoints[i].impl == NULL) continue;
+    const int stop_status = policy_shared_packet_stop(fixture, i);
+    const int destroy_status = cnet_packet_endpoint_destroy(&fixture->endpoints[i]);
+    if (destroy_status != SALTS_OK) return failure != 0 ? failure : __LINE__;
+    if (stop_status != SALTS_OK && failure == 0) failure = __LINE__;
+  }
+  if (backend_open) {
+    const int close_status = native_io_backend_close(&fixture->backend);
+    const int destroy_status = native_io_backend_destroy(&fixture->backend);
+    if ((close_status != SALTS_OK || destroy_status != SALTS_OK) && failure == 0)
+      failure = __LINE__;
+  }
+  free(fixture);
+#undef SHARED_REQUIRE
+  return failure;
+}
+
 static int select_destination_index(void *user, const cnet_destination_selection *input, size_t *out) {
   (void)input; *out = *(size_t *)user; return SALTS_OK;
 }
@@ -1245,6 +1464,14 @@ spec("CNet native policy and channel admission") {
   it("cancels one unacknowledged KCP tag after real wire retransmission before CLOSED") {
     const int failed = policy_kcp_retransmission_stop();
     check(failed == 0, "KCP retransmission stop: failed source line %d", failed);
+  }
+  it("drives plain KCP timers, retransmission and stop on a borrowed Owner beside UDP") {
+    const int failed = policy_shared_kcp(false);
+    check(failed == 0, "Shared plain KCP: failed source line %d", failed);
+  }
+  it("drives authenticated KCP and UDP through a borrowed Owner") {
+    const int failed = policy_shared_kcp(true);
+    check(failed == 0, "Shared authenticated KCP: failed source line %d", failed);
   }
   it("requires secure KCP handshake READY and authenticated protocol ACK") {
     const int failed = policy_loopback_pair(CNET_PACKET_KCP, true);

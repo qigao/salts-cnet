@@ -2086,6 +2086,17 @@ int cnet_packet_endpoint_init_ex(cnet_packet_endpoint *endpoint,
                                  const cnet_packet_endpoint_config *config,
                                  const cnet_packet_terminal_config *terminal);
 
+/**
+ * Initializes the same UDP/KCP endpoint on a borrowed NativeIO backend.
+ * The host owns observe and routes every observed terminal to its borrower.
+ * config and optional terminal policy match cnet_packet_endpoint_init_ex().
+ * The backend must outlive the endpoint and concurrent wake callers. Failed
+ * initialization leaves the endpoint unpublished and the backend open.
+ */
+int cnet_packet_endpoint_init_external(cnet_packet_endpoint *endpoint,
+    const cnet_packet_endpoint_config *config,
+    const cnet_packet_terminal_config *terminal, native_io_backend *backend);
+
 /** Returns the host-order UDP port shared by all endpoint sessions. */
 int cnet_packet_endpoint_port(const cnet_packet_endpoint *endpoint, uint16_t *out_port);
 
@@ -2120,8 +2131,38 @@ int cnet_packet_send(cnet_packet_endpoint *endpoint, cnet_packet_session session
 int cnet_packet_send_tagged(cnet_packet_endpoint *endpoint, cnet_packet_session session,
                             const void *data, size_t size, uint64_t tag);
 
-/** Drives socket completions and all due KCP timers on the caller-owned lane. */
+/** Drives socket completions and all due KCP timers on the owned backend.
+ * A borrowed endpoint returns SALTS_ENOTSUP. */
 int cnet_packet_poll(cnet_packet_endpoint *endpoint, uint32_t timeout_ms, size_t *out_events);
+
+/**
+ * Advances one borrowed endpoint without observing or waiting. The positive
+ * timer_budget bounds the session slots visited for timer updates. Successive
+ * calls resume at the next slot. Advances deferred UDP work during stop.
+ * out_events counts UDP I/O callbacks, as in cnet_packet_poll(). KCP timers
+ * may publish packet callbacks even when that count is zero.
+ */
+int cnet_packet_advance_external(cnet_packet_endpoint *endpoint,
+                                 size_t timer_budget, size_t *out_events);
+
+/**
+ * After advance, query the maximum wait for the host's next observe. The result
+ * is capped at max_wait_ms. Due timers return zero, including any left by the
+ * advance budget. An idle endpoint without active KCP timers returns the cap.
+ */
+int cnet_packet_external_timeout(const cnet_packet_endpoint *endpoint,
+                                  uint32_t max_wait_ms, uint32_t *out_timeout_ms);
+
+/**
+ * Routes one terminal observed on the endpoint's borrowed backend. Foreign and
+ * duplicate requests return SALTS_OK with consumed=false. A claimed terminal
+ * sets consumed=true even when validation or a packet callback reports an
+ * error. Route the entire observed batch before acting on its first error.
+ * Receive views are borrowed through callback return. out_events counts UDP
+ * I/O callbacks and both outputs are cleared before validation.
+ */
+int cnet_packet_route_external_completion(cnet_packet_endpoint *endpoint,
+    const native_io_completion *completion, bool *out_consumed, size_t *out_events);
 
 /** The only packet endpoint operation allowed concurrently from a non-owner thread. */
 int cnet_packet_wake(cnet_packet_endpoint *endpoint);
@@ -2130,8 +2171,20 @@ int cnet_packet_wake(cnet_packet_endpoint *endpoint);
  * Stops admission, KCP timers and UDP I/O, then drains terminal socket writes.
  * Except for retryable `SALTS_ETIMEDOUT`, an error is returned only after every
  * accepted tagged send has published exactly one terminal callback.
+ * A borrowed endpoint returns SALTS_ENOTSUP.
  */
 int cnet_packet_endpoint_stop(cnet_packet_endpoint *endpoint, uint32_t timeout_ms);
+
+/**
+ * Stops a borrowed endpoint without observing or closing the host backend.
+ * out_stopped becomes true after all UDP and packet terminals and endpoint
+ * cleanup have finished. On SALTS_EBUSY continue host observe/route and retry.
+ * A concrete error is retained and reported independently of out_stopped.
+ * Continue draining and cleanup until out_stopped is true. Repeated calls are
+ * safe. Owned endpoints return SALTS_ENOTSUP. Recursive progress, query, or
+ * stop on an active packet callback returns SALTS_EBUSY.
+ */
+int cnet_packet_endpoint_stop_external(cnet_packet_endpoint *endpoint, bool *out_stopped);
 
 /** Requires completed stop and releases the peer index and all fixed storage. */
 int cnet_packet_endpoint_destroy(cnet_packet_endpoint *endpoint);
