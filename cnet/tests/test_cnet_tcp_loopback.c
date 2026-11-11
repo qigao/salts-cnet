@@ -2462,7 +2462,7 @@ static int saltscore_native_entry_test_cnet_ipc_lifetime(bool pipe_dial, bool ma
                                  &rejected_adoption) == SALTS_ENOBUFS);
     VERIFY(cnet_manager_lookup(&server_manager, rejected_child, &entry) == SALTS_OK);
     VERIFY(entry.state == CNET_MANAGER_RETIRED && !entry.context_held);
-    VERIFY(cnet_manager_advance(&server_manager, 1u, &work) == SALTS_OK);
+    VERIFY(cnet_manager_advance(&server_manager, 2u, &work) == SALTS_OK);
     VERIFY(rejected_adopt.connected == 0u && rejected_adopt.terminal == 0u &&
            rejected_adopt.recycled == 1u);
     VERIFY(cnet_manager_lookup(&server_manager, rejected_child, &entry) == SALTS_ENOENT);
