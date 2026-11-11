@@ -3,6 +3,7 @@
 #include <cnet/websocket_transport.h>
 
 #include "cnet_client_internal.h"
+#include "cnet_ipc_internal.h"
 #include "cnet_resources.h"
 #include "cnet_reuse.h"
 #include "cnet_dispatcher.h"
@@ -74,6 +75,7 @@ typedef struct cnet_client_record {
 
 struct cnet_client_impl {
   const void *owner_thread;
+  native_io_backend *borrowed_backend;
   cnet_resources resources;
   cnet_send_limits send_limits;
   cnet_send_admission_policy send_admission;
@@ -432,6 +434,7 @@ static int cnet_client_init_impl(cnet_client *client,
     return SALTS_ENOMEM;
   }
   impl->owner_thread = sync_thread_current_token();
+  impl->borrowed_backend = borrowed_backend;
   impl->resources = config->resources;
   impl->send_admission = config->send_admission;
   impl->send_limits = config->send_limits;
@@ -1094,37 +1097,53 @@ int cnet_start_tls_server(cnet_client *client, cnet_connection connection,
   return status;
 }
 
+static int cnet_client_adopt_ipc_child(cnet_client_impl *impl, cnet_ipc_child *child,
+                                       const cnet_observer *observer, cnet_connection *out_connection) {
+  cnet_owner_connect_payload payload = {0};
+  bool transferred = false;
+  if (impl == NULL || observer == NULL || observer->on_state == NULL || out_connection == NULL
+#if defined(_WIN32)
+      || child->descriptor.kind != CNET_IPC_RESOURCE_PIPE
+#else
+      || child->descriptor.kind != CNET_IPC_RESOURCE_SOCKET
+#endif
+  ) {
+    (void)cnet_ipc_child_close(child, impl != NULL ? impl->borrowed_backend : NULL);
+    return SALTS_EINVAL;
+  }
+  payload.scheme = CNET_URI_IPC;
+  payload.adopted_socket = child->descriptor.native_handle;
+  payload.adopted_pipe_endpoint = child->attached_pipe;
+  payload.read_timeout_ms = impl->read_timeout_ms;
+  payload.write_timeout_ms = impl->write_timeout_ms;
+  payload.adopted = true;
+  const int status = cnet_client_admit(impl, &payload, CNET_URI_IPC, observer, out_connection, &transferred);
+  if (!transferred) (void)cnet_ipc_child_close(child, impl->borrowed_backend);
+  return status;
+}
+
 int cnet_client_adopt_ipc(cnet_client *client, cnet_ipc_accepted *accepted,
                          const cnet_observer *observer, cnet_connection *out_connection) {
-  cnet_client_impl *impl = cnet_client_get(client);
-  cnet_owner_connect_payload payload = {0};
-  cnet_ipc_accepted owned;
-  bool transferred = false;
-  int status;
   if (out_connection != NULL) *out_connection = (cnet_connection){0};
   if (accepted == NULL || accepted->native_handle == UINTPTR_MAX ||
       (accepted->kind != CNET_IPC_RESOURCE_PIPE && accepted->kind != CNET_IPC_RESOURCE_SOCKET))
     return SALTS_EINVAL;
-  owned = *accepted;
+  cnet_ipc_child child = {.descriptor = *accepted};
   *accepted = (cnet_ipc_accepted){0};
-  if (impl == NULL || observer == NULL || observer->on_state == NULL || out_connection == NULL
-#if defined(_WIN32)
-      || owned.kind != CNET_IPC_RESOURCE_PIPE
-#else
-      || owned.kind != CNET_IPC_RESOURCE_SOCKET
-#endif
-  ) {
-    (void)cnet_ipc_accepted_close(&owned);
-    return SALTS_EINVAL;
-  }
-  payload.scheme = CNET_URI_IPC;
-  payload.adopted_socket = owned.native_handle;
-  payload.read_timeout_ms = impl->read_timeout_ms;
-  payload.write_timeout_ms = impl->write_timeout_ms;
-  payload.adopted = true;
-  status = cnet_client_admit(impl, &payload, CNET_URI_IPC, observer, out_connection, &transferred);
-  if (!transferred) (void)cnet_ipc_accepted_close(&owned);
-  return status;
+  return cnet_client_adopt_ipc_child(cnet_client_get(client), &child, observer, out_connection);
+}
+
+int cnet_client_adopt_ipc_listener(cnet_client *client, cnet_ipc_listener *listener,
+                                   const cnet_observer *observer, cnet_connection *out_connection) {
+  cnet_client_impl *impl = cnet_client_get(client);
+  cnet_ipc_child child;
+  if (out_connection != NULL) *out_connection = (cnet_connection){0};
+  if (impl == NULL || impl->borrowed_backend == NULL || observer == NULL ||
+      observer->on_state == NULL || out_connection == NULL) return SALTS_EINVAL;
+  if (impl->owner_thread != sync_thread_current_token()) return SALTS_EPERM;
+  const int status = cnet_ipc_listener_take_external(listener, impl->borrowed_backend, &child);
+  if (status != SALTS_OK) return status;
+  return cnet_client_adopt_ipc_child(impl, &child, observer, out_connection);
 }
 
 int cnet_client_adopt_tcp(cnet_client *client, uintptr_t native_socket,

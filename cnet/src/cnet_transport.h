@@ -157,6 +157,7 @@ int cnet_transport_ipc_prepare_connect(cnet_transport *transport, native_io_back
                                         native_io_operation *out_operation, bool *out_immediate);
 int cnet_transport_adopt_ipc(cnet_transport *transport, native_io_backend *backend,
                               uintptr_t native_handle);
+cnet_transport cnet_transport_attached_pipe(uintptr_t native_handle, native_io_endpoint endpoint);
 int cnet_transport_close_ipc(uintptr_t native_handle);
 
 native_io_endpoint cnet_transport_read_endpoint(const cnet_transport *transport);

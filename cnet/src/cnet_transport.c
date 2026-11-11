@@ -294,6 +294,13 @@ int cnet_transport_adopt_ipc(cnet_transport *transport, native_io_backend *backe
   return native_io_transport_adopt_ipc(transport, backend, native_handle);
 }
 
+cnet_transport cnet_transport_attached_pipe(uintptr_t native_handle, native_io_endpoint endpoint) {
+  return (cnet_transport){.native_handle = native_handle, .endpoint = endpoint,
+                         .write_native_handle = UINTPTR_MAX,
+                         .resource_kind = NATIVE_IO_TRANSPORT_RESOURCE_PIPE,
+                         .native_open = true, .attached = true};
+}
+
 int cnet_transport_close_ipc(uintptr_t native_handle) {
   return native_io_transport_close_ipc(native_handle);
 }

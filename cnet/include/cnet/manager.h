@@ -124,6 +124,13 @@ int cnet_manager_adopt(cnet_manager *manager, cnet_managed_connection managed,
 int cnet_manager_adopt_ipc(cnet_manager *manager, cnet_managed_connection managed,
                            cnet_ipc_accepted *accepted, cnet_connection *out_connection);
 
+/** Adopt one ready child from an external IPC listener on the manager's
+ * backend. Follows cnet_client_adopt_ipc_listener() for child ownership.
+ * A valid RESERVED attempt retires the reservation on failure.
+ */
+int cnet_manager_adopt_ipc_listener(cnet_manager *manager, cnet_managed_connection managed,
+                                    cnet_ipc_listener *listener, cnet_connection *out_connection);
+
 /** Releases the optional extra context hold once (EALREADY if absent). Does not
  * recycle during a callback; cleanup runs later in advance. Transport/observer
  * borrows still apply when released before terminal.

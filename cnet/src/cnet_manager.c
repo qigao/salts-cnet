@@ -283,6 +283,24 @@ int cnet_manager_adopt_ipc(cnet_manager *manager, cnet_managed_connection id,
   }
   return end_admit(record, status, connection, out);
 }
+
+int cnet_manager_adopt_ipc_listener(cnet_manager *manager, cnet_managed_connection id,
+                                    cnet_ipc_listener *listener, cnet_connection *out) {
+  manager_impl *impl;
+  manager_record *record;
+  cnet_connection connection = {0};
+  if (out != NULL) *out = (cnet_connection){0};
+  int status = begin_admit(manager, id, &impl, &record);
+  if (status != SALTS_OK) return status;
+  if (out == NULL || listener == NULL) status = SALTS_EINVAL;
+  else if (impl->sealed) status = SALTS_ESHUTDOWN;
+  else {
+    const cnet_observer observer = bridge(record);
+    status = cnet_client_adopt_ipc_listener(impl->client, listener, &observer, &connection);
+  }
+  return end_admit(record, status, connection, out);
+}
+
 int cnet_manager_release_context(cnet_manager *manager, cnet_managed_connection id) {
   manager_impl *impl;
   manager_record *record;

@@ -14,6 +14,7 @@
 #include <atomic/atomic.h>
 #include <core/error_codes.h>
 #include <memory/buffer.h>
+#include <native_io_transport.h>
 
 #include <stdint.h>
 #include <stdio.h>
@@ -55,7 +56,6 @@ static bool test_would_block(void) {
 #  include <netinet/tcp.h>
 #  include <sys/socket.h>
 #  include <native_io_socket.h>
-#  include <native_io_transport.h>
 #  include <sys/time.h>
 #  include <sys/resource.h>
 #  include <sys/stat.h>
@@ -2303,7 +2303,67 @@ static int progress_ipc_pair(cnet_ipc_listener *listener, cnet_client *client,
   return status;
 }
 
-#if !defined(_WIN32)
+#if defined(_WIN32)
+typedef HANDLE test_ipc_peer;
+#define TEST_INVALID_IPC_PEER INVALID_HANDLE_VALUE
+
+static test_ipc_peer test_external_ipc_dial(const char *uri) {
+  char *name = NULL;
+  if (native_io_transport_ipc_native_name(uri + sizeof("ipc://") - 1u, &name) != SALTS_OK)
+    return TEST_INVALID_IPC_PEER;
+  test_ipc_peer peer = CreateFileA(name, GENERIC_READ | GENERIC_WRITE, 0u, NULL,
+                                  OPEN_EXISTING, 0u, NULL);
+  free(name);
+  return peer;
+}
+
+static bool test_external_ipc_write(test_ipc_peer peer, const void *data, size_t length) {
+  DWORD count;
+  return WriteFile(peer, data, (DWORD)length, &count, NULL) && count == length;
+}
+
+static bool test_external_ipc_eof(test_ipc_peer peer) {
+  DWORD available;
+  if (PeekNamedPipe(peer, NULL, 0u, NULL, &available, NULL)) return false;
+  const DWORD error = GetLastError();
+  return error == ERROR_BROKEN_PIPE || error == ERROR_PIPE_NOT_CONNECTED;
+}
+
+static void test_external_ipc_close(test_ipc_peer peer) {
+  if (peer != TEST_INVALID_IPC_PEER) (void)CloseHandle(peer);
+}
+#else
+typedef test_socket test_ipc_peer;
+#define TEST_INVALID_IPC_PEER TEST_INVALID_SOCKET
+
+static test_ipc_peer test_external_ipc_dial(const char *uri) {
+  native_io_socket_address address;
+  size_t length;
+  if (native_io_transport_ipc_address(uri + sizeof("ipc://") - 1u, &address,
+                                      sizeof(address), &length) != SALTS_OK)
+    return TEST_INVALID_IPC_PEER;
+  const test_socket peer = socket(AF_UNIX, SOCK_STREAM, 0);
+  if (peer == TEST_INVALID_SOCKET) return TEST_INVALID_IPC_PEER;
+  if (test_recv_timeout(peer) != 0 ||
+      connect(peer, (const struct sockaddr *)&address, (socklen_t)length) != 0) {
+    test_close_socket(peer);
+    return TEST_INVALID_IPC_PEER;
+  }
+  return peer;
+}
+
+static bool test_external_ipc_write(test_ipc_peer peer, const void *data, size_t length) {
+  return send(peer, data, length, 0) == (ssize_t)length;
+}
+
+static bool test_external_ipc_eof(test_ipc_peer peer) {
+  unsigned char unexpected;
+  return recv(peer, &unexpected, sizeof(unexpected), 0) == 0;
+}
+
+static void test_external_ipc_close(test_ipc_peer peer) { test_close_socket(peer); }
+#endif
+
 static int progress_external_ipc_client(cnet_client *client, native_io_backend *backend) {
   native_io_completion completions[4];
   size_t events, count;
@@ -2337,22 +2397,29 @@ static int test_cnet_external_ipc_listener(bool accept_races_stop) {
   cnet_ipc_wait_source source = {0};
   tcp_probe probe = {0};
   const cnet_observer observer = {on_state, on_borrowed, &probe, on_sent};
-  native_io_socket_address address;
-  test_socket peer = TEST_INVALID_SOCKET, racing = TEST_INVALID_SOCKET;
+  test_ipc_peer peer = TEST_INVALID_IPC_PEER, racing = TEST_INVALID_IPC_PEER;
   const unsigned char payload[] = {'i', 'p', 'c'};
-  unsigned char unexpected;
-  size_t count = 0u, address_length = 0u;
+  size_t count = 0u;
   uint64_t deadline;
   bool ready = false, consumed = false, stopped = false, terminal_held = false;
   int result = 0;
   char uri[256];
+#if defined(_WIN32)
+  native_io_backend foreign_backend = {0};
+  cnet_client foreign_client = {0};
+  cnet_manager manager = {0};
+  const cnet_manager_config manager_cfg = {sizeof(manager_cfg), CNET_MANAGER_VERSION, &server, 1u, 1u};
+  const cnet_manager_attachment attachment = {.observer = observer};
+  cnet_managed_connection reserved;
+  const int uri_length = snprintf(uri, sizeof(uri), "ipc://cnet-owner-%lu",
+                                   (unsigned long)GetCurrentProcessId());
+#else
   char *directory = tt_make_temp_dir("cnetipc");
 
   VERIFY(directory != NULL);
   const int uri_length = snprintf(uri, sizeof(uri), "ipc://%s/peer", directory);
+#endif
   VERIFY(uri_length > 0 && (size_t)uri_length < sizeof(uri));
-  VERIFY(native_io_transport_ipc_address(uri + sizeof("ipc://") - 1u, &address,
-                                         sizeof(address), &address_length) == SALTS_OK);
   listener_cfg.uri = uri;
   VERIFY(native_io_backend_init(&backend, &backend_cfg) == SALTS_OK);
   VERIFY(cnet_ipc_listener_init(&listener, &listener_cfg) == SALTS_OK);
@@ -2364,9 +2431,8 @@ static int test_cnet_external_ipc_listener(bool accept_races_stop) {
   VERIFY(request.slot == repeated.slot && request.generation == repeated.generation);
   VERIFY(native_io_backend_observe(&backend, &first, 1u, 0u, &count) == SALTS_ETIMEDOUT);
 
-  peer = socket(AF_UNIX, SOCK_STREAM, 0);
-  VERIFY(peer != TEST_INVALID_SOCKET);
-  VERIFY(connect(peer, (const struct sockaddr *)&address, (socklen_t)address_length) == 0);
+  peer = test_external_ipc_dial(uri);
+  VERIFY(peer != TEST_INVALID_IPC_PEER);
   VERIFY(native_io_backend_observe(&backend, &first, 1u, 1000u, &count) == SALTS_OK && count == 1u);
   terminal = first;
   terminal_held = true;
@@ -2375,19 +2441,36 @@ static int test_cnet_external_ipc_listener(bool accept_races_stop) {
   terminal_held = false;
   VERIFY(cnet_ipc_listener_submit_external_accept(&listener, &repeated) == SALTS_ENOBUFS);
   VERIFY(!native_io_request_valid(repeated));
+  VERIFY(cnet_client_init_external(&server, &server_cfg, &backend) == SALTS_OK);
+#if defined(_WIN32)
+  VERIFY(cnet_ipc_listener_accept_detached(&listener, &accepted) == SALTS_ENOTSUP);
+  VERIFY(accepted.kind == CNET_IPC_RESOURCE_NONE);
+  VERIFY(native_io_backend_init(&foreign_backend, &backend_cfg) == SALTS_OK);
+  VERIFY(cnet_client_init_external(&foreign_client, &server_cfg, &foreign_backend) == SALTS_OK);
+  VERIFY(cnet_client_adopt_ipc_listener(&foreign_client, &listener, &observer, &connection) == SALTS_EINVAL);
+  VERIFY(connection.slot == 0u);
+  VERIFY(cnet_client_stop_external(&foreign_client) == SALTS_OK);
+  VERIFY(cnet_client_destroy(&foreign_client) == SALTS_OK);
+  VERIFY(native_io_backend_close(&foreign_backend) == SALTS_OK);
+  VERIFY(native_io_backend_destroy(&foreign_backend) == SALTS_OK);
+  VERIFY(cnet_manager_init(&manager, &manager_cfg) == SALTS_OK);
+  VERIFY(cnet_manager_reserve(&manager, &attachment, &reserved) == SALTS_OK);
+  VERIFY(cnet_manager_adopt_ipc_listener(&manager, reserved, &listener, &connection) == SALTS_OK);
+  cnet_connection duplicate = {0};
+  VERIFY(cnet_client_adopt_ipc_listener(&server, &listener, &observer, &duplicate) == SALTS_ENOENT);
+#else
   VERIFY(cnet_ipc_listener_accept_detached(&listener, &accepted) == SALTS_OK);
   VERIFY(accepted.kind == CNET_IPC_RESOURCE_SOCKET);
-  VERIFY(cnet_client_init_external(&server, &server_cfg, &backend) == SALTS_OK);
   VERIFY(cnet_client_adopt_ipc(&server, &accepted, &observer, &connection) == SALTS_OK);
   VERIFY(accepted.kind == CNET_IPC_RESOURCE_NONE);
+#endif
   VERIFY(cnet_client_advance_external(&server, &count) == SALTS_OK && probe.connected == 1u);
 
   VERIFY(cnet_ipc_listener_submit_external_accept(&listener, &request) == SALTS_OK);
   VERIFY(cnet_ipc_listener_route_external_completion(&listener, &first, &consumed) == SALTS_OK && !consumed);
   if (accept_races_stop) {
-    racing = socket(AF_UNIX, SOCK_STREAM, 0);
-    VERIFY(racing != TEST_INVALID_SOCKET && test_recv_timeout(racing) == 0);
-    VERIFY(connect(racing, (const struct sockaddr *)&address, (socklen_t)address_length) == 0);
+    racing = test_external_ipc_dial(uri);
+    VERIFY(racing != TEST_INVALID_IPC_PEER);
     VERIFY(native_io_backend_observe(&backend, &terminal, 1u, 1000u, &count) == SALTS_OK && count == 1u);
     terminal_held = true;
     VERIFY(terminal.kind == NATIVE_IO_COMPLETION_OK);
@@ -2405,11 +2488,32 @@ static int test_cnet_external_ipc_listener(bool accept_races_stop) {
   VERIFY(cnet_ipc_listener_route_external_completion(&listener, &terminal, &consumed) == SALTS_OK && !consumed);
   VERIFY(cnet_ipc_listener_stop(&listener, &stopped) == SALTS_OK && stopped);
   VERIFY(cnet_ipc_listener_destroy(&listener) == SALTS_OK);
-  if (accept_races_stop) VERIFY(recv(racing, &unexpected, sizeof(unexpected), 0) == 0);
+  if (accept_races_stop) VERIFY(test_external_ipc_eof(racing));
+
+#if defined(_WIN32)
+  /* Rebind with the original child still open. The completed but unclaimed
+   * new child is retired by stop, and the old completion cannot name it. */
+  test_external_ipc_close(racing);
+  racing = TEST_INVALID_IPC_PEER;
+  VERIFY(cnet_ipc_listener_init(&listener, &listener_cfg) == SALTS_OK);
+  VERIFY(cnet_ipc_listener_attach_external(&listener, &backend) == SALTS_OK);
+  VERIFY(cnet_ipc_listener_submit_external_accept(&listener, &request) == SALTS_OK);
+  VERIFY(cnet_ipc_listener_route_external_completion(&listener, &terminal, &consumed) == SALTS_OK && !consumed);
+  racing = test_external_ipc_dial(uri);
+  VERIFY(racing != TEST_INVALID_IPC_PEER);
+  VERIFY(native_io_backend_observe(&backend, &terminal, 1u, 1000u, &count) == SALTS_OK && count == 1u);
+  terminal_held = true;
+  VERIFY(terminal.kind == NATIVE_IO_COMPLETION_OK);
+  VERIFY(cnet_ipc_listener_route_external_completion(&listener, &terminal, &consumed) == SALTS_OK && consumed);
+  terminal_held = false;
+  VERIFY(cnet_ipc_listener_stop(&listener, &stopped) == SALTS_OK && stopped);
+  VERIFY(cnet_ipc_listener_destroy(&listener) == SALTS_OK);
+  VERIFY(test_external_ipc_eof(racing));
+#endif
 
   /* The first child and its data owner survive the listener shutdown. */
   VERIFY(cnet_receive(&server, connection, sizeof(payload)) == SALTS_OK);
-  VERIFY(send(peer, payload, sizeof(payload), 0) == (ssize_t)sizeof(payload));
+  VERIFY(test_external_ipc_write(peer, payload, sizeof(payload)));
   deadline = monotonic_ms() + 1000u;
   while (probe.borrowed_bytes < sizeof(payload) && monotonic_ms() < deadline)
     VERIFY(progress_external_ipc_client(&server, &backend) == SALTS_OK);
@@ -2419,6 +2523,10 @@ static int test_cnet_external_ipc_listener(bool accept_races_stop) {
   while (probe.terminal == 0u && monotonic_ms() < deadline)
     VERIFY(progress_external_ipc_client(&server, &backend) == SALTS_OK);
   VERIFY(probe.terminal == 1u && probe.failed == 0u);
+#if defined(_WIN32)
+  VERIFY(cnet_manager_advance(&manager, 1u, &count) == SALTS_OK);
+  VERIFY(cnet_manager_destroy(&manager) == SALTS_OK);
+#endif
   VERIFY(cnet_client_stop_external(&server) == SALTS_OK);
   VERIFY(cnet_client_destroy(&server) == SALTS_OK);
   VERIFY(native_io_backend_close(&backend) == SALTS_OK);
@@ -2426,8 +2534,8 @@ static int test_cnet_external_ipc_listener(bool accept_races_stop) {
 
 cleanup:
   if (accepted.kind != CNET_IPC_RESOURCE_NONE) (void)cnet_ipc_accepted_close(&accepted);
-  test_close_socket(racing);
-  test_close_socket(peer);
+  test_external_ipc_close(racing);
+  test_external_ipc_close(peer);
   if (listener.impl != NULL) {
     if (terminal_held)
       (void)cnet_ipc_listener_route_external_completion(&listener, &terminal, &consumed);
@@ -2441,23 +2549,45 @@ cleanup:
     (void)cnet_ipc_listener_destroy(&listener);
   }
   if (server.impl != NULL) {
+#if defined(_WIN32)
+    if (manager.impl != NULL) {
+      (void)cnet_manager_request_close(&manager);
+      (void)cnet_manager_advance(&manager, 1u, &count);
+    }
+#endif
     if (connection.slot != 0u && probe.terminal == 0u) (void)cnet_close(&server, connection);
     deadline = monotonic_ms() + 1000u;
     while (cnet_client_stop_external(&server) == SALTS_EBUSY && monotonic_ms() < deadline)
       (void)progress_external_ipc_client(&server, &backend);
+#if defined(_WIN32)
+    if (manager.impl != NULL) {
+      (void)cnet_manager_advance(&manager, 1u, &count);
+      (void)cnet_manager_destroy(&manager);
+    }
+#endif
     (void)cnet_client_destroy(&server);
   }
   if (backend.impl != NULL) {
     (void)native_io_backend_close(&backend);
     (void)native_io_backend_destroy(&backend);
   }
+#if defined(_WIN32)
+  if (foreign_client.impl != NULL) {
+    (void)cnet_client_stop_external(&foreign_client);
+    (void)cnet_client_destroy(&foreign_client);
+  }
+  if (foreign_backend.impl != NULL) {
+    (void)native_io_backend_close(&foreign_backend);
+    (void)native_io_backend_destroy(&foreign_backend);
+  }
+#else
   if (directory != NULL) {
     (void)tt_remove_tree(directory);
     free(directory);
   }
+#endif
   return result;
 }
-#endif
 
 /* One thread owns the listener and both production clients. IPC is AF_UNIX
  * on POSIX and an overlapped named pipe on Windows. Detachment transfers one
@@ -5642,16 +5772,14 @@ spec("CNet real TCP loopback and retained slice") {
     const int result = saltscore_native_entry_test_cnet_ipc_lifetime(false, true);
     check(result == 0, "managed IPC lifetime returned %d", result);
   }
-#if !defined(_WIN32)
-  it("routes Unix-domain accept and cancellation through one external backend") {
+  it("routes IPC accept and cancellation through one external backend") {
     const int result = test_cnet_external_ipc_listener(false);
     check(result == 0, "external IPC cancellation returned %d", result);
   }
-  it("closes a Unix-domain child whose accept completion raced listener stop") {
+  it("closes an IPC child whose accept completion raced listener stop") {
     const int result = test_cnet_external_ipc_listener(true);
     check(result == 0, "external IPC accept/stop race returned %d", result);
   }
-#endif
   it("rejects TCP-only pipe policy and drains retained native pipe transfer") {
 #if defined(_WIN32)
     const int result = saltscore_native_entry_test_cnet_ipc_lifetime(true, false);
