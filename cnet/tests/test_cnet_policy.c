@@ -640,6 +640,12 @@ cleanup:
   return failure;
 }
 
+enum {
+  POLICY_KCP_WINDOW_MTU = 256u,
+  POLICY_KCP_WIRE_HEADER = 24u,
+  POLICY_KCP_WINDOW_MESSAGES = CNET_KCP_DEFAULT_WINDOW + 1u
+};
+
 /* Keep callback storage alive even if an unexpected stop timeout prevents
  * destruction. All normal paths must stop and destroy every real endpoint. */
 typedef struct policy_packet_lifecycle {
@@ -648,6 +654,9 @@ typedef struct policy_packet_lifecycle {
   cnet_datagram wire_peer;
   uint16_t source_port;
   unsigned pushes, wire_errors;
+  unsigned window_distinct, wire_sends;
+  bool window_seen[POLICY_KCP_WINDOW_MESSAGES];
+  unsigned char first_timestamp[4];
 } policy_packet_lifecycle;
 
 static int policy_lifecycle_init_config(policy_packet_lifecycle *fixture, size_t index,
@@ -964,6 +973,148 @@ static int policy_kcp_retransmission_stop(void) {
   LIFECYCLE_REQUIRE(probe->terminals == 1u && probe->closed == 1u);
 cleanup:
 #undef LIFECYCLE_REQUIRE
+  return policy_lifecycle_cleanup(fixture, failure);
+}
+
+static void policy_kcp_window_wire(void *user, cnet_datagram *datagram,
+                                   const cnet_datagram_peer *peer, const cnet_receive_view *view) {
+  policy_packet_lifecycle *fixture = user;
+  const unsigned char *bytes = view->data;
+  const unsigned char conversation[] = {0x78u, 0x56u, 0x34u, 0x12u};
+  (void)datagram;
+  /* A full-MTU datagram contains one PUSH with a one-segment message. */
+  if (peer->port != fixture->source_port || view->size != POLICY_KCP_WINDOW_MTU ||
+      memcmp(bytes, conversation, sizeof(conversation)) != 0 || bytes[4] != 81u || bytes[5] != 0u ||
+      bytes[20] != POLICY_KCP_WINDOW_MTU - POLICY_KCP_WIRE_HEADER ||
+      bytes[21] != 0u || bytes[22] != 0u || bytes[23] != 0u) {
+    ++fixture->wire_errors;
+    return;
+  }
+  const uint32_t sequence = (uint32_t)bytes[12] | (uint32_t)bytes[13] << 8u |
+                            (uint32_t)bytes[14] << 16u | (uint32_t)bytes[15] << 24u;
+  if (sequence >= POLICY_KCP_WINDOW_MESSAGES || bytes[POLICY_KCP_WIRE_HEADER] != sequence) {
+    ++fixture->wire_errors;
+    return;
+  }
+  if (!fixture->window_seen[sequence]) {
+    fixture->window_seen[sequence] = true;
+    ++fixture->window_distinct;
+    if (sequence == 0u) memcpy(fixture->first_timestamp, bytes + 8u, sizeof(fixture->first_timestamp));
+  }
+}
+
+static void policy_kcp_window_wire_send(void *user, cnet_datagram *datagram,
+                                        const cnet_datagram_peer *peer, size_t size,
+                                        int status, uint64_t tag) {
+  policy_packet_lifecycle *fixture = user;
+  (void)datagram;
+  if (status != SALTS_OK || peer->port != fixture->source_port ||
+      size != POLICY_KCP_WIRE_HEADER || tag != fixture->wire_sends + 1u) {
+    ++fixture->wire_errors;
+    return;
+  }
+  ++fixture->wire_sends;
+}
+
+static int policy_kcp_send_window(void) {
+  policy_packet_lifecycle *fixture = calloc(1u, sizeof(*fixture));
+  if (fixture == NULL) return __LINE__;
+  cnet_packet_endpoint *client = &fixture->endpoints[0];
+  cnet_packet_endpoint *server = &fixture->endpoints[1];
+  cnet_datagram *wire = &fixture->wire_peer;
+  policy_loopback_probe *tx = &fixture->probes[0];
+  policy_loopback_probe *rx = &fixture->probes[1];
+  cnet_packet_endpoint_config config = policy_packet_config(CNET_PACKET_KCP);
+  cnet_datagram_config wire_config = config.datagram;
+  cnet_packet_session stalled, healthy;
+  uint16_t wire_port, server_port;
+  size_t events = 0u;
+  int failure = 0;
+  const uint32_t conversation = UINT32_C(0x12345678);
+  const uint64_t stalled_tag = 201u, healthy_tag = 202u;
+  const unsigned char healthy_data = 0x55u;
+  unsigned char payload[POLICY_KCP_WINDOW_MTU - POLICY_KCP_WIRE_HEADER] = {0};
+  /* WINS advertises more room than the sender's default 128-segment window. */
+  const unsigned char report[POLICY_KCP_WIRE_HEADER] = {
+      0x78, 0x56, 0x34, 0x12, 84u, [6] = POLICY_KCP_WINDOW_MESSAGES};
+#define WINDOW_REQUIRE(expr) do { if (!(expr)) { failure = __LINE__; goto cleanup; } } while (0)
+  config.kcp.mtu = POLICY_KCP_WINDOW_MTU;
+  config.kcp.no_congestion_window = true;
+  config.datagram.send_capacity = POLICY_KCP_WINDOW_MESSAGES + 8u;
+  config.datagram.request_capacity = 2u * config.datagram.send_capacity;
+  config.datagram.completion_batch_capacity = 32u;
+  rx->conversation = conversation;
+  WINDOW_REQUIRE(policy_lifecycle_init_config(fixture, 0u, &config) == SALTS_OK);
+  WINDOW_REQUIRE(policy_lifecycle_init_config(fixture, 1u, &config) == SALTS_OK);
+  WINDOW_REQUIRE(cnet_packet_endpoint_port(client, &fixture->source_port) == SALTS_OK);
+  WINDOW_REQUIRE(cnet_packet_endpoint_port(server, &server_port) == SALTS_OK);
+  wire_config.observer = (cnet_datagram_observer){policy_kcp_window_wire, policy_kcp_window_wire_send,
+                                                  fixture};
+  WINDOW_REQUIRE(cnet_datagram_init(wire, &wire_config) == SALTS_OK);
+  WINDOW_REQUIRE(cnet_datagram_port(wire, &wire_port) == SALTS_OK);
+  WINDOW_REQUIRE(cnet_datagram_receive(wire, 16u * POLICY_KCP_WINDOW_MESSAGES) == SALTS_OK);
+  const cnet_datagram_peer wire_peer = policy_loopback_peer(wire_port);
+  const cnet_datagram_peer server_peer = policy_loopback_peer(server_port);
+  const cnet_datagram_peer sender_peer = policy_loopback_peer(fixture->source_port);
+  WINDOW_REQUIRE(cnet_packet_session_open(client, &wire_peer, conversation, &stalled) == SALTS_OK);
+  WINDOW_REQUIRE(cnet_packet_session_open(client, &server_peer, conversation, &healthy) == SALTS_OK);
+  WINDOW_REQUIRE(cnet_datagram_send(wire, &sender_peer, report, sizeof(report), 1u) == SALTS_OK);
+  uint64_t deadline = monotonic_ms() + 5000u;
+  while (events == 0u && monotonic_ms() < deadline)
+    WINDOW_REQUIRE(cnet_packet_poll(client, 5u, &events) == SALTS_OK);
+  WINDOW_REQUIRE(events != 0u && tx->errors == 0u);
+
+  for (size_t i = 0u; i < CNET_KCP_DEFAULT_WINDOW; ++i) {
+    payload[0] = (unsigned char)i;
+    WINDOW_REQUIRE(cnet_packet_send(client, stalled, payload, sizeof(payload)) == SALTS_OK);
+  }
+  payload[0] = CNET_KCP_DEFAULT_WINDOW;
+  WINDOW_REQUIRE(cnet_packet_send_tagged(client, stalled, payload, sizeof(payload), stalled_tag) ==
+                 SALTS_OK);
+  deadline = monotonic_ms() + 5000u;
+  while (fixture->window_distinct < CNET_KCP_DEFAULT_WINDOW && monotonic_ms() < deadline) {
+    WINDOW_REQUIRE(cnet_packet_poll(client, 0u, &events) == SALTS_OK);
+    WINDOW_REQUIRE(cnet_datagram_poll(wire, 1u, &events) == SALTS_OK);
+    WINDOW_REQUIRE(fixture->wire_errors == 0u);
+  }
+  WINDOW_REQUIRE(fixture->window_distinct == CNET_KCP_DEFAULT_WINDOW &&
+                 !fixture->window_seen[CNET_KCP_DEFAULT_WINDOW] && tx->terminals == 0u);
+
+  WINDOW_REQUIRE(cnet_packet_send_tagged(client, healthy, &healthy_data, 1u, healthy_tag) == SALTS_OK);
+  const uint64_t observe_until = monotonic_ms() + 3u * config.kcp.interval_ms;
+  deadline = monotonic_ms() + 5000u;
+  while ((tx->terminals == 0u || monotonic_ms() < observe_until) && monotonic_ms() < deadline) {
+    WINDOW_REQUIRE(cnet_packet_poll(client, 0u, &events) == SALTS_OK);
+    WINDOW_REQUIRE(cnet_packet_poll(server, 1u, &events) == SALTS_OK);
+    WINDOW_REQUIRE(cnet_datagram_poll(wire, 1u, &events) == SALTS_OK);
+    WINDOW_REQUIRE(fixture->window_distinct == CNET_KCP_DEFAULT_WINDOW && fixture->wire_errors == 0u);
+  }
+  WINDOW_REQUIRE(fixture->window_distinct == CNET_KCP_DEFAULT_WINDOW && fixture->wire_sends == 1u);
+  WINDOW_REQUIRE(rx->received == 1u && rx->receive_size == 1u && rx->receive_data[0] == healthy_data);
+  WINDOW_REQUIRE(tx->terminals == 1u && tx->terminal_status == SALTS_OK &&
+                 tx->terminal_tag == healthy_tag && policy_same_session(tx->terminal_session, healthy));
+
+  /* ACK sequence zero with UNA=1. Exactly one queued segment may advance. */
+  unsigned char ack[POLICY_KCP_WIRE_HEADER] = {
+      0x78, 0x56, 0x34, 0x12, 82u, [6] = POLICY_KCP_WINDOW_MESSAGES, [16] = 1u};
+  memcpy(ack + 8u, fixture->first_timestamp, sizeof(fixture->first_timestamp));
+  WINDOW_REQUIRE(cnet_datagram_send(wire, &sender_peer, ack, sizeof(ack), 2u) == SALTS_OK);
+  deadline = monotonic_ms() + 5000u;
+  while ((!fixture->window_seen[CNET_KCP_DEFAULT_WINDOW] || fixture->wire_sends < 2u) &&
+         monotonic_ms() < deadline) {
+    WINDOW_REQUIRE(cnet_packet_poll(client, 0u, &events) == SALTS_OK);
+    WINDOW_REQUIRE(cnet_datagram_poll(wire, 1u, &events) == SALTS_OK);
+    WINDOW_REQUIRE(fixture->wire_errors == 0u);
+  }
+  WINDOW_REQUIRE(fixture->window_distinct == POLICY_KCP_WINDOW_MESSAGES && fixture->wire_sends == 2u);
+  WINDOW_REQUIRE(tx->terminals == 1u && tx->errors == 0u && rx->errors == 0u && fixture->wire_errors == 0u);
+  WINDOW_REQUIRE(cnet_packet_endpoint_stop(client, 4000u) == SALTS_OK);
+  WINDOW_REQUIRE(tx->terminals == 2u && tx->terminal_status == SALTS_ECANCELED &&
+                 tx->terminal_tag == stalled_tag && tx->terminal_size == sizeof(payload) &&
+                 policy_same_session(tx->terminal_session, stalled));
+  WINDOW_REQUIRE(tx->closed == 2u && tx->terminals_at_close == 2u && tx->errors == 0u);
+cleanup:
+#undef WINDOW_REQUIRE
   return policy_lifecycle_cleanup(fixture, failure);
 }
 
@@ -1599,6 +1750,10 @@ spec("CNet native policy and channel admission") {
   it("cancels one unacknowledged KCP tag after real wire retransmission before CLOSED") {
     const int failed = policy_kcp_retransmission_stop();
     check(failed == 0, "KCP retransmission stop: failed source line %d", failed);
+  }
+  it("fills the 128-segment KCP send window while a neighbor completes") {
+    const int failed = policy_kcp_send_window();
+    check(failed == 0, "KCP send window: failed source line %d", failed);
   }
   it("drives plain KCP timers, retransmission and stop on a borrowed Owner beside UDP") {
     const int failed = policy_shared_kcp(false);
