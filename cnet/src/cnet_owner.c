@@ -896,11 +896,17 @@ static int cnet_owner_release_request(cnet_owner_request *request) {
   return SALTS_OK;
 }
 
-static void cnet_owner_close_adopted(const cnet_owner_connect_payload *payload) {
-  if (payload->scheme == CNET_URI_IPC)
+static void cnet_owner_close_adopted(cnet_owner_impl *impl,
+                                     const cnet_owner_connect_payload *payload) {
+  if (payload->scheme == CNET_URI_IPC && native_io_endpoint_valid(payload->adopted_pipe_endpoint)) {
+    cnet_transport transport = cnet_transport_attached_pipe(payload->adopted_socket,
+                                                           payload->adopted_pipe_endpoint);
+    (void)cnet_transport_close(&transport, &impl->backend);
+  } else if (payload->scheme == CNET_URI_IPC) {
     (void)cnet_transport_close_ipc(payload->adopted_socket);
-  else
+  } else {
     cnet_transport_close_socket(payload->adopted_socket);
+  }
 }
 
 static int cnet_owner_receive_operation_kind(cnet_uri_scheme scheme,
@@ -1027,7 +1033,7 @@ static int cnet_owner_fail_accepted_command(cnet_owner_impl *impl, cnet_owner_se
   int release_status = cnet_command_queue_release(impl->commands, command);
   if (release_status != SALTS_OK) return release_status;
   if (session->peer.adopted) {
-    cnet_owner_close_adopted(&session->peer);
+    cnet_owner_close_adopted(impl, &session->peer);
     session->peer.adopted_socket = UINTPTR_MAX;
     session->peer.adopted = false;
   }
@@ -2034,7 +2040,7 @@ static int cnet_owner_connect(cnet_owner_impl *impl, cnet_command_view *command)
       !tls_valid || !cnet_owner_connect_endpoint_valid(payload, has_adopted, has_address,
                                                        host_present, has_host, pipe_present,
                                                        has_pipe)) {
-    if (payload->adopted) cnet_owner_close_adopted(payload);
+    if (payload->adopted) cnet_owner_close_adopted(impl, payload);
     cnet_tls_context_release(payload->tls_context);
     status = cnet_command_queue_release(impl->commands, command);
     if (status != SALTS_OK) return status;
@@ -2042,21 +2048,21 @@ static int cnet_owner_connect(cnet_owner_impl *impl, cnet_command_view *command)
                                    CNET_SESSION_STAGE_CONNECT);
   }
   if ((size_t)command->connection.slot > impl->connection_capacity) {
-    if (payload->adopted) cnet_owner_close_adopted(payload);
+    if (payload->adopted) cnet_owner_close_adopted(impl, payload);
     cnet_tls_context_release(payload->tls_context);
     (void)cnet_command_queue_release(impl->commands, command);
     return SALTS_ENOBUFS;
   }
   session = &impl->session_records[command->connection.slot - 1u];
   if (session->occupied) {
-    if (payload->adopted) cnet_owner_close_adopted(payload);
+    if (payload->adopted) cnet_owner_close_adopted(impl, payload);
     cnet_tls_context_release(payload->tls_context);
     (void)cnet_command_queue_release(impl->commands, command);
     return SALTS_EPROTO;
   }
   status = cnet_session_table_state(impl->sessions, command->connection, &state);
   if (status != SALTS_OK || state != CNET_SESSION_RESERVED) {
-    if (payload->adopted) cnet_owner_close_adopted(payload);
+    if (payload->adopted) cnet_owner_close_adopted(impl, payload);
     cnet_tls_context_release(payload->tls_context);
     (void)cnet_command_queue_release(impl->commands, command);
     return status != SALTS_OK ? status : SALTS_EPROTO;
@@ -2112,7 +2118,14 @@ static int cnet_owner_connect(cnet_owner_impl *impl, cnet_command_view *command)
           &operation, false, false);
     }
 
-    status = session->peer.scheme == CNET_URI_IPC
+    if (session->peer.scheme == CNET_URI_IPC &&
+        native_io_endpoint_valid(session->peer.adopted_pipe_endpoint)) {
+      session->transport = cnet_transport_attached_pipe(session->peer.adopted_socket,
+                                                        session->peer.adopted_pipe_endpoint);
+      session->peer.adopted_pipe_endpoint = (native_io_endpoint){0};
+      status = SALTS_OK;
+    } else {
+      status = session->peer.scheme == CNET_URI_IPC
                  ? cnet_transport_adopt_ipc(&session->transport, &impl->backend,
                                             session->peer.adopted_socket)
                  : session->peer.scheme == CNET_URI_VSOCK
@@ -2122,6 +2135,7 @@ static int cnet_owner_connect(cnet_owner_impl *impl, cnet_command_view *command)
                  : cnet_transport_adopt_tcp(&session->transport, &impl->backend,
                                             session->peer.adopted_socket,
                                             &session->peer.socket_options);
+    }
     session->peer.adopted_socket = UINTPTR_MAX;
     session->peer.adopted = false;
     if (status == SALTS_OK) {

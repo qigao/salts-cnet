@@ -23,7 +23,11 @@ typedef struct cnet_owner_connect_payload {
   size_t address_length;
   unsigned char address[CNET_OWNER_ADDRESS_CAPACITY];
   size_t local_address_length;
-  unsigned char local_address[CNET_OWNER_ADDRESS_CAPACITY];
+  union {
+    unsigned char local_address[CNET_OWNER_ADDRESS_CAPACITY];
+    /* Adopted IPC has no outbound bind address. */
+    native_io_endpoint adopted_pipe_endpoint;
+  };
   char host[CNET_RESOLVER_HOST_CAPACITY];
   uint16_t port;
   char pipe_name[CNET_URI_PATH_CAPACITY];

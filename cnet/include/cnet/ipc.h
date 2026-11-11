@@ -57,7 +57,8 @@ typedef struct cnet_ipc_wait_source {
  * cleanup belongs to the caller even after bind succeeds but later init fails.
  * Capacities are positive; accept_capacity <= child_capacity and <=255 on
  * Windows. Pending + completed-undetached children never exceed child_capacity.
- * Backend kind must be supported; only the final data owner attaches children.
+ * Backend kind must be supported. Detached children attach on their final data
+ * owner. Windows external children keep the attachment used for acceptance.
  * All config input is consumed before return. Init submits no Windows accepts:
  * call advance before waiting. Failure leaves a zero wrapper unchanged.
  * Returns SALTS_OK, SALTS_EINVAL, SALTS_EALREADY, SALTS_ENOTSUP, SALTS_ERANGE,
@@ -65,10 +66,10 @@ typedef struct cnet_ipc_wait_source {
  */
 int cnet_ipc_listener_init(cnet_ipc_listener *listener, const cnet_ipc_listener_config *config);
 
-/** Attach a POSIX listener to a matching epoll or kqueue backend on the
+/** Attach a listener to a matching IOCP, epoll or kqueue backend on the
  * calling owner. The backend is borrowed through completed stop. Unregister
- * any borrowed wait source before attaching. Windows returns ENOTSUP.
- * An attached listener uses submit/route for accept progress.
+ * any borrowed wait source before attaching. On Windows attach before
+ * standalone progress submits accepts. An attached listener uses submit/route.
  */
 int cnet_ipc_listener_attach_external(cnet_ipc_listener *listener,
                                       native_io_backend *borrowed_backend);
@@ -82,7 +83,7 @@ int cnet_ipc_listener_submit_external_accept(cnet_ipc_listener *listener,
 
 /** Route a real completion from the borrowed backend. Only the active request
  * and endpoint generations match. A matching success transfers the child
- * into the detached queue, or closes it if stop has begun. A matching terminal
+ * into the ready queue, or closes it if stop has begun. A matching terminal
  * consumes the request once. Foreign and stale requests leave out_consumed
  * false. The embedding owner is responsible for observing the backend.
  */
@@ -101,6 +102,8 @@ int cnet_ipc_listener_advance(cnet_ipc_listener *listener, size_t max_events, si
 /** Moves one completed child to an empty output; ENOENT when none is ready,
  * EALREADY for a live output, ESHUTDOWN after stop. No pending native request or
  * accept callback borrow crosses this boundary. Call advance to replenish accepts.
+ * A Windows external listener uses cnet_client_adopt_ipc_listener() and returns
+ * ENOTSUP here because its ready children carry live IOCP attachments.
  */
 int cnet_ipc_listener_accept_detached(cnet_ipc_listener *listener, cnet_ipc_accepted *out_accepted);
 
@@ -136,6 +139,15 @@ int cnet_ipc_accepted_close(cnet_ipc_accepted *accepted);
  */
 int cnet_client_adopt_ipc(cnet_client *client, cnet_ipc_accepted *accepted,
                           const cnet_observer *observer, cnet_connection *out_connection);
+
+/** Adopt the oldest ready child of an external listener. The client and
+ * listener must borrow the same backend. Invalid arguments or a backend
+ * mismatch leave the child queued. After take, admission consumes the child
+ * even on failure. Windows keeps the accept's IOCP endpoint for data I/O.
+ * An empty listener returns ENOENT. The client may outlive the listener.
+ */
+int cnet_client_adopt_ipc_listener(cnet_client *client, cnet_ipc_listener *listener,
+                                   const cnet_observer *observer, cnet_connection *out_connection);
 
 #ifdef __cplusplus
 }
