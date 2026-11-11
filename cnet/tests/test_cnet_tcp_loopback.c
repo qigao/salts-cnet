@@ -54,6 +54,8 @@ static bool test_would_block(void) {
 #  include <netinet/in.h>
 #  include <netinet/tcp.h>
 #  include <sys/socket.h>
+#  include <native_io_socket.h>
+#  include <native_io_transport.h>
 #  include <sys/time.h>
 #  include <sys/resource.h>
 #  include <sys/stat.h>
@@ -2300,6 +2302,162 @@ static int progress_ipc_pair(cnet_ipc_listener *listener, cnet_client *client,
   if (status == SALTS_OK) status = cnet_client_poll(server, 1u, &events);
   return status;
 }
+
+#if !defined(_WIN32)
+static int progress_external_ipc_client(cnet_client *client, native_io_backend *backend) {
+  native_io_completion completions[4];
+  size_t events, count;
+  int status = cnet_client_advance_external(client, &events);
+  if (status != SALTS_OK) return status;
+  status = native_io_backend_observe(backend, completions, 4u, 10u, &count);
+  if (status == SALTS_ETIMEDOUT) return SALTS_OK;
+  if (status != SALTS_OK) return status;
+  for (size_t i = 0u; i < count; ++i) {
+    bool consumed;
+    status = cnet_client_route_external_completion(client, &completions[i], &consumed, &events);
+    if (status != SALTS_OK) return status;
+    if (!consumed) return SALTS_EPROTO;
+  }
+  return SALTS_OK;
+}
+
+static int test_cnet_external_ipc_listener(bool accept_races_stop) {
+  native_io_backend backend = {0};
+  const native_io_backend_config backend_cfg = {backend_kind(), 8u, 16u, 4u};
+  cnet_ipc_listener listener = {0};
+  cnet_ipc_listener_config listener_cfg = {
+      sizeof(cnet_ipc_listener_config), CNET_IPC_VERSION, backend_kind(), NULL,
+      1u, 1u, 256u, 256u};
+  cnet_client server = {0};
+  cnet_client_config server_cfg = client_config();
+  cnet_connection connection = {0};
+  cnet_ipc_accepted accepted = {0};
+  native_io_request request = {0}, repeated = {0};
+  native_io_completion first = {0}, terminal = {0};
+  cnet_ipc_wait_source source = {0};
+  tcp_probe probe = {0};
+  const cnet_observer observer = {on_state, on_borrowed, &probe, on_sent};
+  native_io_socket_address address;
+  test_socket peer = TEST_INVALID_SOCKET, racing = TEST_INVALID_SOCKET;
+  const unsigned char payload[] = {'i', 'p', 'c'};
+  unsigned char unexpected;
+  size_t count = 0u, address_length = 0u;
+  uint64_t deadline;
+  bool ready = false, consumed = false, stopped = false, terminal_held = false;
+  int result = 0;
+  char uri[256];
+  char *directory = tt_make_temp_dir("cnetipc");
+
+  VERIFY(directory != NULL);
+  const int uri_length = snprintf(uri, sizeof(uri), "ipc://%s/peer", directory);
+  VERIFY(uri_length > 0 && (size_t)uri_length < sizeof(uri));
+  VERIFY(native_io_transport_ipc_address(uri + sizeof("ipc://") - 1u, &address,
+                                         sizeof(address), &address_length) == SALTS_OK);
+  listener_cfg.uri = uri;
+  VERIFY(native_io_backend_init(&backend, &backend_cfg) == SALTS_OK);
+  VERIFY(cnet_ipc_listener_init(&listener, &listener_cfg) == SALTS_OK);
+  VERIFY(cnet_ipc_listener_attach_external(&listener, &backend) == SALTS_OK);
+  VERIFY(cnet_ipc_listener_advance(&listener, 1u, &count) == SALTS_ENOTSUP && count == 0u);
+  VERIFY(cnet_ipc_listener_wait_sources(&listener, &source, 1u, &count, &ready) == SALTS_ENOTSUP);
+  VERIFY(cnet_ipc_listener_submit_external_accept(&listener, &request) == SALTS_OK);
+  VERIFY(cnet_ipc_listener_submit_external_accept(&listener, &repeated) == SALTS_OK);
+  VERIFY(request.slot == repeated.slot && request.generation == repeated.generation);
+  VERIFY(native_io_backend_observe(&backend, &first, 1u, 0u, &count) == SALTS_ETIMEDOUT);
+
+  peer = socket(AF_UNIX, SOCK_STREAM, 0);
+  VERIFY(peer != TEST_INVALID_SOCKET);
+  VERIFY(connect(peer, (const struct sockaddr *)&address, (socklen_t)address_length) == 0);
+  VERIFY(native_io_backend_observe(&backend, &first, 1u, 1000u, &count) == SALTS_OK && count == 1u);
+  terminal = first;
+  terminal_held = true;
+  VERIFY(first.kind == NATIVE_IO_COMPLETION_OK);
+  VERIFY(cnet_ipc_listener_route_external_completion(&listener, &first, &consumed) == SALTS_OK && consumed);
+  terminal_held = false;
+  VERIFY(cnet_ipc_listener_submit_external_accept(&listener, &repeated) == SALTS_ENOBUFS);
+  VERIFY(!native_io_request_valid(repeated));
+  VERIFY(cnet_ipc_listener_accept_detached(&listener, &accepted) == SALTS_OK);
+  VERIFY(accepted.kind == CNET_IPC_RESOURCE_SOCKET);
+  VERIFY(cnet_client_init_external(&server, &server_cfg, &backend) == SALTS_OK);
+  VERIFY(cnet_client_adopt_ipc(&server, &accepted, &observer, &connection) == SALTS_OK);
+  VERIFY(accepted.kind == CNET_IPC_RESOURCE_NONE);
+  VERIFY(cnet_client_advance_external(&server, &count) == SALTS_OK && probe.connected == 1u);
+
+  VERIFY(cnet_ipc_listener_submit_external_accept(&listener, &request) == SALTS_OK);
+  VERIFY(cnet_ipc_listener_route_external_completion(&listener, &first, &consumed) == SALTS_OK && !consumed);
+  if (accept_races_stop) {
+    racing = socket(AF_UNIX, SOCK_STREAM, 0);
+    VERIFY(racing != TEST_INVALID_SOCKET && test_recv_timeout(racing) == 0);
+    VERIFY(connect(racing, (const struct sockaddr *)&address, (socklen_t)address_length) == 0);
+    VERIFY(native_io_backend_observe(&backend, &terminal, 1u, 1000u, &count) == SALTS_OK && count == 1u);
+    terminal_held = true;
+    VERIFY(terminal.kind == NATIVE_IO_COMPLETION_OK);
+  }
+  VERIFY(cnet_ipc_listener_stop(&listener, &stopped) == SALTS_EBUSY && !stopped);
+  VERIFY(cnet_ipc_listener_destroy(&listener) == SALTS_EBUSY);
+  VERIFY(cnet_ipc_listener_submit_external_accept(&listener, &repeated) == SALTS_ESHUTDOWN);
+  if (!terminal_held) {
+    VERIFY(native_io_backend_observe(&backend, &terminal, 1u, 1000u, &count) == SALTS_OK && count == 1u);
+    terminal_held = true;
+    VERIFY(terminal.kind == NATIVE_IO_COMPLETION_CANCELLED);
+  }
+  VERIFY(cnet_ipc_listener_route_external_completion(&listener, &terminal, &consumed) == SALTS_OK && consumed);
+  terminal_held = false;
+  VERIFY(cnet_ipc_listener_route_external_completion(&listener, &terminal, &consumed) == SALTS_OK && !consumed);
+  VERIFY(cnet_ipc_listener_stop(&listener, &stopped) == SALTS_OK && stopped);
+  VERIFY(cnet_ipc_listener_destroy(&listener) == SALTS_OK);
+  if (accept_races_stop) VERIFY(recv(racing, &unexpected, sizeof(unexpected), 0) == 0);
+
+  /* The first child and its data owner survive the listener shutdown. */
+  VERIFY(cnet_receive(&server, connection, sizeof(payload)) == SALTS_OK);
+  VERIFY(send(peer, payload, sizeof(payload), 0) == (ssize_t)sizeof(payload));
+  deadline = monotonic_ms() + 1000u;
+  while (probe.borrowed_bytes < sizeof(payload) && monotonic_ms() < deadline)
+    VERIFY(progress_external_ipc_client(&server, &backend) == SALTS_OK);
+  VERIFY(probe.borrowed_bytes == sizeof(payload) && memcmp(probe.borrowed_data, payload, sizeof(payload)) == 0);
+  VERIFY(cnet_close(&server, connection) == SALTS_OK);
+  deadline = monotonic_ms() + 1000u;
+  while (probe.terminal == 0u && monotonic_ms() < deadline)
+    VERIFY(progress_external_ipc_client(&server, &backend) == SALTS_OK);
+  VERIFY(probe.terminal == 1u && probe.failed == 0u);
+  VERIFY(cnet_client_stop_external(&server) == SALTS_OK);
+  VERIFY(cnet_client_destroy(&server) == SALTS_OK);
+  VERIFY(native_io_backend_close(&backend) == SALTS_OK);
+  VERIFY(native_io_backend_destroy(&backend) == SALTS_OK);
+
+cleanup:
+  if (accepted.kind != CNET_IPC_RESOURCE_NONE) (void)cnet_ipc_accepted_close(&accepted);
+  test_close_socket(racing);
+  test_close_socket(peer);
+  if (listener.impl != NULL) {
+    if (terminal_held)
+      (void)cnet_ipc_listener_route_external_completion(&listener, &terminal, &consumed);
+    deadline = monotonic_ms() + 1000u;
+    while (cnet_ipc_listener_stop(&listener, &stopped) == SALTS_EBUSY && monotonic_ms() < deadline) {
+      if (native_io_backend_observe(&backend, &terminal, 1u, 10u, &count) != SALTS_OK) continue;
+      (void)cnet_ipc_listener_route_external_completion(&listener, &terminal, &consumed);
+      if (!consumed && server.impl != NULL)
+        (void)cnet_client_route_external_completion(&server, &terminal, &consumed, &count);
+    }
+    (void)cnet_ipc_listener_destroy(&listener);
+  }
+  if (server.impl != NULL) {
+    if (connection.slot != 0u && probe.terminal == 0u) (void)cnet_close(&server, connection);
+    deadline = monotonic_ms() + 1000u;
+    while (cnet_client_stop_external(&server) == SALTS_EBUSY && monotonic_ms() < deadline)
+      (void)progress_external_ipc_client(&server, &backend);
+    (void)cnet_client_destroy(&server);
+  }
+  if (backend.impl != NULL) {
+    (void)native_io_backend_close(&backend);
+    (void)native_io_backend_destroy(&backend);
+  }
+  if (directory != NULL) {
+    (void)tt_remove_tree(directory);
+    free(directory);
+  }
+  return result;
+}
+#endif
 
 /* One thread owns the listener and both production clients. IPC is AF_UNIX
  * on POSIX and an overlapped named pipe on Windows. Detachment transfers one
@@ -5484,6 +5642,16 @@ spec("CNet real TCP loopback and retained slice") {
     const int result = saltscore_native_entry_test_cnet_ipc_lifetime(false, true);
     check(result == 0, "managed IPC lifetime returned %d", result);
   }
+#if !defined(_WIN32)
+  it("routes Unix-domain accept and cancellation through one external backend") {
+    const int result = test_cnet_external_ipc_listener(false);
+    check(result == 0, "external IPC cancellation returned %d", result);
+  }
+  it("closes a Unix-domain child whose accept completion raced listener stop") {
+    const int result = test_cnet_external_ipc_listener(true);
+    check(result == 0, "external IPC accept/stop race returned %d", result);
+  }
+#endif
   it("rejects TCP-only pipe policy and drains retained native pipe transfer") {
 #if defined(_WIN32)
     const int result = saltscore_native_entry_test_cnet_ipc_lifetime(true, false);

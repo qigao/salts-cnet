@@ -3,6 +3,7 @@
 #include "cnet_uri.h"
 #include <cnet/ipc.h>
 #include <limits.h>
+#include <native_io_accept.h>
 #include <native_ipc.h>
 #include <stdlib.h>
 #include <string.h>
@@ -79,6 +80,11 @@ typedef struct cnet_ipc_listener_impl {
   uintptr_t *wait_handles;
 #else
   uintptr_t socket_value;
+  native_io_backend_kind backend_kind;
+  native_io_backend *external_backend;
+  native_io_endpoint external_endpoint;
+  native_io_request external_request;
+  bool external_cancel_requested;
 #endif
 } cnet_ipc_listener_impl;
 
@@ -129,6 +135,15 @@ static int cnet_ipc_nonblocking(uintptr_t socket_value) {
   if (result.status == SALTS_OK) result = native_io_socket_close_on_exec(socket_value);
   return cnet_ipc_socket_status(result);
 }
+
+static int cnet_ipc_publish_socket(cnet_ipc_listener_impl *impl, uintptr_t descriptor) {
+  cnet_ipc_accepted accepted = {descriptor, CNET_IPC_RESOURCE_SOCKET};
+  if (impl->stopping) return cnet_ipc_accepted_close(&accepted);
+  int status = cnet_ipc_nonblocking(descriptor);
+  if (status == SALTS_OK) status = cnet_ipc_queue_push(&impl->ready, &accepted);
+  if (status != SALTS_OK) (void)cnet_ipc_accepted_close(&accepted);
+  return status;
+}
 #endif
 
 int cnet_ipc_listener_init(cnet_ipc_listener *listener, const cnet_ipc_listener_config *config) {
@@ -165,6 +180,7 @@ int cnet_ipc_listener_init(cnet_ipc_listener *listener, const cnet_ipc_listener_
   }
 #if !defined(_WIN32)
   impl->socket_value = UINTPTR_MAX;
+  impl->backend_kind = config->backend;
 #endif
   impl->accept_capacity = config->accept_capacity;
   impl->child_capacity = config->child_capacity;
@@ -223,12 +239,99 @@ fail:
   return status;
 }
 
+int cnet_ipc_listener_attach_external(cnet_ipc_listener *listener,
+                                      native_io_backend *borrowed_backend) {
+  cnet_ipc_listener_impl *impl = listener != NULL ? listener->impl : NULL;
+  if (impl == NULL || borrowed_backend == NULL || borrowed_backend->impl == NULL)
+    return SALTS_EINVAL;
+  if (impl->stopping) return SALTS_ESHUTDOWN;
+#if defined(_WIN32)
+  return SALTS_ENOTSUP;
+#else
+  native_io_backend_config config;
+  int status;
+  if (impl->advancing) return SALTS_EBUSY;
+  if (impl->external_backend != NULL)
+    return impl->external_backend == borrowed_backend ? SALTS_EALREADY : SALTS_EBUSY;
+  if (impl->backend_kind != NATIVE_IO_BACKEND_EPOLL &&
+      impl->backend_kind != NATIVE_IO_BACKEND_KQUEUE) return SALTS_ENOTSUP;
+  if (!native_io_backend_get_config(borrowed_backend, &config) ||
+      config.kind != impl->backend_kind) return SALTS_EINVAL;
+  status = native_io_backend_attach_socket(borrowed_backend, impl->socket_value,
+                                           &impl->external_endpoint);
+  if (status == SALTS_OK) impl->external_backend = borrowed_backend;
+  return status;
+#endif
+}
+
+int cnet_ipc_listener_submit_external_accept(cnet_ipc_listener *listener,
+                                             native_io_request *out_request) {
+  cnet_ipc_listener_impl *impl = listener != NULL ? listener->impl : NULL;
+  if (out_request == NULL) return SALTS_EINVAL;
+  *out_request = (native_io_request){0};
+  if (impl == NULL) return SALTS_EINVAL;
+  if (impl->stopping) return SALTS_ESHUTDOWN;
+#if defined(_WIN32)
+  return SALTS_ENOTSUP;
+#else
+  if (impl->external_backend == NULL) return SALTS_ENOTSUP;
+  if (native_io_request_valid(impl->external_request)) {
+    *out_request = impl->external_request;
+    return SALTS_OK;
+  }
+  if (cnet_ipc_queue_size(&impl->ready) == impl->child_capacity) return SALTS_ENOBUFS;
+  const int status = native_io_internal_submit_stream_accept(
+      impl->external_backend, impl->external_endpoint, out_request);
+  if (status == SALTS_OK) impl->external_request = *out_request;
+  return status;
+#endif
+}
+
+int cnet_ipc_listener_route_external_completion(cnet_ipc_listener *listener,
+                                                 const native_io_completion *completion,
+                                                 bool *out_consumed) {
+  cnet_ipc_listener_impl *impl = listener != NULL ? listener->impl : NULL;
+  if (out_consumed == NULL) return SALTS_EINVAL;
+  *out_consumed = false;
+  if (impl == NULL || completion == NULL) return SALTS_EINVAL;
+#if defined(_WIN32)
+  return SALTS_OK;
+#else
+  int status = SALTS_OK;
+  if (!native_io_request_valid(impl->external_request) ||
+      completion->request.slot != impl->external_request.slot ||
+      completion->request.generation != impl->external_request.generation)
+    return SALTS_OK;
+  if (completion->endpoint.slot != impl->external_endpoint.slot ||
+      completion->endpoint.generation != impl->external_endpoint.generation)
+    return SALTS_EPROTO;
+
+  *out_consumed = true;
+  impl->external_request = (native_io_request){0};
+  impl->external_cancel_requested = false;
+  if (completion->kind == NATIVE_IO_COMPLETION_OK && completion->status == SALTS_OK) {
+    uintptr_t descriptor;
+    status = native_io_internal_take_stream_accept(impl->external_backend,
+                                                    completion->request, &descriptor);
+    if (status == SALTS_OK) status = cnet_ipc_publish_socket(impl, descriptor);
+  } else if (!(impl->stopping && (completion->kind == NATIVE_IO_COMPLETION_CANCELLED ||
+                                 completion->status == SALTS_ECANCELED))) {
+    status = completion->status == SALTS_OK ? SALTS_EIO : completion->status;
+  }
+  if (impl->stopping && impl->stop_status == SALTS_OK) impl->stop_status = status;
+  return status;
+#endif
+}
+
 int cnet_ipc_listener_advance(cnet_ipc_listener *listener, size_t max_events, size_t *out_events) {
   cnet_ipc_listener_impl *impl = listener != NULL ? listener->impl : NULL;
   int status = SALTS_OK;
   if (out_events != NULL) *out_events = 0u;
   if (impl == NULL || out_events == NULL || max_events == 0u) return SALTS_EINVAL;
   if (impl->advancing) return SALTS_EBUSY;
+#if !defined(_WIN32)
+  if (impl->external_backend != NULL) return SALTS_ENOTSUP;
+#endif
   if (impl->stopped) return SALTS_OK;
   impl->advancing = true;
   impl->progress_status = SALTS_OK;
@@ -255,19 +358,13 @@ int cnet_ipc_listener_advance(cnet_ipc_listener *listener, size_t max_events, si
          cnet_ipc_queue_size(&impl->ready) < impl->child_capacity) {
     uintptr_t descriptor;
     native_io_socket_result result = native_io_socket_accept(impl->socket_value, &descriptor, NULL, 0, NULL);
-    cnet_ipc_accepted accepted;
     if (result.status != SALTS_OK) {
       status = result.status == SALTS_ETIMEDOUT || result.status == SALTS_EINTR ?
           SALTS_OK : cnet_ipc_socket_status(result);
       break;
     }
-    accepted = (cnet_ipc_accepted){(uintptr_t)descriptor, CNET_IPC_RESOURCE_SOCKET};
-    status = cnet_ipc_nonblocking(descriptor);
-    if (status == SALTS_OK) status = cnet_ipc_queue_push(&impl->ready, &accepted);
-    if (status != SALTS_OK) {
-      (void)cnet_ipc_accepted_close(&accepted);
-      break;
-    }
+    status = cnet_ipc_publish_socket(impl, descriptor);
+    if (status != SALTS_OK) break;
     ++*out_events;
   }
 #endif
@@ -306,6 +403,7 @@ int cnet_ipc_listener_wait_sources(const cnet_ipc_listener *listener,
     if (status != SALTS_OK) return status;
   }
 #else
+  if (impl->external_backend != NULL) return SALTS_ENOTSUP;
   if (!impl->stopping && cnet_ipc_queue_size(&impl->ready) < impl->child_capacity) count = 1u;
 #endif
   *out_ready = *out_ready || !cnet_ipc_queue_empty(&impl->ready);
@@ -344,10 +442,24 @@ int cnet_ipc_listener_stop(cnet_ipc_listener *listener, bool *out_stopped) {
     impl->stopped = ipc_pipe_server_is_quiescent(&impl->server);
   }
 #else
+  if (native_io_request_valid(impl->external_request)) {
+    if (!impl->external_cancel_requested) {
+      status = native_io_backend_cancel(impl->external_backend, impl->external_request);
+      if (status != SALTS_OK && status != SALTS_EALREADY && status != SALTS_ENOENT)
+        return status;
+      impl->external_cancel_requested = true;
+    }
+    return impl->stop_status == SALTS_OK ? SALTS_EBUSY : impl->stop_status;
+  }
   if (impl->socket_value != UINTPTR_MAX) {
     status = cnet_ipc_socket_status(native_io_socket_close(impl->socket_value));
     impl->socket_value = UINTPTR_MAX;
     if (status != SALTS_OK && impl->stop_status == SALTS_OK) impl->stop_status = status;
+  }
+  if (impl->external_backend != NULL) {
+    status = native_io_backend_release_socket(impl->external_backend, impl->external_endpoint);
+    if (status != SALTS_OK) return status;
+    impl->external_backend = NULL;
   }
   impl->stopped = true;
 #endif

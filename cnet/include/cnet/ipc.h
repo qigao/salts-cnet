@@ -65,10 +65,36 @@ typedef struct cnet_ipc_wait_source {
  */
 int cnet_ipc_listener_init(cnet_ipc_listener *listener, const cnet_ipc_listener_config *config);
 
+/** Attach a POSIX listener to a matching epoll or kqueue backend on the
+ * calling owner. The backend is borrowed through completed stop. Unregister
+ * any borrowed wait source before attaching. Windows returns ENOTSUP.
+ * An attached listener uses submit/route for accept progress.
+ */
+int cnet_ipc_listener_attach_external(cnet_ipc_listener *listener,
+                                      native_io_backend *borrowed_backend);
+
+/** Submit one accept to the borrowed backend. Repeated submission returns
+ * the active request. A full detached queue returns ENOBUFS before admission.
+ * Stop seals admission with ESHUTDOWN. Failure clears out_request.
+ */
+int cnet_ipc_listener_submit_external_accept(cnet_ipc_listener *listener,
+                                             native_io_request *out_request);
+
+/** Route a real completion from the borrowed backend. Only the active request
+ * and endpoint generations match. A matching success transfers the child
+ * into the detached queue, or closes it if stop has begun. A matching terminal
+ * consumes the request once. Foreign and stale requests leave out_consumed
+ * false. The embedding owner is responsible for observing the backend.
+ */
+int cnet_ipc_listener_route_external_completion(cnet_ipc_listener *listener,
+                                                 const native_io_completion *completion,
+                                                 bool *out_consumed);
+
 /** Observes at most max_events terminal accepts (positive), never waits; on
  * Windows also submits at most max_events replacements. out_events reports
  * observed terminals and is required. Continues cancellation drain during stop; returns first progress
  * error without discarding other observed terminals. Recursive use is EBUSY.
+ * Returns ENOTSUP while the listener is attached to an external backend.
  */
 int cnet_ipc_listener_advance(cnet_ipc_listener *listener, size_t max_events, size_t *out_events);
 
@@ -84,15 +110,17 @@ int cnet_ipc_listener_accept_detached(cnet_ipc_listener *listener, cnet_ipc_acce
  * Zero-capacity NULL output queries required count; ENOBUFS writes no partial
  * array. Refresh after every mutation; unregister before advance/stop/destroy.
  * Never close or reset sources. Host supplies its own command/stop wake source
- * and obeys native wait limits. No background thread or periodic polling.
+ * and obeys native wait limits. Returns ENOTSUP for an attached listener.
  */
 int cnet_ipc_listener_wait_sources(const cnet_ipc_listener *listener,
                                    cnet_ipc_wait_source *out_sources, size_t capacity,
                                    size_t *out_count, bool *out_ready);
 
-/** Stops admission, closes queued children, requests native cancellation; never
- * waits/observes. EBUSY and out_stopped=false require advance then retry. Actual
- * errors are independent of quiescence. Detached children are unaffected.
+/** Stops admission, closes queued children, and requests native cancellation.
+ * EBUSY and out_stopped=false require progress before retrying. An attached
+ * listener requires routing its terminal completion through the borrowed
+ * backend. Errors are independent of quiescence. Detached children keep their
+ * existing ownership.
  */
 int cnet_ipc_listener_stop(cnet_ipc_listener *listener, bool *out_stopped);
 /** Requires completed stop; idempotent on an empty wrapper. */
