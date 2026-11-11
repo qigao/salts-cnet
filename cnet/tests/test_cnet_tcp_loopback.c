@@ -2305,16 +2305,30 @@ static int progress_ipc_pair(cnet_ipc_listener *listener, cnet_client *client,
  * on POSIX and an overlapped named pipe on Windows. Detachment transfers one
  * resource; failed admission must consume/close it, while the established
  * neighbor survives. Receive demand bounds events without assuming framing. */
-static int saltscore_native_entry_test_cnet_ipc_lifetime(bool pipe_dial) {
+static int saltscore_native_entry_test_cnet_ipc_lifetime(bool pipe_dial, bool managed) {
   cnet_client client = {0}, server = {0};
   cnet_ipc_listener listener = {0};
+  cnet_manager client_manager = {0}, server_manager = {0};
+  const cnet_manager_config client_manager_config = {
+      sizeof(cnet_manager_config), CNET_MANAGER_VERSION, &client, 1u, 1u};
+  const cnet_manager_config server_manager_config = {
+      sizeof(cnet_manager_config), CNET_MANAGER_VERSION, &server, 2u, 2u};
+  cnet_managed_connection dial = {0}, child = {0}, rejected_child = {0};
+  cnet_manager_entry entry = {0};
+  size_t work = 0u;
   cnet_client_config client_cfg = client_config(), server_cfg = client_config();
   cnet_ipc_listener_config listener_cfg = {
       sizeof(cnet_ipc_listener_config), CNET_IPC_VERSION, backend_kind(), NULL,
       1u, 2u, 256u, 256u};
-  tcp_probe outbound = {0}, inbound = {0}, rejected = {0};
+  tcp_probe outbound = {0}, inbound = {0}, rejected = {0}, rejected_adopt = {0};
   cnet_observer outbound_observer = {on_state, on_borrowed, &outbound, on_sent};
   const cnet_observer inbound_observer = {on_state, on_borrowed, &inbound, on_sent};
+  const cnet_manager_attachment dial_attachment = {
+      outbound_observer, on_recycled, false};
+  const cnet_manager_attachment child_attachment = {
+      inbound_observer, on_recycled, true};
+  const cnet_manager_attachment rejected_attachment = {
+      {on_state, on_borrowed, &rejected_adopt, on_sent}, on_recycled, false};
   cnet_connect_options options = {0};
   cnet_stream_socket_options socket_options = CNET_STREAM_SOCKET_OPTIONS_INIT;
   int *tcp_only_options[] = {&socket_options.nodelay, &socket_options.keepalive,
@@ -2370,7 +2384,14 @@ static int saltscore_native_entry_test_cnet_ipc_lifetime(bool pipe_dial) {
   }
   socket_options = (cnet_stream_socket_options)CNET_STREAM_SOCKET_OPTIONS_INIT;
   VERIFY(cnet_client_set_stream_socket_options(&client, &socket_options) == SALTS_OK);
-  VERIFY(cnet_connect(&client, &options, &connection) == SALTS_OK);
+  if (managed) {
+    VERIFY(cnet_manager_init(&client_manager, &client_manager_config) == SALTS_OK);
+    VERIFY(cnet_manager_init(&server_manager, &server_manager_config) == SALTS_OK);
+    VERIFY(cnet_manager_reserve(&client_manager, &dial_attachment, &dial) == SALTS_OK);
+    VERIFY(cnet_manager_connect(&client_manager, dial, &options, &connection) == SALTS_OK);
+  } else {
+    VERIFY(cnet_connect(&client, &options, &connection) == SALTS_OK);
+  }
   deadline = monotonic_ms() + 5000u;
   while (accepted.kind == CNET_IPC_RESOURCE_NONE && monotonic_ms() < deadline) {
     int status;
@@ -2383,8 +2404,24 @@ static int saltscore_native_entry_test_cnet_ipc_lifetime(bool pipe_dial) {
 #else
   VERIFY(accepted.kind == CNET_IPC_RESOURCE_SOCKET);
 #endif
-  VERIFY(cnet_client_adopt_ipc(&server, &accepted, &inbound_observer,
-                              &accepted_connection) == SALTS_OK);
+  if (managed) {
+    const uintptr_t detached_handle = accepted.native_handle;
+    const cnet_ipc_resource_kind detached_kind = accepted.kind;
+    VERIFY(cnet_manager_adopt_ipc(&server_manager, child, &accepted,
+                                 &rejected_adoption) == SALTS_ENOENT);
+    VERIFY(accepted.native_handle == detached_handle && accepted.kind == detached_kind);
+    VERIFY(rejected_adoption.slot == 0u && rejected_adoption.generation == 0u);
+    VERIFY(cnet_manager_reserve(&server_manager, &child_attachment, &child) == SALTS_OK);
+    VERIFY(cnet_manager_adopt_ipc(&server_manager, child, &accepted,
+                                 &accepted_connection) == SALTS_OK);
+    VERIFY(cnet_manager_lookup(&server_manager, child, &entry) == SALTS_OK);
+    VERIFY(entry.state == CNET_MANAGER_BOUND && entry.context_held);
+    VERIFY(entry.connection.slot == accepted_connection.slot &&
+           entry.connection.generation == accepted_connection.generation);
+  } else {
+    VERIFY(cnet_client_adopt_ipc(&server, &accepted, &inbound_observer,
+                                &accepted_connection) == SALTS_OK);
+  }
   VERIFY(accepted.kind == CNET_IPC_RESOURCE_NONE && accepted.native_handle == 0u);
   VERIFY(cnet_client_adopt_ipc(&server, &accepted, &inbound_observer,
                               &rejected_adoption) == SALTS_EINVAL);
@@ -2418,8 +2455,21 @@ static int saltscore_native_entry_test_cnet_ipc_lifetime(bool pipe_dial) {
     }
   }
   VERIFY(accepted.kind != CNET_IPC_RESOURCE_NONE && rejected.connected == 1u);
-  VERIFY(cnet_client_adopt_ipc(&server, &accepted, &inbound_observer,
-                              &rejected_adoption) == SALTS_ENOBUFS);
+  if (managed) {
+    VERIFY(cnet_manager_reserve(&server_manager, &rejected_attachment,
+                                &rejected_child) == SALTS_OK);
+    VERIFY(cnet_manager_adopt_ipc(&server_manager, rejected_child, &accepted,
+                                 &rejected_adoption) == SALTS_ENOBUFS);
+    VERIFY(cnet_manager_lookup(&server_manager, rejected_child, &entry) == SALTS_OK);
+    VERIFY(entry.state == CNET_MANAGER_RETIRED && !entry.context_held);
+    VERIFY(cnet_manager_advance(&server_manager, 1u, &work) == SALTS_OK);
+    VERIFY(rejected_adopt.connected == 0u && rejected_adopt.terminal == 0u &&
+           rejected_adopt.recycled == 1u);
+    VERIFY(cnet_manager_lookup(&server_manager, rejected_child, &entry) == SALTS_ENOENT);
+  } else {
+    VERIFY(cnet_client_adopt_ipc(&server, &accepted, &inbound_observer,
+                                &rejected_adoption) == SALTS_ENOBUFS);
+  }
   VERIFY(accepted.kind == CNET_IPC_RESOURCE_NONE && accepted.native_handle == 0u);
   VERIFY(rejected_adoption.slot == 0u && rejected_adoption.generation == 0u);
   VERIFY(cnet_ipc_accepted_close(&accepted) == SALTS_EALREADY);
@@ -2485,6 +2535,20 @@ static int saltscore_native_entry_test_cnet_ipc_lifetime(bool pipe_dial) {
   VERIFY(progress_ipc_pair(&listener, &client, &server) == SALTS_OK);
   VERIFY(outbound.sent == 1u && inbound.sent == 1u &&
          outbound.terminal == 1u && inbound.terminal == 1u && rejected.terminal == 1u);
+  if (managed) {
+    VERIFY(cnet_manager_lookup(&server_manager, child, &entry) == SALTS_OK);
+    VERIFY(entry.state == CNET_MANAGER_RETIRED && entry.context_held);
+    VERIFY(cnet_manager_advance(&server_manager, 2u, &work) == SALTS_OK);
+    VERIFY(inbound.recycled == 0u);
+    VERIFY(cnet_manager_release_context(&server_manager, child) == SALTS_OK);
+    VERIFY(cnet_manager_advance(&server_manager, 2u, &work) == SALTS_OK);
+    VERIFY(inbound.recycled == 1u);
+    VERIFY(cnet_manager_lookup(&server_manager, child, &entry) == SALTS_ENOENT);
+    VERIFY(cnet_manager_advance(&client_manager, 1u, &work) == SALTS_OK);
+    VERIFY(outbound.recycled == 1u);
+    VERIFY(cnet_manager_destroy(&server_manager) == SALTS_OK);
+    VERIFY(cnet_manager_destroy(&client_manager) == SALTS_OK);
+  }
   VERIFY(cnet_client_stop(&client, 5000u) == SALTS_OK);
   VERIFY(cnet_client_destroy(&client) == SALTS_OK);
   client_live = 0;
@@ -2509,14 +2573,27 @@ cleanup:
   mem_slice_release(&ranges[1]);
   if (pending) mem_buffer_release(pending);
   if (accepted.kind != CNET_IPC_RESOURCE_NONE) (void)cnet_ipc_accepted_close(&accepted);
-  if (client_live) {
-    (void)cnet_client_stop(&client, 3000u);
-    (void)cnet_client_destroy(&client);
+  if (client_manager.impl != NULL) {
+    (void)cnet_manager_request_close(&client_manager);
+    (void)cnet_manager_advance(&client_manager, 1u, &work);
   }
-  if (server_live) {
-    (void)cnet_client_stop(&server, 3000u);
-    (void)cnet_client_destroy(&server);
+  if (server_manager.impl != NULL) {
+    (void)cnet_manager_release_context(&server_manager, child);
+    (void)cnet_manager_request_close(&server_manager);
+    (void)cnet_manager_advance(&server_manager, 2u, &work);
   }
+  if (client_live) (void)cnet_client_stop(&client, 3000u);
+  if (server_live) (void)cnet_client_stop(&server, 3000u);
+  if (client_manager.impl != NULL) {
+    (void)cnet_manager_advance(&client_manager, 1u, &work);
+    (void)cnet_manager_destroy(&client_manager);
+  }
+  if (server_manager.impl != NULL) {
+    (void)cnet_manager_advance(&server_manager, 2u, &work);
+    (void)cnet_manager_destroy(&server_manager);
+  }
+  if (client_live) (void)cnet_client_destroy(&client);
+  if (server_live) (void)cnet_client_destroy(&server);
   if (listener_live) {
     deadline = monotonic_ms() + 3000u;
     while (!stopped && monotonic_ms() < deadline) {
@@ -5400,12 +5477,16 @@ spec("CNet real TCP loopback and retained slice") {
     check(result == 0, "native kernel-pressure cancellation returned %d", result);
   }
   it("adopts local IPC once, consumes rejected children and drains retained request/reply") {
-    const int result = saltscore_native_entry_test_cnet_ipc_lifetime(false);
+    const int result = saltscore_native_entry_test_cnet_ipc_lifetime(false, false);
     check(result == 0, "native IPC lifetime returned %d", result);
+  }
+  it("manages IPC dial and detached adoption through terminal context recycling") {
+    const int result = saltscore_native_entry_test_cnet_ipc_lifetime(false, true);
+    check(result == 0, "managed IPC lifetime returned %d", result);
   }
   it("rejects TCP-only pipe policy and drains retained native pipe transfer") {
 #if defined(_WIN32)
-    const int result = saltscore_native_entry_test_cnet_ipc_lifetime(true);
+    const int result = saltscore_native_entry_test_cnet_ipc_lifetime(true, false);
 #else
     const int result = saltscore_native_entry_test_cnet_fifo_lifetime();
 #endif
