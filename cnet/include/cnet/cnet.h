@@ -2072,6 +2072,8 @@ int cnet_secure_kcp_destroy(cnet_secure_kcp *session);
 /**
  * Initializes a zero-initialized fixed-capacity UDP/KCP endpoint and arms
  * continuous bounded receive. A live owner returns SALTS_EALREADY.
+ * A passive plain KCP session is admitted only on a valid sequence-zero
+ * PUSH. Explicitly opened sessions accept normal out-of-order input.
  */
 int cnet_packet_endpoint_init(cnet_packet_endpoint *endpoint,
                               const cnet_packet_endpoint_config *config);

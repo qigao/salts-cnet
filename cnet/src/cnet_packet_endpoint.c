@@ -17,6 +17,7 @@
 
 enum {
   CNET_PACKET_KCP_WIRE_HEADER_BYTES = 24,
+  CNET_PACKET_KCP_SEQUENCE_OFFSET = 12,
   CNET_PACKET_KCP_MIN_MTU = 50,
   CNET_PACKET_KCP_MIN_INTERVAL_MS = 10,
   CNET_PACKET_KCP_MAX_INTERVAL_MS = 5000,
@@ -126,7 +127,8 @@ static uint32_t cnet_packet_decode_u32_le(const unsigned char *input) {
          ((uint32_t)input[3] << 24u);
 }
 
-static bool cnet_packet_kcp_wire_valid(const void *data, size_t size, uint32_t conversation) {
+static bool cnet_packet_kcp_wire_valid(const void *data, size_t size, uint32_t conversation,
+                                       bool *starts_session) {
   const unsigned char *cursor = (const unsigned char *)data;
   size_t remaining = size;
   while (remaining != 0u) {
@@ -142,6 +144,9 @@ static bool cnet_packet_kcp_wire_valid(const void *data, size_t size, uint32_t c
       return false;
     payload_size = cnet_packet_decode_u32_le(cursor + 20u);
     if ((size_t)payload_size > remaining - CNET_PACKET_KCP_WIRE_HEADER_BYTES) return false;
+    if (starts_session != NULL && command == CNET_PACKET_KCP_COMMAND_PUSH &&
+        cnet_packet_decode_u32_le(cursor + CNET_PACKET_KCP_SEQUENCE_OFFSET) == 0u)
+      *starts_session = true;
     cursor += CNET_PACKET_KCP_WIRE_HEADER_BYTES + (size_t)payload_size;
     remaining -= CNET_PACKET_KCP_WIRE_HEADER_BYTES + (size_t)payload_size;
   }
@@ -751,6 +756,7 @@ static void cnet_packet_datagram_receive(void *user, cnet_datagram *datagram,
       return;
     }
     if (!secure_kcp) {
+      bool starts_session = false;
       conversation = cnet_packet_decode_u32_le((const unsigned char *)view->data);
       if (conversation == 0u ||
           !cnet_packet_key_make(impl->protocol, false, peer, conversation, &key)) {
@@ -759,7 +765,8 @@ static void cnet_packet_datagram_receive(void *user, cnet_datagram *datagram,
       }
       key_ready = true;
       record = cnet_packet_record_from_key(impl, &key);
-      if (!cnet_packet_kcp_wire_valid(view->data, view->size, conversation)) {
+      if (!cnet_packet_kcp_wire_valid(view->data, view->size, conversation,
+                                      record == NULL ? &starts_session : NULL)) {
         if (record != NULL) handle = cnet_packet_record_handle(impl, record);
         if (record != NULL && !record->closing && impl->terminal.on_send != NULL)
           cnet_packet_record_fail(impl, record, SALTS_EPROTO);
@@ -767,6 +774,9 @@ static void cnet_packet_datagram_receive(void *user, cnet_datagram *datagram,
           cnet_packet_user_error(impl, handle, SALTS_EPROTO);
         return;
       }
+      /* A new session needs its first PUSH. Late ACKs and later PUSH segments
+       * alone must not create state after the listener restarts. */
+      if (record == NULL && !starts_session) return;
     }
   }
   if (!key_ready && !cnet_packet_key_make(impl->protocol, secure_kcp, peer, conversation, &key)) {

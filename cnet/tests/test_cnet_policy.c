@@ -691,6 +691,50 @@ static bool policy_same_session(cnet_packet_session a, cnet_packet_session b) {
   return a.slot == b.slot && a.generation == b.generation;
 }
 
+static int policy_kcp_passive_start(void) {
+  policy_packet_lifecycle *fixture = calloc(1u, sizeof(*fixture));
+  if (fixture == NULL) return __LINE__;
+  cnet_packet_endpoint *wire = &fixture->endpoints[0];
+  cnet_packet_endpoint *server = &fixture->endpoints[1];
+  policy_loopback_probe *rx = &fixture->probes[1];
+  cnet_packet_session wire_session;
+  uint16_t port;
+  int failure = 0;
+  /* Wire records from the same UDP source and conversation as the new peer. */
+  static const unsigned char ack[24] = {0x78, 0x56, 0x34, 0x12, 82};
+  static const unsigned char later_push[25] = {
+      0x78, 0x56, 0x34, 0x12, 81, [6] = 32, [12] = 3, [20] = 1, [24] = 'x'};
+  static const unsigned char first_push[25] = {
+      0x78, 0x56, 0x34, 0x12, 81, [6] = 32, [20] = 1, [24] = 'a'};
+#define PASSIVE_REQUIRE(expr) do { if (!(expr)) { failure = __LINE__; goto cleanup; } } while (0)
+  PASSIVE_REQUIRE(policy_lifecycle_init(fixture, 0u, CNET_PACKET_UDP) == SALTS_OK);
+  PASSIVE_REQUIRE(policy_lifecycle_init(fixture, 1u, CNET_PACKET_KCP) == SALTS_OK);
+  rx->conversation = UINT32_C(0x12345678);
+  PASSIVE_REQUIRE(cnet_packet_endpoint_port(server, &port) == SALTS_OK && port != 0u);
+  const cnet_datagram_peer peer = policy_loopback_peer(port);
+  PASSIVE_REQUIRE(cnet_packet_session_open(wire, &peer, 0u, &wire_session) == SALTS_OK);
+  const unsigned char *records[] = {ack, later_push, first_push};
+  const size_t sizes[] = {sizeof(ack), sizeof(later_push), sizeof(first_push)};
+  for (size_t i = 0u; i < sizeof(records) / sizeof(records[0]); ++i) {
+    size_t events = 0u;
+    PASSIVE_REQUIRE(cnet_packet_send_tagged(wire, wire_session, records[i], sizes[i], i + 1u) ==
+                    SALTS_OK);
+    const uint64_t deadline = monotonic_ms() + 5000u;
+    do {
+      PASSIVE_REQUIRE(policy_loopback_drive(wire) == SALTS_OK);
+      PASSIVE_REQUIRE(cnet_packet_poll(server, 5u, &events) == SALTS_OK);
+    } while (events == 0u && monotonic_ms() < deadline);
+    PASSIVE_REQUIRE(events != 0u);
+    if (i < 2u)
+      PASSIVE_REQUIRE(rx->admitted == 0u && rx->opened == 0u && rx->received == 0u);
+  }
+  PASSIVE_REQUIRE(rx->admitted == 1u && rx->opened == 1u && rx->received == 1u &&
+                  rx->receive_size == 1u && rx->receive_data[0] == 'a' && rx->errors == 0u);
+cleanup:
+#undef PASSIVE_REQUIRE
+  return policy_lifecycle_cleanup(fixture, failure);
+}
+
 static int policy_udp_generation_drain(void) {
   policy_packet_lifecycle *fixture = calloc(1u, sizeof(*fixture));
   cnet_packet_session old = {0}, neighbor = {0}, replacement = {0}, rejected = {0};
@@ -1456,6 +1500,10 @@ spec("CNet native policy and channel admission") {
   it("requires real KCP peer ACK before logical-send terminal") {
     const int failed = policy_loopback_pair(CNET_PACKET_KCP, false);
     check(failed == 0, "KCP packet endpoint: failed source line %d", failed);
+  }
+  it("admits passive plain KCP only on the first PUSH segment") {
+    const int failed = policy_kcp_passive_start();
+    check(failed == 0, "Passive KCP start: failed source line %d", failed);
   }
   it("drains a closing UDP generation before reuse and preserves its neighbor") {
     const int failed = policy_udp_generation_drain();
