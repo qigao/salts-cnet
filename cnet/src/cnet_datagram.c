@@ -1,3 +1,8 @@
+#if defined(_WIN32)
+  #include <winsock2.h>
+  #include <mswsock.h>
+#endif
+
 #include <cnet/cnet.h>
 
 #include "cnet_datagram_internal.h"
@@ -11,9 +16,6 @@
 #include <stdbool.h>
 #include <stdlib.h>
 #include <string.h>
-#if defined(_WIN32)
-  #include <winerror.h>
-#endif
 
 typedef uintptr_t cnet_datagram_socket;
 #define CNET_DATAGRAM_INVALID_SOCKET UINTPTR_MAX
@@ -477,6 +479,20 @@ static int cnet_datagram_init_impl(cnet_datagram *datagram, const cnet_datagram_
   if (status != SALTS_OK) goto fail;
   status = cnet_datagram_socket_status(native_io_socket_create(config->backend, family, true, &impl->socket_value));
   if (status != SALTS_OK) goto fail;
+#if defined(_WIN32)
+  if (kcp) {
+    /* An ICMP port error can also fail an immediate Winsock receive submission.
+     * Keep the shared socket usable and let KCP handle the lost datagram. */
+    BOOL report_unreachable = FALSE;
+    DWORD bytes = 0u;
+    if (WSAIoctl((SOCKET)impl->socket_value, SIO_UDP_CONNRESET,
+                 &report_unreachable, sizeof(report_unreachable),
+                 NULL, 0u, &bytes, NULL, NULL) != 0) {
+      status = -WSAGetLastError();
+      goto fail;
+    }
+  }
+#endif
   if (config->reuse_port) {
     status = cnet_datagram_socket_status(native_io_socket_reuse(impl->socket_value, true, true));
     if (status != SALTS_OK) goto fail;

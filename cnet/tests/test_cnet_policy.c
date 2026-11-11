@@ -650,18 +650,23 @@ typedef struct policy_packet_lifecycle {
   unsigned pushes, wire_errors;
 } policy_packet_lifecycle;
 
-static int policy_lifecycle_init(policy_packet_lifecycle *fixture, size_t index,
-                                  cnet_packet_protocol protocol) {
-  cnet_packet_endpoint_config config = policy_packet_config(protocol);
+static int policy_lifecycle_init_config(policy_packet_lifecycle *fixture, size_t index,
+                                        cnet_packet_endpoint_config *config) {
   cnet_packet_terminal_config terminal = CNET_PACKET_TERMINAL_CONFIG_INIT;
   policy_loopback_probe *probe = &fixture->probes[index];
-  probe->protocol = protocol;
-  config.observer = (cnet_packet_observer){policy_loopback_admit, policy_loopback_state,
+  probe->protocol = config->protocol;
+  config->observer = (cnet_packet_observer){policy_loopback_admit, policy_loopback_state,
       policy_loopback_receive, policy_loopback_error, probe};
   terminal.send_capacity = 2u;
   terminal.on_send = policy_loopback_terminal;
   terminal.user = probe;
-  return cnet_packet_endpoint_init_ex(&fixture->endpoints[index], &config, &terminal);
+  return cnet_packet_endpoint_init_ex(&fixture->endpoints[index], config, &terminal);
+}
+
+static int policy_lifecycle_init(policy_packet_lifecycle *fixture, size_t index,
+                                  cnet_packet_protocol protocol) {
+  cnet_packet_endpoint_config config = policy_packet_config(protocol);
+  return policy_lifecycle_init_config(fixture, index, &config);
 }
 
 static int policy_lifecycle_cleanup(policy_packet_lifecycle *fixture, int failure) {
@@ -735,7 +740,7 @@ cleanup:
   return policy_lifecycle_cleanup(fixture, failure);
 }
 
-static int policy_kcp_unreachable_peer(void) {
+static int policy_kcp_unreachable_peer(bool secure) {
   policy_packet_lifecycle *fixture = calloc(1u, sizeof(*fixture));
   if (fixture == NULL) return __LINE__;
   cnet_packet_endpoint *client = &fixture->endpoints[0];
@@ -743,26 +748,44 @@ static int policy_kcp_unreachable_peer(void) {
   cnet_packet_endpoint *server = &fixture->endpoints[2];
   policy_loopback_probe *tx = &fixture->probes[0];
   policy_loopback_probe *rx = &fixture->probes[2];
-  const uint32_t conversation = UINT32_C(0x12345678);
+  cnet_packet_endpoint_config config = policy_packet_config(CNET_PACKET_KCP);
+  const uint32_t conversation = secure ? 0u : UINT32_C(0x12345678);
   const unsigned char data = 0x55u;
+  const unsigned char burst[24u * 1024u] = {0x47u};
   cnet_packet_session absent, healthy;
   uint16_t closed_port, server_port;
   int failure = 0;
 #define UNREACHABLE_REQUIRE(expr) do { if (!(expr)) { failure = __LINE__; goto cleanup; } } while (0)
-  UNREACHABLE_REQUIRE(policy_lifecycle_init(fixture, 0u, CNET_PACKET_KCP) == SALTS_OK);
-  UNREACHABLE_REQUIRE(policy_lifecycle_init(fixture, 1u, CNET_PACKET_UDP) == SALTS_OK);
-  UNREACHABLE_REQUIRE(policy_lifecycle_init(fixture, 2u, CNET_PACKET_KCP) == SALTS_OK);
+  config.datagram.send_capacity = 128u;
+  config.datagram.request_capacity = 256u;
+  config.datagram.completion_batch_capacity = 32u;
+  config.kcp.no_congestion_window = true;
+  if (secure) {
+    config.kcp.mtu = config.security.fec.max_payload_bytes - CNET_KCP_SECURE_RECORD_OVERHEAD;
+    config.security.mode = CNET_KCP_SECURITY_PSK_V1;
+    config.security.pre_shared_key[0] = 1u; /* Test-only key. */
+  }
+  for (size_t i = 0u; i < 3u; ++i) {
+    fixture->probes[i].conversation = conversation;
+    UNREACHABLE_REQUIRE(policy_lifecycle_init_config(fixture, i, &config) == SALTS_OK);
+  }
   UNREACHABLE_REQUIRE(cnet_packet_endpoint_port(closed, &closed_port) == SALTS_OK);
   UNREACHABLE_REQUIRE(cnet_packet_endpoint_port(server, &server_port) == SALTS_OK);
-  UNREACHABLE_REQUIRE(cnet_packet_endpoint_stop(closed, 4000u) == SALTS_OK);
-  UNREACHABLE_REQUIRE(cnet_packet_endpoint_destroy(closed) == SALTS_OK);
   const cnet_datagram_peer closed_peer = policy_loopback_peer(closed_port);
   const cnet_datagram_peer server_peer = policy_loopback_peer(server_port);
-  rx->conversation = conversation;
   UNREACHABLE_REQUIRE(cnet_packet_session_open(client, &closed_peer, conversation, &absent) ==
                       SALTS_OK);
-  UNREACHABLE_REQUIRE(cnet_packet_send_tagged(client, absent, &data, 1u, 1u) == SALTS_OK);
-  uint64_t deadline = monotonic_ms() + 250u;
+  uint64_t deadline = monotonic_ms() + 5000u;
+  while (tx->opened == 0u && monotonic_ms() < deadline) {
+    UNREACHABLE_REQUIRE(policy_loopback_drive(client) == SALTS_OK);
+    UNREACHABLE_REQUIRE(policy_loopback_drive(closed) == SALTS_OK);
+  }
+  UNREACHABLE_REQUIRE(tx->opened == 1u);
+  UNREACHABLE_REQUIRE(cnet_packet_endpoint_stop(closed, 4000u) == SALTS_OK);
+  UNREACHABLE_REQUIRE(cnet_packet_endpoint_destroy(closed) == SALTS_OK);
+  UNREACHABLE_REQUIRE(cnet_packet_send_tagged(client, absent, burst, sizeof(burst), 1u) ==
+                      SALTS_OK);
+  deadline = monotonic_ms() + 250u;
   do {
     UNREACHABLE_REQUIRE(policy_loopback_drive(client) == SALTS_OK);
   } while (monotonic_ms() < deadline);
@@ -770,6 +793,12 @@ static int policy_kcp_unreachable_peer(void) {
 
   UNREACHABLE_REQUIRE(cnet_packet_session_open(client, &server_peer, conversation, &healthy) ==
                       SALTS_OK);
+  deadline = monotonic_ms() + 5000u;
+  while (tx->opened < 2u && monotonic_ms() < deadline) {
+    UNREACHABLE_REQUIRE(policy_loopback_drive(server) == SALTS_OK);
+    UNREACHABLE_REQUIRE(policy_loopback_drive(client) == SALTS_OK);
+  }
+  UNREACHABLE_REQUIRE(tx->opened == 2u);
   UNREACHABLE_REQUIRE(cnet_packet_send_tagged(client, healthy, &data, 1u, 2u) == SALTS_OK);
   deadline = monotonic_ms() + 5000u;
   while (tx->terminals == 0u && monotonic_ms() < deadline) {
@@ -1556,8 +1585,12 @@ spec("CNet native policy and channel admission") {
     check(failed == 0, "Passive KCP start: failed source line %d", failed);
   }
   it("keeps a KCP neighbor working when another UDP port is unreachable") {
-    const int failed = policy_kcp_unreachable_peer();
+    const int failed = policy_kcp_unreachable_peer(false);
     check(failed == 0, "KCP unreachable peer: failed source line %d", failed);
+  }
+  it("keeps an authenticated KCP neighbor working after a lost datagram burst") {
+    const int failed = policy_kcp_unreachable_peer(true);
+    check(failed == 0, "Authenticated KCP unreachable peer: failed source line %d", failed);
   }
   it("drains a closing UDP generation before reuse and preserves its neighbor") {
     const int failed = policy_udp_generation_drain();
