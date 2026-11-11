@@ -50,6 +50,7 @@ jobs:
     timeout-minutes: 45
     outputs:
       matrix: ${{ steps.release.outputs.matrix }}
+      sdk_inputs: ${{ steps.archive.outputs.name }}
     defaults:
       run:
         shell: pwsh
@@ -82,14 +83,16 @@ jobs:
           GH_TOKEN: ${{ secrets.VCPKG_CACHE_READ_TOKEN || github.token }}
         run: .github/ci/prepare-sdk-inputs.ps1
       - name: Archive the same infrastructure sources for every runner
+        id: archive
         run: |
           $archive = [IO.Path]::GetFullPath('build/ci-inputs/infrastructure.tar')
           & git -C build/ci-infrastructure/vcpkg-cache archive --format=tar HEAD --output $archive
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          "name=shared-sdk-inputs-${env:GITHUB_RUN_ID}-${env:GITHUB_RUN_ATTEMPT}" >> $env:GITHUB_OUTPUT
       - name: Distribute prepared inputs
         uses: actions/upload-artifact@v4
         with:
-          name: shared-sdk-inputs-${{ github.run_id }}-${{ github.run_attempt }}
+          name: ${{ steps.archive.outputs.name }}
           path: build/ci-inputs/
           compression-level: 0
           if-no-files-found: error
@@ -115,7 +118,7 @@ jobs:
       - name: Receive prepared SDK inputs
         uses: actions/download-artifact@v4
         with:
-          name: shared-sdk-inputs-${{ github.run_id }}-${{ github.run_attempt }}
+          name: ${{ needs.prepare.outputs.sdk_inputs }}
           path: build/ci-inputs
 
       - name: Restore the released infrastructure snapshot
