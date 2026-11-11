@@ -294,9 +294,8 @@ own acceptance. Qualification follows this change's formal LLVM CI result.
 
 ### Packet session close, reuse and retransmission stop
 
-Packet endpoints currently own their NativeIO polling; they do not expose the
-datagram API's borrowed-backend completion routing. Qualification must use that
-actual boundary. One owner thread admits copied messages into fixed session,
+Packet endpoints can own NativeIO polling or borrow the host's backend. One
+owner thread admits copied messages into fixed session,
 datagram and tagged-send capacities. A closing session stays reserved until its
 real UDP sends and terminal callbacks drain; only then may its slot be reused
 with a new generation. Old handles must reject without changing the replacement
@@ -314,7 +313,20 @@ wire anti-replay identities: UDP has no generation field, and plain KCP's peer
 and conversation identity does not authenticate packets. Applications must not
 infer that reopening an identical wire identity rejects delayed old packets.
 Authenticated-session security retains its separate handshake/identity contract.
-This lifecycle qualification merged in #193 after its exact-head CI #218 passed.
+This owned-poll lifecycle qualification merged in #193 after CI #218 passed.
+
+For a borrowed backend, the host advances packet endpoints with a bounded
+timer budget, takes the minimum wait from their timeout queries, and observes
+NativeIO once. It routes the whole observed batch by request identity before
+handling errors. Packet stop cancels that endpoint's requests and logical
+sends. The host continues routing until stop reports completion, then destroys
+the endpoint. The borrowed backend and other transports continue to run.
+The public declarations and callback lifetimes are in
+[`cnet/cnet.h`](../cnet/include/cnet/cnet.h).
+
+The policy test exercises ordinary and authenticated KCP beside UDP on one
+backend. It checks retransmission with withheld ACKs, duplicate terminal
+routing, and drain through a malformed cancellation completion.
 
 ### Multi-connection pool policy composition
 

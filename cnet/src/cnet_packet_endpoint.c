@@ -99,8 +99,10 @@ struct cnet_packet_endpoint_impl {
   cnet_packet_observer observer;
   cnet_packet_terminal_config terminal;
   size_t callback_depth;
+  size_t timer_cursor;
   int pending_status;
   int stop_status;
+  bool external;
   bool polling;
   bool stopping;
   bool stopped;
@@ -922,14 +924,19 @@ static bool cnet_packet_terminal_config_valid(const cnet_packet_endpoint_config 
          operation_capacity <= SIZE_MAX / sizeof(uint32_t);
 }
 
-int cnet_packet_endpoint_init(cnet_packet_endpoint *endpoint,
-                              const cnet_packet_endpoint_config *config) {
-  return cnet_packet_endpoint_init_ex(endpoint, config, NULL);
+static void cnet_packet_free_impl(cnet_packet_endpoint_impl *impl) {
+  cnet_packet_index_destroy(&impl->peer_index);
+  free(impl->free_send_operations);
+  free(impl->send_operations);
+  free(impl->free_records);
+  free(impl->records);
+  crypto_wipe(&impl->security_template, sizeof(impl->security_template));
+  free(impl);
 }
 
-int cnet_packet_endpoint_init_ex(cnet_packet_endpoint *endpoint,
-                                 const cnet_packet_endpoint_config *config,
-                                 const cnet_packet_terminal_config *terminal) {
+static int cnet_packet_endpoint_init_impl(cnet_packet_endpoint *endpoint,
+    const cnet_packet_endpoint_config *config,
+    const cnet_packet_terminal_config *terminal, native_io_backend *backend) {
   cnet_packet_endpoint_impl *impl;
   cnet_datagram_config datagram_config;
   size_t send_operation_capacity = 0u;
@@ -956,21 +963,12 @@ int cnet_packet_endpoint_init_ex(cnet_packet_endpoint *endpoint,
   if (impl->records == NULL || impl->free_records == NULL ||
       (send_operation_capacity != 0u &&
        (impl->send_operations == NULL || impl->free_send_operations == NULL))) {
-    free(impl->free_send_operations);
-    free(impl->send_operations);
-    free(impl->free_records);
-    free(impl->records);
-    free(impl);
+    cnet_packet_free_impl(impl);
     return SALTS_ENOMEM;
   }
   map_status = cnet_packet_index_init(&impl->peer_index, config->session_capacity);
   if (map_status != SALTS_OK) {
-    cnet_packet_index_destroy(&impl->peer_index);
-    free(impl->free_send_operations);
-    free(impl->send_operations);
-    free(impl->free_records);
-    free(impl->records);
-    free(impl);
+    cnet_packet_free_impl(impl);
     return map_status;
   }
   impl->owner = endpoint;
@@ -980,6 +978,7 @@ int cnet_packet_endpoint_init_ex(cnet_packet_endpoint *endpoint,
   impl->free_send_operation_count = send_operation_capacity;
   impl->max_datagram_bytes = config->datagram.max_datagram_bytes;
   impl->protocol = config->protocol;
+  impl->external = backend != NULL;
   impl->kcp_template = config->kcp;
   impl->security_template = config->security;
   impl->observer = config->observer;
@@ -993,32 +992,46 @@ int cnet_packet_endpoint_init_ex(cnet_packet_endpoint *endpoint,
   datagram_config.observer.on_receive = cnet_packet_datagram_receive;
   datagram_config.observer.on_send = cnet_packet_datagram_send;
   datagram_config.observer.user = impl;
-  status = cnet_datagram_init(&impl->datagram, &datagram_config);
+  status = impl->external
+      ? cnet_datagram_init_external(&impl->datagram, &datagram_config, backend)
+      : cnet_datagram_init(&impl->datagram, &datagram_config);
   if (status != SALTS_OK) {
-    cnet_packet_index_destroy(&impl->peer_index);
-    free(impl->free_send_operations);
-    free(impl->send_operations);
-    free(impl->free_records);
-    free(impl->records);
-    crypto_wipe(&impl->security_template, sizeof(impl->security_template));
-    free(impl);
+    cnet_packet_free_impl(impl);
     return status;
   }
   status = cnet_datagram_receive(&impl->datagram, SIZE_MAX);
   if (status != SALTS_OK) {
-    (void)cnet_datagram_stop(&impl->datagram, 1000u);
+    /* The first receive failed admission. No native request was retained. */
+    if (impl->external) {
+      bool stopped;
+      (void)cnet_datagram_stop_external(&impl->datagram, &stopped);
+    } else {
+      (void)cnet_datagram_stop(&impl->datagram, 1000u);
+    }
     (void)cnet_datagram_destroy(&impl->datagram);
-    cnet_packet_index_destroy(&impl->peer_index);
-    free(impl->free_send_operations);
-    free(impl->send_operations);
-    free(impl->free_records);
-    free(impl->records);
-    crypto_wipe(&impl->security_template, sizeof(impl->security_template));
-    free(impl);
+    cnet_packet_free_impl(impl);
     return status;
   }
   endpoint->impl = impl;
   return SALTS_OK;
+}
+
+int cnet_packet_endpoint_init(cnet_packet_endpoint *endpoint,
+                              const cnet_packet_endpoint_config *config) {
+  return cnet_packet_endpoint_init_ex(endpoint, config, NULL);
+}
+
+int cnet_packet_endpoint_init_ex(cnet_packet_endpoint *endpoint,
+                                 const cnet_packet_endpoint_config *config,
+                                 const cnet_packet_terminal_config *terminal) {
+  return cnet_packet_endpoint_init_impl(endpoint, config, terminal, NULL);
+}
+
+int cnet_packet_endpoint_init_external(cnet_packet_endpoint *endpoint,
+    const cnet_packet_endpoint_config *config,
+    const cnet_packet_terminal_config *terminal, native_io_backend *backend) {
+  if (backend == NULL) return SALTS_EINVAL;
+  return cnet_packet_endpoint_init_impl(endpoint, config, terminal, backend);
 }
 
 int cnet_packet_endpoint_port(const cnet_packet_endpoint *endpoint, uint16_t *out_port) {
@@ -1121,12 +1134,13 @@ int cnet_packet_send_tagged(cnet_packet_endpoint *endpoint, cnet_packet_session 
   return cnet_packet_send_impl(endpoint, session, data, size, tag, true);
 }
 
-static void cnet_packet_update_kcp(cnet_packet_endpoint_impl *impl, uint32_t now_ms) {
-  size_t index;
-  if (impl->protocol != CNET_PACKET_KCP) return;
-  for (index = 0u; index < impl->session_capacity; ++index) {
+static size_t cnet_packet_update_kcp(cnet_packet_endpoint_impl *impl,
+                                    uint32_t now_ms, size_t index, size_t count) {
+  if (impl->protocol != CNET_PACKET_KCP) return index;
+  for (size_t checked = 0u; checked < count; ++checked) {
     cnet_packet_record *record = &impl->records[index];
     int status;
+    if (++index == impl->session_capacity) index = 0u;
     if (!record->occupied || record->closing) continue;
     status = record->secure_kcp_initialized
                  ? cnet_secure_kcp_update(&record->secure_kcp, now_ms)
@@ -1146,15 +1160,16 @@ static void cnet_packet_update_kcp(cnet_packet_endpoint_impl *impl, uint32_t now
       cnet_packet_user_error(impl, cnet_packet_record_handle(impl, record), status);
   }
   cnet_packet_sweep_closed(impl);
+  return index;
 }
 
-static uint32_t cnet_packet_wait_ms(cnet_packet_endpoint_impl *impl, uint32_t now_ms,
+static uint32_t cnet_packet_wait_ms(const cnet_packet_endpoint_impl *impl, uint32_t now_ms,
                                     uint32_t requested_ms) {
   size_t index;
   uint32_t result = requested_ms;
   if (impl->protocol != CNET_PACKET_KCP) return result;
   for (index = 0u; index < impl->session_capacity; ++index) {
-    cnet_packet_record *record = &impl->records[index];
+    const cnet_packet_record *record = &impl->records[index];
     uint32_t next_ms;
     int32_t difference;
     if (!record->occupied || record->closing) continue;
@@ -1169,6 +1184,19 @@ static uint32_t cnet_packet_wait_ms(cnet_packet_endpoint_impl *impl, uint32_t no
   return result;
 }
 
+static void cnet_packet_progress_begin(cnet_packet_endpoint_impl *impl) {
+  impl->polling = true;
+  impl->pending_status = SALTS_OK;
+}
+
+static int cnet_packet_progress_finish(cnet_packet_endpoint_impl *impl, int status) {
+  impl->polling = false;
+  if (status == SALTS_OK) status = impl->pending_status;
+  if (impl->stopping && status != SALTS_OK && impl->stop_status == SALTS_OK)
+    impl->stop_status = status;
+  return status;
+}
+
 int cnet_packet_poll(cnet_packet_endpoint *endpoint, uint32_t timeout_ms, size_t *out_events) {
   cnet_packet_endpoint_impl *impl = cnet_packet_get(endpoint);
   uint32_t now_ms;
@@ -1177,19 +1205,64 @@ int cnet_packet_poll(cnet_packet_endpoint *endpoint, uint32_t timeout_ms, size_t
   if (out_events == NULL) return SALTS_EINVAL;
   *out_events = 0u;
   if (impl == NULL) return SALTS_EINVAL;
+  if (impl->external) return SALTS_ENOTSUP;
   if (impl->stopping) return SALTS_ESHUTDOWN;
   if (impl->polling || impl->callback_depth != 0u) return SALTS_EBUSY;
-  impl->polling = true;
-  impl->pending_status = SALTS_OK;
+  cnet_packet_progress_begin(impl);
   now_ms = (uint32_t)monotonic_ms();
-  cnet_packet_update_kcp(impl, now_ms);
+  (void)cnet_packet_update_kcp(impl, now_ms, 0u, impl->session_capacity);
   wait_ms = cnet_packet_wait_ms(impl, now_ms, timeout_ms);
   status = cnet_datagram_poll(&impl->datagram, wait_ms, out_events);
   now_ms = (uint32_t)monotonic_ms();
-  cnet_packet_update_kcp(impl, now_ms);
-  if (status == SALTS_OK && impl->pending_status != SALTS_OK) status = impl->pending_status;
-  impl->polling = false;
-  return status;
+  (void)cnet_packet_update_kcp(impl, now_ms, 0u, impl->session_capacity);
+  return cnet_packet_progress_finish(impl, status);
+}
+
+int cnet_packet_advance_external(cnet_packet_endpoint *endpoint,
+                                  size_t timer_budget, size_t *out_events) {
+  cnet_packet_endpoint_impl *impl = cnet_packet_get(endpoint);
+  if (out_events == NULL) return SALTS_EINVAL;
+  *out_events = 0u;
+  if (impl == NULL || timer_budget == 0u) return SALTS_EINVAL;
+  if (!impl->external) return SALTS_ENOTSUP;
+  if (impl->polling || impl->callback_depth != 0u) return SALTS_EBUSY;
+  cnet_packet_progress_begin(impl);
+  const int status = cnet_datagram_advance_external(&impl->datagram, out_events);
+  if (status == SALTS_OK && !impl->stopping) {
+    const size_t count = timer_budget < impl->session_capacity
+        ? timer_budget : impl->session_capacity;
+    impl->timer_cursor = cnet_packet_update_kcp(
+        impl, (uint32_t)monotonic_ms(), impl->timer_cursor, count);
+  }
+  return cnet_packet_progress_finish(impl, status);
+}
+
+int cnet_packet_external_timeout(const cnet_packet_endpoint *endpoint,
+                                  uint32_t max_wait_ms, uint32_t *out_timeout_ms) {
+  const cnet_packet_endpoint_impl *impl = cnet_packet_get(endpoint);
+  if (out_timeout_ms == NULL) return SALTS_EINVAL;
+  *out_timeout_ms = 0u;
+  if (impl == NULL) return SALTS_EINVAL;
+  if (!impl->external) return SALTS_ENOTSUP;
+  if (impl->polling || impl->callback_depth != 0u) return SALTS_EBUSY;
+  *out_timeout_ms = impl->stopping ? max_wait_ms
+      : cnet_packet_wait_ms(impl, (uint32_t)monotonic_ms(), max_wait_ms);
+  return SALTS_OK;
+}
+
+int cnet_packet_route_external_completion(cnet_packet_endpoint *endpoint,
+    const native_io_completion *completion, bool *out_consumed, size_t *out_events) {
+  cnet_packet_endpoint_impl *impl = cnet_packet_get(endpoint);
+  if (out_consumed != NULL) *out_consumed = false;
+  if (out_events != NULL) *out_events = 0u;
+  if (impl == NULL || completion == NULL || out_consumed == NULL || out_events == NULL)
+    return SALTS_EINVAL;
+  if (!impl->external) return SALTS_ENOTSUP;
+  if (impl->polling || impl->callback_depth != 0u) return SALTS_EBUSY;
+  cnet_packet_progress_begin(impl);
+  const int status = cnet_datagram_route_external_completion(
+      &impl->datagram, completion, out_consumed, out_events);
+  return cnet_packet_progress_finish(impl, status);
 }
 
 int cnet_packet_wake(cnet_packet_endpoint *endpoint) {
@@ -1198,29 +1271,55 @@ int cnet_packet_wake(cnet_packet_endpoint *endpoint) {
   return cnet_datagram_wake(&impl->datagram);
 }
 
-int cnet_packet_endpoint_stop(cnet_packet_endpoint *endpoint, uint32_t timeout_ms) {
-  cnet_packet_endpoint_impl *impl = cnet_packet_get(endpoint);
-  size_t index;
-  int status;
-  if (impl == NULL) return SALTS_EINVAL;
-  if (impl->polling || impl->callback_depth != 0u) return SALTS_EBUSY;
-  if (impl->stopped) return SALTS_OK;
+static void cnet_packet_begin_stop(cnet_packet_endpoint_impl *impl) {
+  if (impl->stopping) return;
   impl->stopping = true;
-  for (index = 0u; index < impl->session_capacity; ++index) {
+  for (size_t index = 0u; index < impl->session_capacity; ++index) {
     cnet_packet_record *record = &impl->records[index];
     if (record->occupied) cnet_packet_record_begin_close(impl, record, SALTS_ECANCELED);
   }
-  status = cnet_datagram_stop(&impl->datagram, timeout_ms);
-  if (status == SALTS_ETIMEDOUT) return status;
-  if (status != SALTS_OK && impl->stop_status == SALTS_OK) impl->stop_status = status;
+}
+
+static void cnet_packet_finish_stop(cnet_packet_endpoint_impl *impl) {
   cnet_packet_dispatch_ready_sends(impl);
   cnet_packet_sweep_closed(impl);
-  if (impl->free_record_count != impl->session_capacity || impl->ready_send_head != 0u ||
-      impl->tagged_send_count != 0u ||
-      impl->free_send_operation_count != impl->send_operation_capacity)
-    return SALTS_EBUSY;
-  impl->stopped = true;
-  return impl->stop_status;
+  impl->stopped = impl->free_record_count == impl->session_capacity &&
+                  impl->ready_send_head == 0u && impl->tagged_send_count == 0u &&
+                  impl->free_send_operation_count == impl->send_operation_capacity;
+}
+
+int cnet_packet_endpoint_stop(cnet_packet_endpoint *endpoint, uint32_t timeout_ms) {
+  cnet_packet_endpoint_impl *impl = cnet_packet_get(endpoint);
+  if (impl == NULL) return SALTS_EINVAL;
+  if (impl->external) return SALTS_ENOTSUP;
+  if (impl->polling || impl->callback_depth != 0u) return SALTS_EBUSY;
+  if (impl->stopped) return SALTS_OK;
+  cnet_packet_begin_stop(impl);
+  const int status = cnet_datagram_stop(&impl->datagram, timeout_ms);
+  if (status == SALTS_ETIMEDOUT) return status;
+  if (status != SALTS_OK && impl->stop_status == SALTS_OK) impl->stop_status = status;
+  cnet_packet_finish_stop(impl);
+  return impl->stopped ? impl->stop_status : SALTS_EBUSY;
+}
+
+int cnet_packet_endpoint_stop_external(cnet_packet_endpoint *endpoint, bool *out_stopped) {
+  cnet_packet_endpoint_impl *impl = cnet_packet_get(endpoint);
+  bool datagram_stopped;
+  if (out_stopped == NULL) return SALTS_EINVAL;
+  *out_stopped = false;
+  if (impl == NULL) return SALTS_EINVAL;
+  if (!impl->external) return SALTS_ENOTSUP;
+  if (impl->polling || impl->callback_depth != 0u) return SALTS_EBUSY;
+  if (!impl->stopped) {
+    cnet_packet_begin_stop(impl);
+    const int status = cnet_datagram_stop_external(&impl->datagram, &datagram_stopped);
+    if (status != SALTS_OK && status != SALTS_EBUSY && impl->stop_status == SALTS_OK)
+      impl->stop_status = status;
+    if (datagram_stopped) cnet_packet_finish_stop(impl);
+  }
+  *out_stopped = impl->stopped;
+  if (impl->stop_status != SALTS_OK) return impl->stop_status;
+  return impl->stopped ? SALTS_OK : SALTS_EBUSY;
 }
 
 int cnet_packet_endpoint_destroy(cnet_packet_endpoint *endpoint) {
@@ -1232,13 +1331,7 @@ int cnet_packet_endpoint_destroy(cnet_packet_endpoint *endpoint) {
   if (!impl->stopped) return SALTS_EBUSY;
   status = cnet_datagram_destroy(&impl->datagram);
   if (status != SALTS_OK) return status;
-  cnet_packet_index_destroy(&impl->peer_index);
-  free(impl->free_send_operations);
-  free(impl->send_operations);
-  free(impl->free_records);
-  free(impl->records);
-  crypto_wipe(&impl->security_template, sizeof(impl->security_template));
-  free(impl);
+  cnet_packet_free_impl(impl);
   endpoint->impl = NULL;
   return SALTS_OK;
 }
