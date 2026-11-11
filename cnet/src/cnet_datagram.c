@@ -1,5 +1,6 @@
 #include <cnet/cnet.h>
 
+#include "cnet_datagram_internal.h"
 #include "cnet_module.h"
 #include "cnet_transport.h"
 
@@ -10,6 +11,9 @@
 #include <stdbool.h>
 #include <stdlib.h>
 #include <string.h>
+#if defined(_WIN32)
+  #include <winerror.h>
+#endif
 
 typedef uintptr_t cnet_datagram_socket;
 #define CNET_DATAGRAM_INVALID_SOCKET UINTPTR_MAX
@@ -60,6 +64,7 @@ typedef struct cnet_datagram_impl {
   bool receive_rearm;
   bool bound;
   bool receive_paused;
+  bool kcp;
 #if defined(CNET_INTERNAL_TESTING)
   int test_drive_status;
   int test_persistent_drive_status;
@@ -200,6 +205,14 @@ static int cnet_datagram_completion_status(const native_io_completion *completio
   return completion->status < SALTS_OK ? completion->status : SALTS_EIO;
 }
 
+static bool cnet_datagram_port_unreachable(int status) {
+#if defined(_WIN32)
+  if (status == -(int)ERROR_PORT_UNREACHABLE || status == -(int)WSAECONNRESET)
+    return true;
+#endif
+  return status == SALTS_ECONNREFUSED;
+}
+
 /* The local tag is not an identity on a shared backend. Receive uses the
  * sentinel send_capacity; only retained request identities can claim a terminal. */
 static bool cnet_datagram_find_request(const cnet_datagram_impl *impl,
@@ -245,6 +258,8 @@ static int cnet_datagram_complete(cnet_datagram_impl *impl,
     if (impl->receive_paused) return SALTS_OK;
     if (completion->kind == NATIVE_IO_COMPLETION_CANCELLED && impl->stopping) return SALTS_OK;
     status = cnet_datagram_completion_status(completion);
+    if (impl->kcp && cnet_datagram_port_unreachable(status))
+      return cnet_datagram_arm_receive(impl);
     if (status != SALTS_OK) return status;
     if (impl->stopping) return SALTS_OK;
     if (completion->bytes > impl->max_datagram_bytes || impl->receive_demand == 0u)
@@ -370,7 +385,8 @@ static int cnet_datagram_drive(cnet_datagram_impl *impl, uint32_t timeout_ms,
 }
 
 static int cnet_datagram_init_impl(cnet_datagram *datagram, const cnet_datagram_config *config,
-                                    native_io_backend *borrowed_backend, cnet_datagram_address_family unbound_family) {
+                                    native_io_backend *borrowed_backend,
+                                    cnet_datagram_address_family unbound_family, bool kcp) {
   cnet_datagram_impl *impl = NULL;
   native_io_backend_config borrowed_config = {0};
   native_io_backend_stats borrowed_stats = {0};
@@ -475,6 +491,7 @@ static int cnet_datagram_init_impl(cnet_datagram *datagram, const cnet_datagram_
   status = native_io_backend_attach_socket(&impl->backend, (uintptr_t)impl->socket_value,
                                            &impl->endpoint);
   if (status != SALTS_OK) goto fail;
+  impl->kcp = kcp;
   datagram->impl = impl;
   return SALTS_OK;
 
@@ -497,19 +514,24 @@ fail:
 }
 
 int cnet_datagram_init(cnet_datagram *datagram, const cnet_datagram_config *config) {
-  return cnet_datagram_init_impl(datagram, config, NULL, 0);
+  return cnet_datagram_init_impl(datagram, config, NULL, 0, false);
 }
 
 int cnet_datagram_init_external(cnet_datagram *datagram, const cnet_datagram_config *config,
                                  native_io_backend *backend) {
   if (backend == NULL) return SALTS_EINVAL;
-  return cnet_datagram_init_impl(datagram, config, backend, 0);
+  return cnet_datagram_init_impl(datagram, config, backend, 0, false);
+}
+
+int cnet_datagram_init_kcp(cnet_datagram *datagram, const cnet_datagram_config *config,
+                           native_io_backend *backend) {
+  return cnet_datagram_init_impl(datagram, config, backend, 0, true);
 }
 
 int cnet_datagram_open_external(cnet_datagram *datagram, const cnet_datagram_config *config,
                                native_io_backend *backend, cnet_datagram_address_family family) {
   if (!backend || !family) return SALTS_EINVAL;
-  return cnet_datagram_init_impl(datagram, config, backend, family);
+  return cnet_datagram_init_impl(datagram, config, backend, family, false);
 }
 
 static int endpoint_to_native(const cnet_stream_endpoint *endpoint,

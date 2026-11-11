@@ -1,5 +1,6 @@
 #include <cnet/cnet.h>
 
+#include "cnet_datagram_internal.h"
 #include "cnet_kcp_fec_internal.h"
 #include "cnet_kcp_internal.h"
 #include "cnet_kcp_secure_internal.h"
@@ -1002,9 +1003,12 @@ static int cnet_packet_endpoint_init_impl(cnet_packet_endpoint *endpoint,
   datagram_config.observer.on_receive = cnet_packet_datagram_receive;
   datagram_config.observer.on_send = cnet_packet_datagram_send;
   datagram_config.observer.user = impl;
-  status = impl->external
-      ? cnet_datagram_init_external(&impl->datagram, &datagram_config, backend)
-      : cnet_datagram_init(&impl->datagram, &datagram_config);
+  if (config->protocol == CNET_PACKET_KCP)
+    status = cnet_datagram_init_kcp(&impl->datagram, &datagram_config, backend);
+  else if (impl->external)
+    status = cnet_datagram_init_external(&impl->datagram, &datagram_config, backend);
+  else
+    status = cnet_datagram_init(&impl->datagram, &datagram_config);
   if (status != SALTS_OK) {
     cnet_packet_free_impl(impl);
     return status;

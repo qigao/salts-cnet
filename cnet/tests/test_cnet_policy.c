@@ -735,6 +735,56 @@ cleanup:
   return policy_lifecycle_cleanup(fixture, failure);
 }
 
+static int policy_kcp_unreachable_peer(void) {
+  policy_packet_lifecycle *fixture = calloc(1u, sizeof(*fixture));
+  if (fixture == NULL) return __LINE__;
+  cnet_packet_endpoint *client = &fixture->endpoints[0];
+  cnet_packet_endpoint *closed = &fixture->endpoints[1];
+  cnet_packet_endpoint *server = &fixture->endpoints[2];
+  policy_loopback_probe *tx = &fixture->probes[0];
+  policy_loopback_probe *rx = &fixture->probes[2];
+  const uint32_t conversation = UINT32_C(0x12345678);
+  const unsigned char data = 0x55u;
+  cnet_packet_session absent, healthy;
+  uint16_t closed_port, server_port;
+  int failure = 0;
+#define UNREACHABLE_REQUIRE(expr) do { if (!(expr)) { failure = __LINE__; goto cleanup; } } while (0)
+  UNREACHABLE_REQUIRE(policy_lifecycle_init(fixture, 0u, CNET_PACKET_KCP) == SALTS_OK);
+  UNREACHABLE_REQUIRE(policy_lifecycle_init(fixture, 1u, CNET_PACKET_UDP) == SALTS_OK);
+  UNREACHABLE_REQUIRE(policy_lifecycle_init(fixture, 2u, CNET_PACKET_KCP) == SALTS_OK);
+  UNREACHABLE_REQUIRE(cnet_packet_endpoint_port(closed, &closed_port) == SALTS_OK);
+  UNREACHABLE_REQUIRE(cnet_packet_endpoint_port(server, &server_port) == SALTS_OK);
+  UNREACHABLE_REQUIRE(cnet_packet_endpoint_stop(closed, 4000u) == SALTS_OK);
+  UNREACHABLE_REQUIRE(cnet_packet_endpoint_destroy(closed) == SALTS_OK);
+  const cnet_datagram_peer closed_peer = policy_loopback_peer(closed_port);
+  const cnet_datagram_peer server_peer = policy_loopback_peer(server_port);
+  rx->conversation = conversation;
+  UNREACHABLE_REQUIRE(cnet_packet_session_open(client, &closed_peer, conversation, &absent) ==
+                      SALTS_OK);
+  UNREACHABLE_REQUIRE(cnet_packet_send_tagged(client, absent, &data, 1u, 1u) == SALTS_OK);
+  uint64_t deadline = monotonic_ms() + 250u;
+  do {
+    UNREACHABLE_REQUIRE(policy_loopback_drive(client) == SALTS_OK);
+  } while (monotonic_ms() < deadline);
+  UNREACHABLE_REQUIRE(tx->terminals == 0u && tx->errors == 0u);
+
+  UNREACHABLE_REQUIRE(cnet_packet_session_open(client, &server_peer, conversation, &healthy) ==
+                      SALTS_OK);
+  UNREACHABLE_REQUIRE(cnet_packet_send_tagged(client, healthy, &data, 1u, 2u) == SALTS_OK);
+  deadline = monotonic_ms() + 5000u;
+  while (tx->terminals == 0u && monotonic_ms() < deadline) {
+    UNREACHABLE_REQUIRE(policy_loopback_drive(server) == SALTS_OK);
+    UNREACHABLE_REQUIRE(policy_loopback_drive(client) == SALTS_OK);
+  }
+  UNREACHABLE_REQUIRE(rx->received == 1u && rx->receive_size == 1u &&
+                      rx->receive_data[0] == data && rx->errors == 0u);
+  UNREACHABLE_REQUIRE(tx->terminals == 1u && tx->terminal_tag == 2u &&
+                      tx->terminal_status == SALTS_OK && tx->errors == 0u);
+cleanup:
+#undef UNREACHABLE_REQUIRE
+  return policy_lifecycle_cleanup(fixture, failure);
+}
+
 static int policy_udp_generation_drain(void) {
   policy_packet_lifecycle *fixture = calloc(1u, sizeof(*fixture));
   cnet_packet_session old = {0}, neighbor = {0}, replacement = {0}, rejected = {0};
@@ -1504,6 +1554,10 @@ spec("CNet native policy and channel admission") {
   it("admits passive plain KCP only on the first PUSH segment") {
     const int failed = policy_kcp_passive_start();
     check(failed == 0, "Passive KCP start: failed source line %d", failed);
+  }
+  it("keeps a KCP neighbor working when another UDP port is unreachable") {
+    const int failed = policy_kcp_unreachable_peer();
+    check(failed == 0, "KCP unreachable peer: failed source line %d", failed);
   }
   it("drains a closing UDP generation before reuse and preserves its neighbor") {
     const int failed = policy_udp_generation_drain();
