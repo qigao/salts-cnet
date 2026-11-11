@@ -225,7 +225,9 @@ int cnet_manager_connect(cnet_manager *manager, cnet_managed_connection id,
   if (status != SALTS_OK) return status;
   if (out == NULL || options == NULL || options->uri == NULL) status = SALTS_EINVAL;
   else if (impl->sealed) status = SALTS_ESHUTDOWN;
-  else if (strncmp(options->uri, "tcp://", 6u) != 0 && strncmp(options->uri, "tls://", 6u) != 0)
+  else if (strncmp(options->uri, "tcp://", 6u) != 0 &&
+           strncmp(options->uri, "tls://", 6u) != 0 &&
+           strncmp(options->uri, "ipc://", 6u) != 0)
     status = SALTS_ENOTSUP;
   else {
     copied = *options;
@@ -256,6 +258,27 @@ int cnet_manager_adopt(cnet_manager *manager, cnet_managed_connection id,
   }
   if (status != SALTS_OK && accepted != NULL && accepted->internal_active != 0u) {
     const int close_status = cnet_accepted_stream_close(accepted);
+    if (close_status != SALTS_OK) status = close_status;
+  }
+  return end_admit(record, status, connection, out);
+}
+int cnet_manager_adopt_ipc(cnet_manager *manager, cnet_managed_connection id,
+                           cnet_ipc_accepted *accepted, cnet_connection *out) {
+  manager_impl *impl;
+  manager_record *record;
+  cnet_connection connection = {0};
+  int status;
+  if (out != NULL) *out = (cnet_connection){0};
+  status = begin_admit(manager, id, &impl, &record);
+  if (status != SALTS_OK) return status;
+  if (out == NULL || accepted == NULL) status = SALTS_EINVAL;
+  else if (impl->sealed) status = SALTS_ESHUTDOWN;
+  else {
+    const cnet_observer observer = bridge(record);
+    status = cnet_client_adopt_ipc(impl->client, accepted, &observer, &connection);
+  }
+  if (status != SALTS_OK && accepted != NULL && accepted->kind != CNET_IPC_RESOURCE_NONE) {
+    const int close_status = cnet_ipc_accepted_close(accepted);
     if (close_status != SALTS_OK) status = close_status;
   }
   return end_admit(record, status, connection, out);

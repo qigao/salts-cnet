@@ -1,7 +1,7 @@
 #ifndef CNET_MANAGER_H
 #define CNET_MANAGER_H
 
-#include <cnet/cnet.h>
+#include <cnet/ipc.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -101,7 +101,7 @@ int cnet_manager_cancel(cnet_manager *manager, cnet_managed_connection managed);
 /** Consumes a valid RESERVED record on every attempt, including invalid options,
  * seal and CNet admission failure. Rejection retires the attachment; no state
  * callback is fabricated. Output is zero on failure. Uses attachment.observer,
- * ignoring options.observer. Only tcp/tls stream URIs are supported (ENOTSUP).
+ * ignoring options.observer. Supports tcp/tls/ipc stream URIs (ENOTSUP otherwise).
  * Binding is complete before return, without polling or allocation by the helper.
  */
 int cnet_manager_connect(cnet_manager *manager, cnet_managed_connection managed,
@@ -114,6 +114,15 @@ int cnet_manager_connect(cnet_manager *manager, cnet_managed_connection managed,
 int cnet_manager_adopt(cnet_manager *manager, cnet_managed_connection managed,
                        cnet_accepted_stream *accepted, const cnet_tls_server *tls,
                        cnet_connection *out_connection);
+
+/** Adopt a detached IPC stream on its final Owner. A valid RESERVED attempt
+ * consumes a valid accepted descriptor and retires the reservation on failure.
+ * Manager/identity/state rejection leaves the descriptor with the caller.
+ * Invalid descriptors return EINVAL. Output is zero on failure. The attachment
+ * observer and context hold govern the admitted connection's lifetime.
+ */
+int cnet_manager_adopt_ipc(cnet_manager *manager, cnet_managed_connection managed,
+                           cnet_ipc_accepted *accepted, cnet_connection *out_connection);
 
 /** Releases the optional extra context hold once (EALREADY if absent). Does not
  * recycle during a callback; cleanup runs later in advance. Transport/observer
