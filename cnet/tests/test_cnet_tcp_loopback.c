@@ -54,6 +54,7 @@ static bool test_would_block(void) {
 #  include <netinet/in.h>
 #  include <netinet/tcp.h>
 #  include <sys/socket.h>
+#  include <native_io_socket.h>
 #  include <native_io_transport.h>
 #  include <sys/time.h>
 #  include <sys/resource.h>
