@@ -174,6 +174,16 @@ the preinstalled dependency prefix supplies those imports without adding a Media
 Runtime paths include the selected vcpkg prefix, SaltsBase's runtime and, for
 Windows llvm-mingw, the selected compiler's runtime directory.
 
+## Linux ARM64 SDK
+
+Linux ARM64 is built and tested natively on `ubuntu-24.04-arm` using the
+existing `llvm-native-release-user` configure/build/test/install presets.
+The matrix selects `arm64-linux` dependencies and the matching published
+`linux-clang-arm64` SaltsBase SDK. The complete CNet/Crypto/SCTP graph and
+formal CTest suite run before publishing `salts-cnet-<version>-linux-arm64.tar`.
+The archive is part of the same qualified release set and SHA-256 manifest
+as the other platforms; no cross-compiled test execution is claimed.
+
 ## Build and test
 
 Use the versioned `CMakeUserPresets.json`. Populate the required environment
@@ -229,16 +239,16 @@ NativeIO socket/transport/accept headers and the retained startup repairs. Its C
 `<asn1.h>` and `<asn1_value.h>`, and coroutine headers use `<salts/coro_*.h>`.
 Consumers use these public headers directly without draft-layout aliases.
 
-Core CI explicitly selects seven of those published platform/compiler SDKs: Windows x64 MSVC and LLVM-MinGW, Linux x64 GCC and Clang, macOS ARM64
-Clang, and Android arm64/x64 NDK. Each lane selects its exact manifest entry;
-no architecture or compiler substitution is performed. The two Linux ARM64 SDKs
-passed producer CI; consumer ARM64 qualification is not yet in this matrix.
+Core CI selects eight published platform/compiler SDKs: Windows x64 MSVC and
+LLVM-MinGW, Linux x64 GCC and Clang, Linux ARM64 Clang, macOS ARM64 Clang,
+and Android arm64/x64 NDK. Each lane selects its exact manifest entry;
+no architecture or compiler substitution is performed.
 Windows ARM64 and macOS x64 still require producer SDKs.
 ASan/UBSan additionally uses the ordinary Linux x64 Clang foundation and
 instruments this network graph; that does not qualify the prebuilt foundation
 under ASan/UBSan. TSan requires the matching `linux-clang-x64-tsan` SDK,
 published in SaltsBase 0.1.2, so its shared synchronization is instrumented too.
-There are nine qualification jobs covering eight released SDK profiles.
+There are ten qualification jobs, including sanitizer profiles.
 
 Android links Core's own `libcnet.so` with explicit 16 KiB maximum/common
 page alignment, matching the Base 0.1.3 SDK. Both Android CI profiles install
@@ -247,7 +257,7 @@ segment for alignment of at least 16384 bytes. This checks SDK layout; Android
 device execution and full application packaging remain separate qualification.
 
 The historical fixed-tag `v0.1.002` eight-RID NuGet publisher has a broader
-packaging contract and is not qualified by this seven-SDK matrix. It requires
+packaging contract and is not qualified by this SDK matrix. It requires
 its own coordinated release migration; changing this CI scope does not create
 or replace a published package or tag.
 

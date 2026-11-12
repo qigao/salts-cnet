@@ -12,6 +12,17 @@
       "package": true
     },
     {
+      "rid": "linux-arm64",
+      "runner": "ubuntu-24.04-arm",
+      "compiler": "clang",
+      "sdk": "linux-clang-arm64",
+      "target": "arm64",
+      "triplet": "arm64-linux",
+      "preset": "llvm-native-release-user",
+      "android_abi": "",
+      "package": true
+    },
+    {
       "rid": "linux-gcc-x64",
       "runner": "ubuntu-24.04",
       "compiler": "gcc",
