@@ -79,8 +79,8 @@ manifests, compiler/ABI selection and product tests remain mandatory. To roll
 back, choose the previous exact release and restore into its own directory.
 
 `SALTS_BASE_VERSION` selects the SaltsBase release and must match the
-installed `SALTS_BASE_ROOT` exactly. The API compatibility floor stays
-0.1.1; CI still validates the release manifest and successful producer.
+installed `SALTS_BASE_ROOT` exactly. CMake owns API compatibility constraints;
+CI validates the release manifest and successful producer.
 
 The current example selects SaltsBase 0.1.7 and vcpkg-cache 0.1.3. When
 upgrading, update the relevant nonsecret `.env` version and SDK-root fields
@@ -114,7 +114,7 @@ are built only with their module's tests. The SCTP public headers are
 
 ## Dependencies and ownership
 
-Set `SALTS_BASE_ROOT` to a matching released SaltsBase SDK (0.1.1 or newer). Configuration
+Set `SALTS_BASE_ROOT` to the released SDK selected by `SALTS_BASE_VERSION`. Configuration
 uses only that root and fails if the package or its required components are
 missing. Core thread, memory and IPC calls use SaltsBase's current public names
 and headers; no compatibility aliases or private source paths are added.
@@ -125,9 +125,8 @@ CNet retains connection/protocol policy and adapts its existing public values;
 it contains no first-party native socket I/O implementation. The c-ares provider
 continues to own DNS protocol execution on the same progress owner.
 
-This boundary requires SaltsBase 0.1.1 or newer; the current SDK selection is
+The current SDK selection is
 [SaltsBase 0.1.7](https://github.com/qigao/salts-base/releases/tag/v0.1.7).
-Version 0.1.0 lacks these headers/symbols and fails the package version check.
 CI consumes immutable published SDKs; local builds can extract the same archives
 into separate installation prefixes.
 
