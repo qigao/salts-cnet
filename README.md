@@ -82,7 +82,7 @@ back, choose the previous exact release and restore into its own directory.
 installed `SALTS_BASE_ROOT` exactly. The API compatibility floor stays
 0.1.1; CI still validates the release manifest and successful producer.
 
-The current example selects SaltsBase 0.1.3 and vcpkg-cache 0.1.3. When
+The current example selects SaltsBase 0.1.7 and vcpkg-cache 0.1.3. When
 upgrading, update the relevant nonsecret `.env` version and SDK-root fields
 together, preserving credentials and other machine settings. The infrastructure
 checkout must match its selected release; a dirty older checkout is not reset
@@ -125,7 +125,8 @@ CNet retains connection/protocol policy and adapts its existing public values;
 it contains no first-party native socket I/O implementation. The c-ares provider
 continues to own DNS protocol execution on the same progress owner.
 
-This boundary requires the released [SaltsBase 0.1.1 SDK](https://github.com/qigao/salts-base/releases/tag/v0.1.1).
+This boundary requires SaltsBase 0.1.1 or newer; the current SDK selection is
+[SaltsBase 0.1.7](https://github.com/qigao/salts-base/releases/tag/v0.1.7).
 Version 0.1.0 lacks these headers/symbols and fails the package version check.
 CI consumes immutable published SDKs; local builds can extract the same archives
 into separate installation prefixes.
@@ -209,7 +210,7 @@ and `LLVM_MINGW_ARM64_INSTALL_PREFIX` in the parent environment. Both SDKs must
 target Windows ARM64; the preset selects `qigao-arm64-windows-llvm-mingw`
 and `aarch64-w64-mingw32` independently of native x64 settings. Restore the
 vcpkg SDK with `cmake/dependencies/qigao-arm64-windows-llvm-mingw.lock.json`.
-SaltsBase v0.1.3 has no Windows ARM64 release asset, so a matching SDK must be
+SaltsBase v0.1.7 has no Windows ARM64 release asset, so a matching SDK must be
 provided separately. After changing dependency roots, configure with
 `cmake/WithVs.cmd cmake --fresh --preset llvm-mingw-arm64-release-user`
 before building that same preset.
