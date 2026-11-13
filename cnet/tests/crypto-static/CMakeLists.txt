@@ -3,8 +3,6 @@
 # M5 must use this exact source tree, not find_package(Crypto) or
 # imported qigao/crypto ASN1. Salts::CNet is built separately for parity,
 # but the candidate image links only this local static Crypto owner.
-find_package(c-ares CONFIG REQUIRED)
-find_package(kcp CONFIG REQUIRED)
 if(APPLE)
   find_library(cnet_COREFOUNDATION CoreFoundation REQUIRED)
   find_library(cnet_SECURITY Security REQUIRED)
@@ -33,10 +31,6 @@ set_source_files_properties(
 cmake_add_executable(cnet_crypto_static_original_owner SOURCES ${_static_owner_sources}
   "${PROJECT_SOURCE_DIR}/cnet/tests/crypto-static/owner_tinytest.c"
   FOLDER "cnet/tests/crypto-static")
-target_compile_features(cnet_crypto_static_original_owner
-  PRIVATE c_std_11)
-set_target_properties(cnet_crypto_static_original_owner PROPERTIES
-  C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
 target_include_directories(cnet_crypto_static_original_owner PRIVATE
   "${PROJECT_SOURCE_DIR}/cnet/include"
   "${PROJECT_SOURCE_DIR}/cnet/src"
@@ -87,7 +81,6 @@ set_tests_properties(saltscore.cnet_crypto_static_original_owner_tls12_tls13
 # M5: real original CNet epoll/kqueue/IOCP Owner, not an adapter-only
 # socket. TLS12/TLS13 REQUIRED mTLS uses exact-head Crypto Python X.509
 # fixtures and a single physical static Crypto instance in the process.
-find_package(Python3 COMPONENTS Interpreter REQUIRED)
 add_test(NAME saltscore.cnet_crypto_static_original_owner_python_mtls
   COMMAND "${Python3_EXECUTABLE}"
     "${PROJECT_SOURCE_DIR}/cnet/tests/crypto-static/python_original_owner_mtls.py"
@@ -99,7 +92,6 @@ set_tests_properties(saltscore.cnet_crypto_static_original_owner_python_mtls
 
 # True client SAN mismatch requires SNI-neutral independent Python ssl server:
 # pinned GmSSL refuses unrecognized SNI *on the server* first.
-find_package(Python3 REQUIRED COMPONENTS Interpreter)
 foreach(_protocol IN ITEMS tls12 tls13)
   add_test(NAME saltscore.cnet_crypto_static_python_san_${_protocol}
     COMMAND "${Python3_EXECUTABLE}" -B
@@ -127,7 +119,6 @@ target_compile_features(cnet_crypto_m6_shared PUBLIC c_std_11)
 target_compile_definitions(cnet_crypto_m6_shared
   PRIVATE CNET_M6_BUILD_SHARED=1)
 set_target_properties(cnet_crypto_m6_shared PROPERTIES
-  C_STANDARD_REQUIRED ON C_EXTENSIONS OFF
   WINDOWS_EXPORT_ALL_SYMBOLS ON
   OUTPUT_NAME cnet_m6_static_crypto)
 target_compile_definitions(cnet_crypto_m6_shared PRIVATE
@@ -173,11 +164,7 @@ endif()
 foreach(_module IN ITEMS a b)
   add_library(cnet_m6_plugin_${_module} MODULE
     "${PROJECT_SOURCE_DIR}/cnet/tests/crypto-static/m6_plugin.c")
-  target_compile_features(cnet_m6_plugin_${_module}
-    PRIVATE c_std_11)
-  set_target_properties(cnet_m6_plugin_${_module} PROPERTIES
-    C_STANDARD_REQUIRED ON C_EXTENSIONS OFF
-    WINDOWS_EXPORT_ALL_SYMBOLS ON)
+  set_target_properties(cnet_m6_plugin_${_module} PROPERTIES WINDOWS_EXPORT_ALL_SYMBOLS ON)
   target_include_directories(cnet_m6_plugin_${_module} PRIVATE
     "${PROJECT_SOURCE_DIR}/cnet/tests/crypto-static")
   target_link_libraries(cnet_m6_plugin_${_module}
@@ -196,10 +183,6 @@ set_source_files_properties(
 cmake_add_executable(cnet_m6_two_plugin_loader SOURCES "${PROJECT_SOURCE_DIR}/cnet/tests/crypto-static/m6_loader.c"
   "${PROJECT_SOURCE_DIR}/cnet/tests/crypto-static/m6_loader_tinytest.c"
   FOLDER "cnet/tests/crypto-static")
-target_compile_features(cnet_m6_two_plugin_loader
-  PRIVATE c_std_11)
-set_target_properties(cnet_m6_two_plugin_loader PROPERTIES
-  C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
 target_include_directories(cnet_m6_two_plugin_loader PRIVATE
   "${PROJECT_SOURCE_DIR}/cnet/tests/crypto-static")
 target_link_libraries(cnet_m6_two_plugin_loader PRIVATE
@@ -217,7 +200,6 @@ add_test(NAME saltscore.cnet_crypto_m6_two_plugin_shared_owner
 set_tests_properties(saltscore.cnet_crypto_m6_two_plugin_shared_owner
   PROPERTIES TIMEOUT 120 RESOURCE_LOCK cnet_m6_shared_owner)
 
-find_package(Python3 COMPONENTS Interpreter REQUIRED)
 add_test(NAME saltscore.cnet_crypto_m6_two_plugin_concurrent_mtls
   COMMAND "${Python3_EXECUTABLE}"
     "${PROJECT_SOURCE_DIR}/cnet/tests/crypto-static/python_m6_two_plugin_mtls.py"

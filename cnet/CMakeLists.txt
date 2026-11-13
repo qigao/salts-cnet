@@ -7,14 +7,18 @@ cmake_config_target(saltscore_wsparser FOLDER "cnet")
 
 target_compile_features(saltscore_wsparser PUBLIC c_std_11)
 set_target_properties(saltscore_wsparser PROPERTIES
-  C_STANDARD_REQUIRED ON C_EXTENSIONS OFF POSITION_INDEPENDENT_CODE ON C_VISIBILITY_PRESET hidden)
+  POSITION_INDEPENDENT_CODE ON C_VISIBILITY_PRESET hidden)
 target_include_directories(saltscore_wsparser PRIVATE
   "${CMAKE_CURRENT_SOURCE_DIR}/src/wsparser")
 
 # Production CNet drives the opaque Crypto stream API. Backend protocol state,
 # certificates and platform trust stores belong to Crypto.
-find_package(c-ares CONFIG REQUIRED)
-find_package(kcp CONFIG REQUIRED)
+find_package(c-ares CONFIG REQUIRED
+  PATHS "${SALTS_DEPENDENCY_PREFIX}/share/c-ares"
+  NO_DEFAULT_PATH NO_CMAKE_FIND_ROOT_PATH)
+find_package(kcp CONFIG REQUIRED
+  PATHS "${SALTS_DEPENDENCY_PREFIX}/share/kcp"
+  NO_DEFAULT_PATH NO_CMAKE_FIND_ROOT_PATH)
 # Salts source at refactor/cnet-ipc-name-native: native C11 FIFO, indexed peers,
 # and caller-owned IPC path. Keep the entire CNet DSO in one ownership domain.
 cmake_add_source(cnet_sources DIRS src include/cnet
@@ -22,11 +26,10 @@ cmake_add_source(cnet_sources DIRS src include/cnet
 source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES ${cnet_sources})
 add_library(cnet SHARED ${cnet_sources} $<TARGET_OBJECTS:saltscore_wsparser>)
 cmake_config_target(cnet
-  ALIAS Salts::CNet FOLDER "cnet" EXPORT_NAME CNet OUTPUT_NAME cnet)
+  ALIAS Salts::CNet FOLDER "cnet" EXPORT_NAME CNet)
 
 target_compile_features(cnet PUBLIC c_std_11)
-set_target_properties(cnet PROPERTIES
-  C_STANDARD_REQUIRED ON C_EXTENSIONS OFF WINDOWS_EXPORT_ALL_SYMBOLS ON)
+set_target_properties(cnet PROPERTIES WINDOWS_EXPORT_ALL_SYMBOLS ON)
 
 target_include_directories(cnet
   PUBLIC
@@ -125,8 +128,5 @@ if(BUILD_TESTS)
     COMMAND "${Python3_EXECUTABLE}" -B -m unittest discover
       -s "${PROJECT_SOURCE_DIR}/cnet/tests/owner"
       -p test_native_crypto_owner_audit.py -v)
-endif()
-
-if(BUILD_TESTS)
   add_subdirectory(tests)
 endif()

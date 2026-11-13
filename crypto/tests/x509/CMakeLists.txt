@@ -6,9 +6,6 @@ set_source_files_properties(test_x509_der.c PROPERTIES
   COMPILE_DEFINITIONS "main=crypto_x509_real_legacy_entry")
 cmake_add_executable(crypto_x509_der_conformance SOURCES test_x509_der.c real_der_tinytest.c
   FOLDER "crypto/tests/x509")
-target_compile_features(crypto_x509_der_conformance PRIVATE c_std_11)
-set_target_properties(crypto_x509_der_conformance PROPERTIES
-  C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
 target_compile_definitions(crypto_x509_der_conformance PRIVATE
   "CRYPTO_X509_TEST_P256_PEM=\"${CMAKE_CURRENT_SOURCE_DIR}/../fixtures/p256-leaf-sha384.pem\""
   "CRYPTO_X509_TEST_P384_PEM=\"${CMAKE_CURRENT_SOURCE_DIR}/../fixtures/p384-leaf-sha384.pem\"")
@@ -23,7 +20,6 @@ set_source_files_properties(test_saltsnet_x509_der.c PROPERTIES
   COMPILE_DEFINITIONS "main=crypto_x509_saltsnet_legacy_entry")
 cmake_add_executable(crypto_x509_moved_saltsnet_fixture SOURCES test_saltsnet_x509_der.c saltsnet_der_tinytest.c
   FOLDER "crypto/tests/x509")
-target_compile_features(crypto_x509_moved_saltsnet_fixture PRIVATE c_std_11)
 target_link_libraries(crypto_x509_moved_saltsnet_fixture PRIVATE Salts::Crypto Salts::TinyTest)
 add_test(NAME crypto.x509.migrated_saltsnet_fixture
          COMMAND crypto_x509_moved_saltsnet_fixture)

@@ -10,11 +10,11 @@ function(_cmake_check_arguments caller prefix)
     endif()
 endfunction()
 
-# Only explicitly supplied attributes are changed. VERSION/SOVERSION, including
-# zero, belong to the caller's ABI policy; omitted attributes retain their value.
+# Only explicitly supplied attributes are changed; omitted attributes retain
+# their value.
 function(cmake_config_target target_name)
     set(options)
-    set(oneValueArgs FOLDER VERSION SOVERSION EXPORT_NAME ALIAS OUTPUT_NAME)
+    set(oneValueArgs FOLDER EXPORT_NAME ALIAS OUTPUT_NAME)
     set(multiValueArgs)
     cmake_parse_arguments(PARSE_ARGV 1 ARG "${options}" "${oneValueArgs}" "${multiValueArgs}")
     _cmake_check_arguments(cmake_config_target ARG)
@@ -29,7 +29,7 @@ function(cmake_config_target target_name)
         endif()
     endif()
 
-    foreach(attribute IN ITEMS FOLDER EXPORT_NAME OUTPUT_NAME VERSION SOVERSION)
+    foreach(attribute IN ITEMS FOLDER EXPORT_NAME OUTPUT_NAME)
         if(DEFINED ARG_${attribute})
             set_target_properties("${target_name}" PROPERTIES
                 ${attribute} "${ARG_${attribute}}")

@@ -342,6 +342,14 @@
   ],
   "testPresets": [
     {
+      "name": "llvm-mingw-x64-release-user",
+      "inherits": [
+        "base-test",
+        "test-windows"
+      ],
+      "configurePreset": "llvm-mingw-x64-release-user"
+    },
+    {
       "name": "native-release-user",
       "inherits": [
         "base-test",

@@ -20,254 +20,215 @@ foreach(target IN ITEMS cnet_sctp_data_proto cnet_sctp_assoc_proto
   endif()
 endforeach()
 
-if(BUILD_TESTS)
-  cmake_add_executable(cnet_sctp_wire_test SOURCES wire_test.c
-    FOLDER "sctp/tests")
-  target_link_libraries(cnet_sctp_wire_test PRIVATE Salts::SCTPWire Salts::TinyTest)
-  set_target_properties(cnet_sctp_wire_test PROPERTIES
-  C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
-  if(MSVC)
-    target_compile_options(cnet_sctp_wire_test PRIVATE /W4 /WX)
-  else()
-    target_compile_options(cnet_sctp_wire_test PRIVATE -Wall -Wextra -Wpedantic -Werror)
-  endif()
-  add_test(NAME cnet_sctp_wire_test COMMAND cnet_sctp_wire_test)
-
-  cmake_add_executable(cnet_sctp_assoc_test SOURCES assoc_test.c
-    FOLDER "sctp/tests")
-  target_link_libraries(cnet_sctp_assoc_test PRIVATE cnet_sctp_assoc_proto Salts::TinyTest)
-  target_include_directories(cnet_sctp_assoc_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../src")
-  set_target_properties(cnet_sctp_assoc_test PROPERTIES
-  C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
-  if(MSVC)
-    target_compile_options(cnet_sctp_assoc_test PRIVATE /W4 /WX)
-  else()
-    target_compile_options(cnet_sctp_assoc_test PRIVATE -Wall -Wextra -Wpedantic -Werror)
-  endif()
-  add_test(NAME cnet_sctp_assoc_test COMMAND cnet_sctp_assoc_test)
-
-  cmake_add_executable(cnet_sctp_init_params_test SOURCES init_params_test.c
-    FOLDER "sctp/tests")
-  target_link_libraries(cnet_sctp_init_params_test PRIVATE cnet_sctp_assoc_proto Salts::TinyTest)
-  target_include_directories(cnet_sctp_init_params_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../src")
-  set_target_properties(cnet_sctp_init_params_test PROPERTIES
-  C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
-  if(MSVC)
-    target_compile_options(cnet_sctp_init_params_test PRIVATE /W4 /WX)
-  else()
-    target_compile_options(cnet_sctp_init_params_test PRIVATE -Wall -Wextra -Wpedantic -Werror)
-  endif()
-  add_test(NAME cnet_sctp_init_params_test COMMAND cnet_sctp_init_params_test)
-
-  # Table 12 classifiers are decision-only: no side effects or production cutover.
-  cmake_add_executable(cnet_sctp_collision_test SOURCES collision_test.c
-    FOLDER "sctp/tests")
-  target_link_libraries(cnet_sctp_collision_test PRIVATE cnet_sctp_assoc_proto Salts::TinyTest)
-  target_include_directories(cnet_sctp_collision_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../src")
-  set_target_properties(cnet_sctp_collision_test PROPERTIES
-  C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
-  if(MSVC)
-    target_compile_options(cnet_sctp_collision_test PRIVATE /W4 /WX)
-  else()
-    target_compile_options(cnet_sctp_collision_test PRIVATE -Wall -Wextra -Wpedantic -Werror)
-  endif()
-  add_test(NAME cnet_sctp_collision_test COMMAND cnet_sctp_collision_test)
-
-  cmake_add_executable(cnet_sctp_data_test SOURCES data_test.c
-    FOLDER "sctp/tests")
-  target_link_libraries(cnet_sctp_data_test PRIVATE cnet_sctp_data_proto Salts::TinyTest)
-  target_include_directories(cnet_sctp_data_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../src")
-  set_target_properties(cnet_sctp_data_test PROPERTIES
-  C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
-  if(MSVC)
-    target_compile_options(cnet_sctp_data_test PRIVATE /W4 /WX)
-  else()
-    target_compile_options(cnet_sctp_data_test PRIVATE -Wall -Wextra -Wpedantic -Werror)
-  endif()
-  add_test(NAME cnet_sctp_data_test COMMAND cnet_sctp_data_test)
-
-  cmake_add_executable(cnet_sctp_sack_recovery_test SOURCES sack_recovery_test.c
-    FOLDER "sctp/tests")
-  target_link_libraries(cnet_sctp_sack_recovery_test PRIVATE cnet_sctp_data_proto Salts::TinyTest)
-  target_include_directories(cnet_sctp_sack_recovery_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../src")
-  set_target_properties(cnet_sctp_sack_recovery_test PROPERTIES
-  C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
-  if(MSVC)
-    target_compile_options(cnet_sctp_sack_recovery_test PRIVATE /W4 /WX)
-  else()
-    target_compile_options(cnet_sctp_sack_recovery_test PRIVATE -Wall -Wextra -Wpedantic -Werror)
-  endif()
-  add_test(NAME cnet_sctp_sack_recovery_test COMMAND cnet_sctp_sack_recovery_test)
-
-  cmake_add_executable(cnet_sctp_fast_recovery_test SOURCES fast_recovery_test.c
-    FOLDER "sctp/tests")
-  target_link_libraries(cnet_sctp_fast_recovery_test PRIVATE cnet_sctp_data_proto Salts::TinyTest)
-  target_include_directories(cnet_sctp_fast_recovery_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../src")
-  set_target_properties(cnet_sctp_fast_recovery_test PROPERTIES
-  C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
-  if(MSVC)
-    target_compile_options(cnet_sctp_fast_recovery_test PRIVATE /W4 /WX)
-  else()
-    target_compile_options(cnet_sctp_fast_recovery_test PRIVATE -Wall -Wextra -Wpedantic -Werror)
-  endif()
-  add_test(NAME cnet_sctp_fast_recovery_test COMMAND cnet_sctp_fast_recovery_test)
-
-  cmake_add_executable(cnet_sctp_congestion_test SOURCES congestion_test.c
-    FOLDER "sctp/tests")
-  target_link_libraries(cnet_sctp_congestion_test PRIVATE cnet_sctp_data_proto Salts::TinyTest)
-  target_include_directories(cnet_sctp_congestion_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../src")
-  set_target_properties(cnet_sctp_congestion_test PROPERTIES
-  C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
-  if(MSVC)
-    target_compile_options(cnet_sctp_congestion_test PRIVATE /W4 /WX)
-  else()
-    target_compile_options(cnet_sctp_congestion_test PRIVATE -Wall -Wextra -Wpedantic -Werror)
-  endif()
-  add_test(NAME cnet_sctp_congestion_test COMMAND cnet_sctp_congestion_test)
-
-  cmake_add_executable(cnet_sctp_zero_window_test SOURCES zero_window_test.c
-    FOLDER "sctp/tests")
-  target_link_libraries(cnet_sctp_zero_window_test PRIVATE cnet_sctp_data_proto Salts::TinyTest)
-  target_include_directories(cnet_sctp_zero_window_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../src")
-  set_target_properties(cnet_sctp_zero_window_test PROPERTIES
-  C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
-  if(MSVC)
-    target_compile_options(cnet_sctp_zero_window_test PRIVATE /W4 /WX)
-  else()
-    target_compile_options(cnet_sctp_zero_window_test PRIVATE -Wall -Wextra -Wpedantic -Werror)
-  endif()
-  add_test(NAME cnet_sctp_zero_window_test COMMAND cnet_sctp_zero_window_test)
-
-  cmake_add_executable(cnet_sctp_pr_sctp_test SOURCES pr_sctp_test.c
-    FOLDER "sctp/tests")
-  target_link_libraries(cnet_sctp_pr_sctp_test PRIVATE
-    cnet_sctp_data_proto cnet_sctp_wire Salts::TinyTest)
-  target_include_directories(cnet_sctp_pr_sctp_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../src")
-  set_target_properties(cnet_sctp_pr_sctp_test PROPERTIES
-  C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
-  if(MSVC)
-    target_compile_options(cnet_sctp_pr_sctp_test PRIVATE /W4 /WX)
-  else()
-    target_compile_options(cnet_sctp_pr_sctp_test PRIVATE
-      -Wall -Wextra -Wpedantic -Werror)
-  endif()
-  add_test(NAME cnet_sctp_pr_sctp_test COMMAND cnet_sctp_pr_sctp_test)
-
-  cmake_add_executable(cnet_sctp_interleaving_test SOURCES interleaving_test.c
-    FOLDER "sctp/tests")
-  target_link_libraries(cnet_sctp_interleaving_test PRIVATE
-    cnet_sctp_data_proto cnet_sctp_wire Salts::TinyTest)
-  target_include_directories(cnet_sctp_interleaving_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../src")
-  set_target_properties(cnet_sctp_interleaving_test PROPERTIES
-  C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
-  if(MSVC)
-    target_compile_options(cnet_sctp_interleaving_test PRIVATE /W4 /WX)
-  else()
-    target_compile_options(cnet_sctp_interleaving_test PRIVATE
-      -Wall -Wextra -Wpedantic -Werror)
-  endif()
-  add_test(NAME cnet_sctp_interleaving_test
-    COMMAND cnet_sctp_interleaving_test)
-
-  cmake_add_executable(cnet_sctp_bundle_test SOURCES bundle_test.c
-    FOLDER "sctp/tests")
-  target_link_libraries(cnet_sctp_bundle_test PRIVATE cnet_sctp_data_proto Salts::TinyTest)
-  target_include_directories(cnet_sctp_bundle_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../src")
-  set_target_properties(cnet_sctp_bundle_test PROPERTIES
-  C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
-  if(MSVC)
-    target_compile_options(cnet_sctp_bundle_test PRIVATE /W4 /WX)
-  else()
-    target_compile_options(cnet_sctp_bundle_test PRIVATE -Wall -Wextra -Wpedantic -Werror)
-  endif()
-  add_test(NAME cnet_sctp_bundle_test COMMAND cnet_sctp_bundle_test)
-
-  cmake_add_executable(cnet_sctp_fragment_test SOURCES fragment_test.c
-    FOLDER "sctp/tests")
-  target_link_libraries(cnet_sctp_fragment_test PRIVATE cnet_sctp_data_proto Salts::TinyTest)
-  target_include_directories(cnet_sctp_fragment_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../src")
-  set_target_properties(cnet_sctp_fragment_test PROPERTIES
-  C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
-  if(MSVC)
-    target_compile_options(cnet_sctp_fragment_test PRIVATE /W4 /WX)
-  else()
-    target_compile_options(cnet_sctp_fragment_test PRIVATE -Wall -Wextra -Wpedantic -Werror)
-  endif()
-  add_test(NAME cnet_sctp_fragment_test COMMAND cnet_sctp_fragment_test)
-
-  cmake_add_executable(cnet_sctp_assoc_data_test SOURCES assoc_data_test.c
-    FOLDER "sctp/tests")
-  target_link_libraries(cnet_sctp_assoc_data_test PRIVATE
-    cnet_sctp_assoc_proto cnet_sctp_dcep_proto cnet_sctp_webrtc_proto Salts::TinyTest)
-  target_include_directories(cnet_sctp_assoc_data_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../src")
-  set_target_properties(cnet_sctp_assoc_data_test PROPERTIES
-  C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
-  if(MSVC)
-    target_compile_options(cnet_sctp_assoc_data_test PRIVATE /W4 /WX)
-  else()
-    target_compile_options(cnet_sctp_assoc_data_test PRIVATE -Wall -Wextra -Wpedantic -Werror)
-  endif()
-  add_test(NAME cnet_sctp_assoc_data_test COMMAND cnet_sctp_assoc_data_test)
-
-  cmake_add_executable(cnet_sctp_dcep_test SOURCES dcep_test.c
-    FOLDER "sctp/tests")
-  target_link_libraries(cnet_sctp_dcep_test PRIVATE cnet_sctp_dcep_proto Salts::TinyTest)
-  target_include_directories(cnet_sctp_dcep_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../src")
-  set_target_properties(cnet_sctp_dcep_test PROPERTIES
-  C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
-  if(MSVC)
-    target_compile_options(cnet_sctp_dcep_test PRIVATE /W4 /WX)
-  else()
-    target_compile_options(cnet_sctp_dcep_test PRIVATE -Wall -Wextra -Wpedantic -Werror)
-  endif()
-  add_test(NAME cnet_sctp_dcep_test COMMAND cnet_sctp_dcep_test)
-
-  cmake_add_executable(cnet_sctp_session_test SOURCES session_test.c
-    FOLDER "sctp/tests")
-  target_link_libraries(cnet_sctp_session_test PRIVATE cnet_sctp_session_proto Salts::TinyTest)
-  target_include_directories(cnet_sctp_session_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../src")
-  set_target_properties(cnet_sctp_session_test PROPERTIES
-  C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
-  if(MSVC)
-    target_compile_options(cnet_sctp_session_test PRIVATE /W4 /WX)
-  else()
-    target_compile_options(cnet_sctp_session_test PRIVATE
-      -Wall -Wextra -Wpedantic -Werror)
-  endif()
-  add_test(NAME cnet_sctp_session_test COMMAND cnet_sctp_session_test)
-
-  # Public opaque Session behavior remains a source-tree formal test. It is
-  # deliberately not configured as a second installed-consumer project.
-  cmake_add_executable(cnet_sctp_public_api_test SOURCES public_api_test.c
-    FOLDER "sctp/tests")
-  target_link_libraries(cnet_sctp_public_api_test PRIVATE Salts::SCTP Salts::TinyTest)
-  set_target_properties(cnet_sctp_public_api_test PROPERTIES
-  C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
-  if(MSVC)
-    target_compile_options(cnet_sctp_public_api_test PRIVATE /W4 /WX)
-  else()
-    target_compile_options(cnet_sctp_public_api_test PRIVATE
-      -Wall -Wextra -Wpedantic -Werror)
-  endif()
-  add_test(NAME cnet_sctp_public_api_test COMMAND cnet_sctp_public_api_test)
-
+cmake_add_executable(cnet_sctp_wire_test SOURCES wire_test.c
+  FOLDER "sctp/tests")
+target_link_libraries(cnet_sctp_wire_test PRIVATE Salts::SCTPWire Salts::TinyTest)
+if(MSVC)
+  target_compile_options(cnet_sctp_wire_test PRIVATE /W4 /WX)
+else()
+  target_compile_options(cnet_sctp_wire_test PRIVATE -Wall -Wextra -Wpedantic -Werror)
 endif()
+add_test(NAME cnet_sctp_wire_test COMMAND cnet_sctp_wire_test)
+
+cmake_add_executable(cnet_sctp_assoc_test SOURCES assoc_test.c
+  FOLDER "sctp/tests")
+target_link_libraries(cnet_sctp_assoc_test PRIVATE cnet_sctp_assoc_proto Salts::TinyTest)
+target_include_directories(cnet_sctp_assoc_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../src")
+if(MSVC)
+  target_compile_options(cnet_sctp_assoc_test PRIVATE /W4 /WX)
+else()
+  target_compile_options(cnet_sctp_assoc_test PRIVATE -Wall -Wextra -Wpedantic -Werror)
+endif()
+add_test(NAME cnet_sctp_assoc_test COMMAND cnet_sctp_assoc_test)
+
+cmake_add_executable(cnet_sctp_init_params_test SOURCES init_params_test.c
+  FOLDER "sctp/tests")
+target_link_libraries(cnet_sctp_init_params_test PRIVATE cnet_sctp_assoc_proto Salts::TinyTest)
+target_include_directories(cnet_sctp_init_params_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../src")
+if(MSVC)
+  target_compile_options(cnet_sctp_init_params_test PRIVATE /W4 /WX)
+else()
+  target_compile_options(cnet_sctp_init_params_test PRIVATE -Wall -Wextra -Wpedantic -Werror)
+endif()
+add_test(NAME cnet_sctp_init_params_test COMMAND cnet_sctp_init_params_test)
+
+# Table 12 classifiers are decision-only: no side effects or production cutover.
+cmake_add_executable(cnet_sctp_collision_test SOURCES collision_test.c
+  FOLDER "sctp/tests")
+target_link_libraries(cnet_sctp_collision_test PRIVATE cnet_sctp_assoc_proto Salts::TinyTest)
+target_include_directories(cnet_sctp_collision_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../src")
+if(MSVC)
+  target_compile_options(cnet_sctp_collision_test PRIVATE /W4 /WX)
+else()
+  target_compile_options(cnet_sctp_collision_test PRIVATE -Wall -Wextra -Wpedantic -Werror)
+endif()
+add_test(NAME cnet_sctp_collision_test COMMAND cnet_sctp_collision_test)
+
+cmake_add_executable(cnet_sctp_data_test SOURCES data_test.c
+  FOLDER "sctp/tests")
+target_link_libraries(cnet_sctp_data_test PRIVATE cnet_sctp_data_proto Salts::TinyTest)
+target_include_directories(cnet_sctp_data_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../src")
+if(MSVC)
+  target_compile_options(cnet_sctp_data_test PRIVATE /W4 /WX)
+else()
+  target_compile_options(cnet_sctp_data_test PRIVATE -Wall -Wextra -Wpedantic -Werror)
+endif()
+add_test(NAME cnet_sctp_data_test COMMAND cnet_sctp_data_test)
+
+cmake_add_executable(cnet_sctp_sack_recovery_test SOURCES sack_recovery_test.c
+  FOLDER "sctp/tests")
+target_link_libraries(cnet_sctp_sack_recovery_test PRIVATE cnet_sctp_data_proto Salts::TinyTest)
+target_include_directories(cnet_sctp_sack_recovery_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../src")
+if(MSVC)
+  target_compile_options(cnet_sctp_sack_recovery_test PRIVATE /W4 /WX)
+else()
+  target_compile_options(cnet_sctp_sack_recovery_test PRIVATE -Wall -Wextra -Wpedantic -Werror)
+endif()
+add_test(NAME cnet_sctp_sack_recovery_test COMMAND cnet_sctp_sack_recovery_test)
+
+cmake_add_executable(cnet_sctp_fast_recovery_test SOURCES fast_recovery_test.c
+  FOLDER "sctp/tests")
+target_link_libraries(cnet_sctp_fast_recovery_test PRIVATE cnet_sctp_data_proto Salts::TinyTest)
+target_include_directories(cnet_sctp_fast_recovery_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../src")
+if(MSVC)
+  target_compile_options(cnet_sctp_fast_recovery_test PRIVATE /W4 /WX)
+else()
+  target_compile_options(cnet_sctp_fast_recovery_test PRIVATE -Wall -Wextra -Wpedantic -Werror)
+endif()
+add_test(NAME cnet_sctp_fast_recovery_test COMMAND cnet_sctp_fast_recovery_test)
+
+cmake_add_executable(cnet_sctp_congestion_test SOURCES congestion_test.c
+  FOLDER "sctp/tests")
+target_link_libraries(cnet_sctp_congestion_test PRIVATE cnet_sctp_data_proto Salts::TinyTest)
+target_include_directories(cnet_sctp_congestion_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../src")
+if(MSVC)
+  target_compile_options(cnet_sctp_congestion_test PRIVATE /W4 /WX)
+else()
+  target_compile_options(cnet_sctp_congestion_test PRIVATE -Wall -Wextra -Wpedantic -Werror)
+endif()
+add_test(NAME cnet_sctp_congestion_test COMMAND cnet_sctp_congestion_test)
+
+cmake_add_executable(cnet_sctp_zero_window_test SOURCES zero_window_test.c
+  FOLDER "sctp/tests")
+target_link_libraries(cnet_sctp_zero_window_test PRIVATE cnet_sctp_data_proto Salts::TinyTest)
+target_include_directories(cnet_sctp_zero_window_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../src")
+if(MSVC)
+  target_compile_options(cnet_sctp_zero_window_test PRIVATE /W4 /WX)
+else()
+  target_compile_options(cnet_sctp_zero_window_test PRIVATE -Wall -Wextra -Wpedantic -Werror)
+endif()
+add_test(NAME cnet_sctp_zero_window_test COMMAND cnet_sctp_zero_window_test)
+
+cmake_add_executable(cnet_sctp_pr_sctp_test SOURCES pr_sctp_test.c
+  FOLDER "sctp/tests")
+target_link_libraries(cnet_sctp_pr_sctp_test PRIVATE
+  cnet_sctp_data_proto cnet_sctp_wire Salts::TinyTest)
+target_include_directories(cnet_sctp_pr_sctp_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../src")
+if(MSVC)
+  target_compile_options(cnet_sctp_pr_sctp_test PRIVATE /W4 /WX)
+else()
+  target_compile_options(cnet_sctp_pr_sctp_test PRIVATE
+    -Wall -Wextra -Wpedantic -Werror)
+endif()
+add_test(NAME cnet_sctp_pr_sctp_test COMMAND cnet_sctp_pr_sctp_test)
+
+cmake_add_executable(cnet_sctp_interleaving_test SOURCES interleaving_test.c
+  FOLDER "sctp/tests")
+target_link_libraries(cnet_sctp_interleaving_test PRIVATE
+  cnet_sctp_data_proto cnet_sctp_wire Salts::TinyTest)
+target_include_directories(cnet_sctp_interleaving_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../src")
+if(MSVC)
+  target_compile_options(cnet_sctp_interleaving_test PRIVATE /W4 /WX)
+else()
+  target_compile_options(cnet_sctp_interleaving_test PRIVATE
+    -Wall -Wextra -Wpedantic -Werror)
+endif()
+add_test(NAME cnet_sctp_interleaving_test
+  COMMAND cnet_sctp_interleaving_test)
+
+cmake_add_executable(cnet_sctp_bundle_test SOURCES bundle_test.c
+  FOLDER "sctp/tests")
+target_link_libraries(cnet_sctp_bundle_test PRIVATE cnet_sctp_data_proto Salts::TinyTest)
+target_include_directories(cnet_sctp_bundle_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../src")
+if(MSVC)
+  target_compile_options(cnet_sctp_bundle_test PRIVATE /W4 /WX)
+else()
+  target_compile_options(cnet_sctp_bundle_test PRIVATE -Wall -Wextra -Wpedantic -Werror)
+endif()
+add_test(NAME cnet_sctp_bundle_test COMMAND cnet_sctp_bundle_test)
+
+cmake_add_executable(cnet_sctp_fragment_test SOURCES fragment_test.c
+  FOLDER "sctp/tests")
+target_link_libraries(cnet_sctp_fragment_test PRIVATE cnet_sctp_data_proto Salts::TinyTest)
+target_include_directories(cnet_sctp_fragment_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../src")
+if(MSVC)
+  target_compile_options(cnet_sctp_fragment_test PRIVATE /W4 /WX)
+else()
+  target_compile_options(cnet_sctp_fragment_test PRIVATE -Wall -Wextra -Wpedantic -Werror)
+endif()
+add_test(NAME cnet_sctp_fragment_test COMMAND cnet_sctp_fragment_test)
+
+cmake_add_executable(cnet_sctp_assoc_data_test SOURCES assoc_data_test.c
+  FOLDER "sctp/tests")
+target_link_libraries(cnet_sctp_assoc_data_test PRIVATE
+  cnet_sctp_assoc_proto cnet_sctp_dcep_proto cnet_sctp_webrtc_proto Salts::TinyTest)
+target_include_directories(cnet_sctp_assoc_data_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../src")
+if(MSVC)
+  target_compile_options(cnet_sctp_assoc_data_test PRIVATE /W4 /WX)
+else()
+  target_compile_options(cnet_sctp_assoc_data_test PRIVATE -Wall -Wextra -Wpedantic -Werror)
+endif()
+add_test(NAME cnet_sctp_assoc_data_test COMMAND cnet_sctp_assoc_data_test)
+
+cmake_add_executable(cnet_sctp_dcep_test SOURCES dcep_test.c
+  FOLDER "sctp/tests")
+target_link_libraries(cnet_sctp_dcep_test PRIVATE cnet_sctp_dcep_proto Salts::TinyTest)
+target_include_directories(cnet_sctp_dcep_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../src")
+if(MSVC)
+  target_compile_options(cnet_sctp_dcep_test PRIVATE /W4 /WX)
+else()
+  target_compile_options(cnet_sctp_dcep_test PRIVATE -Wall -Wextra -Wpedantic -Werror)
+endif()
+add_test(NAME cnet_sctp_dcep_test COMMAND cnet_sctp_dcep_test)
+
+cmake_add_executable(cnet_sctp_session_test SOURCES session_test.c
+  FOLDER "sctp/tests")
+target_link_libraries(cnet_sctp_session_test PRIVATE cnet_sctp_session_proto Salts::TinyTest)
+target_include_directories(cnet_sctp_session_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../src")
+if(MSVC)
+  target_compile_options(cnet_sctp_session_test PRIVATE /W4 /WX)
+else()
+  target_compile_options(cnet_sctp_session_test PRIVATE
+    -Wall -Wextra -Wpedantic -Werror)
+endif()
+add_test(NAME cnet_sctp_session_test COMMAND cnet_sctp_session_test)
+
+# Public opaque Session behavior remains a source-tree formal test. It is
+# deliberately not configured as a second installed-consumer project.
+cmake_add_executable(cnet_sctp_public_api_test SOURCES public_api_test.c
+  FOLDER "sctp/tests")
+target_link_libraries(cnet_sctp_public_api_test PRIVATE Salts::SCTP Salts::TinyTest)
+if(MSVC)
+  target_compile_options(cnet_sctp_public_api_test PRIVATE /W4 /WX)
+else()
+  target_compile_options(cnet_sctp_public_api_test PRIVATE
+    -Wall -Wextra -Wpedantic -Werror)
+endif()
+add_test(NAME cnet_sctp_public_api_test COMMAND cnet_sctp_public_api_test)
+
 
 # M5: actual POSIX-thread handoff test with external single-Owner lease.
 # This test does not authorize unsynchronized concurrent API
 # calls and never enters the installed Wire-only SDK.
-if(BUILD_TESTS AND UNIX)
+if(UNIX)
   if(WIN32)
     message(FATAL_ERROR "Private Owner thread gate needs POSIX Threads")
   endif()
-  find_package(Threads REQUIRED)
   cmake_add_executable(cnet_sctp_owner_thread_test SOURCES owner_thread_test.c
     FOLDER "sctp/tests")
   target_include_directories(cnet_sctp_owner_thread_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../src")
   target_link_libraries(cnet_sctp_owner_thread_test PRIVATE
     cnet_sctp_assoc_proto Threads::Threads Salts::TinyTest)
-  set_target_properties(cnet_sctp_owner_thread_test PROPERTIES
-  C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
   target_compile_options(cnet_sctp_owner_thread_test PRIVATE
     -Wall -Wextra -Wpedantic -Werror)
   add_test(NAME cnet_sctp_owner_thread_test
@@ -280,8 +241,6 @@ if(BUILD_TESTS AND UNIX)
     provider_dso_fixture.c)
   target_include_directories(cnet_sctp_test_provider_dso PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
   target_link_libraries(cnet_sctp_test_provider_dso PRIVATE Threads::Threads)
-  set_target_properties(cnet_sctp_test_provider_dso PROPERTIES
-  C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
   target_compile_options(cnet_sctp_test_provider_dso PRIVATE
     -Wall -Wextra -Wpedantic -Werror)
 
@@ -290,8 +249,6 @@ if(BUILD_TESTS AND UNIX)
   target_include_directories(cnet_sctp_provider_dso_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../src" "${CMAKE_CURRENT_SOURCE_DIR}")
   target_link_libraries(cnet_sctp_provider_dso_test PRIVATE
     cnet_sctp_assoc_proto Threads::Threads ${CMAKE_DL_LIBS} Salts::TinyTest)
-  set_target_properties(cnet_sctp_provider_dso_test PROPERTIES
-  C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
   target_compile_options(cnet_sctp_provider_dso_test PRIVATE
     -Wall -Wextra -Wpedantic -Werror)
   add_dependencies(cnet_sctp_provider_dso_test
@@ -309,8 +266,6 @@ if(BUILD_TESTS AND UNIX)
     PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
   target_link_libraries(cnet_sctp_session_provider_dso_test PRIVATE
     Salts::SCTP Threads::Threads ${CMAKE_DL_LIBS} Salts::TinyTest)
-  set_target_properties(cnet_sctp_session_provider_dso_test PROPERTIES
-  C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
   target_compile_options(cnet_sctp_session_provider_dso_test PRIVATE
     -Wall -Wextra -Wpedantic -Werror)
   add_dependencies(cnet_sctp_session_provider_dso_test
@@ -324,13 +279,11 @@ endif()
 # Test-only independent Pion SCTP oracle. Real UDP datagrams to an external
 # Go implementation of SCTP (RFC8260); no DTLS in this deliberately isolated
 # first oracle slice. NEVER export, install or link this adapter into Salts.
-if(BUILD_TESTS AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
   cmake_add_executable(cnet_sctp_pion_oracle_peer SOURCES independent/pion_peer.c
   FOLDER "sctp/tests")
   target_link_libraries(cnet_sctp_pion_oracle_peer PRIVATE
     Salts::SCTP)
-  set_target_properties(cnet_sctp_pion_oracle_peer PROPERTIES
-  C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
   target_compile_options(cnet_sctp_pion_oracle_peer PRIVATE
     -Wall -Wextra -Wpedantic -Werror)
 endif()

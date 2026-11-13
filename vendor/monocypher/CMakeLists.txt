@@ -8,7 +8,7 @@ target_include_directories(monocypher PUBLIC
   "${CMAKE_CURRENT_SOURCE_DIR}")
 set_target_properties(monocypher PROPERTIES
   POSITION_INDEPENDENT_CODE ON C_VISIBILITY_PRESET hidden
-  C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
+)
 
 # Preserve the existing private ABI without a wrapper source/header. The same
 # usage requirements rename both the upstream implementation and its callers.

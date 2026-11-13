@@ -21,12 +21,10 @@ cmake_add_source(crypto_sources DIRS src src/asn1 include/crypto
 source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES ${crypto_sources})
 add_library(salts_crypto STATIC ${crypto_sources}
   $<TARGET_OBJECTS:crypto_libecc_ed448_objects>)
-cmake_config_target(salts_crypto ALIAS Salts::Crypto FOLDER "crypto")
-cmake_config_target(salts_crypto
-  OUTPUT_NAME salts_crypto
+cmake_config_target(salts_crypto ALIAS Salts::Crypto FOLDER "crypto"
   EXPORT_NAME Crypto)
 set_target_properties(salts_crypto PROPERTIES
-  C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF POSITION_INDEPENDENT_CODE ON C_VISIBILITY_PRESET hidden)
+  POSITION_INDEPENDENT_CODE ON C_VISIBILITY_PRESET hidden)
 target_compile_features(salts_crypto PUBLIC c_std_11)
 target_link_libraries(salts_crypto PUBLIC Threads::Threads Salts::ASN1
   PRIVATE GmSSL::GmSSL)

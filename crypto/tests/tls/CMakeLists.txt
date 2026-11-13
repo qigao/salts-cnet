@@ -1,8 +1,5 @@
 cmake_add_executable(saltscore_gmssl_tls_io_abi_test SOURCES test_gmssl_tls_io_abi.c
   FOLDER "crypto/tests/tls")
-target_compile_features(saltscore_gmssl_tls_io_abi_test PRIVATE c_std_11)
-set_target_properties(saltscore_gmssl_tls_io_abi_test PROPERTIES
-  C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
 target_link_libraries(saltscore_gmssl_tls_io_abi_test PRIVATE
   Salts::Crypto Salts::Core Salts::NativeIO Salts::TinyTest)
 target_include_directories(saltscore_gmssl_tls_io_abi_test PRIVATE
@@ -21,9 +18,6 @@ add_test(NAME saltscore.gmssl_tls_io_abi COMMAND saltscore_gmssl_tls_io_abi_test
 
 cmake_add_executable(saltscore_gmssl_shangmi_provider_test SOURCES test_gmssl_shangmi_provider.c
   FOLDER "crypto/tests/tls")
-target_compile_features(saltscore_gmssl_shangmi_provider_test PRIVATE c_std_11)
-set_target_properties(saltscore_gmssl_shangmi_provider_test PROPERTIES
-  C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
 target_link_libraries(saltscore_gmssl_shangmi_provider_test PRIVATE Salts::Crypto Salts::TinyTest)
 target_include_directories(saltscore_gmssl_shangmi_provider_test PRIVATE
   "$<TARGET_PROPERTY:GmSSL::GmSSL,INTERFACE_INCLUDE_DIRECTORIES>")
@@ -41,8 +35,7 @@ if(NOT CMAKE_SYSTEM_NAME STREQUAL "Android")
     # The peer-policy fixture owns C11 atomic retain/release counters.
     target_compile_options(saltscore_crypto_tls_peer_policy_test PRIVATE /experimental:c11atomics)
   endif()
-  set_target_properties(saltscore_crypto_tls_peer_policy_test PROPERTIES
-    C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF FOLDER "crypto/tests/tls")
+  set_target_properties(saltscore_crypto_tls_peer_policy_test PROPERTIES FOLDER "crypto/tests/tls")
   add_test(NAME saltscore.crypto_tls_shangmi_revocation
     COMMAND "${SALTS_CRYPTO_TEST_GO}" test -mod=readonly -count=1 -timeout=150s -run "^TestShangMiRevocation$"
       -args -native "$<TARGET_FILE:saltscore_crypto_tls_peer_policy_test>")

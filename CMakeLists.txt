@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.25)
 include(CMakeOptions.cmake)
 project(
   SaltsNet
-  VERSION 0.1.11
+  VERSION 0.1.12
   LANGUAGES C CXX)
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_CXX_STANDARD 17)
@@ -32,6 +32,8 @@ endif()
 include(cmake/CmakeUtils.cmake)
 include(cmake/Sanitizers.cmake)
 set_property(GLOBAL PROPERTY USE_FOLDERS ON)
+
+set(SALTS_DEPENDENCY_PREFIX "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}")
 
 find_package(Threads REQUIRED)
 find_package(

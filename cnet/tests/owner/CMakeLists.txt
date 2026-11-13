@@ -1,8 +1,6 @@
 # Original CNet tests use the same pinned vcpkg GmSSL/Crypto dependency
 # graph as production, in a separate executable that never loads Salts::CNet.
 # Discover only the transport dependencies in this sibling CMake scope.
-find_package(c-ares CONFIG REQUIRED)
-find_package(kcp CONFIG REQUIRED)
 
 # CNet test-only link closure: same real CNet implementation as the
 # installed shared target, compiled as a PRIVATE owner only for this test image.
@@ -17,7 +15,6 @@ target_compile_definitions(cnet_original_test_owner PUBLIC
   CNET_INTERNAL_PROFILING=1 CNET_INTERNAL_MULTI_OWNER_POC=1
   CNET_INTERNAL_TESTING=1)
 set_target_properties(cnet_original_test_owner PROPERTIES
-  C_STANDARD_REQUIRED ON C_EXTENSIONS OFF
   POSITION_INDEPENDENT_CODE ON C_VISIBILITY_PRESET hidden)
 target_include_directories(cnet_original_test_owner
   PUBLIC "${PROJECT_SOURCE_DIR}/crypto/include"
@@ -35,9 +32,6 @@ target_link_libraries(cnet_original_test_owner
 
 cmake_add_executable(cnet_owner_original_test SOURCES cnet_owner_test.c
   FOLDER "cnet/tests/owner")
-target_compile_features(cnet_owner_original_test PRIVATE c_std_11)
-set_target_properties(cnet_owner_original_test PROPERTIES
-  C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
 target_compile_definitions(cnet_owner_original_test PRIVATE
   CNET_INTERNAL_TESTING=1)
 target_include_directories(cnet_owner_original_test PRIVATE

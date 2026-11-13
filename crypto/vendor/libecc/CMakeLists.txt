@@ -36,7 +36,6 @@ add_library(crypto_libecc_ed448_objects OBJECT
   src/sig/sig_algs.c
   src/utils/utils.c)
 set_target_properties(crypto_libecc_ed448_objects PROPERTIES
-  C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF
   POSITION_INDEPENDENT_CODE ON C_VISIBILITY_PRESET hidden)
 target_include_directories(crypto_libecc_ed448_objects PRIVATE
   "${CMAKE_CURRENT_SOURCE_DIR}/include")

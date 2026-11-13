@@ -207,10 +207,11 @@ The obsolete `crypto/tests/x509/standalone` project was removed with the
 independent ASN1 package. Its certificate inspection and migrated fixture cases
 remain in `crypto.x509.real_der_and_negative` and
 `crypto.x509.migrated_saltsnet_fixture` in the root-owned formal graph.
-The existing `sctp/tests/independent/dtls` driver remains outside that graph;
-it does not authorize adding a consumer project or another test framework.
-Its independent peer oracle and owner boundary remain distinct from package
-configuration checks.
+The obsolete `sctp/tests/independent/dtls` consumer project was also removed;
+its referenced `dtls_records.c` no longer exists. The root-owned
+`saltscore.sctp_dtls_native` test retains the native SCTP/DTLS peer and
+independent Go peer suite. Independent peer tests remain part of the module's
+formal graph rather than separate package configuration projects.
 
 ## CI dependency and compiler caches
 

@@ -1,14 +1,12 @@
 {
   "name": "salts-core",
-  "version-semver": "0.1.11",
+  "version-semver": "0.1.12",
   "builtin-baseline": "b1b19307e2d2ec1eefbdb7ea069de7d4bcd31f01",
   "dependencies": [
     "simde",
     "zstd",
     "c-ares",
     "kcp",
-    "gmssl",
-    "libjpeg-turbo",
-    "libyuv"
+    "gmssl"
   ]
 }

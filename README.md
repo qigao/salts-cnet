@@ -82,19 +82,28 @@ back, choose the previous exact release and restore into its own directory.
 installed `SALTS_BASE_ROOT` exactly. CMake owns API compatibility constraints;
 CI validates the release manifest and successful producer.
 
-The current example selects SaltsBase 0.1.7 and vcpkg-cache 0.1.3. When
+The current example selects SaltsBase 0.1.8 and vcpkg-cache 0.1.3. When
 upgrading, update the relevant nonsecret `.env` version and SDK-root fields
 together, preserving credentials and other machine settings. The infrastructure
 checkout must match its selected release; a dirty older checkout is not reset
 or overwritten. Restore into a version-specific directory and use the reported
 SDK root. After changing an SDK, compiler or triplet, configure explicitly with
-`cmake --fresh --preset <user-preset>` so cached GmSSL/JPEG package locations
+`cmake --fresh --preset <user-preset>` so cached dependency package locations
 cannot retain the previous installation. Normal builds do not clear caches.
 
 
 This checkout builds the `SaltsNet` CMake project. It owns Crypto, CNet and
 SCTP. The installed package remains `SaltsCore` with the existing `Salts::*`
 targets.
+
+All module libraries and tests belong to this one root project. Its version
+identifies the SDK package; module libraries have no separate ABI version.
+The root owns language standards and extension modes. Targets retain public
+compile requirements, PIC, symbol visibility and platform constraints where
+needed. The selected vcpkg installation and triplet provide explicit paths for
+the directly used GmSSL, c-ares and KCP packages. CNet does not resolve Media's
+JPEG or libyuv dependencies; the SaltsBase package configuration must keep
+those lookups out of consumers that do not use Media.
 
 The foundation modules now belong to [SaltsBase](https://github.com/qigao/salts-base).
 They are consumed as an installed SDK; this repository does not rebuild or copy
@@ -126,7 +135,7 @@ it contains no first-party native socket I/O implementation. The c-ares provider
 continues to own DNS protocol execution on the same progress owner.
 
 The current SDK selection is
-[SaltsBase 0.1.7](https://github.com/qigao/salts-base/releases/tag/v0.1.7).
+[SaltsBase 0.1.8](https://github.com/qigao/salts-base/releases/tag/v0.1.8).
 CI consumes immutable published SDKs; local builds can extract the same archives
 into separate installation prefixes.
 
@@ -145,8 +154,9 @@ python "$env:VCPKG_CACHE_REPOSITORY_ROOT/scripts/restore-native-dependency.py" l
 
 Use the printed `root` value as `VCPKG_INSTALLED_DIR`. The restore validates
 SHA-256, safely extracts the archive and records its provenance. This prefix
-contains GmSSL, c-ares, KCP, zstd, SIMDe and SaltsBase's JPEG/libyuv
-imports. `vcpkg.json` and `vcpkg-configuration.json` retain the dependency and
+supplies the directly used GmSSL, c-ares, KCP and SIMDe dependencies, along
+with SaltsBase's required native dependencies. `vcpkg.json` and
+`vcpkg-configuration.json` retain the dependency and
 source inventory; configure no longer runs a vcpkg resolver or builds ports.
 Missing packages fail configuration. Refreshing dependencies means reviewing
 and selecting an exact upstream release; there is no port-build fallback.
@@ -169,8 +179,8 @@ CNet. TLS verification, retained buffers, completion ownership, cancel/drain
 and exact mode semantics are preserved. See [Crypto coverage](crypto/docs/SHANGMI-COVERAGE.md)
 for the finite supported profiles and remaining qualification gates.
 
-SaltsBase's package also resolves its Media archive's JPEG/libyuv dependencies;
-the preinstalled dependency prefix supplies those imports without adding a Media implementation here.
+JPEG and libyuv belong to SaltsBase Media and are not CNet dependencies.
+Loading SaltsBase for CNet must not discover either package.
 Runtime paths include the selected vcpkg prefix, SaltsBase's runtime and, for
 Windows llvm-mingw, the selected compiler's runtime directory.
 
@@ -209,7 +219,7 @@ and `LLVM_MINGW_ARM64_INSTALL_PREFIX` in the parent environment. Both SDKs must
 target Windows ARM64; the preset selects `qigao-arm64-windows-llvm-mingw`
 and `aarch64-w64-mingw32` independently of native x64 settings. Restore the
 vcpkg SDK with `cmake/dependencies/qigao-arm64-windows-llvm-mingw.lock.json`.
-SaltsBase v0.1.7 has no Windows ARM64 release asset, so a matching SDK must be
+SaltsBase v0.1.8 has no Windows ARM64 release asset, so a matching SDK must be
 provided separately. After changing dependency roots, configure with
 `cmake/WithVs.cmd cmake --fresh --preset llvm-mingw-arm64-release-user`
 before building that same preset.

@@ -1,4 +1,3 @@
-find_package(Python3 COMPONENTS Interpreter REQUIRED)
 
 cmake_add_test(cnet_resources_test SOURCES test_cnet_resources.c
   INCLUDES "${PROJECT_SOURCE_DIR}/cnet/src"
@@ -7,9 +6,6 @@ cmake_add_test(cnet_resources_test SOURCES test_cnet_resources.c
 # Parser-only C11 gate with no TLS, CNet, re2c, CMeta or CFlow provider.
 cmake_add_executable(saltscore_wsparser_test SOURCES test_wsparser.c
   FOLDER "cnet/tests")
-target_compile_features(saltscore_wsparser_test PRIVATE c_std_11)
-set_target_properties(saltscore_wsparser_test PROPERTIES
-  C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
 target_include_directories(saltscore_wsparser_test PRIVATE
   "${PROJECT_SOURCE_DIR}/cnet/src/wsparser")
 target_link_libraries(saltscore_wsparser_test PRIVATE saltscore_wsparser Salts::TinyTest)
@@ -20,9 +16,6 @@ add_test(NAME saltscore.wsparser COMMAND saltscore_wsparser_test)
 # No consumer project, extra runtime/Owner, installer or new test workflow.
 cmake_add_executable(cnet_policy_test SOURCES test_cnet_policy.c
   FOLDER "cnet/tests")
-target_compile_features(cnet_policy_test PRIVATE c_std_11)
-set_target_properties(cnet_policy_test PROPERTIES
-  C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
 target_link_libraries(cnet_policy_test PRIVATE
   Salts::CNet Salts::Crypto Salts::TinyTest)
 if(MSVC)
@@ -37,17 +30,12 @@ add_test(NAME saltscore.cnet_policy COMMAND cnet_policy_test)
 # A separate loadable module checks process-global pool and thread identity
 # across DSO/DLL boundaries. Never resolve these through a static archive.
 add_library(saltscore_runtime_owner_probe SHARED runtime_owner_module.c)
-target_compile_features(saltscore_runtime_owner_probe PRIVATE c_std_11)
-set_target_properties(saltscore_runtime_owner_probe PROPERTIES
-  C_STANDARD_REQUIRED ON C_EXTENSIONS OFF WINDOWS_EXPORT_ALL_SYMBOLS ON)
+set_target_properties(saltscore_runtime_owner_probe PROPERTIES WINDOWS_EXPORT_ALL_SYMBOLS ON)
 target_link_libraries(saltscore_runtime_owner_probe PRIVATE
   Salts::Core)
 # Genuine loopback TCP acceptance + borrowed/retained ownership + stop drain.
 cmake_add_executable(cnet_tcp_loopback_test SOURCES test_cnet_tcp_loopback.c
   FOLDER "cnet/tests")
-target_compile_features(cnet_tcp_loopback_test PRIVATE c_std_11)
-set_target_properties(cnet_tcp_loopback_test PROPERTIES
-  C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
 target_link_libraries(cnet_tcp_loopback_test PRIVATE
   Salts::CNet saltscore_runtime_owner_probe Salts::TinyTest)
 if(WIN32)
@@ -65,18 +53,13 @@ set_tests_properties(saltscore.cnet_tcp_loopback PROPERTIES TIMEOUT 20)
 # No CNet library is linked into the executable itself.
 foreach(_plugin IN ITEMS a b)
   add_library(saltscore_runtime_plugin_${_plugin} MODULE runtime_loaded_plugin.c)
-  target_compile_features(saltscore_runtime_plugin_${_plugin} PRIVATE c_std_11)
-  set_target_properties(saltscore_runtime_plugin_${_plugin} PROPERTIES
-    C_STANDARD_REQUIRED ON C_EXTENSIONS OFF WINDOWS_EXPORT_ALL_SYMBOLS ON)
+  set_target_properties(saltscore_runtime_plugin_${_plugin} PROPERTIES WINDOWS_EXPORT_ALL_SYMBOLS ON)
   target_link_libraries(saltscore_runtime_plugin_${_plugin} PRIVATE
     Salts::CNet)
   cnet_owner_link_map(saltscore_runtime_plugin_${_plugin})
 endforeach()
 cmake_add_executable(saltscore_two_plugins_test SOURCES test_runtime_plugins.c
   FOLDER "cnet/tests")
-target_compile_features(saltscore_two_plugins_test PRIVATE c_std_11)
-set_target_properties(saltscore_two_plugins_test PROPERTIES
-  C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
 target_link_libraries(saltscore_two_plugins_test PRIVATE
   Salts::Core ${CMAKE_DL_LIBS} Salts::TinyTest)
 cnet_owner_link_map(saltscore_two_plugins_test)
@@ -92,9 +75,6 @@ set_tests_properties(saltscore.two_cnet_plugins PROPERTIES TIMEOUT 30)
 # wrong root and wrong DNS identity must fail without authenticated callback.
 cmake_add_executable(cnet_tls_ca_san_test SOURCES test_cnet_tls_ca_san.c
   FOLDER "cnet/tests")
-target_compile_features(cnet_tls_ca_san_test PRIVATE c_std_11)
-set_target_properties(cnet_tls_ca_san_test PROPERTIES
-  C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
 target_link_libraries(cnet_tls_ca_san_test PRIVATE Salts::CNet Salts::Crypto Salts::TinyTest)
 target_include_directories(cnet_tls_ca_san_test PRIVATE
   "${PROJECT_SOURCE_DIR}/cnet/src" "${PROJECT_SOURCE_DIR}/crypto/src"
@@ -161,7 +141,6 @@ endif()
 
 # This is the exact production Salts::CNet target, never the retired
 # second test-only CNet Owner / Crypto adapter.
-find_package(Python3 COMPONENTS Interpreter REQUIRED)
 add_test(NAME saltscore.cnet_production_required_mtls
   COMMAND "${Python3_EXECUTABLE}" -B
     "${PROJECT_SOURCE_DIR}/cnet/tests/test_cnet_tls_required_mtls.py"
@@ -317,7 +296,6 @@ set_target_properties(cnet_dtls_native_peer PROPERTIES FOLDER "CNet/tests")
 file(GLOB _cnet_dtls_cpp_sources CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/dtls_header_*.cpp")
 source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" PREFIX "tests" FILES ${_cnet_dtls_cpp_sources})
 add_executable(cnet_dtls_header_cpp ${_cnet_dtls_cpp_sources})
-target_compile_features(cnet_dtls_header_cpp PRIVATE cxx_std_17)
 target_link_libraries(cnet_dtls_header_cpp PRIVATE Salts::CNet Salts::Crypto Salts::TinyTest)
 set_target_properties(cnet_dtls_header_cpp PROPERTIES FOLDER "CNet/tests")
 add_test(NAME saltscore.cnet_dtls_cpp17 COMMAND cnet_dtls_header_cpp)
