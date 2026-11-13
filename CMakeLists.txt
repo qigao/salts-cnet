@@ -32,20 +32,8 @@ endif()
 include(cmake/CmakeUtils.cmake)
 include(cmake/Sanitizers.cmake)
 set_property(GLOBAL PROPERTY USE_FOLDERS ON)
-set(SALTS_DEPENDENCY_PREFIX "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}")
-list(PREPEND CMAKE_PREFIX_PATH
-     "${SALTS_DEPENDENCY_PREFIX}/$ENV{VCPKG_CONFIGURATION_SUBDIR}"
-     "${SALTS_DEPENDENCY_PREFIX}")
+
 find_package(Threads REQUIRED)
-unset(SaltsBase_DIR CACHE)
-if(NOT "$ENV{SALTS_BASE_VERSION}" MATCHES "^[0-9]+[.][0-9]+[.][0-9]+$")
-  message(FATAL_ERROR "SALTS_BASE_VERSION must select an exact SDK version without the v prefix")
-endif()
-# This is the API compatibility floor, not the selected upstream version.
-set(SALTS_BASE_REQUIRED_VERSION 0.1.5)
-if("$ENV{SALTS_BASE_VERSION}" VERSION_LESS "${SALTS_BASE_REQUIRED_VERSION}")
-  message(FATAL_ERROR "SaltsBase ${SALTS_BASE_REQUIRED_VERSION} or newer is required")
-endif()
 find_package(
   SaltsBase
   $ENV{SALTS_BASE_VERSION}
