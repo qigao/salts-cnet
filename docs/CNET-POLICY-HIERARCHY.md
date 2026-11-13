@@ -26,6 +26,9 @@ Windows pressure/cancellation qualification and native policy acceptance.
 Production DTLS/SCTP is tracked
 separately in [#188](https://github.com/qigao/salts-core/issues/188), and matched
 performance benchmarks in [#189](https://github.com/qigao/salts-core/issues/189).
+The [DTLS/SCTP ownership contract](CNET-DTLS-SCTP-CONTRACT.md) defines the
+future datagram/provider boundary and qualification gates; it adds no current
+production support.
 This RFC supersedes the earlier
 ACE/Configurator-oriented draft in PR #157. **Core has no CMeta/ACE dependency,
 second event loop, generic strategy registry, or new runtime.** Optional
