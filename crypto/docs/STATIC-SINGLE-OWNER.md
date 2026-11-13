@@ -11,7 +11,7 @@ link ownership, not a claim that platform and runtime gates already passed.
 
 Monocypher remains independently owned as `vendor/monocypher/` and Reed
 GF(256) FEC as `vendor/reed/`. Neither is merged into the Crypto archive.
-The original 170-file GmSSL source mirror is **not** in the SaltsCore tree.
+The original 170-file GmSSL source mirror is **not** in the SaltsCNet tree.
 Fifteen original extension inputs under `crypto/gmssl-extensions/` keep
 immutable source-blob hashes, while the vcpkg port compiles them exactly once.
 
@@ -27,13 +27,13 @@ range secure-hello guard without admitting TLS13-only/TLCP renegotiation.
 The common project parent imports `GmSSL::GmSSL` before creating Crypto and
 CNet subdirectories, so both see the same imported static provider. Crypto
 links it privately as a static-library dependency, which becomes a transitive
-link-only requirement for downstream consumers. The installed SaltsCore config
-uses `find_dependency(GmSSL CONFIG REQUIRED)` and imports `Salts::ASN1`
-from the separate SaltsBase SDK. It exports only its own Crypto/network targets. Do not install a second GmSSL
-copy in the SaltsCore SDK or export an invented GmSSL implementation.
+link-only requirement for downstream consumers. Applications linking static
+Crypto resolve GmSSL and the separate SaltsBase SDK before loading the
+`SaltsCNet` package. It exports only its own Crypto/network targets. Do not
+install a second GmSSL copy in the SaltsCNet SDK or export an invented GmSSL
+implementation.
 
-The ASN1 target itself does not link GmSSL; the unified SDK package discovers
-GmSSL for its exported Crypto target. Crypto users consume
+The ASN1 target itself does not link GmSSL. Crypto users consume
 `Salts::Crypto` and its dependency closure via the pinned package manager;
 they must not manually merge archives or provide an alternate TLS engine.
 
@@ -63,7 +63,7 @@ It enforces:
 
 The older `crypto/tools/audit_static_crypto.py` driver targets the retired
 split Crypto/ASN1 SDK layout. It is not installed or used by the unified
-SaltsCore graph. Current ownership qualification uses the production CNet
+SaltsCNet graph. Current ownership qualification uses the production CNet
 DSO/peer link-map tests described above.
 
 **Release gates:** exact-HEAD Linux/Windows/macOS/Android builds, real TLS1.2,

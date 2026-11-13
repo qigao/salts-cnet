@@ -6,7 +6,7 @@ RFC 8410 X25519/Ed25519 SPKI/PKCS#8 structures.
 General-purpose ASN.1 Reader/Validator/Encoder and Value Tree belong to
 `Salts::ASN1`, imported from the separately installed `SaltsBase` package.
 Crypto contains only cryptographic key formats and links that single owner.
-The network SDK remains available through `find_package(SaltsCore CONFIG REQUIRED)`.
+The network SDK is available through `find_package(SaltsCNet CONFIG REQUIRED)`.
 
 `crypto.asn1.sm2_keys` tests public API key binding, canonical DER, bounds,
 failure erasure, provider RNG failure and native GmSSL key-file interoperation.

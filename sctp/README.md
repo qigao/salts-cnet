@@ -1,6 +1,6 @@
 # Experimental CNet SCTP - pure C11
 
-SCTP exposes `Salts::SCTP` from the root SaltsCore graph. Its bounded opaque
+SCTP exposes `Salts::SCTP` from the root SaltsCNet graph. Its bounded opaque
 Session and private protocol tests are independent of a TLS provider.
 `Salts::SCTPDTLS` adds a bounded bridge to the production GmSSL-backed CNet
 DTLS owner. Its local Windows qualification is described below; broader platform

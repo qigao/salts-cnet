@@ -1,4 +1,4 @@
-name: SaltsCore SDK CI
+name: SaltsCNet SDK CI
 
 on:
   pull_request:

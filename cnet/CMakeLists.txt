@@ -55,7 +55,7 @@ target_link_libraries(cnet
     kcp::kcp
     Salts::Crypto)
 
-install(TARGETS cnet EXPORT SaltsCoreTargets
+install(TARGETS cnet EXPORT SaltsCNetTargets
   RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
   LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
   ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR})

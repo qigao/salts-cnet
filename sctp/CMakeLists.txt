@@ -28,7 +28,7 @@ foreach(target IN ITEMS cnet_sctp_wire cnet_sctp_session cnet_sctp_dtls)
   endif()
 endforeach()
 install(TARGETS cnet_sctp_wire cnet_sctp_session cnet_sctp_dtls
-  EXPORT SaltsCoreTargets ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR})
+  EXPORT SaltsCNetTargets ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR})
 install(DIRECTORY include/ DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
 if(BUILD_TESTS)
   add_subdirectory(tests)

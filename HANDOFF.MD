@@ -37,3 +37,25 @@
   (`build/cmake-cleanup-generation-check.log`). The extra SCTP consumer project
   was unused and referenced the missing `dtls_records.c`; the root-owned native
   DTLS/Go suite remains registered. No independent validation project is added.
+
+# SaltsCNet package identity and release validation
+
+- The root project and installed package are `SaltsCNet`, with configuration
+  and export files under `lib/cmake/SaltsCNet`. Consumers migrate
+  `find_package(SaltsCore ...)` to `find_package(SaltsCNet ...)`. All imported
+  targets keep the `Salts::` namespace and their existing names.
+- A local shared build cache was reconfigured with `BUILD_TESTS=OFF` while
+  stale CTest registrations and test executables remained. The resulting
+  Windows loader error was a missing `cnet_test_tls_memory_snapshot` export
+  from the tests-disabled CNet DLL, not a missing SaltsBase SDK symbol. Use a
+  task-owned worktree and the same formal presets/SDK for release validation
+  so unrelated reconfiguration cannot replace the DLL during the run.
+- CI run `43391486509` failed GCC's resumed intermediate-expiry case at
+  `NotAfter + 1.000s`; the server handshake finished within 5 ms. The verifier
+  uses C `time()`, which glibc documents as sharing the coarse realtime clock:
+  https://www.sourceware.org/glibc/manual/2.38/html_node/Getting-the-Time.html.
+  A stale second at this boundary is consistent with the observed acceptance;
+  the log does not prove the exact verifier clock sample. The Go fixture now
+  waits until `NotAfter + 2s`, crossing a complete expired second while the
+  native handshake is already in flight. All expiry/index, no-READY/data and
+  prompt-rejection assertions remain unchanged. TLS code is unchanged.

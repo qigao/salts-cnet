@@ -32,8 +32,8 @@ CMake does not load dotenv files or restore SDKs implicitly.
 - [Salts CNet](https://github.com/qigao/salts-cnet): networking, TLS/DTLS and cryptography.
 - [SaltsUtils](https://github.com/qigao/salts-utils): templates, IDL/Schema, DataBind and language bindings.
 
-This repository was renamed from `salts-core`. The installed CMake package
-remains `SaltsCore`, and existing `Salts::*` targets retain their names.
+This repository was renamed from `salts-core`. The CMake project and installed
+package are `SaltsCNet`; existing `Salts::*` targets retain their names.
 Native socket operations belong to SaltsBase NativeIO; CNet owns connection
 and protocol policy.
 
@@ -67,7 +67,7 @@ version never overwrites an old SDK. CMake does not load `.env` or download
 the dependency SDK implicitly. Existing host-tool package locks remain exact.
 
 CI uses the same named repository Actions variables and selects local shared
-actions from the chosen infrastructure checkout. SaltsBase and SaltsCore
+actions from the chosen infrastructure checkout. SaltsBase and SaltsCNet
 prepare jobs resolve once, then distribute generated locks and verified blobs
 to all matrix workers. Set the CI variables before enabling these changes;
 the selected infrastructure release must contain `resolve-release`.
@@ -92,9 +92,14 @@ SDK root. After changing an SDK, compiler or triplet, configure explicitly with
 cannot retain the previous installation. Normal builds do not clear caches.
 
 
-This checkout builds the `SaltsNet` CMake project. It owns Crypto, CNet and
-SCTP. The installed package remains `SaltsCore` with the existing `Salts::*`
-targets.
+This checkout builds the `SaltsCNet` CMake project. It owns Crypto, CNet and
+SCTP. Installed consumers use `find_package(SaltsCNet CONFIG REQUIRED)`;
+configuration and export files live in `lib/cmake/SaltsCNet`.
+
+When upgrading from the former `SaltsCore` package, change package discovery
+to `SaltsCNet` and select the new SDK prefix. Link target names are unchanged:
+`Salts::Crypto`, `Salts::CNet`, `Salts::SCTPWire`, `Salts::SCTP` and
+`Salts::SCTPDTLS`. Runtime library filenames are unchanged.
 
 All module libraries and tests belong to this one root project. Its version
 identifies the SDK package; module libraries have no separate ABI version.

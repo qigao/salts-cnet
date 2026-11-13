@@ -5,10 +5,10 @@ endif()
 
 if(SALTSCORE_ENABLE_ASAN OR SALTSCORE_ENABLE_UBSAN OR SALTSCORE_ENABLE_TSAN)
   if(NOT CMAKE_C_COMPILER_ID MATCHES "Clang")
-    message(FATAL_ERROR "SaltsCore sanitizer profiles require Clang/LLVM")
+    message(FATAL_ERROR "SaltsCNet sanitizer profiles require Clang/LLVM")
   endif()
   if(NOT CMAKE_SYSTEM_NAME STREQUAL "Linux")
-    message(FATAL_ERROR "SaltsCore sanitizer profiles are qualified on Linux only")
+    message(FATAL_ERROR "SaltsCNet sanitizer profiles are qualified on Linux only")
   endif()
 
   set(_saltscore_sanitizers)

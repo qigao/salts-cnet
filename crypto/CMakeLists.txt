@@ -1,7 +1,7 @@
 # One Crypto API archive links the pinned vcpkg GmSSL static dependency.
 # GmSSL native C/H sources belong to the external package, not a local mirror.
 # Original Ed448 libecc sources remain private first-party objects.
-# The SaltsCore root owns package discovery, language setup and SDK exports.
+# The SaltsCNet root owns package discovery, language setup and SDK exports.
 set(_salts_crypto_source_dir "${CMAKE_CURRENT_SOURCE_DIR}")
 if(NOT CMAKE_SIZEOF_VOID_P EQUAL 8)
   message(FATAL_ERROR "Ed448 libecc source uses the reviewed 64-bit WORDSIZE ABI")
@@ -59,7 +59,7 @@ endif()
 # GmSSL's vcpkg archive is an explicit imported, transitive dependency.
 # Never duplicate its implementation objects into Salts::Crypto.
 
-install(TARGETS salts_crypto EXPORT SaltsCoreTargets
+install(TARGETS salts_crypto EXPORT SaltsCNetTargets
   ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR})
 install(DIRECTORY include/crypto
   DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}

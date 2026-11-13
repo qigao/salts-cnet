@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.25)
 include(CMakeOptions.cmake)
 project(
-  SaltsNet
+  SaltsCNet
   VERSION 0.1.12
   LANGUAGES C CXX)
 set(CMAKE_C_STANDARD 11)
@@ -60,20 +60,20 @@ add_subdirectory(crypto)
 add_subdirectory(cnet)
 add_subdirectory(sctp)
 
-set(_saltscore_package_dir "${CMAKE_INSTALL_LIBDIR}/cmake/SaltsCore")
+set(_saltscnet_package_dir "${CMAKE_INSTALL_LIBDIR}/cmake/SaltsCNet")
 configure_package_config_file(
-  "${CMAKE_CURRENT_SOURCE_DIR}/cmake/SaltsCoreConfig.cmake.in"
-  "${CMAKE_CURRENT_BINARY_DIR}/SaltsCoreConfig.cmake"
-  INSTALL_DESTINATION "${_saltscore_package_dir}")
+  "${CMAKE_CURRENT_SOURCE_DIR}/cmake/SaltsCNetConfig.cmake.in"
+  "${CMAKE_CURRENT_BINARY_DIR}/SaltsCNetConfig.cmake"
+  INSTALL_DESTINATION "${_saltscnet_package_dir}")
 write_basic_package_version_file(
-  "${CMAKE_CURRENT_BINARY_DIR}/SaltsCoreConfigVersion.cmake"
+  "${CMAKE_CURRENT_BINARY_DIR}/SaltsCNetConfigVersion.cmake"
   VERSION ${PROJECT_VERSION}
   COMPATIBILITY SameMinorVersion)
-install(FILES "${CMAKE_CURRENT_BINARY_DIR}/SaltsCoreConfig.cmake"
-              "${CMAKE_CURRENT_BINARY_DIR}/SaltsCoreConfigVersion.cmake"
-        DESTINATION "${_saltscore_package_dir}")
+install(FILES "${CMAKE_CURRENT_BINARY_DIR}/SaltsCNetConfig.cmake"
+              "${CMAKE_CURRENT_BINARY_DIR}/SaltsCNetConfigVersion.cmake"
+        DESTINATION "${_saltscnet_package_dir}")
 install(
-  EXPORT SaltsCoreTargets
-  FILE SaltsCoreTargets.cmake
+  EXPORT SaltsCNetTargets
+  FILE SaltsCNetTargets.cmake
   NAMESPACE Salts::
-  DESTINATION "${_saltscore_package_dir}")
+  DESTINATION "${_saltscnet_package_dir}")

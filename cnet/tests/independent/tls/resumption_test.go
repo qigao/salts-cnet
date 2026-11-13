@@ -128,7 +128,11 @@ func TestTLS13SessionResumption(t *testing.T) {
 						}
 						conn := tls.Server(raw, selectedConfig)
 						if expired && i != 0 {
-							time.Sleep(time.Until(expires.Add(time.Second)))
+							// The verifier uses C time(), which can read the previous
+							// second at a fresh Go clock boundary (glibc's coarse
+							// realtime clock). Cross one complete expired second
+							// before completing this already-started handshake.
+							time.Sleep(time.Until(expires.Add(2 * time.Second)))
 							started := time.Now()
 							if !started.After(expires) {
 								return fmt.Errorf("expiry gate not crossed: now=%s not_after=%s", started, expires)

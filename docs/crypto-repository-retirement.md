@@ -1,13 +1,14 @@
 # qigao/crypto repository retirement — native source ownership
 
-SaltsCore is the canonical source home for the module-local `asn1/` and
-`crypto/` interfaces, implementation, CI and package configuration. The former
+SaltsCNet is the canonical source home for the `crypto/` interfaces,
+implementation, CI and package configuration. General-purpose ASN1 belongs
+to the separate SaltsBase SDK. The former
 `qigao/crypto` repository is a historical donor. Its read-only archival was
 recorded in [the migration audit](https://github.com/qigao/salts-core/issues/147#issuecomment-6562099755)
 on 2026-11-02; preserve its source history and outstanding retirement records.
 
-`Salts::ASN1` owns the independent BER/DER C11 codec. The root graph assembles
-and installs it, and Crypto consumes that target. It is not a TLS engine.
+`Salts::ASN1` owns the independent BER/DER C11 codec. SaltsBase assembles and
+installs it, and Crypto consumes that imported target. It is not a TLS engine.
 
 `Salts::Crypto` produces one first-party static facade archive, including its
 private Ed448 libecc objects. The TLS provider is the **separate imported
@@ -18,16 +19,17 @@ archive merge or second local GmSSL compilation.
 
 The root `vcpkg.json` declares GmSSL, and `vcpkg-configuration.json` selects
 its custom registry baseline. Crypto uses plain required CMake package
-resolution; the unified SaltsCore installed configuration imports GmSSL and
-ASN1 and exports `Salts::Crypto` with the other SDK targets. Direct Crypto
-consumers use `find_package(SaltsCore CONFIG REQUIRED)`; the separate Crypto
+resolution; the unified SaltsCNet installed configuration exports
+`Salts::Crypto` with the other SDK targets. Direct static Crypto consumers
+resolve SaltsBase and GmSSL explicitly, then use
+`find_package(SaltsCNet CONFIG REQUIRED)`; the separate Crypto
 package configuration is retired, while its archive/header interfaces remain.
 Missing dependencies fail configuration. The extension sources and recipes
 belong to `crypto/gmssl-extensions/`; its
 [source lock](../crypto/gmssl-extensions/source-lock.json) records upstream,
 registry, port-tree, extension-checkout and original blob identities. The
-active package is `gmssl 3.2.0#18`, including the TLS corrections qualified
-in [PR #172](https://github.com/qigao/salts-core/pull/172).
+active package is `gmssl 3.2.0#44`, recorded by that source lock and the
+selected vcpkg registry baseline.
 
 Production CNet calls only the opaque `<crypto/tls_stream.h>` interface after
 [PR #173](https://github.com/qigao/salts-core/pull/173). Crypto owns private
