@@ -59,3 +59,22 @@
   waits until `NotAfter + 2s`, crossing a complete expired second while the
   native handshake is already in flight. All expiry/index, no-READY/data and
   prompt-rejection assertions remain unchanged. TLS code is unchanged.
+- The renamed package passed local LLVM-MinGW configure/build, the focused
+  resumption test, all 103 formal CTest cases (248.52 s), and installation.
+  CI run `43394647730` at `a29cea5465b5423e512cb63a17d5e76b84f2fdad`
+  passed all ten profiles: six POSIX native profiles with 104 tests each,
+  two Windows profiles with 103 each, and two Android cross-build/install/
+  16 KiB alignment profiles without device execution. The original SDK TARs
+  were published as v0.1.12 with their manifest and SHA256SUMS; uploaded bytes
+  were checked against GitHub's asset sizes/digests before publication.
+- For `llvm-mingw-x64-release-user`, set
+  `LLVM_MINGW_X64_INSTALL_PREFIX`, not only `INSTALL_PREFIX`: the user-preset
+  environment replaces the latter with the former. A missing x64 value yielded
+  an empty CMAKE_INSTALL_PREFIX during local validation, so installation wrote
+  `/bin`, `/lib`, `/include` and `/share` on the current Windows drive. The
+  corrected install used an explicit task stage and passed. Local `.env` now
+  supplies the proper x64 input, and `.env.example` documents both presets.
+  Existing root directories were present before this task; their files were
+  preserved because a pre-install snapshot was unavailable. The affected-file
+  list is `build/release-0.1.12/unintended-root-install-manifest.txt`; the local
+  validation receipt and corrected stage manifest are beside it.
