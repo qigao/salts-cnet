@@ -1,0 +1,23 @@
+# Read compiled definitions, never parse C declarations or backend headers.
+file(STRINGS "${OBJECTS}" objects)
+execute_process(
+  COMMAND "${NM}" --defined-only --extern-only --format=posix ${objects}
+  OUTPUT_VARIABLE symbols COMMAND_ERROR_IS_FATAL ANY)
+string(REPLACE "\n" ";" lines "${symbols}")
+set(exports)
+string(REPLACE "," "|" prefix_regex "${PREFIXES}")
+foreach(line IN LISTS lines)
+  if(line MATCHES "^(${prefix_regex})[A-Za-z_0-9]* ([TDBRSCG]) ")
+    set(kind "${CMAKE_MATCH_2}")
+    string(REGEX MATCH "^[A-Za-z_0-9]+" name "${line}")
+    if(kind STREQUAL "T")
+      list(APPEND exports "${name}")
+    else()
+      list(APPEND exports "${name} DATA")
+    endif()
+  endif()
+endforeach()
+list(REMOVE_DUPLICATES exports)
+list(SORT exports)
+list(JOIN exports "\n" body)
+file(WRITE "${OUTPUT}" "EXPORTS\n${body}\n")

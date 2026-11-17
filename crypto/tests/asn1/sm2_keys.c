@@ -7,7 +7,7 @@
 #include <tinytest.h>
 #include <string.h>
 
-/* RNG override is confined to this formal executable. The independent Python
+/* RNG override is confined to this formal executable. The independent Go
  * test links the unmodified production RNG and exercises randomized exports. */
 static unsigned rng_calls, rng_fail_at;
 int rand_bytes(uint8_t *out, size_t n) {

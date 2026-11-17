@@ -115,7 +115,7 @@ done:
     if (lease) (void)w->release(&lease);
 }
 
-/* Python passes genuine temporary CA/server/client identities. The host
+/* Go passes genuine temporary CA/server/client identities. The host
  * does not link Crypto, and each independent plugin runs its original CNet
  * TLS 1.2 or TLS 1.3 over its OWN epoll/kqueue/IOCP NativeIO clients.
  * They borrow exactly one Provider through the shared CNet candidate.

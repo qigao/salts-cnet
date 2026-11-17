@@ -6,6 +6,9 @@
 # it into Salts::Crypto or rename its algorithm implementations.
 add_subdirectory(monocypher)
 
+# Crypto consumes these private Ed448 objects; no libecc SDK is exported.
+add_subdirectory(libecc)
+
 # Reed-Solomon/GF(256) is an independent FEC CMake library,
 # NOT a cryptographic provider or a Salts::Crypto implementation.
 add_subdirectory(reed)

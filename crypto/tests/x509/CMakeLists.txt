@@ -58,13 +58,13 @@ if(NOT CMAKE_SYSTEM_NAME STREQUAL "Android")
   target_link_libraries(crypto_sm2_ocsp_peer PRIVATE Salts::Crypto)
   set_target_properties(crypto_sm2_ocsp_peer PROPERTIES FOLDER "Crypto/tests/x509")
   add_test(NAME crypto.x509.sm2_ocsp_independent
-    COMMAND "${SALTS_CRYPTO_TEST_GO}" test -mod=readonly -count=1 -timeout=90s -run "^TestSM2OCSP$"
+    COMMAND "${SALTS_CRYPTO_TEST_GO}" test -mod=readonly ./e2e -count=1 -timeout=90s -run "^TestSM2OCSP$"
       -args -ocsp-peer "$<TARGET_FILE:crypto_sm2_ocsp_peer>")
   set_tests_properties(crypto.x509.sm2_ocsp_independent PROPERTIES
     WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/independent"
     ENVIRONMENT "CGO_ENABLED=0;GOWORK=off" TIMEOUT 180)
   add_test(NAME crypto.x509.sm2_ocsp_delegation
-    COMMAND "${SALTS_CRYPTO_TEST_GO}" test -mod=readonly -count=1 -timeout=90s -run "^TestSM2OCSPDelegation$"
+    COMMAND "${SALTS_CRYPTO_TEST_GO}" test -mod=readonly ./e2e -count=1 -timeout=90s -run "^TestSM2OCSPDelegation$"
       -args -ocsp-peer "$<TARGET_FILE:crypto_sm2_ocsp_peer>")
   set_tests_properties(crypto.x509.sm2_ocsp_delegation PROPERTIES
     WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/independent"
@@ -73,13 +73,13 @@ if(NOT CMAKE_SYSTEM_NAME STREQUAL "Android")
   target_link_libraries(crypto_sm2_cms_peer PRIVATE Salts::Crypto)
   set_target_properties(crypto_sm2_cms_peer PROPERTIES FOLDER "Crypto/tests/x509")
   add_test(NAME crypto.x509.sm2_cms_independent
-    COMMAND "${SALTS_CRYPTO_TEST_GO}" test -mod=readonly -count=1 -timeout=90s -run "^TestSM2CMS$"
+    COMMAND "${SALTS_CRYPTO_TEST_GO}" test -mod=readonly ./e2e -count=1 -timeout=90s -run "^TestSM2CMS$"
       -args -cms-peer "$<TARGET_FILE:crypto_sm2_cms_peer>")
   set_tests_properties(crypto.x509.sm2_cms_independent PROPERTIES
     WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/independent"
     ENVIRONMENT "CGO_ENABLED=0;GOWORK=off" TIMEOUT 180)
   add_test(NAME crypto.x509.sm2_cms_envelope_independent
-    COMMAND "${SALTS_CRYPTO_TEST_GO}" test -mod=readonly -count=1 -timeout=90s -run "^TestSM2CMSEnvelope$"
+    COMMAND "${SALTS_CRYPTO_TEST_GO}" test -mod=readonly ./e2e -count=1 -timeout=90s -run "^TestSM2CMSEnvelope$"
       -args -cms-peer "$<TARGET_FILE:crypto_sm2_cms_peer>")
   set_tests_properties(crypto.x509.sm2_cms_envelope_independent PROPERTIES
     WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/independent"
@@ -88,7 +88,7 @@ if(NOT CMAKE_SYSTEM_NAME STREQUAL "Android")
   target_link_libraries(crypto_sm2_x509_peer PRIVATE Salts::Crypto)
   set_target_properties(crypto_sm2_x509_peer PROPERTIES FOLDER "Crypto/tests/x509")
   add_test(NAME crypto.x509.sm2_independent
-    COMMAND "${SALTS_CRYPTO_TEST_GO}" test -mod=readonly -count=1 -timeout=90s -run "^TestSM2Certificates$"
+    COMMAND "${SALTS_CRYPTO_TEST_GO}" test -mod=readonly ./e2e -count=1 -timeout=90s -run "^TestSM2Certificates$"
       -args -peer "$<TARGET_FILE:crypto_sm2_x509_peer>")
   set_tests_properties(crypto.x509.sm2_independent PROPERTIES
     WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/independent"
@@ -97,7 +97,7 @@ if(NOT CMAKE_SYSTEM_NAME STREQUAL "Android")
   target_link_libraries(crypto_sm2_trust_peer PRIVATE Salts::Crypto)
   set_target_properties(crypto_sm2_trust_peer PROPERTIES FOLDER "Crypto/tests/x509")
   add_test(NAME crypto.x509.sm2_pinned_trust
-    COMMAND "${SALTS_CRYPTO_TEST_GO}" test -mod=readonly -count=1 -timeout=90s -run "^TestPinnedChain$"
+    COMMAND "${SALTS_CRYPTO_TEST_GO}" test -mod=readonly ./e2e -count=1 -timeout=90s -run "^TestPinnedChain$"
       -args -trust-peer "$<TARGET_FILE:crypto_sm2_trust_peer>")
   set_tests_properties(crypto.x509.sm2_pinned_trust PROPERTIES
     WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/independent"
@@ -106,7 +106,7 @@ if(NOT CMAKE_SYSTEM_NAME STREQUAL "Android")
   target_link_libraries(crypto_sm2_crl_peer PRIVATE Salts::Crypto)
   set_target_properties(crypto_sm2_crl_peer PROPERTIES FOLDER "Crypto/tests/x509")
   add_test(NAME crypto.x509.sm2_crl_independent
-    COMMAND "${SALTS_CRYPTO_TEST_GO}" test -mod=readonly -count=1 -timeout=90s -run "^TestSM2CRL$"
+    COMMAND "${SALTS_CRYPTO_TEST_GO}" test -mod=readonly ./e2e -count=1 -timeout=90s -run "^TestSM2CRL$"
       -args -crl-peer "$<TARGET_FILE:crypto_sm2_crl_peer>")
   set_tests_properties(crypto.x509.sm2_crl_independent PROPERTIES
     WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/independent"

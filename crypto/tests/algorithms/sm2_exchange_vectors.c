@@ -4,8 +4,9 @@
 #include <tinytest.h>
 #include <string.h>
 
-/* Only this formal executable resolves the static provider RNG symbol. Native
- * arithmetic is still the installed GmSSL archive; production RNG is unchanged. */
+/* Compile the tested implementation into this unit-test executable so the
+ * RNG override remains local. The Go E2E peer uses the production shared
+ * library and its unmodified RNG. Native arithmetic stays in the selected SDK. */
 static sm2_z256_t chosen;
 static unsigned calls, zeros;
 static int fail_rng;

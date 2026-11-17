@@ -45,36 +45,45 @@ if(MSVC)
   target_compile_options(crypto_dtls_server_endpoint PRIVATE /experimental:c11atomics)
 endif()
 if(NOT CMAKE_SYSTEM_NAME STREQUAL "Android")
-  find_package(Python3 COMPONENTS Interpreter REQUIRED)
-  add_test(NAME crypto.algorithms.dtls_record
-    COMMAND "${Python3_EXECUTABLE}" -B "${CMAKE_CURRENT_SOURCE_DIR}/dtls_record_peer.py"
-      "$<TARGET_FILE:crypto_dtls_record_test>")
-  set_tests_properties(crypto.algorithms.dtls_record PROPERTIES TIMEOUT 60)
-  add_test(NAME crypto.algorithms.dtls_handshake
-    COMMAND "${Python3_EXECUTABLE}" -B "${CMAKE_CURRENT_SOURCE_DIR}/dtls_handshake_peer.py"
-      "$<TARGET_FILE:crypto_dtls_handshake_test>"
-      "$<TARGET_FILE:crypto_dtls_secrets_test>"
-      "$<TARGET_FILE:crypto_dtls_exchange_test>"
-      "$<TARGET_FILE:crypto_dtls_client_cases_test>"
-      "$<TARGET_FILE:crypto_dtls_server_cases_test>")
-  set_tests_properties(crypto.algorithms.dtls_handshake PROPERTIES TIMEOUT 60)
-  add_test(NAME crypto.algorithms.dtls_client_independent
-    COMMAND "${Python3_EXECUTABLE}" -B "${CMAKE_CURRENT_SOURCE_DIR}/dtls_client_peer.py"
-      "$<TARGET_FILE:crypto_dtls_client_endpoint>")
-  set_tests_properties(crypto.algorithms.dtls_client_independent PROPERTIES TIMEOUT 90)
-  add_test(NAME crypto.algorithms.dtls_server_independent
-    COMMAND "${Python3_EXECUTABLE}" -B "${CMAKE_CURRENT_SOURCE_DIR}/dtls_server_peer.py"
-      "$<TARGET_FILE:crypto_dtls_server_endpoint>")
-  set_tests_properties(crypto.algorithms.dtls_server_independent PROPERTIES TIMEOUT 90)
   find_program(SALTS_CRYPTO_TEST_GO go REQUIRED)
+  add_test(NAME crypto.algorithms.dtls_record
+    COMMAND "${SALTS_CRYPTO_TEST_GO}" test -mod=readonly ./e2e -count=1 -timeout=50s
+      -run "^TestDTLSRecordOracle$" -args
+      -record-suite "$<TARGET_FILE:crypto_dtls_record_test>")
+  set_tests_properties(crypto.algorithms.dtls_record PROPERTIES
+    WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/independent"
+    ENVIRONMENT "CGO_ENABLED=0;GOWORK=off" TIMEOUT 60)
+  add_test(NAME crypto.algorithms.dtls_handshake
+    COMMAND "${SALTS_CRYPTO_TEST_GO}" test -mod=readonly ./e2e -count=1 -timeout=100s
+      -run "^TestDTLSHandshakeOracle$" -args
+      -handshake-suite "$<TARGET_FILE:crypto_dtls_handshake_test>"
+      -secrets-suite "$<TARGET_FILE:crypto_dtls_secrets_test>"
+      -exchange-suite "$<TARGET_FILE:crypto_dtls_exchange_test>"
+      -client-suite "$<TARGET_FILE:crypto_dtls_client_cases_test>"
+      -server-suite "$<TARGET_FILE:crypto_dtls_server_cases_test>")
+  set_tests_properties(crypto.algorithms.dtls_handshake PROPERTIES
+    WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/independent"
+    ENVIRONMENT "CGO_ENABLED=0;GOWORK=off" TIMEOUT 120)
+  add_test(NAME crypto.algorithms.dtls_client_independent
+    COMMAND "${SALTS_CRYPTO_TEST_GO}" test -mod=readonly ./e2e -count=1 -timeout=75s
+      -run "^TestScriptedDTLSClient$" -args -dtls-client "$<TARGET_FILE:crypto_dtls_client_endpoint>")
+  set_tests_properties(crypto.algorithms.dtls_client_independent PROPERTIES
+    WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/independent"
+    ENVIRONMENT "CGO_ENABLED=0;GOWORK=off" TIMEOUT 90)
+  add_test(NAME crypto.algorithms.dtls_server_independent
+    COMMAND "${SALTS_CRYPTO_TEST_GO}" test -mod=readonly ./e2e -count=1 -timeout=75s
+      -run "^TestScriptedDTLSServer$" -args -dtls-server "$<TARGET_FILE:crypto_dtls_server_endpoint>")
+  set_tests_properties(crypto.algorithms.dtls_server_independent PROPERTIES
+    WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/independent"
+    ENVIRONMENT "CGO_ENABLED=0;GOWORK=off" TIMEOUT 90)
   add_test(NAME crypto.algorithms.dtls_client_pion
-    COMMAND "${SALTS_CRYPTO_TEST_GO}" test -mod=readonly -count=1 -failfast -v -timeout=60s -run "^TestDTLSClientAgainstPion$"
+    COMMAND "${SALTS_CRYPTO_TEST_GO}" test -mod=readonly ./e2e -count=1 -failfast -v -timeout=60s -run "^TestDTLSClientAgainstPion$"
       -args -dtls-client "$<TARGET_FILE:crypto_dtls_client_endpoint>")
   set_tests_properties(crypto.algorithms.dtls_client_pion PROPERTIES
     WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/independent"
     ENVIRONMENT "CGO_ENABLED=0;GOWORK=off" TIMEOUT 120)
   add_test(NAME crypto.algorithms.dtls_server_pion
-    COMMAND "${SALTS_CRYPTO_TEST_GO}" test -mod=readonly -count=1 -failfast -v -timeout=90s -run "^TestDTLSServerAgainstPion$"
+    COMMAND "${SALTS_CRYPTO_TEST_GO}" test -mod=readonly ./e2e -count=1 -failfast -v -timeout=90s -run "^TestDTLSServerAgainstPion$"
       -args -dtls-server "$<TARGET_FILE:crypto_dtls_server_endpoint>")
   set_tests_properties(crypto.algorithms.dtls_server_pion PROPERTIES
     WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/independent"
@@ -92,6 +101,8 @@ add_test(NAME crypto.algorithms.sm9_public COMMAND salts_crypto_sm9_vectors)
 set_tests_properties(crypto.algorithms.sm9_public PROPERTIES TIMEOUT 120)
 
 add_executable(salts_crypto_sm9_provider_failure sm9_provider_failure.c)
+target_sources(salts_crypto_sm9_provider_failure PRIVATE
+  "${_salts_crypto_source_dir}/src/crypto_sm9.c")
 target_link_libraries(salts_crypto_sm9_provider_failure PRIVATE Salts::Crypto Salts::TinyTest GmSSL::GmSSL)
 add_test(NAME crypto.algorithms.sm9_provider_failure COMMAND salts_crypto_sm9_provider_failure)
 set_tests_properties(crypto.algorithms.sm9_provider_failure PROPERTIES TIMEOUT 120)
@@ -107,6 +118,8 @@ add_test(NAME crypto.algorithms.sm2_exchange COMMAND salts_crypto_sm2_exchange_t
 set_tests_properties(crypto.algorithms.sm2_exchange PROPERTIES TIMEOUT 120)
 
 add_executable(salts_crypto_sm2_exchange_vectors sm2_exchange_vectors.c)
+target_sources(salts_crypto_sm2_exchange_vectors PRIVATE
+  "${_salts_crypto_source_dir}/src/crypto_sm2_exchange.c")
 target_link_libraries(salts_crypto_sm2_exchange_vectors PRIVATE Salts::Crypto Salts::TinyTest GmSSL::GmSSL)
 add_test(NAME crypto.algorithms.sm2_exchange_vectors COMMAND salts_crypto_sm2_exchange_vectors)
 set_tests_properties(crypto.algorithms.sm2_exchange_vectors PROPERTIES TIMEOUT 120)

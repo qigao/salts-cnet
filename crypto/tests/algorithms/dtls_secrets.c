@@ -274,8 +274,8 @@ spec("GmSSL PRF fail-fast provider contract") {
   }
 }
 
-spec("Independent Python EMS key expansion and Finished oracle") {
-  it("verifies Python Finished proofs and exports test-only keys and directional records") {
+spec("Independent Go EMS key expansion and Finished oracle") {
+  it("verifies Go Finished proofs and exports test-only keys and directional records") {
     const char *path=getenv("SALTS_DTLS_SECRETS"),*proofs=getenv("SALTS_DTLS_PROOFS"); check_true(path && proofs);
     if (path && proofs) {
       crypto_dtls_transcript t={0}; crypto_dtls_secrets s={0}; uint8_t shared[32],client[32],server[32],hash[32];

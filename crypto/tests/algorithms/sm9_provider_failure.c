@@ -5,9 +5,9 @@
 #include <tinytest.h>
 #include <string.h>
 
-/* This executable alone resolves the static provider's RNG symbol. No crypto
- * implementation is copied; production and the public vector executable keep
- * the real RNG. Scalars are supplied in the provider's native limb layout. */
+/* Compile the tested implementation into this unit-test executable so the
+ * RNG override remains local. The Go E2E peer uses the production shared
+ * library and its unmodified RNG. Native arithmetic stays in the selected SDK. */
 static unsigned calls, zeros;
 static int fail_rng;
 static sm9_z256_t chosen;

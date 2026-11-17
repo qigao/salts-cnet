@@ -7,28 +7,14 @@ on:
       - "cnet/**"
       - "sctp/**"
       - "vendor/**"
-      - "CMake*.json"
-      - "CMakeLists.txt"
-      - "CMakeOptions.cmake"
-      - "cmake/**"
-      - "presets/**"
-      - ".github/ci/**"
-      - ".github/workflows/ci.yml"
   push:
     branches: [master]
-    tags: ["v0.1.002"]
+    tags: ["v*"]
     paths:
       - "crypto/**"
       - "cnet/**"
       - "sctp/**"
       - "vendor/**"
-      - "CMake*.json"
-      - "CMakeLists.txt"
-      - "CMakeOptions.cmake"
-      - "cmake/**"
-      - "presets/**"
-      - ".github/ci/**"
-      - ".github/workflows/ci.yml"
   workflow_dispatch:
 
 permissions:

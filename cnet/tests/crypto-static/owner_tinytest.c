@@ -1,6 +1,6 @@
 /* Canonical TinyTest runner for the optional real CNet static Crypto owner.
  * The original main remains unmodified as a test-only legacy entry.
- * Python TLS/mTLS peer invocations must keep their exact stdout protocol
+ * Go TLS/mTLS peer invocations must keep their exact stdout protocol
  * and original exit semantics; they are external peer drivers, not unit tests.
  */
 #define TINYTEST_NO_MAIN
@@ -24,7 +24,7 @@ int main(int argc, char **argv) {
   if (argc > 1 && argv[1] &&
       (strcmp(argv[1], "--mtls") == 0 ||
        strcmp(argv[1], "--external-san") == 0)) {
-    /* Python TLS/mTLS peers require the original byte-exact process protocol.
+    /* Go TLS/mTLS peers require the original byte-exact process protocol.
      * Their command-line modes must bypass TinyTest output entirely. */
     return cnet_crypto_legacy_main(argc, argv);
   }

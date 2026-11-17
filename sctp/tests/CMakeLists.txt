@@ -299,7 +299,7 @@ set_target_properties(cnet_sctp_dtls_native_peer PROPERTIES FOLDER "SCTP/tests")
 if(NOT CMAKE_SYSTEM_NAME STREQUAL "Android")
   find_program(SALTS_SCTP_DTLS_GO go REQUIRED)
   add_test(NAME saltscore.sctp_dtls_native
-    COMMAND "${SALTS_SCTP_DTLS_GO}" test -mod=readonly -count=1 -failfast -v -timeout=120s
+    COMMAND "${SALTS_SCTP_DTLS_GO}" test -mod=readonly ./e2e -count=1 -failfast -v -timeout=120s
       -args -native "$<TARGET_FILE:cnet_sctp_dtls_native_peer>")
   set_tests_properties(saltscore.sctp_dtls_native PROPERTIES
     WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/secure"

@@ -423,7 +423,7 @@ int main(int argc, char **argv) {
         !strcmp(scenario, "missing") || !strcmp(scenario, "untrusted") || !strcmp(scenario,"pkix");
     /* Pion's pinned shared SNI decoder rejects valid empty ServerHello ACKs.
      * Positive Pion cases explicitly select fixed identity; strict mismatch is
-     * separate, and the existing Python oracle qualifies strict SNI success. */
+     * separate, and the existing Go oracle qualifies strict SNI success. */
     const bool strict = !strcmp(scenario, "sni");
     const crypto_dtls_listener_config lc = {&credentials,
                                             mtls ? &client_roots : NULL,

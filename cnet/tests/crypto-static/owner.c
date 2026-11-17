@@ -273,7 +273,7 @@ typedef struct m5_mtls_case {
 } m5_mtls_case;
 
 /* The original CNet clients and NativeIO Owners remain unchanged.
- * Python-generated file fixtures remain alive until full owner teardown.
+ * Go-generated file fixtures remain alive until full owner teardown.
  */
 #if defined(CNET_M6_BUILD_SHARED)
 /* Both independent CNet workers must have already submitted real native
@@ -591,7 +591,7 @@ int cnet_m6_original_owner_mtls_case(
         ? SALTS_OK : SALTS_EIO;
 }
 #else
-/* Independent OpenSSL 3 server is launched in ANOTHER PROCESS by Python.
+/* Independent Go TLS server is launched in ANOTHER PROCESS by Go.
  * It presents the exact trusted 'localhost' certificate irrespective of
  * client SNI. A wrong.example failure can then only be counted when the
  * original CNet client rejects authentication, never a GmSSL server-side
@@ -656,7 +656,7 @@ static int run_external_san(unsigned port, uint32_t protocol, bool accept_peer)
         CHECK(observed.connected == 1u && observed.failed == 0u);
         /* TCP/TLS CONNECTED is not proof that our encrypted Finished
          * reached the independent OpenSSL peer. Wait for actual SERVER
-         * APPLICATION DATA, emitted only AFTER Python SSL handshake().
+         * APPLICATION DATA, emitted only AFTER Go TLS Handshake().
          * Keep real IOCP/epoll/kqueue active until this terminal evidence.
          */
         CHECK(cnet_set_receive_slice_handler(

@@ -74,8 +74,8 @@ typedef struct tls_probe {
   size_t stream_received;
   size_t send_sizes[3];
   unsigned sends_at_terminal;
-  /* Python ssl peer sends a complete two-byte TLS application record. */
-  bool expect_python_ok_record;
+  /* Go TLS peer sends a complete two-byte TLS application record. */
+  bool expect_peer_ok_record;
   unsigned receive_limit; /* zero keeps the ordinary single-record contract */
   int tls_version_status;
   int tls_cipher_status;
@@ -149,8 +149,8 @@ static void receive_callback(void *user, cnet_connection connection,
     ++p->received_count;
     return;
   }
-  if (p->expect_python_ok_record) {
-    /* Receive demand counts events, not bytes. The independent Python ssl
+  if (p->expect_peer_ok_record) {
+    /* Receive demand counts events, not bytes. The independent Go TLS
      * server sends exactly "ok" in one authenticated application record. */
     if (view->size != 2u || memcmp(view->data, "ok", 2u) != 0) {
       ++p->failed;
@@ -918,7 +918,7 @@ cleanup:
 
 
 /*
- * Native, production Salts::CNet client to independent Python ssl or GoTLCP
+ * Native, production Salts::CNet client to independent Go TLS or GoTLCP
  * server. The peer fixes TLS1.2/TLS1.3 or TLCP and supplies the same valid X.509
  * leaf for both SAN-positive and SAN-negative controls. This mode never
  * imports the alternate test-only CNet TLS facade or its Provider.
@@ -1102,7 +1102,7 @@ static int run_external_tls_server(const char *port_text,
     return 2;
 
   probe.client = &client;
-  probe.expect_python_ok_record = true;
+  probe.expect_peer_ok_record = true;
   probe.expected_send_size = byte_rotation ? 3u : 1u;
   probe.receive_limit = rounds;
   REQUIRE(cnet_client_init(&client, &client_cfg) == SALTS_OK);
@@ -1196,11 +1196,11 @@ static int run_external_tls_server(const char *port_text,
     while ((!probe.received_count || !probe.sent_count) &&
            !probe.terminal_count && monotonic_ms() < deadline)
       REQUIRE(cnet_client_poll(&client, 1u, &events) == SALTS_OK);
-    /* Independent Python ssl writes "ok" over the negotiated record;
+    /* Independent Go TLS writes "ok" over the negotiated record;
      * one receive-event credit must deliver that complete record. The
      * peer waits for our authenticated shutdown after BOTH local events. */
     if (probe.received_count != 1u || probe.received_byte != 'o' || probe.failed)
-      fprintf(stderr, "Python TLS success data received=%u byte=%u sent=%u terminal=%u failed=%u status=%d native=%d stage=%s\n",
+      fprintf(stderr, "Go TLS success data received=%u byte=%u sent=%u terminal=%u failed=%u status=%d native=%d stage=%s\n",
               probe.received_count, (unsigned)probe.received_byte, probe.sent_count, probe.terminal_count,
               probe.failed, probe.last_error_status, probe.last_native_status, probe.failure_stage);
     REQUIRE(probe.received_count == 1u && probe.received_byte == 'o' &&
@@ -1248,7 +1248,7 @@ cleanup:
   return result;
 }
 
-static int run_python_ssl_server(const char *port_text,
+static int run_go_tls_server(const char *port_text,
                                  const char *protocol,
                                  const char *identity,
                                  const char *trust_ca,
@@ -1264,8 +1264,8 @@ static int run_python_ssl_server(const char *port_text,
 
 
 /*
- * Production CNet server against a separate Python ssl or GoTLCP
- * client. The server retains exactly one Salts::CNet native owner; Python
+ * Production CNet server against a separate Go TLS or GoTLCP
+ * client. The server retains exactly one Salts::CNet native owner; Go
  * supplies ephemeral client credentials and pins TLS 1.2 or TLS 1.3.
  * Port handoff is a private test file to avoid any extra server/consumer app.
  */
@@ -1328,7 +1328,7 @@ static int tls_eof_race_progress(cnet_client *client, tls_eof_race *race,
   return first_error;
 }
 
-static int run_python_ssl_client(const char *port_path,
+static int run_go_tls_client(const char *port_path,
                                  const char *ca_file,
                                  const char *cert_file,
                                  const char *key_file,
@@ -1553,7 +1553,7 @@ static int run_python_ssl_client(const char *port_path,
         response_sent && probe.sent_count && !send_marker_published) {
       /*
        * Isolate authenticated-reply completion from the separate
-       * post-authenticated invalid-close gate. An independent Python peer
+       * post-authenticated invalid-close gate. An independent Go peer
        * must not inject EOF/bad alert until production CNet has actually
        * published the SEND event for G; ciphertext reception alone is not
        * that guarantee. The negative case still requires a real FAILED
@@ -1574,7 +1574,7 @@ static int run_python_ssl_client(const char *port_path,
     }
     if (expect_local_peer_close && response_sent &&
         probe.sent_count && !local_close_started) {
-      /* Native application-initiated shutdown can race the Python peer's
+      /* Native application-initiated shutdown can race the Go peer's
        * close_notify after it receives the authenticated response G.
        * At this point CNet can also own a background NativeIO TLS_READ.
        * Do not release that lease or its buffers until the real terminal. */
@@ -1584,7 +1584,7 @@ static int run_python_ssl_client(const char *port_path,
       REQUIRE(probe.failed == 0u && probe.connected_count == 1u);
       REQUIRE(cnet_close(&server, probe.connection) == SALTS_OK);
       local_close_started = true;
-      /* The Python peer must not win the race *before* native CNet has
+      /* The Go peer must not win the race *before* native CNet has
        * accepted local close. It still sends its reciprocal close_notify
        * while NativeIO cancellation and encrypted shutdown are pending. */
       close_name_bytes =
@@ -1639,7 +1639,7 @@ static int run_python_ssl_client(const char *port_path,
       REQUIRE(probe.received_count == 1u && probe.sent_count == expected_sends);
     }
   } else if (expect_orderly_close || expect_local_peer_close || expect_final_send_close) {
-    /* Python ssl.unwrap() requires a real authenticated reciprocal
+    /* Go TLS close exchange requires a real authenticated reciprocal
      * close_notify for both explicit cnet_close and retained final send.
      * TCP EOF, SEND callback or local ciphertext flush are insufficient.
      * Complete the NativeIO TLS_READ lease and publish exactly one CLOSED. */
@@ -1835,7 +1835,7 @@ static int saltscore_original_entry_test_cnet_tls_ca_san_c(int argc, char **argv
   }
   if (argc == 10 && strcmp(argv[1], "--tls-client-identities") == 0) {
     if (strcmp(argv[8], "accept") != 0 && strcmp(argv[8], "reject") != 0) return 2;
-    return run_python_ssl_server(argv[2], argv[3], argv[4], argv[5],
+    return run_go_tls_server(argv[2], argv[3], argv[4], argv[5],
         strcmp(argv[8], "accept") == 0, argv[6], argv[7], argv[9], NULL);
   }
   if ((argc == 9 || argc == 11) && (strcmp(argv[1], "--tlcp-crl-policy") == 0 || strcmp(argv[1], "--tlcp-ocsp-policy") == 0))
@@ -1846,11 +1846,11 @@ static int saltscore_original_entry_test_cnet_tls_ca_san_c(int argc, char **argv
     return run_cnet_ocsp_policy_case(argv);
   if (argc == 9 && strcmp(argv[1], "--shangmi-required-server") == 0) {
     if (strcmp(argv[7], "accept") != 0 && strcmp(argv[7], "reject") != 0) return 2;
-    return run_python_ssl_server(argv[2], "shangmi13", argv[3], argv[4],
+    return run_go_tls_server(argv[2], "shangmi13", argv[3], argv[4],
         strcmp(argv[7], "accept") == 0, argv[5], argv[6], argv[8], NULL);
   }
   if (argc == 8 && strcmp(argv[1], "--shangmi-required-client") == 0)
-    return run_python_ssl_client(argv[2], argv[3], argv[4], argv[5], "shangmi13-mtls", argv[6], argv[7]);
+    return run_go_tls_client(argv[2], argv[3], argv[4], argv[5], "shangmi13-mtls", argv[6], argv[7]);
   if ((argc == 12 && strcmp(argv[1], "--shangmi-mtls") == 0) ||
       (argc == 16 && (strcmp(argv[1], "--depth-mtls") == 0 || strcmp(argv[1], "--signature-mtls") == 0 ||
           strcmp(argv[1], "--chain-signature-mtls") == 0))) {
@@ -1919,22 +1919,22 @@ static int saltscore_original_entry_test_cnet_tls_ca_san_c(int argc, char **argv
         ? run_mutual_peer_policy_case(&mtls, policy_client, policy_server) : run_case(&mtls);
   }
   if (argc == 6 && strcmp(argv[1], "--shangmi-client") == 0)
-    return run_python_ssl_client(argv[2], "-", argv[3], argv[4], "shangmi13", argv[5], "-");
+    return run_go_tls_client(argv[2], "-", argv[3], argv[4], "shangmi13", argv[5], "-");
   if (argc == 4 && strcmp(argv[1], "--reject-tlcp-identity") == 0)
     return reject_tlcp_identity(argv[2], argv[3]);
   if (argc == 6 && strcmp(argv[1], "--gotlcp-client") == 0)
-    return run_python_ssl_client(argv[2], "-", argv[3], argv[4], "tlcp", argv[5], "-");
-  if (argc == 9 && strcmp(argv[1], "--python-ssl-client") == 0)
-    return run_python_ssl_client(
+    return run_go_tls_client(argv[2], "-", argv[3], argv[4], "tlcp", argv[5], "-");
+  if (argc == 9 && strcmp(argv[1], "--go-tls-client") == 0)
+    return run_go_tls_client(
         argv[2], argv[3], argv[4], argv[5], argv[6], argv[7], argv[8]);
   if (argc == 5 && strcmp(argv[1], "--external-san") == 0)
-    return run_python_ssl_server(
+    return run_go_tls_server(
         argv[2], argv[3], argv[4], CORE_TLS_TEST_EXTERNAL_CA,
         strcmp(argv[4], "localhost") == 0, NULL, NULL, NULL, NULL);
   if (argc == 7 && strcmp(argv[1], "--external-ip-san") == 0) {
     if (strcmp(argv[6], "accept") != 0 && strcmp(argv[6], "reject") != 0)
       return 2;
-    return run_python_ssl_server(
+    return run_go_tls_server(
         argv[2], argv[3], argv[4], argv[5],
         strcmp(argv[6], "accept") == 0, NULL, NULL, NULL, NULL);
   }
@@ -2586,7 +2586,7 @@ cleanup:;
 static int saltscore_original_argc;
 static char **saltscore_original_argv;
 
-spec("CNet real TLS CA SAN mTLS Python peer interoperability") {
+spec("CNet real TLS CA SAN mTLS Go peer interoperability") {
   it("preserves the real native integration and external peer contract") {
     const int result = saltscore_original_entry_test_cnet_tls_ca_san_c(saltscore_original_argc, saltscore_original_argv);
     check(result == 0, "native integration returned %d", result);

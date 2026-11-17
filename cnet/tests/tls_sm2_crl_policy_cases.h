@@ -306,7 +306,7 @@ static int run_cnet_tlcp_crl_policy_case(char **argv) {
   /* No native or policy engine may depend on these caller buffers afterward. */
   memset(issuer, 0, sizeof(issuer)); memset(crl, 0, sizeof(crl));
   memset(certificate_id, 0, sizeof(certificate_id)); memset(crl_id, 0, sizeof(crl_id));
-  REQUIRE(run_python_ssl_server(argv[2], "tlcp", argv[3], argv[4],
+  REQUIRE(run_go_tls_server(argv[2], "tlcp", argv[3], argv[4],
       strcmp(argv[7], "accept") == 0, NULL, NULL, NULL, &policy) == 0);
   REQUIRE(policy.context == NULL);
   REQUIRE(atomic_load(&probe.references) == 0u && atomic_load(&probe.invalid) == 0u);

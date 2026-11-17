@@ -186,7 +186,7 @@ spec("Private DTLS flight timer and actual-send ownership") {
 }
 
 spec("Independent DTLS cookie and transcript framing oracle") {
-  it("verifies a Python cookie and emits an independently verifiable challenge and normalized message") {
+  it("verifies a Go cookie and emits an independently verifiable challenge and normalized message") {
     const char *first=getenv("SALTS_DTLS_FIRST"),*second=getenv("SALTS_DTLS_SECOND"),*reply_path=getenv("SALTS_DTLS_REPLY");
     const char *fragments=getenv("SALTS_DTLS_FRAGMENTS"),*canonical=getenv("SALTS_DTLS_CANONICAL");
     check_true(first && second && reply_path && fragments && canonical);

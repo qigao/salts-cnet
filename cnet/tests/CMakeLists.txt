@@ -56,13 +56,11 @@ foreach(_plugin IN ITEMS a b)
   set_target_properties(saltscore_runtime_plugin_${_plugin} PROPERTIES WINDOWS_EXPORT_ALL_SYMBOLS ON)
   target_link_libraries(saltscore_runtime_plugin_${_plugin} PRIVATE
     Salts::CNet)
-  cnet_owner_link_map(saltscore_runtime_plugin_${_plugin})
 endforeach()
 cmake_add_executable(saltscore_two_plugins_test SOURCES test_runtime_plugins.c
   FOLDER "cnet/tests")
 target_link_libraries(saltscore_two_plugins_test PRIVATE
   Salts::Core ${CMAKE_DL_LIBS} Salts::TinyTest)
-cnet_owner_link_map(saltscore_two_plugins_test)
 add_dependencies(saltscore_two_plugins_test
   saltscore_runtime_plugin_a saltscore_runtime_plugin_b)
 add_test(NAME saltscore.two_cnet_plugins
@@ -139,54 +137,48 @@ endforeach()
 
 endif()
 
-# This is the exact production Salts::CNet target, never the retired
-# second test-only CNet Owner / Crypto adapter.
+find_program(SALTS_CNET_TEST_GO go REQUIRED)
 add_test(NAME saltscore.cnet_production_required_mtls
-  COMMAND "${Python3_EXECUTABLE}" -B
-    "${PROJECT_SOURCE_DIR}/cnet/tests/test_cnet_tls_required_mtls.py"
-    --binary "$<TARGET_FILE:cnet_tls_ca_san_test>"
-    --fixture-generator
-      "${PROJECT_SOURCE_DIR}/crypto/tests/sdk/python_mtls.py"
-    --work "${PROJECT_BINARY_DIR}/native-required-mtls")
-set_tests_properties(saltscore.cnet_production_required_mtls
-  PROPERTIES TIMEOUT 180 RESOURCE_LOCK cnet_native_required_mtls)
-
-# CNet *production* client linked once to independent Python stdlib ssl
-# server. Each peer pins exactly one TLS version; positive DNS SAN must
-# transfer application bytes, and wrong DNS SAN must reject at handshake.
+  COMMAND "${SALTS_CNET_TEST_GO}" test -mod=readonly ./e2e -count=1 -timeout=160s
+    -run "^TestRequiredMTLS$" -args -native "$<TARGET_FILE:cnet_tls_ca_san_test>")
+set_tests_properties(saltscore.cnet_production_required_mtls PROPERTIES
+  WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/independent/tls"
+  ENVIRONMENT "CGO_ENABLED=0;GOWORK=off" TIMEOUT 180 RESOURCE_LOCK cnet_native_required_mtls)
 foreach(_protocol IN ITEMS tls12 tls13)
-  add_test(NAME saltscore.cnet_python_ssl_peer_${_protocol}
-    COMMAND "${Python3_EXECUTABLE}" -B
-      "${PROJECT_SOURCE_DIR}/cnet/tests/crypto-static/external_san_peer.py"
-      --binary "$<TARGET_FILE:cnet_tls_ca_san_test>"
-      --cert "${PROJECT_SOURCE_DIR}/crypto/tests/fixtures/external-io-server-cert.pem"
-      --key "${PROJECT_SOURCE_DIR}/crypto/tests/fixtures/external-io-server-key.pem"
-      --protocol "${_protocol}")
-  set_tests_properties(saltscore.cnet_python_ssl_peer_${_protocol}
-    PROPERTIES TIMEOUT 95 RESOURCE_LOCK cnet_native_python_ssl_peer)
+  add_test(NAME saltscore.cnet_go_tls_peer_${_protocol}
+    COMMAND "${SALTS_CNET_TEST_GO}" test -mod=readonly ./e2e -count=1 -timeout=80s
+      -run "^TestExternalSAN$" -args -native "$<TARGET_FILE:cnet_tls_ca_san_test>"
+      -protocol "${_protocol}" -fixtures "${PROJECT_SOURCE_DIR}/crypto/tests/fixtures")
+  set_tests_properties(saltscore.cnet_go_tls_peer_${_protocol} PROPERTIES
+    WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/independent/tls"
+    ENVIRONMENT "CGO_ENABLED=0;GOWORK=off" TIMEOUT 95 RESOURCE_LOCK cnet_native_go_tls_peer)
 endforeach()
+add_test(NAME saltscore.cnet_go_tls_client_required_mtls
+  COMMAND "${SALTS_CNET_TEST_GO}" test -mod=readonly ./e2e -count=1 -timeout=280s
+    -run "^TestGoClientRequiredMTLS$" -args -native "$<TARGET_FILE:cnet_tls_ca_san_test>")
+set_tests_properties(saltscore.cnet_go_tls_client_required_mtls PROPERTIES
+  WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/independent/tls"
+  ENVIRONMENT "CGO_ENABLED=0;GOWORK=off" TIMEOUT 300 RESOURCE_LOCK cnet_native_required_mtls)
+add_test(NAME saltscore.cnet_tls_sni
+  COMMAND "${SALTS_CNET_TEST_GO}" test -mod=readonly ./e2e -count=1 -timeout=150s
+    -run "^TestServerSNI$" -args -native "$<TARGET_FILE:cnet_tls_ca_san_test>")
+set_tests_properties(saltscore.cnet_tls_sni PROPERTIES
+  WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/independent/tls"
+  ENVIRONMENT "CGO_ENABLED=0;GOWORK=off" TIMEOUT 180)
+if(WIN32)
+  add_test(NAME saltscore.cnet_tls_system_intermediate_trust
+    COMMAND "${SALTS_CNET_TEST_GO}" test -mod=readonly ./e2e -count=1 -timeout=80s
+      -run "^TestSystemIntermediateTrust$" -args -native "$<TARGET_FILE:cnet_tls_ca_san_test>")
+  set_tests_properties(saltscore.cnet_tls_system_intermediate_trust PROPERTIES
+    WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/independent/tls"
+    ENVIRONMENT "CGO_ENABLED=0;GOWORK=off" TIMEOUT 95 RESOURCE_LOCK cnet_native_go_tls_peer)
+endif()
 
-# Inverse interop: Python's own ssl TLS client uses exact TLS1.2 or
-# TLS1.3 against the ONE production CNet listener, with REQUIRED mTLS.
-# No duplicate CNet owner, test-only provider, installed SDK or consumer.
-add_test(NAME saltscore.cnet_python_ssl_client_required_mtls
-  COMMAND "${Python3_EXECUTABLE}" -B
-    "${PROJECT_SOURCE_DIR}/cnet/tests/test_cnet_tls_python_client.py"
-    --binary "$<TARGET_FILE:cnet_tls_ca_san_test>"
-    --fixture-generator "${PROJECT_SOURCE_DIR}/crypto/tests/sdk/python_mtls.py"
-    --work "${PROJECT_BINARY_DIR}/native-python-client-mtls")
-set_tests_properties(saltscore.cnet_python_ssl_client_required_mtls
-  PROPERTIES TIMEOUT 300 RESOURCE_LOCK cnet_native_required_mtls)
-
-# Test-only native Crypto Owner, never part of the production CNet target.
 add_subdirectory(crypto-static)
 
-add_subdirectory(owner)
-
 if(NOT CMAKE_SYSTEM_NAME STREQUAL "Android")
-  find_program(SALTS_CNET_TEST_GO go REQUIRED)
   add_test(NAME saltscore.cnet_tls_session_resumption
-    COMMAND "${SALTS_CNET_TEST_GO}" test -mod=readonly -count=1 -timeout=60s
+    COMMAND "${SALTS_CNET_TEST_GO}" test -mod=readonly ./e2e -count=1 -timeout=60s
       -run ^TestTLS13SessionResumption$
       -args -native "$<TARGET_FILE:cnet_tls_ca_san_test>")
   set_tests_properties(saltscore.cnet_tls_session_resumption PROPERTIES
@@ -206,81 +198,81 @@ if(NOT CMAKE_SYSTEM_NAME STREQUAL "Android")
     list(GET salts_tls_test 0 salts_tls_name)
     list(GET salts_tls_test 1 salts_tls_case)
     add_test(NAME saltscore.cnet_tls_${salts_tls_name}
-      COMMAND "${SALTS_CNET_TEST_GO}" test -mod=readonly -count=1 -timeout=150s
+      COMMAND "${SALTS_CNET_TEST_GO}" test -mod=readonly ./e2e -count=1 -timeout=150s
         -run "^${salts_tls_case}$"
-        -args -python "${Python3_EXECUTABLE}" -native "$<TARGET_FILE:cnet_tls_ca_san_test>")
+        -args -native "$<TARGET_FILE:cnet_tls_ca_san_test>")
     set_tests_properties(saltscore.cnet_tls_${salts_tls_name} PROPERTIES
       WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/independent/tls"
       ENVIRONMENT "CGO_ENABLED=0;GOWORK=off" TIMEOUT 180)
   endforeach()
   add_test(NAME saltscore.cnet_tlcp_independent
-    COMMAND "${SALTS_CNET_TEST_GO}" test -mod=readonly -count=1 -timeout=150s
-      -args -python "${Python3_EXECUTABLE}" -native "$<TARGET_FILE:cnet_tls_ca_san_test>")
+    COMMAND "${SALTS_CNET_TEST_GO}" test -mod=readonly ./e2e -count=1 -timeout=150s
+      -args -native "$<TARGET_FILE:cnet_tls_ca_san_test>")
   set_tests_properties(saltscore.cnet_tlcp_independent PROPERTIES
     WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/independent/tlcp"
     ENVIRONMENT "CGO_ENABLED=0;GOWORK=off" TIMEOUT 180)
   add_test(NAME saltscore.cnet_tlcp_crl_policy
-    COMMAND "${SALTS_CNET_TEST_GO}" test -mod=readonly -count=1 -timeout=150s -run "^TestTLCPCRLPolicy$"
+    COMMAND "${SALTS_CNET_TEST_GO}" test -mod=readonly ./e2e -count=1 -timeout=150s -run "^TestTLCPCRLPolicy$"
       -args -native "$<TARGET_FILE:cnet_tls_ca_san_test>")
   set_tests_properties(saltscore.cnet_tlcp_crl_policy PROPERTIES
     WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/independent/tlcp"
     ENVIRONMENT "CGO_ENABLED=0;GOWORK=off" TIMEOUT 180)
   add_test(NAME saltscore.cnet_tlcp_certificate_policy
-    COMMAND "${SALTS_CNET_TEST_GO}" test -mod=readonly -count=1 -timeout=150s -run "^TestTLCPCertificatePolicy$"
+    COMMAND "${SALTS_CNET_TEST_GO}" test -mod=readonly ./e2e -count=1 -timeout=150s -run "^TestTLCPCertificatePolicy$"
       -args -native "$<TARGET_FILE:cnet_tls_ca_san_test>")
   set_tests_properties(saltscore.cnet_tlcp_certificate_policy PROPERTIES
     WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/independent/tlcp"
     ENVIRONMENT "CGO_ENABLED=0;GOWORK=off" TIMEOUT 180)
   add_test(NAME saltscore.cnet_tlcp_ocsp_policy
-    COMMAND "${SALTS_CNET_TEST_GO}" test -mod=readonly -count=1 -timeout=150s -run "^TestTLCPOCSPPolicy$"
+    COMMAND "${SALTS_CNET_TEST_GO}" test -mod=readonly ./e2e -count=1 -timeout=150s -run "^TestTLCPOCSPPolicy$"
       -args -native "$<TARGET_FILE:cnet_tls_ca_san_test>")
   set_tests_properties(saltscore.cnet_tlcp_ocsp_policy PROPERTIES
     WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/independent/tlcp"
     ENVIRONMENT "CGO_ENABLED=0;GOWORK=off" TIMEOUT 180)
   add_test(NAME saltscore.cnet_shangmi_session_resumption
-    COMMAND "${SALTS_CNET_TEST_GO}" test -mod=readonly -count=1 -timeout=90s -run "^TestShangMiSessionResumption$"
+    COMMAND "${SALTS_CNET_TEST_GO}" test -mod=readonly ./e2e -count=1 -timeout=90s -run "^TestShangMiSessionResumption$"
       -args -native "$<TARGET_FILE:cnet_tls_ca_san_test>")
   set_tests_properties(saltscore.cnet_shangmi_session_resumption PROPERTIES
     WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/independent/shangmi"
     ENVIRONMENT "CGO_ENABLED=0;GOWORK=off" TIMEOUT 120)
   add_test(NAME saltscore.cnet_shangmi_tls13_independent
-    COMMAND "${SALTS_CNET_TEST_GO}" test -mod=readonly -count=1 -timeout=150s -run "^TestShangMi$"
+    COMMAND "${SALTS_CNET_TEST_GO}" test -mod=readonly ./e2e -count=1 -timeout=150s -run "^TestShangMi$"
       -args -native "$<TARGET_FILE:cnet_tls_ca_san_test>")
   set_tests_properties(saltscore.cnet_shangmi_tls13_independent PROPERTIES
     WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/independent/shangmi"
     ENVIRONMENT "CGO_ENABLED=0;GOWORK=off" TIMEOUT 180)
   add_test(NAME saltscore.cnet_shangmi_required_mtls
-    COMMAND "${SALTS_CNET_TEST_GO}" test -mod=readonly -count=1 -timeout=150s -run "^TestShangMiMutual$"
-      -args -python "${Python3_EXECUTABLE}" -native "$<TARGET_FILE:cnet_tls_ca_san_test>")
+    COMMAND "${SALTS_CNET_TEST_GO}" test -mod=readonly ./e2e -count=1 -timeout=150s -run "^TestShangMiMutual$"
+      -args -native "$<TARGET_FILE:cnet_tls_ca_san_test>")
   set_tests_properties(saltscore.cnet_shangmi_required_mtls PROPERTIES
     WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/independent/shangmi"
     ENVIRONMENT "CGO_ENABLED=0;GOWORK=off" TIMEOUT 180)
   add_test(NAME saltscore.cnet_shangmi_mtls_independent
-    COMMAND "${SALTS_CNET_TEST_GO}" test -mod=readonly -count=1 -timeout=150s -run "^TestShangMiMutualIndependent$"
+    COMMAND "${SALTS_CNET_TEST_GO}" test -mod=readonly ./e2e -count=1 -timeout=150s -run "^TestShangMiMutualIndependent$"
       -args -native "$<TARGET_FILE:cnet_tls_ca_san_test>")
   set_tests_properties(saltscore.cnet_shangmi_mtls_independent PROPERTIES
     WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/independent/shangmi"
     ENVIRONMENT "CGO_ENABLED=0;GOWORK=off" TIMEOUT 180)
   add_test(NAME saltscore.cnet_shangmi_mtls_native_client
-    COMMAND "${SALTS_CNET_TEST_GO}" test -mod=readonly -count=1 -timeout=150s -run "^TestShangMiMutualNativeClient$"
+    COMMAND "${SALTS_CNET_TEST_GO}" test -mod=readonly ./e2e -count=1 -timeout=150s -run "^TestShangMiMutualNativeClient$"
       -args -native "$<TARGET_FILE:cnet_tls_ca_san_test>")
   set_tests_properties(saltscore.cnet_shangmi_mtls_native_client PROPERTIES
     WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/independent/shangmi"
     ENVIRONMENT "CGO_ENABLED=0;GOWORK=off" TIMEOUT 180)
   add_test(NAME saltscore.cnet_shangmi_key_update
-    COMMAND "${SALTS_CNET_TEST_GO}" test -mod=readonly -count=1 -timeout=150s -run "^TestShangMiKeyUpdate$"
+    COMMAND "${SALTS_CNET_TEST_GO}" test -mod=readonly ./e2e -count=1 -timeout=150s -run "^TestShangMiKeyUpdate$"
       -args -native "$<TARGET_FILE:cnet_tls_ca_san_test>")
   set_tests_properties(saltscore.cnet_shangmi_key_update PROPERTIES
     WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/independent/shangmi"
     ENVIRONMENT "CGO_ENABLED=0;GOWORK=off" TIMEOUT 180)
   add_test(NAME saltscore.cnet_shangmi_crl_policy
-    COMMAND "${SALTS_CNET_TEST_GO}" test -mod=readonly -count=1 -timeout=150s -run "^TestShangMiCNetCRLPolicy$"
+    COMMAND "${SALTS_CNET_TEST_GO}" test -mod=readonly ./e2e -count=1 -timeout=150s -run "^TestShangMiCNetCRLPolicy$"
       -args -native "$<TARGET_FILE:cnet_tls_ca_san_test>")
   set_tests_properties(saltscore.cnet_shangmi_crl_policy PROPERTIES
     WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/independent/shangmi"
     ENVIRONMENT "CGO_ENABLED=0;GOWORK=off" TIMEOUT 180)
   add_test(NAME saltscore.cnet_shangmi_ocsp_policy
-    COMMAND "${SALTS_CNET_TEST_GO}" test -mod=readonly -count=1 -timeout=150s -run "^TestShangMiCNetOCSPPolicy$"
+    COMMAND "${SALTS_CNET_TEST_GO}" test -mod=readonly ./e2e -count=1 -timeout=150s -run "^TestShangMiCNetOCSPPolicy$"
       -args -native "$<TARGET_FILE:cnet_tls_ca_san_test>")
   set_tests_properties(saltscore.cnet_shangmi_ocsp_policy PROPERTIES
     WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/independent/shangmi"
@@ -308,31 +300,31 @@ set_target_properties(cnet_tls_server_ticket_peer PROPERTIES FOLDER "CNet/tests"
 if(NOT CMAKE_SYSTEM_NAME STREQUAL "Android")
   find_program(SALTS_CNET_TICKET_GO go REQUIRED)
   add_test(NAME saltscore.cnet_dtls_native
-    COMMAND "${SALTS_CNET_TICKET_GO}" test -mod=readonly -count=1 -failfast -v -timeout=90s -run "^TestDTLSNative"
+    COMMAND "${SALTS_CNET_TICKET_GO}" test -mod=readonly ./e2e -count=1 -failfast -v -timeout=90s -run "^TestDTLSNative"
       -args -dtls-native "$<TARGET_FILE:cnet_dtls_native_peer>")
   set_tests_properties(saltscore.cnet_dtls_native PROPERTIES
     WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/tickets"
     ENVIRONMENT "CGO_ENABLED=0;GOWORK=off" TIMEOUT 120)
   add_test(NAME saltscore.cnet_tls_server_tickets
-    COMMAND "${SALTS_CNET_TICKET_GO}" test -mod=readonly -count=1 -timeout=90s -run "^TestServerTickets$"
+    COMMAND "${SALTS_CNET_TICKET_GO}" test -mod=readonly ./e2e -count=1 -timeout=90s -run "^TestServerTickets$"
       -args -native "$<TARGET_FILE:cnet_tls_server_ticket_peer>")
   set_tests_properties(saltscore.cnet_tls_server_tickets PROPERTIES
     WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/tickets"
     ENVIRONMENT "CGO_ENABLED=0;GOWORK=off" TIMEOUT 120)
   add_test(NAME saltscore.cnet_pkix_name_constraints
-    COMMAND "${SALTS_CNET_TICKET_GO}" test -mod=readonly -count=1 -timeout=60s
+    COMMAND "${SALTS_CNET_TICKET_GO}" test -mod=readonly ./e2e -count=1 -timeout=60s
       -run "^TestNameConstraints$" -args -native "$<TARGET_FILE:cnet_tls_server_ticket_peer>")
   set_tests_properties(saltscore.cnet_pkix_name_constraints PROPERTIES
     WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/tickets"
     ENVIRONMENT "CGO_ENABLED=0;GOWORK=off" TIMEOUT 90)
   add_test(NAME saltscore.cnet_tlcp_anchor_constraints
-    COMMAND "${SALTS_CNET_TICKET_GO}" test -mod=readonly -count=1 -timeout=60s
+    COMMAND "${SALTS_CNET_TICKET_GO}" test -mod=readonly ./e2e -count=1 -timeout=60s
       -run "^TestTLCPAnchorConstraints$" -args -native "$<TARGET_FILE:cnet_tls_ca_san_test>")
   set_tests_properties(saltscore.cnet_tlcp_anchor_constraints PROPERTIES
     WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}/cnet/tests/independent/tlcp"
     ENVIRONMENT "CGO_ENABLED=0;GOWORK=off" TIMEOUT 90)
   add_test(NAME saltscore.cnet_shangmi_server_tickets
-    COMMAND "${SALTS_CNET_TICKET_GO}" test -mod=readonly -count=1 -timeout=60s
+    COMMAND "${SALTS_CNET_TICKET_GO}" test -mod=readonly ./e2e -count=1 -timeout=60s
       -run "^TestShangMiServerTickets$" -args -native "$<TARGET_FILE:cnet_tls_server_ticket_peer>")
   set_tests_properties(saltscore.cnet_shangmi_server_tickets PROPERTIES
     WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}/cnet/tests/independent/shangmi"

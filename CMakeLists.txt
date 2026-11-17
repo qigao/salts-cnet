@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.25)
 include(CMakeOptions.cmake)
 project(
   SaltsCNet
-  VERSION 0.1.12
+  VERSION 0.1.13
   LANGUAGES C CXX)
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_CXX_STANDARD 17)
@@ -20,7 +20,7 @@ if(WIN32)
   set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/bin")
   # Keep the published DLL identity independent of the selected LLVM driver.
   # llvm-mingw otherwise adds a Unix-style `lib` prefix that differs from the
-  # MSVC ABI name and from the fail-closed installed-owner audit.
+  # MSVC ABI name.
   set(CMAKE_SHARED_LIBRARY_PREFIX "")
 endif()
 

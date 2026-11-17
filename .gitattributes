@@ -1,8 +1,4 @@
 # Preserve reviewed native inputs exactly on every checkout platform.
 # These paths have byte-level provenance; do not apply checkout conversion.
-crypto/native/gmssl/** -text
-vendor/gmssl-extensions/src/** -text
-vendor/gmssl-extensions/include/** -text
-vendor/gmssl-extensions/patches/** -text
 crypto/tests/migration/CMakeLists.original.txt -text
 crypto/tests/migration/CMakeLists.local-native.patch -text

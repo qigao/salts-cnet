@@ -1,5 +1,5 @@
 /* Drive the production opaque server to ClientHello2 with a generated P-256
- * share. These parser-boundary cases stop at ServerHello; independent Python
+ * share. These parser-boundary cases stop at ServerHello; independent Go
  * clients separately verify the complete authenticated HRR transcript. */
 static const unsigned char tls_test_hrr_random[32] = {
     0xcf,0x21,0xad,0x74,0xe5,0x9a,0x61,0x11,0xbe,0x1d,0x8c,0x02,0x1e,0x65,0xb8,0x91,

@@ -78,30 +78,20 @@ add_test(NAME saltscore.cnet_crypto_static_original_owner_tls12_tls13
 set_tests_properties(saltscore.cnet_crypto_static_original_owner_tls12_tls13
   PROPERTIES TIMEOUT 120)
 
-# M5: real original CNet epoll/kqueue/IOCP Owner, not an adapter-only
-# socket. TLS12/TLS13 REQUIRED mTLS uses exact-head Crypto Python X.509
-# fixtures and a single physical static Crypto instance in the process.
-add_test(NAME saltscore.cnet_crypto_static_original_owner_python_mtls
-  COMMAND "${Python3_EXECUTABLE}"
-    "${PROJECT_SOURCE_DIR}/cnet/tests/crypto-static/python_original_owner_mtls.py"
-    --binary "$<TARGET_FILE:cnet_crypto_static_original_owner>"
-    --crypto-python-fixtures "${PROJECT_SOURCE_DIR}/crypto/tests/sdk/python_mtls.py"
-    --work "${CMAKE_CURRENT_BINARY_DIR}/m5-private-python-fixtures")
-set_tests_properties(saltscore.cnet_crypto_static_original_owner_python_mtls
-  PROPERTIES TIMEOUT 360 RESOURCE_LOCK cnet_m5_original_owner)
-
-# True client SAN mismatch requires SNI-neutral independent Python ssl server:
-# pinned GmSSL refuses unrecognized SNI *on the server* first.
+add_test(NAME saltscore.cnet_crypto_static_original_owner_go_mtls
+  COMMAND "${SALTS_CNET_TEST_GO}" test -mod=readonly ./e2e -count=1 -timeout=340s
+    -run "^TestPrivateRequiredMTLS$" -args -private-native "$<TARGET_FILE:cnet_crypto_static_original_owner>")
+set_tests_properties(saltscore.cnet_crypto_static_original_owner_go_mtls PROPERTIES
+  WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}/cnet/tests/independent/tls"
+  ENVIRONMENT "CGO_ENABLED=0;GOWORK=off" TIMEOUT 360 RESOURCE_LOCK cnet_m5_original_owner)
 foreach(_protocol IN ITEMS tls12 tls13)
-  add_test(NAME saltscore.cnet_crypto_static_python_san_${_protocol}
-    COMMAND "${Python3_EXECUTABLE}" -B
-      "${CMAKE_CURRENT_SOURCE_DIR}/static_owner_san_peer.py"
-      --binary "$<TARGET_FILE:cnet_crypto_static_original_owner>"
-      --cert "${_owner_fixtures}/external-io-server-cert.pem"
-      --key "${_owner_fixtures}/external-io-server-key.pem"
-      --protocol "${_protocol}")
-  set_tests_properties(saltscore.cnet_crypto_static_python_san_${_protocol}
-    PROPERTIES TIMEOUT 75)
+  add_test(NAME saltscore.cnet_crypto_static_go_san_${_protocol}
+    COMMAND "${SALTS_CNET_TEST_GO}" test -mod=readonly ./e2e -count=1 -timeout=65s
+      -run "^TestExternalSAN$" -args -private-native "$<TARGET_FILE:cnet_crypto_static_original_owner>"
+      -protocol "${_protocol}" -fixtures "${PROJECT_SOURCE_DIR}/crypto/tests/fixtures")
+  set_tests_properties(saltscore.cnet_crypto_static_go_san_${_protocol} PROPERTIES
+    WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}/cnet/tests/independent/tls"
+    ENVIRONMENT "CGO_ENABLED=0;GOWORK=off" TIMEOUT 75)
 endforeach()
 
 # M6: the original CNet Owner linked once as a TEST-ONLY SHARED image.
@@ -201,12 +191,9 @@ set_tests_properties(saltscore.cnet_crypto_m6_two_plugin_shared_owner
   PROPERTIES TIMEOUT 120 RESOURCE_LOCK cnet_m6_shared_owner)
 
 add_test(NAME saltscore.cnet_crypto_m6_two_plugin_concurrent_mtls
-  COMMAND "${Python3_EXECUTABLE}"
-    "${PROJECT_SOURCE_DIR}/cnet/tests/crypto-static/python_m6_two_plugin_mtls.py"
-    --loader "$<TARGET_FILE:cnet_m6_two_plugin_loader>"
-    --plugin-a "$<TARGET_FILE:cnet_m6_plugin_a>"
-    --plugin-b "$<TARGET_FILE:cnet_m6_plugin_b>"
-    --crypto-python-fixtures "${PROJECT_SOURCE_DIR}/crypto/tests/sdk/python_mtls.py"
-    --work "${CMAKE_CURRENT_BINARY_DIR}/m6-private-concurrent-fixtures")
-set_tests_properties(saltscore.cnet_crypto_m6_two_plugin_concurrent_mtls
-  PROPERTIES TIMEOUT 480 RESOURCE_LOCK cnet_m6_shared_owner)
+  COMMAND "${SALTS_CNET_TEST_GO}" test -mod=readonly ./e2e -count=1 -timeout=460s
+    -run "^TestPluginMTLS$" -args -plugin-loader "$<TARGET_FILE:cnet_m6_two_plugin_loader>"
+    -plugin-a "$<TARGET_FILE:cnet_m6_plugin_a>" -plugin-b "$<TARGET_FILE:cnet_m6_plugin_b>")
+set_tests_properties(saltscore.cnet_crypto_m6_two_plugin_concurrent_mtls PROPERTIES
+  WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}/cnet/tests/independent/tls"
+  ENVIRONMENT "CGO_ENABLED=0;GOWORK=off" TIMEOUT 480 RESOURCE_LOCK cnet_m6_shared_owner)

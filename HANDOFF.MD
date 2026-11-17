@@ -78,3 +78,36 @@
   preserved because a pre-install snapshot was unavailable. The affected-file
   list is `build/release-0.1.12/unintended-root-install-manifest.txt`; the local
   validation receipt and corrected stage manifest are beside it.
+
+# Crypto backend encapsulation review (2026-11-17)
+
+- Load only the existing nonsecret `.env` build inputs into the parent process.
+  The selected vcpkg-cache checkout is exactly v0.1.3; fresh configuration
+  resolves SaltsBase 0.1.8 and GmSSL from the selected LLVM-MinGW triplet.
+  No upstream selectors or SDK contents were changed. The complete
+  `native-release-user` configure/build and all 103 formal CTest cases pass
+  (276.50 seconds). Logs are `build/review-upstream-{configure,build,ctest}.log`.
+- HIGH: `PRIVATE GmSSL::GmSSL` on a static Crypto library still produces
+  `$<LINK_ONLY:GmSSL::GmSSL>` in the installed target interface. The package
+  config imports only Threads, leaving both that backend target and external
+  SaltsBase targets unresolved unless a consumer loads them beforehand.
+  Resolve the SDK's required link closure internally from the existing selected
+  roots; downstream applications must only use the Salts public targets/API.
+- HIGH: the freshly built Windows `cnet.dll` exports backend names including
+  `gmssl_secure_clear`, `digest_init` and `sm2_sign`. A private link dependency
+  does not itself seal the runtime ABI. Evidence is the real COFF export table
+  in `build/review-upstream-exports.log`; existing owner audits do not reject
+  these public exports. An explicit public export boundary and an assertion in
+  the existing owner suite are needed, retaining all required CNet/Crypto APIs.
+- The 53 public module headers contain no includes of GmSSL, libecc or
+  Monocypher. The SDK export set contains no standalone libecc/Monocypher
+  targets or their build macros. The checked CNet DLL has no renamed Monocypher
+  or libecc prefix exports; their archives contain COFF exclude-symbols
+  directives. This is Windows LLVM-MinGW evidence, not cross-platform ABI
+  qualification. Monocypher currently belongs to the private CNet source owner.
+- HTTPS credentials already admit RSA and EC P-256 identities with PKCS#8
+  private keys. STANDARD supports TLS 1.2 ECDHE-RSA/ECDHE-ECDSA and TLS 1.3
+  RSA-PSS/ECDSA handshake signatures; RSA-PSS-signed certificates remain outside
+  the published contract. This review ran the formal TLS suite, not an HTTP
+  application interoperability test. MySQL's standalone SHA-1 use still needs
+  a public Crypto facade before its direct GmSSL header can be removed.
