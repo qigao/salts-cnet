@@ -149,6 +149,15 @@ static const uint8_t *find_marker(const uint8_t *data, size_t size, const char *
   return NULL;
 }
 
+int salts_crypto_key_from_der(const void *der, size_t size, int private_key, salts_crypto_key **output) {
+  der_reader input = {der, size};
+  if (!output) return SALTS_CRYPTO_EINVAL;
+  *output = NULL;
+  if (!der || !size || size > SALTS_CRYPTO_KEY_DER_MAX_SIZE ||
+      (private_key != 0 && private_key != 1)) return SALTS_CRYPTO_EINVAL;
+  return key_info_der(input, private_key, output);
+}
+
 int salts_crypto_key_from_pem(const void *pem, size_t size, int private_key, salts_crypto_key **output) {
   static const struct { const char *begin, *end; int type, private_key; } formats[] = {
     {"-----BEGIN PUBLIC KEY-----", "-----END PUBLIC KEY-----", 0, 0},

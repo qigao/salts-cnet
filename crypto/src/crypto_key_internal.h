@@ -2,11 +2,16 @@
 #define SALTS_CRYPTO_KEY_INTERNAL_H
 #include <crypto/key.h>
 #include <gmssl/rsa_components.h>
+typedef struct {
+  uint8_t data[5][RSA_COMPONENTS_MAX_SIZE];
+  size_t size[5];
+} crypto_rsa_crt;
 struct salts_crypto_key {
   salts_crypto_key_kind kind;
   salts_crypto_ec_curve curve;
   size_t scalar_size;
   int has_private;
+  crypto_rsa_crt *crt;
   union {
     RSA_COMPONENTS rsa;
     struct { uint8_t public_key[132], private_key[66]; } ec;

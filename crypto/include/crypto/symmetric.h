@@ -30,6 +30,41 @@ int salts_crypto_hmac(salts_crypto_hash hash, const void *key, size_t key_size,
     const void *data, size_t size, uint8_t *output, size_t capacity, size_t *output_size);
 int salts_crypto_pbkdf2(salts_crypto_hash hash, const void *password, size_t password_size,
     const void *salt, size_t salt_size, uint32_t iterations, uint8_t *output, size_t size);
+
+typedef struct salts_crypto_digest_ctx salts_crypto_digest_ctx;
+typedef struct salts_crypto_hmac_ctx salts_crypto_hmac_ctx;
+/** Exclusive mutable streams. Creation sets *output=NULL on failure and copies
+ * HMAC keys; ENOMEM reports allocation failure. Inputs are borrowed per call.
+ * Destroy wipes/releases storage (NULL is valid); handles must not be copied.
+ * Update/final after finalization/provider failure return ESTATE. EINVAL leaves
+ * active state and output unchanged, except *output_size=0. Final buffers and
+ * output_size must be disjoint from the handle and each other. A stream admits
+ * at most (UINT64_MAX/8 - 144) message bytes; excess is EINVAL before consumption.
+ * Example: create(SHA256,&ctx); update(ctx,part,n); final(ctx,out,32,&n);
+ *          destroy(ctx). No operation is safe concurrently with mutation.
+ */
+int salts_crypto_digest_create(salts_crypto_hash hash, salts_crypto_digest_ctx **output);
+int salts_crypto_digest_update(salts_crypto_digest_ctx *ctx, const void *data, size_t size);
+int salts_crypto_digest_final(salts_crypto_digest_ctx *ctx, uint8_t *output,
+    size_t capacity, size_t *output_size);
+void salts_crypto_digest_destroy(salts_crypto_digest_ctx *ctx);
+int salts_crypto_hmac_create(salts_crypto_hash hash, const void *key, size_t key_size,
+    salts_crypto_hmac_ctx **output);
+int salts_crypto_hmac_update(salts_crypto_hmac_ctx *ctx, const void *data, size_t size);
+int salts_crypto_hmac_final(salts_crypto_hmac_ctx *ctx, uint8_t *output,
+    size_t capacity, size_t *output_size);
+void salts_crypto_hmac_destroy(salts_crypto_hmac_ctx *ctx);
+
+/** RFC 5869. Extract permits output to overlap inputs; output_size is disjoint.
+ * Expand requires PRK length >= HashLen, size <= 255*HashLen, and disjoint input
+ * and output spans. NULL input is valid only for zero length. Zero expand length
+ * permits NULL output. EINVAL preserves output; provider failure clears it.
+ * Example: extract(SHA256,salt,sn,ikm,in,prk,32,&n); expand(...,prk,n,...).
+ */
+int salts_crypto_hkdf_extract(salts_crypto_hash hash, const void *salt, size_t salt_size,
+    const void *input, size_t size, uint8_t *output, size_t capacity, size_t *output_size);
+int salts_crypto_hkdf_expand(salts_crypto_hash hash, const void *prk, size_t prk_size,
+    const void *info, size_t info_size, uint8_t *output, size_t size);
 /** CSPRNG; ERANDOM clears the requested output range. Zero length is valid. */
 int salts_crypto_random(void *output, size_t size);
 /** Wipes caller-owned memory. NULL is valid only for size zero. */
@@ -52,6 +87,23 @@ int salts_crypto_aes_gcm_decrypt(const uint8_t *key, size_t key_size,
     const uint8_t *iv, size_t iv_size, const void *aad, size_t aad_size,
     const uint8_t *input, size_t size, const uint8_t *tag, size_t tag_size,
     uint8_t *output, size_t capacity);
+
+typedef enum salts_crypto_aes_mode {
+  SALTS_CRYPTO_AES_CBC = 1,
+  SALTS_CRYPTO_AES_CTR = 2
+} salts_crypto_aes_mode;
+/** Unauthenticated one-shot AES, 16/24/32-byte keys. decrypt is exactly 0 or 1.
+ * CBC requires size%16==0 and performs no padding. CTR handles arbitrary bytes
+ * identically in both directions, rejecting 128-bit counter exhaustion. IV is
+ * a borrowed immutable 16-byte span; input/output are identical or disjoint,
+ * all other spans are disjoint. Capacity >= size; NULL data/output only if
+ * size==0. EINVAL preserves output, ECRYPTO clears output. No partial state is
+ * retained. The caller owns authentication, padding and IV/nonce uniqueness.
+ * Example: aes_crypt(AES_CBC,0,key,32,iv,blocks,n,out,n).
+ */
+int salts_crypto_aes_crypt(salts_crypto_aes_mode mode, int decrypt,
+    const uint8_t *key, size_t key_size, const uint8_t iv[16],
+    const uint8_t *input, size_t size, uint8_t *output, size_t capacity);
 
 /**
  * RFC 3394 AES Key Wrap using a 16/24/32-byte key-encryption key.

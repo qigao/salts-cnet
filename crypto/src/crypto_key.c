@@ -10,7 +10,10 @@ static salts_crypto_bytes canonical(salts_crypto_bytes value) {
 }
 
 void salts_crypto_key_destroy(salts_crypto_key *key) {
-  if (key) { salts_crypto_clear(key, sizeof(*key)); free(key); }
+  if (key) {
+    if (key->crt) { salts_crypto_clear(key->crt, sizeof(*key->crt)); free(key->crt); }
+    salts_crypto_clear(key, sizeof(*key)); free(key);
+  }
 }
 
 salts_crypto_key_kind salts_crypto_key_type(const salts_crypto_key *key) {
@@ -37,9 +40,19 @@ int salts_crypto_key_from_rsa(salts_crypto_bytes n, salts_crypto_bytes e, salts_
   if (!key) return SALTS_CRYPTO_ENOMEM;
   if (rsa_components_import(&key->value.rsa, n.data, n.size, e.data, e.size, d.data, d.size) != 1)
     goto invalid;
-  if (d.size && p.size && q.size && dp.size && dq.size && qi.size &&
-      rsa_components_check_crt(&key->value.rsa, p.data, p.size, q.data, q.size,
+  if (d.size && p.size && q.size && dp.size && dq.size && qi.size) {
+    salts_crypto_bytes parts[5] = {p, q, dp, dq, qi};
+    if (rsa_components_check_crt(&key->value.rsa, p.data, p.size, q.data, q.size,
         dp.data, dp.size, dq.data, dq.size, qi.data, qi.size) != 1) goto invalid;
+    for (size_t i = 0; i < 5; ++i)
+      if (parts[i].size > RSA_COMPONENTS_MAX_SIZE) goto invalid;
+    key->crt = calloc(1, sizeof(*key->crt));
+    if (!key->crt) { salts_crypto_key_destroy(key); return SALTS_CRYPTO_ENOMEM; }
+    for (size_t i = 0; i < 5; ++i) {
+      memcpy(key->crt->data[i], parts[i].data, parts[i].size);
+      key->crt->size[i] = parts[i].size;
+    }
+  }
   key->kind = SALTS_CRYPTO_KEY_RSA;
   key->has_private = key->value.rsa.has_private;
   *output = key;
@@ -173,25 +186,83 @@ int salts_crypto_key_verify(const salts_crypto_key *key, salts_crypto_signature 
   return rc;
 }
 
-int salts_crypto_key_oaep_encrypt(const salts_crypto_key *key, salts_crypto_hash hash,
-    const uint8_t *input, size_t size, uint8_t *output, size_t capacity, size_t *output_size) {
+int salts_crypto_key_oaep_encrypt_with_label(const salts_crypto_key *key, salts_crypto_hash hash,
+    const void *label, size_t label_size, const uint8_t *input, size_t size,
+    uint8_t *output, size_t capacity, size_t *output_size) {
   size_t digest_size = hash == SALTS_CRYPTO_SHA1 ? 20 : hash == SALTS_CRYPTO_SHA256 ? 32 :
     hash == SALTS_CRYPTO_SHA384 ? 48 : hash == SALTS_CRYPTO_SHA512 ? 64 : 0;
   if (output_size) *output_size = 0;
   if (!key || key->kind != SALTS_CRYPTO_KEY_RSA || !digest_size || !output || !output_size ||
-      (!input && size) || capacity < key->value.rsa.size ||
+      (!label && label_size) || (!input && size) || capacity < key->value.rsa.size ||
       key->value.rsa.size < 2*digest_size + 2 || size > key->value.rsa.size - 2*digest_size - 2)
     return SALTS_CRYPTO_EINVAL;
-  return rsa_components_oaep_encrypt(&key->value.rsa, (RSA_HASH)hash, NULL, 0, input, size,
+  return rsa_components_oaep_encrypt(&key->value.rsa, (RSA_HASH)hash, label, label_size, input, size,
     output, capacity, output_size) == 1 ? SALTS_CRYPTO_OK : SALTS_CRYPTO_ECRYPTO;
 }
 
-int salts_crypto_key_oaep_decrypt(const salts_crypto_key *key, salts_crypto_hash hash,
-    const uint8_t *input, size_t size, uint8_t *output, size_t capacity, size_t *output_size) {
+int salts_crypto_key_oaep_decrypt_with_label(const salts_crypto_key *key, salts_crypto_hash hash,
+    const void *label, size_t label_size, const uint8_t *input, size_t size,
+    uint8_t *output, size_t capacity, size_t *output_size) {
   int rc;
   if (output_size) *output_size = 0;
   if (!key || key->kind != SALTS_CRYPTO_KEY_RSA || !key->has_private) return SALTS_CRYPTO_EINVAL;
-  rc = rsa_components_oaep_decrypt(&key->value.rsa, (RSA_HASH)hash, NULL, 0, input, size,
+  rc = rsa_components_oaep_decrypt(&key->value.rsa, (RSA_HASH)hash, label, label_size, input, size,
     output, capacity, output_size);
   return rc == 1 ? SALTS_CRYPTO_OK : rc == 0 ? SALTS_CRYPTO_EVERIFY : SALTS_CRYPTO_EINVAL;
+}
+
+int salts_crypto_key_oaep_encrypt(const salts_crypto_key *key, salts_crypto_hash hash,
+    const uint8_t *input, size_t size, uint8_t *output, size_t capacity, size_t *output_size) {
+  return salts_crypto_key_oaep_encrypt_with_label(key, hash, NULL, 0, input, size,
+      output, capacity, output_size);
+}
+int salts_crypto_key_oaep_decrypt(const salts_crypto_key *key, salts_crypto_hash hash,
+    const uint8_t *input, size_t size, uint8_t *output, size_t capacity, size_t *output_size) {
+  return salts_crypto_key_oaep_decrypt_with_label(key, hash, NULL, 0, input, size,
+      output, capacity, output_size);
+}
+
+static int pss_arguments(const salts_crypto_key *key, salts_crypto_hash hash, size_t salt_size) {
+  size_t n = hash == SALTS_CRYPTO_SHA256 ? 32 : hash == SALTS_CRYPTO_SHA384 ? 48 :
+             hash == SALTS_CRYPTO_SHA512 ? 64 : 0;
+  size_t bits, encoded;
+  uint8_t first;
+  if (!key || key->kind != SALTS_CRYPTO_KEY_RSA || !n) return 0;
+  bits = key->value.rsa.size * 8; first = key->value.rsa.n[0];
+  while (!(first & 0x80)) { first <<= 1; --bits; }
+  encoded = (bits + 6) / 8;
+  return encoded >= n + 2 && (salt_size == SALTS_CRYPTO_PSS_SALT_AUTO || salt_size <= encoded - n - 2);
+}
+
+int salts_crypto_key_pss_sign(const salts_crypto_key *key, salts_crypto_hash hash,
+    size_t salt_size, const void *message, size_t message_size,
+    uint8_t *signature, size_t capacity, size_t *size) {
+  uint8_t dig[64]; size_t n = 0; int rc;
+  if (size) *size = 0;
+  if (!pss_arguments(key, hash, salt_size) || !key->has_private ||
+      salt_size == SALTS_CRYPTO_PSS_SALT_AUTO || (!message && message_size) ||
+      !signature || !size || capacity < key->value.rsa.size) return SALTS_CRYPTO_EINVAL;
+  rc = salts_crypto_digest(hash, message, message_size, dig, sizeof(dig), &n);
+  if (rc == SALTS_CRYPTO_OK)
+    rc = rsa_components_sign_pss_digest(&key->value.rsa, (RSA_HASH)hash, dig, n,
+      salt_size, signature, capacity, size) == 1 ? SALTS_CRYPTO_OK : SALTS_CRYPTO_ECRYPTO;
+  salts_crypto_clear(dig, sizeof(dig));
+  return rc;
+}
+
+int salts_crypto_key_pss_verify(const salts_crypto_key *key, salts_crypto_hash hash,
+    size_t salt_size, const void *message, size_t message_size,
+    const uint8_t *signature, size_t size) {
+  uint8_t dig[64]; size_t n = 0; int rc;
+  if (!pss_arguments(key, hash, salt_size) || (!message && message_size) || !signature)
+    return SALTS_CRYPTO_EINVAL;
+  if (size != key->value.rsa.size) return SALTS_CRYPTO_EVERIFY;
+  rc = salts_crypto_digest(hash, message, message_size, dig, sizeof(dig), &n);
+  if (rc == SALTS_CRYPTO_OK) {
+    int ret = rsa_components_verify_pss_digest(&key->value.rsa, (RSA_HASH)hash, dig, n,
+      salt_size, signature, size);
+    rc = ret == 1 ? SALTS_CRYPTO_OK : ret == 0 ? SALTS_CRYPTO_EVERIFY : SALTS_CRYPTO_ECRYPTO;
+  }
+  salts_crypto_clear(dig, sizeof(dig));
+  return rc;
 }

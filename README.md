@@ -13,6 +13,16 @@
 | [Crypto](crypto/README.md) | Cryptographic provider integration and TLS/DTLS |
 | [SCTP](sctp/README.md) | SCTP association, reliability and DTLS integration |
 
+This repository has one root CMake `project(SaltsCNet)`. Crypto, CNet and SCTP
+are modules assembled with `add_subdirectory()` under the same project version,
+presets and SDK export. Their library targets do not define separate projects;
+configure, build, test and install from the repository root.
+
+SaltsCNet 0.1.15 adds public streaming Digest/HMAC, HKDF, AES-CBC/CTR,
+RSA-PSS salt/OAEP label controls, DER/PEM key export and bounded encrypted
+PKCS8 import/export. See the [Crypto API contracts](crypto/README.md#general-primitives-and-key-lifecycle).
+Consumers continue to link `Salts::Crypto`; backend targets and types stay private.
+
 ## Quick start
 
 ```sh

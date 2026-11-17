@@ -129,3 +129,60 @@
   JOSE ECDSA curves, copied keys, RSA PKCS1/PSS and OAEP rejection. Its focused
   CTest run and the existing Ed448/C++ header tests passed (3/3). Full platform
   qualification belongs to the matching release's producer CI.
+
+# General Crypto API expansion (2026-11-17)
+
+- The 0.1.14 source candidate adds opaque SHA-1/256/384/512 Digest/HMAC
+  streams, generic HKDF extract/expand, unpadded AES-CBC and AES-CTR, explicit
+  RSA-PSS salt lengths/OAEP labels, SPKI/PKCS8 DER/PEM export and bounded
+  encrypted PKCS8 import/export. Existing signature defaults remain unchanged.
+  Native backend targets/types/symbols remain private; no public API stubs,
+  DES/MD2, replacement provider or independent validation project were added.
+- Stream handles have exclusive mutation and bounded native state; invalid
+  arguments preserve active state, final/provider failure closes admission,
+  and destroy wipes storage. Mutable overlapping spans are rejected. RSA CRT
+  tuples are copied only after validation and wiped on destruction; n/e/d-only
+  keys still support operations but cannot export a complete private PKCS8.
+- The selected GmSSL archive exports no RSA key generator, AES-CCM or AES-CMAC.
+  Its PBES2 encoder only admits SM3/SM4. The explicit SHA256/AES256 PKCS8
+  profile uses existing DER primitives, PBKDF2 and AES, with no failed-provider
+  fallback. Import admits existing OpenSSL 8-byte salts, export uses 16; work
+  is bounded by a caller-supplied iteration ceiling. Padding errors release no
+  key, and facade-owned plaintext/derived keys are wiped.
+- The formal `crypto_primitives_test` now has 20 cases. It covers RFC5869,
+  NIST AES128/192/256 CBC/CTR, identical buffers/counter exhaustion, stream
+  state/alias rejection, canonical private PEM matching the independent
+  existing fixture, all supported EC/Ed key kinds, PSS/OAEP parameters and
+  encrypted PKCS8 failures. The new encrypted test fixture was generated from
+  the existing public test RSA key with OpenSSL `pkcs8 -topk8 -v2 aes-256-cbc
+  -v2prf hmacWithSHA256 -iter 10000 -passout pass:crypto-fixture`.
+- Load the existing nonsecret `.env` build inputs into the parent process,
+  then run `cmake --fresh --preset native-release-user`,
+  `cmake --build --preset native-release-user`,
+  `./cmake/WithVs.cmd ctest --preset native-release-user --output-on-failure
+  --output-junit ctest-crypto-expansion.xml`, and
+  `cmake --build --preset install-native-release-user`. Windows LLVM-MinGW's
+  complete formal graph passes 101/101 (265.82 seconds), and install passes.
+  Logs: `build/crypto-expansion-{configure,build,focused,ctest,install}.log`.
+  A real Crypto DLL export inspection admits the new APIs and finds all 316
+  exported names within the public namespaces (`build/crypto-expansion-exports.log`).
+  Other platforms, sanitizers and a new published SDK were not qualified here.
+- Final review also covered HMAC creation with a NULL key and SIZE_MAX length:
+  it rejects the invalid span and clears the output handle without mistaking
+  that NULL span for an aliased allocation. After that admission-only fix, the
+  complete build, the affected 20-case primitives CTest (372 assertions) and
+  install were repeated successfully; the 101-case run above preceded it.
+- TurboDB's MySQL auth now uses the public digest API and clears temporary
+  password-derived buffers. Its full LLVM-MinGW build, 92 non-E2E formal CTests
+  and install pass against this explicitly selected local 0.1.14 stage. This is
+  source-candidate integration evidence, not qualification of published 0.1.13.
+
+# SaltsCNet 0.1.15 release preparation
+
+- Remote v0.1.14 already qualifies commit `1640e94`; its tag/assets are immutable.
+  The additional Crypto APIs and single-project guidance are prepared as 0.1.15,
+  with the root CMake version and vcpkg manifest version synchronized.
+- The existing ten-profile CI remains the producer. Android's existing ELF
+  alignment step now checks both CNet and the separately distributed Crypto
+  shared library. Publication uses only original SDK TARs from one successful
+  exact-source producer, plus its manifest and SHA256SUMS, as in 0.1.14.

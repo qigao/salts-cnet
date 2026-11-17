@@ -336,16 +336,18 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           $readelf = Join-Path $env:ANDROID_NDK_HOME 'toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf'
-          $library = 'package/sdk/${{ matrix.rid }}/lib/libcnet.so'
-          $headers = & $readelf --program-headers --wide $library
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          $loads = $headers | Select-String '^\s*LOAD\s+.+\s0x([0-9a-fA-F]+)\s*$'
-          if (!$loads) { throw "No ELF LOAD segments in $library" }
-          foreach ($load in $loads) {
-            $alignment = [Convert]::ToInt32($load.Matches[0].Groups[1].Value, 16)
-            if ($alignment -lt 16384) { throw "$library has a LOAD segment aligned to $alignment bytes" }
+          foreach ($name in @('libcnet.so', 'libsalts_crypto.so')) {
+            $library = "package/sdk/${{ matrix.rid }}/lib/$name"
+            $headers = & $readelf --program-headers --wide $library
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            $loads = $headers | Select-String '^\s*LOAD\s+.+\s0x([0-9a-fA-F]+)\s*$'
+            if (!$loads) { throw "No ELF LOAD segments in $library" }
+            foreach ($load in $loads) {
+              $alignment = [Convert]::ToInt32($load.Matches[0].Groups[1].Value, 16)
+              if ($alignment -lt 16384) { throw "$library has a LOAD segment aligned to $alignment bytes" }
+            }
+            Write-Host "$name uses at least 16 KiB alignment for each LOAD segment"
           }
-          Write-Host 'Installed libcnet.so uses at least 16 KiB alignment for each LOAD segment'
 
       - name: Archive qualified SDK
         shell: pwsh

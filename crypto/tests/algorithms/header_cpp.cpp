@@ -32,6 +32,10 @@ static_assert(SALTS_CRYPTO_ED448_PRIVATE_KEY_SIZE == 57U);
 static_assert(SALTS_CRYPTO_ED448_PUBLIC_KEY_SIZE == 57U);
 static_assert(SALTS_CRYPTO_ED448_SIGNATURE_SIZE == 114U);
 static_assert(SALTS_CRYPTO_SHA256_DIGEST_SIZE == 32U);
+static_assert(std::is_same_v<decltype(&salts_crypto_digest_create),
+    int (*)(salts_crypto_hash, salts_crypto_digest_ctx **)>);
+static_assert(std::is_same_v<decltype(&salts_crypto_key_to_der),
+    int (*)(const salts_crypto_key *, int, std::uint8_t *, std::size_t, std::size_t *)>);
 static_assert(std::is_same_v<decltype(&crypto_tls_stream_session_reused),
                              int (*)(const crypto_tls_stream *, bool *)>);
 static_assert(

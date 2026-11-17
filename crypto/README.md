@@ -1,8 +1,8 @@
 # Crypto native module
 
 `Salts::Crypto` is the first-party cryptographic facade of
-[SaltsCNet](../README.md). It produces exactly **one first-party static
-archive** and links the **separate imported vcpkg `GmSSL::GmSSL` static
+[SaltsCNet](../README.md). It produces exactly **one first-party
+shared library** and privately links the **imported vcpkg `GmSSL::GmSSL` static
 provider**. Do not compile a second GmSSL native implementation or a generic
 ASN.1 reader inside Crypto.
 
@@ -13,26 +13,17 @@ reader and owned Value Tree belong to the separately installed SaltsBase SDK, im
 CMake targets, C11 source and C++17-usable C headers.
 
 Use the repository's user presets for the ASN1/Crypto/CNet build and formal
-CTest suite. The native GmSSL implementation is installed from the immutable
-`gmssl 3.2.0#44` vcpkg port, whose extension sources are pinned from
-`gmssl-extensions/`. `Salts::Crypto` links the imported `GmSSL::GmSSL` static
-library; it never compiles a duplicate GmSSL implementation.
-The GmSSL registry uses `v0.1.1`, with immutable baseline
-`4ac631f89e07cebfd347848af642f31fe8c4edec`. CI restores the exact published
-ABI binaries from the selected vcpkg-cache SDK; missing ABIs fail restoration.
-It registers #44 with TLCP
-certificate policy, depth positions, bounded TLS sessions, anchor constraints
-and PRF erasure fixes. No local GmSSL overlay is required.
-Private Ed448 libecc objects live under `vendor/libecc/` in this module.
+CTest suite. GmSSL comes from the environment-selected preinstalled vcpkg SDK.
+Its source/port identity belongs to that SDK's provenance. Crypto never compiles
+a duplicate native provider. Private curve/signature objects live in the
+repository's `vendor/libecc/`.
 No backwards-compatibility alias, fallback or duplicate BER/DER owner.
 
 GmSSL provenance and licenses remain explicit. Production CNet calls only the
-opaque Crypto stream API; Crypto's external GmSSL archive is linked transitively
-into the single CNet shared owner. Runtime consumers still link `Salts::CNet`;
-applications linking the static Crypto target resolve its GmSSL dependency
-explicitly.
+opaque Crypto stream API. Runtime consumers distribute both CNet and Crypto
+shared libraries. GmSSL and libecc targets and symbols remain private.
 
-Installed consumers resolve `SaltsBase` and `GmSSL`, then use
+Installed consumers resolve the matching `SaltsBase`, then use
 `find_package(SaltsCNet CONFIG REQUIRED)` and link `Salts::Crypto`.
 `Salts::ASN1` comes from the matching separately installed SaltsBase SDK.
 Direct codec consumers use `find_package(SaltsBase CONFIG REQUIRED)` and link
@@ -40,7 +31,7 @@ Direct codec consumers use `find_package(SaltsBase CONFIG REQUIRED)` and link
 
 ## Unified SDK packaging
 
-Crypto's archive, headers and `Salts::Crypto` target belong to the root
+Crypto's shared library, headers and `Salts::Crypto` target belong to the root
 SaltsCNet export set. The former independent `CryptoConfig.cmake` and package
 version are no longer produced. Restoring that separate package would retain
 two SDK configuration/version owners; the unified export instead keeps the
@@ -48,11 +39,54 @@ module and its dependencies in one root-owned build and installation graph.
 
 Consumers migrate `find_package(Crypto ...)` or `find_package(SaltsCore ...)`
 to `find_package(SaltsCNet ...)`;
-the linked target, archive filename and public header paths stay the same.
-The static Crypto target retains its link-only GmSSL dependency. Consumers
-linking only the CNet shared runtime do not need to discover that private
-provider. The package rename changes CMake discovery, not TLS behavior,
+the linked targets and public header paths remain stable.
+Consumers do not discover the private provider. The package rename changes
+CMake discovery, not TLS behavior,
 physical runtime ownership, library filenames or the `Salts::` namespace.
+
+## General primitives and key lifecycle
+
+SaltsCNet 0.1.15 extends `<crypto/symmetric.h>` and `<crypto/key.h>` with the
+streaming, HKDF, AES-CBC/CTR, RSA parameter and key-export APIs below. These
+additions are not in the v0.1.14 SDK. Existing one-shot and signature defaults
+remain unchanged. Restore the matching 0.1.15 SDK before using the new APIs;
+changing headers alone is insufficient.
+
+- Digest/HMAC streams are opaque, individually allocated handles. Creation
+  copies the HMAC key. A handle has one exclusive caller and transitions from
+  active to finalized or failed; no update/final is admitted afterwards.
+  Invalid arguments do not consume active state. Destroy releases and wipes
+  all native storage, including after failure. Input spans are borrowed only
+  for each call; final output is caller-owned and disjoint from the handle and
+  output-length pointer. No reset, clone or hidden buffering is provided.
+- HKDF uses the selected SHA hash with separate extract/expand operations.
+  Expand rejects more than `255 * HashLen` bytes before touching output.
+  It does not replace password hashing. See [RFC 5869](https://www.rfc-editor.org/rfc/rfc5869.html).
+- AES-CBC is unpadded, requires complete blocks, and AES-CTR accepts partial
+  blocks. Both borrow an immutable 16-byte IV/counter and permit identical or
+  disjoint input/output spans. They provide confidentiality only: the protocol
+  owns authentication, IV/nonce uniqueness and padding. CTR rejects counter
+  exhaustion before producing output. AES-GCM remains the authenticated API.
+- Key handles remain immutable and copied on import. Concurrent reads require
+  the caller to keep the handle alive; destruction is exclusive and wipes all
+  private material. DER/PEM exports write caller-owned buffers, support an
+  explicit size query, and never return pointers into a handle. Public keys use
+  SPKI; private keys use PKCS8. RSA private export requires the complete CRT
+  tuple at import. The n/e/d-only key remains usable for existing operations.
+- Encrypted PKCS8 uses an explicit bounded PBKDF2-HMAC-SHA256/AES-256-CBC profile.
+  Import requires a caller-supplied iteration ceiling. Wrong passwords and
+  invalid encrypted payloads produce one verification error without a key;
+  existing OpenSSL files with 8-byte salts are admitted; exports use 16 bytes.
+  All temporary plaintext and derived keys are erased. Password spans are
+  borrowed, support embedded NUL, and are never retained or logged.
+- Explicit RSA-PSS salt length and OAEP label operations share the existing
+  backend and status contract. They add no raw RSA interface. See
+  [RFC 8017](https://www.rfc-editor.org/rfc/rfc8017.html).
+
+The selected provider exports no RSA key generator, AES-CCM or AES-CMAC entry
+point. Those require a qualified provider SDK before public wrappers can be
+added; these capabilities are not exposed by this release.
+DES/3DES and MD2 are outside this expansion.
 
 ## ShangMi algorithm APIs
 
