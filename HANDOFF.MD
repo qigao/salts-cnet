@@ -111,3 +111,21 @@
   the published contract. This review ran the formal TLS suite, not an HTTP
   application interoperability test. MySQL's standalone SHA-1 use still needs
   a public Crypto facade before its direct GmSSL header can be removed.
+
+# JOSE primitives in Salts::Crypto (2026-11-17)
+
+- CHttp's private JOSE adapter has moved into Crypto's existing shared library.
+  The public key and symmetric headers contain no provider types. CHttp can
+  retain its JWT/JWE algorithms while linking only Salts::Crypto.
+- GmSSL and libecc both define native SHA-2 names with incompatible context
+  layouts. Adding libecc SHA-256/384/512 without renaming those entry points
+  would allow the linker to bind one implementation to the other's context.
+  Compile the private archive with `salts_private_libecc_` hash names and pass
+  the archive's complete feature definitions to every curve adapter; those
+  definitions also determine libecc structure layout. Do not use the exported
+  `salts_crypto_` prefix for backend hash names.
+- The formal `crypto_primitives_test` verifies MD5/SHA golden digests, HMAC,
+  PBKDF2, NIST GCM authentication, RFC 3394 key wrap, RFC 8032 Ed25519, the four
+  JOSE ECDSA curves, copied keys, RSA PKCS1/PSS and OAEP rejection. Its focused
+  CTest run and the existing Ed448/C++ header tests passed (3/3). Full platform
+  qualification belongs to the matching release's producer CI.

@@ -1,6 +1,6 @@
 # One shared Crypto library privately links its selected static backend. GmSSL
 # native C/H sources belong to the external package, not a local mirror.
-# Vendored Ed448 libecc sources remain private implementation objects. The
+# Vendored curve/signature sources remain private implementation objects. The
 # SaltsCNet root owns package discovery, language setup and SDK exports.
 set(_salts_crypto_source_dir "${CMAKE_CURRENT_SOURCE_DIR}")
 if(NOT CMAKE_SIZEOF_VOID_P EQUAL 8)
@@ -9,12 +9,10 @@ if(NOT CMAKE_SIZEOF_VOID_P EQUAL 8)
 endif()
 
 set(_libecc "${PROJECT_SOURCE_DIR}/vendor/libecc")
-# The vendored Ed448 archive is a private link dependency.
+# The vendored curve/signature archive is a private link dependency.
 
-# The private libecc archive compiles only the required Ed448 code. SHA256
-# uses the selected GmSSL backend, not a duplicate libecc SHA. Generic
-# ASN.1 BER/DER comes solely from the sibling Salts::ASN1 owner. Crypto retains
-# only ECDSA DER and RFC 8410 key-format functions.
+# Native backend contexts remain inside Crypto. Public key imports copy into
+# immutable opaque handles; hash/AES/signature operations borrow call buffers.
 cmake_add_source(
   crypto_sources
   DIRS
@@ -38,7 +36,7 @@ set_target_properties(salts_crypto PROPERTIES POSITION_INDEPENDENT_CODE ON
 target_compile_features(salts_crypto PUBLIC c_std_11)
 target_link_libraries(salts_crypto
   PUBLIC Threads::Threads Salts::ASN1
-  PRIVATE GmSSL::GmSSL crypto_libecc_ed448)
+  PRIVATE GmSSL::GmSSL crypto_libecc)
 cmake_export_symbols(salts_crypto crypto_ salts_crypto_)
 
 target_include_directories(
@@ -53,14 +51,10 @@ if(BUILD_TESTS)
   target_compile_definitions(salts_crypto PRIVATE CRYPTO_TLS_STREAM_TESTING)
 endif()
 
-# Keep the Ed448 facade's configuration consistent with the private object
-# target. No SHA256/SM3 libecc implementation or alternate RNG is built.
+# Match the archive's structure layout, curve set and private hash symbols.
 set_source_files_properties(
-  src/crypto_ed448.c
-  PROPERTIES
-    COMPILE_DEFINITIONS
-    "WITH_STDLIB;WITH_LIBECC_CONFIG_OVERRIDE;WITH_CURVE_WEI448;WITH_HASH_SHAKE256;WITH_SIG_EDDSA448;WORDSIZE=64"
-)
+  src/crypto_ed448.c src/crypto_ed25519.c src/crypto_ecdsa.c
+  PROPERTIES COMPILE_DEFINITIONS "$<TARGET_PROPERTY:crypto_libecc,COMPILE_DEFINITIONS>")
 
 if(MSVC)
   target_compile_options(salts_crypto PRIVATE /experimental:c11atomics)

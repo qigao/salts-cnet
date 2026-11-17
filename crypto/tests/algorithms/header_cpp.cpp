@@ -1,3 +1,7 @@
+#include <crypto/symmetric.h>
+#include <crypto/ecdsa.h>
+#include <crypto/ed25519.h>
+#include <crypto/key.h>
 #include <crypto/sha256.h>
 #include <crypto/ed448.h>
 #include <crypto/tls_stream.h>

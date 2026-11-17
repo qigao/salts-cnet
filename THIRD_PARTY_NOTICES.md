@@ -1,4 +1,23 @@
-# DTLS interoperability test dependencies
+# Third-party notices
+
+## Crypto primitives
+
+The key, PEM, ECDSA, Ed25519, symmetric and AES key-wrap adapters in
+`crypto/src/` were migrated from the Apache-2.0 SaltsUtils implementation at
+commit `234c4a73bcefc455d48b3550ec2142d7ff1c3f5a`, through CHttp's private cjwt
+adapter. Public names now use `salts_crypto_`; randomness uses Crypto's existing
+OS CSPRNG. Existing Ed448 and SHA-256 implementations remain in Crypto.
+
+`vendor/libecc/` uses the BSD option of its upstream BSD/GPLv2 dual license.
+The SHA-256 source added for Ed25519 and ECDSA comes from libecc commit
+`6e8f214f41f65d5f30b04da75472f9c24f2100db`, already recorded by the CHttp
+snapshot. Upstream copyright and license text remain in each vendored file
+and `vendor/libecc/LICENSE`. Private hash names are changed only by compiler
+definitions so GmSSL and libecc cannot share incompatible SHA contexts.
+GmSSL comes from the selected vcpkg-cache SDK; its license is installed with
+the Crypto SDK together with the libecc license.
+
+## DTLS interoperability test dependencies
 
 The Go modules in `crypto/tests/algorithms/independent`, `cnet/tests/tickets`
 and `sctp/tests/secure` use the following packages exclusively for formal

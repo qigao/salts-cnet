@@ -144,8 +144,15 @@ The current SDK selection is
 CI consumes immutable published SDKs; local builds can extract the same archives
 into separate installation prefixes.
 
-Crypto links the required vcpkg `GmSSL::GmSSL` provider (`3.2.0#44`), including
-the reviewed extensions pinned by `crypto/gmssl-extensions/source-lock.json`.
+`Salts::Crypto` is a shared library with private GmSSL and libecc implementations.
+Applications use `<crypto/symmetric.h>` for SHA/HMAC/PBKDF2, AES-GCM, AES key wrap,
+random bytes and legacy HTTP MD5, and `<crypto/key.h>` for copied immutable
+RSA/EC/EdDSA keys, PEM import, signatures and RSA-OAEP. Raw ECDSA and RFC 8032
+Ed25519/Ed448 operations have their own public headers. Buffers are borrowed
+for synchronous calls; imported keys are destroyed with `salts_crypto_key_destroy`
+after readers finish. Public headers document capacities, overlap and failure
+outputs. Backends and their native types are absent from the SDK interface.
+The required vcpkg `GmSSL::GmSSL` provider is `3.2.0#44`.
 Like SaltsBase, this checkout consumes the preinstalled SDK selected by
 `VCPKG_CACHE_VERSION` from [qigao/vcpkg-cache](https://github.com/qigao/vcpkg-cache/releases).
 Each supported triplet has an environment-selected descriptor in `cmake/dependencies/`.

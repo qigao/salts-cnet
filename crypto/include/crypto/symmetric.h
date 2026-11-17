@@ -1,0 +1,87 @@
+#ifndef CRYPTO_SYMMETRIC_H_INCLUDED
+#define CRYPTO_SYMMETRIC_H_INCLUDED
+
+#include <crypto/status.h>
+
+#include <stddef.h>
+#include <stdint.h>
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+typedef enum salts_crypto_hash {
+  SALTS_CRYPTO_SHA1 = 1,
+  SALTS_CRYPTO_SHA256 = 2,
+  SALTS_CRYPTO_SHA384 = 3,
+  SALTS_CRYPTO_SHA512 = 4
+} salts_crypto_hash;
+
+/** Caller-owned buffers; NULL inputs are allowed only with zero length.
+ * Digest/HMAC output_size must be disjoint from all buffers. They set it to
+ * zero on failure. EINVAL preserves output; provider failure returns ECRYPTO.
+ * The digest/HMAC output may overlap inputs; PBKDF2 output must be disjoint.
+ * SHA-1 exists for protocol interoperability. New signatures should use SHA-2.
+ * Example: salts_crypto_digest(SALTS_CRYPTO_SHA384, data, size, out, 48, &n).
+ */
+int salts_crypto_digest(salts_crypto_hash hash, const void *data, size_t size,
+    uint8_t *output, size_t capacity, size_t *output_size);
+int salts_crypto_hmac(salts_crypto_hash hash, const void *key, size_t key_size,
+    const void *data, size_t size, uint8_t *output, size_t capacity, size_t *output_size);
+int salts_crypto_pbkdf2(salts_crypto_hash hash, const void *password, size_t password_size,
+    const void *salt, size_t salt_size, uint32_t iterations, uint8_t *output, size_t size);
+/** CSPRNG; ERANDOM clears the requested output range. Zero length is valid. */
+int salts_crypto_random(void *output, size_t size);
+/** Wipes caller-owned memory. NULL is valid only for size zero. */
+void salts_crypto_clear(void *data, size_t size);
+/** Constant-time comparison for equal public lengths; OK/EVERIFY/EINVAL. */
+int salts_crypto_equal(const void *a, const void *b, size_t size);
+
+/** AES-GCM: keys 16/24/32 bytes; nonempty IV; tags 1..16 bytes. All buffers
+ * belong to the caller. input/output may be identical or disjoint; other
+ * ranges must be disjoint. Capacity must cover size. EINVAL leaves output
+ * unchanged. Authentication failure returns EVERIFY without plaintext output.
+ * GCM nonce uniqueness and tag length selection belong to the protocol caller.
+ * Example: use a fresh 12-byte IV and 16-byte tag for each JWE encryption.
+ */
+int salts_crypto_aes_gcm_encrypt(const uint8_t *key, size_t key_size,
+    const uint8_t *iv, size_t iv_size, const void *aad, size_t aad_size,
+    const uint8_t *input, size_t size, uint8_t *output, size_t capacity,
+    uint8_t *tag, size_t tag_size);
+int salts_crypto_aes_gcm_decrypt(const uint8_t *key, size_t key_size,
+    const uint8_t *iv, size_t iv_size, const void *aad, size_t aad_size,
+    const uint8_t *input, size_t size, const uint8_t *tag, size_t tag_size,
+    uint8_t *output, size_t capacity);
+
+/**
+ * RFC 3394 AES Key Wrap using a 16/24/32-byte key-encryption key.
+ * Input is at least 16 bytes and a multiple of 8; output requires size + 8.
+ * Buffers belong to the caller and may overlap. output_size must not overlap
+ * any buffer. Returns OK or EINVAL; *output_size is zero on failure.
+ */
+int salts_crypto_aes_key_wrap(const uint8_t *key, size_t key_size,
+                              const uint8_t *input, size_t input_size,
+                              uint8_t *output, size_t capacity, size_t *output_size);
+
+/**
+ * Unwraps RFC 3394 ciphertext (at least 24 bytes, a multiple of 8).
+ * Output requires input_size - 8 bytes. Same ownership/alias contract as wrap.
+ * Invalid arguments return EINVAL without changing output. Integrity failure
+ * returns EVERIFY, clears the candidate plaintext, and sets *output_size to 0.
+ */
+int salts_crypto_aes_key_unwrap(const uint8_t *key, size_t key_size,
+                                const uint8_t *input, size_t input_size,
+                                uint8_t *output, size_t capacity, size_t *output_size);
+
+
+#define SALTS_CRYPTO_MD5_DIGEST_SIZE 16U
+/** Legacy HTTP Digest interoperability. NULL data is valid only for size zero.
+ * The caller owns the 16-byte output; errors preserve it for invalid input.
+ * MD5 must not be used to design new authentication or signature protocols. */
+int salts_crypto_md5(const void *data, size_t size, uint8_t output[SALTS_CRYPTO_MD5_DIGEST_SIZE]);
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif

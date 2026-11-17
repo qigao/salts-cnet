@@ -12,6 +12,12 @@ cmake_add_executable(crypto_algorithms_cpp_header SOURCES header_cpp.cpp
 target_link_libraries(crypto_algorithms_cpp_header PRIVATE Salts::Crypto Salts::TinyTest)
 add_test(NAME crypto.algorithms.cpp17_header COMMAND crypto_algorithms_cpp_header)
 
+cmake_add_test(crypto_primitives_test SOURCES primitives.c
+  LIBS Salts::Crypto Salts::TinyTest
+  DEFS "CRYPTO_JOSE_RSA_FIXTURE=\"${CMAKE_CURRENT_SOURCE_DIR}/../fixtures/jose-rsa-private.pem\""
+  FOLDER "crypto/tests/algorithms")
+set_tests_properties(crypto_primitives_test PROPERTIES TIMEOUT 60)
+
 add_executable(crypto_tls_session_cache_test tls_session_cache.c)
 if(MSVC)
   target_compile_options(crypto_tls_session_cache_test PRIVATE /experimental:c11atomics)
