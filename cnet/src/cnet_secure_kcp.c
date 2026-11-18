@@ -28,6 +28,9 @@ typedef struct cnet_secure_kcp_impl {
   uint8_t *secure_send_buffer;
   uint8_t *secure_receive_buffer;
   size_t secure_buffer_size;
+  uint32_t max_transmissions;
+  uint32_t handshake_transmissions;
+  int terminal_status;
   uint32_t last_handshake_send_ms;
   bool started;
   bool kcp_initialized;
@@ -121,7 +124,10 @@ static int cnet_secure_kcp_activate(cnet_secure_kcp_impl *impl) {
   config.observer.on_receive = cnet_secure_kcp_receive;
   config.observer.user = impl;
   status = cnet_kcp_init(&impl->kcp, &config);
-  if (status == SALTS_OK) impl->kcp_initialized = true;
+  if (status == SALTS_OK) {
+    impl->kcp_initialized = true;
+    status = cnet_kcp_set_dead_link(&impl->kcp, impl->max_transmissions);
+  }
   return status;
 }
 
@@ -136,7 +142,10 @@ static int cnet_secure_kcp_send_client_hello(cnet_secure_kcp_impl *impl, uint32_
   uint8_t hello[CNET_KCP_SECURE_HANDSHAKE_BYTES];
   int status = cnet_kcp_secure_build_client_hello(&impl->secure, hello);
   if (status == SALTS_OK) status = cnet_secure_kcp_wire_output(impl, hello, sizeof(hello));
-  if (status == SALTS_OK) impl->last_handshake_send_ms = now_ms;
+  if (status == SALTS_OK) {
+    impl->last_handshake_send_ms = now_ms;
+    ++impl->handshake_transmissions;
+  }
   crypto_wipe(hello, sizeof(hello));
   return status;
 }
@@ -170,6 +179,7 @@ int cnet_secure_kcp_init(cnet_secure_kcp *session, const cnet_secure_kcp_config 
     free(impl);
     return SALTS_ENOMEM;
   }
+  impl->max_transmissions = CNET_KCP_DEFAULT_DEAD_LINK;
   impl->owner = session;
   impl->role = config->role;
   impl->kcp_template = config->kcp;
@@ -189,6 +199,14 @@ int cnet_secure_kcp_init(cnet_secure_kcp *session, const cnet_secure_kcp_config 
     return status;
   }
   session->impl = impl;
+  return SALTS_OK;
+}
+
+int cnet_secure_kcp_set_dead_link(cnet_secure_kcp *session, uint32_t max_transmissions) {
+  cnet_secure_kcp_impl *impl = cnet_secure_kcp_get(session);
+  if (impl == NULL || max_transmissions == 0u) return SALTS_EINVAL;
+  if (impl->started) return SALTS_EBUSY;
+  impl->max_transmissions = max_transmissions;
   return SALTS_OK;
 }
 
@@ -223,6 +241,7 @@ int cnet_secure_kcp_conversation(const cnet_secure_kcp *session, uint32_t *out_c
 int cnet_secure_kcp_send(cnet_secure_kcp *session, const void *data, size_t size) {
   cnet_secure_kcp_impl *impl = cnet_secure_kcp_get(session);
   if (impl == NULL || data == NULL || size == 0u) return SALTS_EINVAL;
+  if (impl->terminal_status != SALTS_OK) return impl->terminal_status;
   if (!impl->started || !impl->kcp_initialized) return SALTS_EBUSY;
   return cnet_kcp_send(&impl->kcp, data, size);
 }
@@ -231,6 +250,7 @@ int cnet_secure_kcp_send_validate(const cnet_secure_kcp *session, const void *da
                                   bool marked) {
   cnet_secure_kcp_impl *impl = cnet_secure_kcp_get(session);
   if (impl == NULL || data == NULL || size == 0u) return SALTS_EINVAL;
+  if (impl->terminal_status != SALTS_OK) return impl->terminal_status;
   if (!impl->started || !impl->kcp_initialized) return SALTS_EBUSY;
   return cnet_kcp_send_validate(&impl->kcp, data, size, marked);
 }
@@ -240,6 +260,7 @@ int cnet_secure_kcp_send_marked(cnet_secure_kcp *session, const void *data, size
   cnet_secure_kcp_impl *impl = cnet_secure_kcp_get(session);
   if (out_marker != NULL) *out_marker = (cnet_kcp_send_marker){0};
   if (impl == NULL || out_marker == NULL || data == NULL || size == 0u) return SALTS_EINVAL;
+  if (impl->terminal_status != SALTS_OK) return impl->terminal_status;
   if (!impl->started || !impl->kcp_initialized) return SALTS_EBUSY;
   return cnet_kcp_send_marked(&impl->kcp, data, size, out_marker);
 }
@@ -258,6 +279,7 @@ int cnet_secure_kcp_input_classified(cnet_secure_kcp *session, const void *data,
   *out_authenticated = false;
   if (impl == NULL || data == NULL || size == 0u) return SALTS_EINVAL;
   if (!impl->started) return SALTS_EBUSY;
+  if (cnet_secure_kcp_terminal_status(session) == SALTS_ETIMEDOUT) return SALTS_ETIMEDOUT;
   impl->last_record_authenticated = false;
   if (cnet_kcp_secure_is_handshake(data, size)) {
     if (impl->role == CNET_SECURE_KCP_CLIENT) {
@@ -293,16 +315,23 @@ int cnet_secure_kcp_update(cnet_secure_kcp *session, uint32_t now_ms) {
   cnet_secure_kcp_impl *impl = cnet_secure_kcp_get(session);
   if (impl == NULL) return SALTS_EINVAL;
   if (!impl->started) return SALTS_EBUSY;
+  if (impl->terminal_status != SALTS_OK) return impl->terminal_status;
   if (impl->kcp_initialized) return cnet_kcp_update(&impl->kcp, now_ms);
   if (impl->role == CNET_SECURE_KCP_CLIENT &&
-      (uint32_t)(now_ms - impl->last_handshake_send_ms) >= impl->security.handshake_retry_ms)
+      (uint32_t)(now_ms - impl->last_handshake_send_ms) >= impl->security.handshake_retry_ms) {
+    if (impl->handshake_transmissions >= impl->max_transmissions) {
+      impl->terminal_status = SALTS_ETIMEDOUT;
+      return impl->terminal_status;
+    }
     return cnet_secure_kcp_send_client_hello(impl, now_ms);
+  }
   return SALTS_OK;
 }
 
 int cnet_secure_kcp_terminal_status(const cnet_secure_kcp *session) {
   cnet_secure_kcp_impl *impl = cnet_secure_kcp_get(session);
   if (impl == NULL) return SALTS_EINVAL;
+  if (impl->terminal_status != SALTS_OK) return impl->terminal_status;
   if (!impl->started || !impl->kcp_initialized) return SALTS_EBUSY;
   return cnet_kcp_terminal_status(&impl->kcp);
 }
@@ -314,6 +343,7 @@ int cnet_secure_kcp_check(const cnet_secure_kcp *session, uint32_t now_ms,
   *out_next_ms = 0u;
   if (impl == NULL) return SALTS_EINVAL;
   if (!impl->started) return SALTS_EBUSY;
+  if (impl->terminal_status != SALTS_OK) return impl->terminal_status;
   if (impl->kcp_initialized) return cnet_kcp_check(&impl->kcp, now_ms, out_next_ms);
   *out_next_ms = impl->role == CNET_SECURE_KCP_CLIENT
                      ? impl->last_handshake_send_ms + impl->security.handshake_retry_ms

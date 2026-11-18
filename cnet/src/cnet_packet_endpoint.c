@@ -97,6 +97,7 @@ struct cnet_packet_endpoint_impl {
   uint32_t ready_send_tail;
   cnet_packet_protocol protocol;
   cnet_kcp_config kcp_template;
+  uint32_t max_transmissions;
   cnet_kcp_security_config security_template;
   cnet_packet_observer observer;
   cnet_packet_terminal_config terminal;
@@ -677,7 +678,10 @@ static int cnet_packet_record_open(cnet_packet_endpoint_impl *impl, const cnet_p
       config.observer.on_established = cnet_packet_secure_kcp_established;
       config.observer.user = record;
       status = cnet_secure_kcp_init(&record->secure_kcp, &config);
-      if (status == SALTS_OK) record->secure_kcp_initialized = true;
+      if (status == SALTS_OK) {
+        record->secure_kcp_initialized = true;
+        status = cnet_secure_kcp_set_dead_link(&record->secure_kcp, impl->max_transmissions);
+      }
     } else {
       cnet_kcp_config config = impl->kcp_template;
       config.conversation = key->conversation;
@@ -685,9 +689,20 @@ static int cnet_packet_record_open(cnet_packet_endpoint_impl *impl, const cnet_p
       config.observer.on_receive = cnet_packet_kcp_receive;
       config.observer.user = record;
       status = cnet_kcp_init(&record->kcp, &config);
-      if (status == SALTS_OK) record->kcp_initialized = true;
+      if (status == SALTS_OK) {
+        record->kcp_initialized = true;
+        status = cnet_kcp_set_dead_link(&record->kcp, impl->max_transmissions);
+      }
     }
     if (status != SALTS_OK) {
+      if (record->kcp_initialized) {
+        (void)cnet_kcp_destroy(&record->kcp);
+        record->kcp_initialized = false;
+      }
+      if (record->secure_kcp_initialized) {
+        (void)cnet_secure_kcp_destroy(&record->secure_kcp);
+        record->secure_kcp_initialized = false;
+      }
       memset(&record->key, 0, sizeof(record->key));
       return status;
     }
@@ -991,6 +1006,7 @@ static int cnet_packet_endpoint_init_impl(cnet_packet_endpoint *endpoint,
   impl->protocol = config->protocol;
   impl->external = backend != NULL;
   impl->kcp_template = config->kcp;
+  impl->max_transmissions = CNET_KCP_DEFAULT_DEAD_LINK;
   impl->security_template = config->security;
   impl->observer = config->observer;
   if (terminal != NULL) impl->terminal = *terminal;
@@ -1046,6 +1062,17 @@ int cnet_packet_endpoint_init_external(cnet_packet_endpoint *endpoint,
     const cnet_packet_terminal_config *terminal, native_io_backend *backend) {
   if (backend == NULL) return SALTS_EINVAL;
   return cnet_packet_endpoint_init_impl(endpoint, config, terminal, backend);
+}
+
+int cnet_packet_endpoint_set_kcp_dead_link(cnet_packet_endpoint *endpoint,
+                                          uint32_t max_transmissions) {
+  cnet_packet_endpoint_impl *impl = cnet_packet_get(endpoint);
+  if (impl == NULL || impl->protocol != CNET_PACKET_KCP || max_transmissions == 0u)
+    return SALTS_EINVAL;
+  if (impl->polling || impl->callback_depth != 0u || impl->stopping ||
+      impl->free_record_count != impl->session_capacity) return SALTS_EBUSY;
+  impl->max_transmissions = max_transmissions;
+  return SALTS_OK;
 }
 
 int cnet_packet_endpoint_port(const cnet_packet_endpoint *endpoint, uint16_t *out_port) {
@@ -1160,7 +1187,7 @@ static size_t cnet_packet_update_kcp(cnet_packet_endpoint_impl *impl,
                  ? cnet_secure_kcp_update(&record->secure_kcp, now_ms)
                  : cnet_kcp_update(&record->kcp, now_ms);
     cnet_packet_record_complete_kcp_sends(impl, record);
-    if (impl->terminal.on_send != NULL && !record->closing) {
+    if (!record->closing) {
       const int terminal_status =
           record->secure_kcp_initialized
               ? cnet_secure_kcp_terminal_status(&record->secure_kcp)

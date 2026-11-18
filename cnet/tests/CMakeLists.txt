@@ -24,6 +24,9 @@ if(MSVC)
 endif()
 add_test(NAME saltscore.cnet_policy COMMAND cnet_policy_test)
 
+cmake_add_test(cnet_kcp_fault_test SOURCES test_kcp_faults.c
+  LIBS Salts::CNet Salts::TinyTest FOLDER "cnet/tests")
+
 # Native ABI and ShangMi tests use the source-built Salts::Crypto archive.
 # No external provider package or second implementation is assembled here.
 

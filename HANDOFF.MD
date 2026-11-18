@@ -186,3 +186,19 @@
   alignment step now checks both CNet and the separately distributed Crypto
   shared library. Publication uses only original SDK TARs from one successful
   exact-source producer, plus its manifest and SHA256SUMS, as in 0.1.14.
+
+# KCP public exhaustion contract (2026-11-18)
+
+- Expose the existing terminal-state queries and additive transmission-limit
+  setters without changing configuration layouts. Defaults remain 20; idle
+  sessions do not fail merely because no application traffic is present.
+- Authenticated client hello retries are bounded by the same selected limit;
+  peer input after exhaustion cannot restart the handshake or admit DATA.
+- Plain/authenticated packet sessions use the terminal result independently of
+  tagged-send policy. Close only the failed generation and settle admitted tags
+  before its actual UDP writes drain and the slot becomes reusable.
+- `cnet_kcp_fault_test` deterministically injects all eight loss/reorder/duplicate
+  combinations and clock wrap, data exhaustion and unanswered authentication.
+  Existing policy cases cover real UDP tagged/untagged timeout and slot reuse.
+- The full native-release-user build, all 102 CTests (263.62 seconds) and install
+  passed. Logs: build/fill-kcp-{configure,build,full-ctest,install}.log.

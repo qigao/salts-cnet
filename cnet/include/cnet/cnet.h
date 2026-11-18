@@ -843,6 +843,7 @@ enum {
   CNET_KCP_DEFAULT_WINDOW = 128,
   CNET_KCP_DEFAULT_INTERVAL_MS = 10,
   CNET_KCP_DEFAULT_FAST_RESEND = 2,
+  CNET_KCP_DEFAULT_DEAD_LINK = 20,
   CNET_KCP_DEFAULT_SEND_SEGMENT_CAPACITY = 1024,
   CNET_KCP_DEFAULT_MAX_MESSAGE_BYTES = 1024 * 1024
 };
@@ -2022,6 +2023,18 @@ int cnet_datagram_destroy(cnet_datagram *datagram);
  */
 int cnet_kcp_init(cnet_kcp *session, const cnet_kcp_config *config);
 
+/** Sets the segment transmission limit, including the initial transmission.
+ * Default is 20. Zero is EINVAL; configure before the first accepted send/input
+ * (EBUSY afterwards). Owner-only, no allocation, no configuration ABI change.
+ * Exhaustion permanently returns ETIMEDOUT from update/send/input/check until
+ * destroy. An idle session without unacknowledged segments does not time out.
+ * Example: init(&kcp,&config); set_dead_link(&kcp,5); send(...); update(...).
+ */
+int cnet_kcp_set_dead_link(cnet_kcp *session, uint32_t max_transmissions);
+
+/** OK while usable, ETIMEDOUT after transmission exhaustion, EINVAL if not live. */
+int cnet_kcp_terminal_status(const cnet_kcp *session);
+
 /**
  * Copies one ordered message into KCP after conservative segment-capacity admission.
  * Returns SALTS_ENOBUFS without retaining input when the hard bound would be exceeded.
@@ -2044,6 +2057,15 @@ int cnet_kcp_destroy(cnet_kcp *session);
 
 /** Creates a zero-initialized PSK v1/FEC session without emitting wire data. */
 int cnet_secure_kcp_init(cnet_secure_kcp *session, const cnet_secure_kcp_config *config);
+
+/** Same segment limit as plain KCP; set before start (EBUSY afterwards).
+ * Also bounds client handshake transmissions. After the final unanswered hello's
+ * retry interval, update/check/input return ETIMEDOUT and no new hello is sent.
+ * Passive idle servers do not expire; authentication failures never reset limits. */
+int cnet_secure_kcp_set_dead_link(cnet_secure_kcp *session, uint32_t max_transmissions);
+
+/** ETIMEDOUT after handshake/data exhaustion; EBUSY while handshaking, else OK. */
+int cnet_secure_kcp_terminal_status(const cnet_secure_kcp *session);
 
 /** Starts the role state machine; a client synchronously emits its first authenticated hello. */
 int cnet_secure_kcp_start(cnet_secure_kcp *session, uint32_t now_ms);
@@ -2077,6 +2099,16 @@ int cnet_secure_kcp_destroy(cnet_secure_kcp *session);
  */
 int cnet_packet_endpoint_init(cnet_packet_endpoint *endpoint,
                               const cnet_packet_endpoint_config *config);
+
+/** Sets the transmission limit of subsequently created plain/authenticated KCP
+ * sessions. Requires a KCP endpoint without live sessions or active progress;
+ * otherwise EINVAL/EBUSY. Zero is EINVAL. The default is 20.
+ * Exhaustion closes only the failed session, settles its accepted tags with
+ * ETIMEDOUT, and drains its real UDP writes before recycling its generation.
+ * Example: endpoint_init(...); endpoint_set_kcp_dead_link(&ep,5); session_open(...).
+ */
+int cnet_packet_endpoint_set_kcp_dead_link(cnet_packet_endpoint *endpoint,
+                                          uint32_t max_transmissions);
 
 /**
  * Initializes an endpoint with authoritative tagged logical-send terminals.

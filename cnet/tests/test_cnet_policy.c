@@ -976,6 +976,64 @@ cleanup:
   return policy_lifecycle_cleanup(fixture, failure);
 }
 
+static int policy_kcp_peer_timeout(bool tagged) {
+  policy_packet_lifecycle *fixture = calloc(1u, sizeof(*fixture));
+  cnet_packet_endpoint_config config = policy_packet_config(CNET_PACKET_KCP);
+  cnet_datagram_config wire_config = config.datagram;
+  cnet_packet_session session = {0}, rejected = {0};
+  const unsigned char payload = 0xadu;
+  cnet_datagram_peer peer;
+  uint16_t port = 0u;
+  uint64_t deadline;
+  size_t events = 0u;
+  int failure = 0;
+  if (fixture == NULL) return __LINE__;
+  cnet_packet_endpoint *client = &fixture->endpoints[0];
+  policy_loopback_probe *probe = &fixture->probes[0];
+#define LIFECYCLE_REQUIRE(expr) do { if (!(expr)) { failure = __LINE__; goto cleanup; } } while (0)
+  if (tagged) {
+    LIFECYCLE_REQUIRE(policy_lifecycle_init(fixture, 0u, CNET_PACKET_KCP) == SALTS_OK);
+  } else {
+    config.observer = (cnet_packet_observer){policy_loopback_admit, policy_loopback_state,
+        policy_loopback_receive, policy_loopback_error, probe};
+    LIFECYCLE_REQUIRE(cnet_packet_endpoint_init(client, &config) == SALTS_OK);
+  }
+  LIFECYCLE_REQUIRE(cnet_packet_endpoint_set_kcp_dead_link(client, 0u) == SALTS_EINVAL);
+  LIFECYCLE_REQUIRE(cnet_packet_endpoint_set_kcp_dead_link(client, 2u) == SALTS_OK);
+  LIFECYCLE_REQUIRE(cnet_packet_endpoint_port(client, &fixture->source_port) == SALTS_OK);
+  wire_config.observer = (cnet_datagram_observer){policy_kcp_unacked_wire, policy_kcp_unexpected_send, fixture};
+  LIFECYCLE_REQUIRE(cnet_datagram_init(&fixture->wire_peer, &wire_config) == SALTS_OK);
+  LIFECYCLE_REQUIRE(cnet_datagram_port(&fixture->wire_peer, &port) == SALTS_OK && port != 0u);
+  LIFECYCLE_REQUIRE(cnet_datagram_receive(&fixture->wire_peer, 8u) == SALTS_OK);
+  peer = policy_loopback_peer(port);
+  LIFECYCLE_REQUIRE(cnet_packet_session_open(client, &peer, UINT32_C(0x12345678), &session) == SALTS_OK);
+  LIFECYCLE_REQUIRE(cnet_packet_endpoint_set_kcp_dead_link(client, 3u) == SALTS_EBUSY);
+  LIFECYCLE_REQUIRE((tagged ? cnet_packet_send_tagged(client, session, &payload, 1u, 201u)
+                            : cnet_packet_send(client, session, &payload, 1u)) == SALTS_OK);
+  deadline = monotonic_ms() + 5000u;
+  while (probe->closed == 0u && monotonic_ms() < deadline) {
+    const int status = policy_loopback_drive(client);
+    LIFECYCLE_REQUIRE(status == SALTS_OK || status == SALTS_ETIMEDOUT);
+    LIFECYCLE_REQUIRE(cnet_datagram_poll(&fixture->wire_peer, 5u, &events) == SALTS_OK);
+  }
+  LIFECYCLE_REQUIRE(probe->closed == 1u && probe->errors == 1u &&
+      probe->last_error == SALTS_ETIMEDOUT && policy_same_session(probe->closed_session, session));
+  LIFECYCLE_REQUIRE(probe->terminals == (tagged ? 1u : 0u));
+  if (tagged) {
+    LIFECYCLE_REQUIRE(probe->terminal_status == SALTS_ETIMEDOUT && probe->terminal_tag == 201u &&
+        probe->terminals_at_close == 1u && policy_same_session(probe->terminal_session, session));
+  }
+  LIFECYCLE_REQUIRE(cnet_packet_send(client, session, &payload, 1u) == SALTS_ENOENT);
+  LIFECYCLE_REQUIRE(cnet_packet_session_open(client, &peer, UINT32_C(0x12345678), &rejected) == SALTS_OK);
+  LIFECYCLE_REQUIRE(!policy_same_session(rejected, session));
+  LIFECYCLE_REQUIRE(cnet_packet_session_close(client, rejected) == SALTS_OK);
+  LIFECYCLE_REQUIRE(cnet_packet_endpoint_stop(client, 4000u) == SALTS_OK);
+  LIFECYCLE_REQUIRE(probe->terminals == (tagged ? 1u : 0u) && probe->errors == 1u);
+cleanup:
+#undef LIFECYCLE_REQUIRE
+  return policy_lifecycle_cleanup(fixture, failure);
+}
+
 static void policy_kcp_window_wire(void *user, cnet_datagram *datagram,
                                    const cnet_datagram_peer *peer, const cnet_receive_view *view) {
   policy_packet_lifecycle *fixture = user;
@@ -1750,6 +1808,14 @@ spec("CNet native policy and channel admission") {
   it("cancels one unacknowledged KCP tag after real wire retransmission before CLOSED") {
     const int failed = policy_kcp_retransmission_stop();
     check(failed == 0, "KCP retransmission stop: failed source line %d", failed);
+  }
+  it("settles a timed-out tagged KCP send before recycling its generation") {
+    const int failed = policy_kcp_peer_timeout(true);
+    check(failed == 0, "Tagged KCP timeout: failed source line %d", failed);
+  }
+  it("closes an untagged KCP session when its peer stops acknowledging") {
+    const int failed = policy_kcp_peer_timeout(false);
+    check(failed == 0, "Untagged KCP timeout: failed source line %d", failed);
   }
   it("fills the 128-segment KCP send window while a neighbor completes") {
     const int failed = policy_kcp_send_window();

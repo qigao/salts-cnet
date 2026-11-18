@@ -15,6 +15,5 @@ bool cnet_secure_kcp_send_marker_complete(const cnet_secure_kcp *session,
                                           cnet_kcp_send_marker marker);
 int cnet_secure_kcp_input_classified(cnet_secure_kcp *session, const void *data, size_t size,
                                      bool *out_authenticated);
-int cnet_secure_kcp_terminal_status(const cnet_secure_kcp *session);
 
 #endif /* CNET_SECURE_KCP_INTERNAL_H */

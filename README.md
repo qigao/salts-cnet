@@ -23,6 +23,19 @@ RSA-PSS salt/OAEP label controls, DER/PEM key export and bounded encrypted
 PKCS8 import/export. See the [Crypto API contracts](crypto/README.md#general-primitives-and-key-lifecycle).
 Consumers continue to link `Salts::Crypto`; backend targets and types stay private.
 
+KCP transmission exhaustion is observable through `cnet_kcp_terminal_status` and
+`cnet_secure_kcp_terminal_status`. The additive `set_dead_link` entry points
+configure a positive transmission limit before admission/start; packet endpoints
+configure future sessions while no session is live. Configuration struct layouts
+remain unchanged, and the default remains 20 transmissions. Authenticated client
+handshakes also stop after the final hello's retry interval. Idle sessions without
+outstanding work do not expire. Failed sessions return `SALTS_ETIMEDOUT`; an
+endpoint settles tags and drains real UDP writes before recycling that generation.
+The existing CNet policy suite and `cnet_kcp_fault_test` cover the contract,
+including controlled loss/reorder/duplicates and 32-bit clock wrap. Applications
+using the new entry points need the matching released SDK selected in `.env`;
+rollback selects the preceding SDK and removes calls to these additive functions.
+
 ## Quick start
 
 ```sh
