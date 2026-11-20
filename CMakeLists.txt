@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.25)
 include(CMakeOptions.cmake)
 project(
   SaltsCNet
-  VERSION 0.1.17
+  VERSION 0.1.18
   LANGUAGES C CXX)
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_CXX_STANDARD 17)
