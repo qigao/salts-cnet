@@ -45,6 +45,28 @@
       "package": true
     },
     {
+      "rid": "macos-x64",
+      "runner": "macos-15-intel",
+      "compiler": "clang",
+      "sdk": "macos-clang-x64",
+      "target": "x64",
+      "triplet": "x64-osx",
+      "preset": "llvm-native-release-user",
+      "android_abi": "",
+      "package": true
+    },
+    {
+      "rid": "linux-gcc-arm64",
+      "runner": "ubuntu-24.04-arm",
+      "compiler": "gcc",
+      "sdk": "linux-gcc-arm64",
+      "target": "arm64",
+      "triplet": "arm64-linux",
+      "preset": "gcc-arm64-release-user",
+      "android_abi": "",
+      "package": false
+    },
+    {
       "rid": "windows-x64",
       "runner": "windows-2025",
       "compiler": "llvm-mingw",
