@@ -1,5 +1,7 @@
 #ifndef CNET_DISPATCHER_H
 #define CNET_DISPATCHER_H
+
+#include <cnet/export.h>
 #include <cnet/resources.h>
 
 #include "cnet_shards.h"
@@ -28,33 +30,41 @@ typedef struct cnet_dispatch_view {
 
 typedef void (*cnet_dispatch_fn)(void *context, const cnet_dispatch_view *view);
 
+SALTS_CNET_EXPORT
 int cnet_dispatcher_init(cnet_dispatcher *dispatcher, cnet_shards *shards);
+SALTS_CNET_EXPORT
 int cnet_dispatcher_init_with_storage(cnet_dispatcher *dispatcher, cnet_shards *shards, const cnet_allocator *storage);
 
 /** Registers immutable callback ownership for one generation-checked connection. */
+SALTS_CNET_EXPORT
 int cnet_dispatcher_register(cnet_dispatcher *dispatcher, cnet_shard_connection connection,
                              cnet_dispatch_fn observer, void *observer_context);
 
 /** Invokes one callback synchronously on the publishing NativeIO owner. */
+SALTS_CNET_EXPORT
 int cnet_dispatcher_publish(cnet_dispatcher *dispatcher, uint32_t shard, const cnet_event *event);
 
 /**
  * Single-consumer, nonblocking drive for one fallback event queue. The callback
  * completes before the retained event lease is released.
  */
+SALTS_CNET_EXPORT
 int cnet_dispatcher_drive(cnet_dispatcher *dispatcher, uint32_t shard);
 
 /**
  * Drives events until every registered connection has completed and recycled.
  * This control-plane wait must not run from an inline callback.
  */
+SALTS_CNET_EXPORT
 int cnet_dispatcher_wait_idle(cnet_dispatcher *dispatcher, uint32_t timeout_ms);
 
 /**
  * Closes admission and live connections, then drives all terminal callbacks.
  * Retry after SALTS_ETIMEDOUT; do not call from an inline callback.
  */
+SALTS_CNET_EXPORT
 int cnet_dispatcher_drain(cnet_dispatcher *dispatcher, uint32_t timeout_ms);
+SALTS_CNET_EXPORT
 bool cnet_dispatcher_drained(const cnet_dispatcher *dispatcher);
 
 #if defined(CNET_INTERNAL_PROFILING)
@@ -75,6 +85,7 @@ int cnet_dispatcher_profile_take(cnet_dispatcher *dispatcher,
 #endif
 
 /** Requires a completed drain and no retained event lease. */
+SALTS_CNET_EXPORT
 int cnet_dispatcher_destroy(cnet_dispatcher *dispatcher);
 
 #endif /* CNET_DISPATCHER_H */

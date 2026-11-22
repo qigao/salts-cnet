@@ -1,0 +1,635 @@
+{
+  "targets": {
+    "saltscore.two_cnet_plugins": {
+      "kind": "header_only",
+      "when": {
+        "os": ["windows", "linux", "macos"],
+        "native": true
+      },
+      "runtimeDeps": ["saltscore_two_plugins_test", "saltscore_runtime_plugin_a", "saltscore_runtime_plugin_b"],
+      "test": {
+        "program": "${artifact:saltscore_two_plugins_test}",
+        "args": ["${artifact:saltscore_runtime_plugin_a}", "${artifact:saltscore_runtime_plugin_b}"],
+        "timeout": 30,
+        "labels": ["cnet", "integration"]
+      }
+    },
+    "saltscore.cnet_production_required_mtls": {
+      "kind": "header_only",
+      "when": {
+        "os": ["windows", "linux", "macos"],
+        "native": true,
+        "config": "tests"
+      },
+      "runtimeDeps": ["cnet_tls_ca_san_test"],
+      "test": {
+        "tool": "go",
+        "args": ["./e2e", "-timeout=160s", "-run", "^TestRequiredMTLS$", "-args", "-native", "${artifact:cnet_tls_ca_san_test}"],
+        "workingDirectory": "$root/cnet/tests/independent/tls",
+        "timeout": 180,
+        "environment": ["CGO_ENABLED=0", "GOWORK=off"],
+        "labels": ["cnet", "interop"]
+      }
+    },
+    "saltscore.cnet_go_tls_peer_tls12": {
+      "kind": "header_only",
+      "when": {
+        "os": ["windows", "linux", "macos"],
+        "native": true,
+        "config": "tests"
+      },
+      "runtimeDeps": ["cnet_tls_ca_san_test"],
+      "test": {
+        "tool": "go",
+        "args": ["./e2e", "-timeout=80s", "-run", "^TestExternalSAN$", "-args", "-native", "${artifact:cnet_tls_ca_san_test}", "-protocol", "tls12", "-fixtures", "$root/crypto/tests/fixtures"],
+        "workingDirectory": "$root/cnet/tests/independent/tls",
+        "timeout": 95,
+        "environment": ["CGO_ENABLED=0", "GOWORK=off"],
+        "labels": ["cnet", "interop"]
+      }
+    },
+    "saltscore.cnet_go_tls_peer_tls13": {
+      "kind": "header_only",
+      "when": {
+        "os": ["windows", "linux", "macos"],
+        "native": true,
+        "config": "tests"
+      },
+      "runtimeDeps": ["cnet_tls_ca_san_test"],
+      "test": {
+        "tool": "go",
+        "args": ["./e2e", "-timeout=80s", "-run", "^TestExternalSAN$", "-args", "-native", "${artifact:cnet_tls_ca_san_test}", "-protocol", "tls13", "-fixtures", "$root/crypto/tests/fixtures"],
+        "workingDirectory": "$root/cnet/tests/independent/tls",
+        "timeout": 95,
+        "environment": ["CGO_ENABLED=0", "GOWORK=off"],
+        "labels": ["cnet", "interop"]
+      }
+    },
+    "saltscore.cnet_go_tls_client_required_mtls": {
+      "kind": "header_only",
+      "when": {
+        "os": ["windows", "linux", "macos"],
+        "native": true,
+        "config": "tests"
+      },
+      "runtimeDeps": ["cnet_tls_ca_san_test"],
+      "test": {
+        "tool": "go",
+        "args": ["./e2e", "-timeout=280s", "-run", "^TestGoClientRequiredMTLS$", "-args", "-native", "${artifact:cnet_tls_ca_san_test}"],
+        "workingDirectory": "$root/cnet/tests/independent/tls",
+        "timeout": 300,
+        "environment": ["CGO_ENABLED=0", "GOWORK=off"],
+        "labels": ["cnet", "interop"]
+      }
+    },
+    "saltscore.cnet_tls_sni": {
+      "kind": "header_only",
+      "when": {
+        "os": ["windows", "linux", "macos"],
+        "native": true,
+        "config": "tests"
+      },
+      "runtimeDeps": ["cnet_tls_ca_san_test"],
+      "test": {
+        "tool": "go",
+        "args": ["./e2e", "-timeout=150s", "-run", "^TestServerSNI$", "-args", "-native", "${artifact:cnet_tls_ca_san_test}"],
+        "workingDirectory": "$root/cnet/tests/independent/tls",
+        "timeout": 180,
+        "environment": ["CGO_ENABLED=0", "GOWORK=off"],
+        "labels": ["cnet", "interop"]
+      }
+    },
+    "saltscore.cnet_tls_system_intermediate_trust": {
+      "kind": "header_only",
+      "when": {
+        "os": ["windows", "linux", "macos"],
+        "native": true,
+        "config": "tests"
+      },
+      "runtimeDeps": ["cnet_tls_ca_san_test"],
+      "test": {
+        "tool": "go",
+        "args": ["./e2e", "-timeout=80s", "-run", "^TestSystemIntermediateTrust$", "-args", "-native", "${artifact:cnet_tls_ca_san_test}"],
+        "workingDirectory": "$root/cnet/tests/independent/tls",
+        "timeout": 95,
+        "environment": ["CGO_ENABLED=0", "GOWORK=off"],
+        "labels": ["cnet", "interop"]
+      }
+    },
+    "saltscore.cnet_tls_session_resumption": {
+      "kind": "header_only",
+      "when": {
+        "os": ["windows", "linux", "macos"],
+        "native": true,
+        "config": "tests"
+      },
+      "runtimeDeps": ["cnet_tls_ca_san_test"],
+      "test": {
+        "tool": "go",
+        "args": ["./e2e", "-timeout=60s", "-run", "^TestTLS13SessionResumption$", "-args", "-native", "${artifact:cnet_tls_ca_san_test}"],
+        "workingDirectory": "$root/cnet/tests/independent/tls",
+        "timeout": 90,
+        "environment": ["CGO_ENABLED=0", "GOWORK=off"],
+        "labels": ["cnet", "interop"]
+      }
+    },
+    "saltscore.cnet_tls_client_identities": {
+      "kind": "header_only",
+      "when": {
+        "os": ["windows", "linux", "macos"],
+        "native": true,
+        "config": "tests"
+      },
+      "runtimeDeps": ["cnet_tls_ca_san_test"],
+      "test": {
+        "tool": "go",
+        "args": ["./e2e", "-timeout=150s", "-run", "^TestClientIdentities$", "-args", "-native", "${artifact:cnet_tls_ca_san_test}"],
+        "workingDirectory": "$root/cnet/tests/independent/tls",
+        "timeout": 180,
+        "environment": ["CGO_ENABLED=0", "GOWORK=off"],
+        "labels": ["cnet", "interop"]
+      }
+    },
+    "saltscore.cnet_tls_encrypted_credentials": {
+      "kind": "header_only",
+      "when": {
+        "os": ["windows", "linux", "macos"],
+        "native": true,
+        "config": "tests"
+      },
+      "runtimeDeps": ["cnet_tls_ca_san_test"],
+      "test": {
+        "tool": "go",
+        "args": ["./e2e", "-timeout=150s", "-run", "^TestEncryptedCredentials$", "-args", "-native", "${artifact:cnet_tls_ca_san_test}"],
+        "workingDirectory": "$root/cnet/tests/independent/tls",
+        "timeout": 180,
+        "environment": ["CGO_ENABLED=0", "GOWORK=off"],
+        "labels": ["cnet", "interop"]
+      }
+    },
+    "saltscore.cnet_tls_certificate_signature_positions": {
+      "kind": "header_only",
+      "when": {
+        "os": ["windows", "linux", "macos"],
+        "native": true,
+        "config": "tests"
+      },
+      "runtimeDeps": ["cnet_tls_ca_san_test"],
+      "test": {
+        "tool": "go",
+        "args": ["./e2e", "-timeout=150s", "-run", "^TestCertificateSignaturePositions$", "-args", "-native", "${artifact:cnet_tls_ca_san_test}"],
+        "workingDirectory": "$root/cnet/tests/independent/tls",
+        "timeout": 180,
+        "environment": ["CGO_ENABLED=0", "GOWORK=off"],
+        "labels": ["cnet", "interop"]
+      }
+    },
+    "saltscore.cnet_tls_purpose_diagnostics": {
+      "kind": "header_only",
+      "when": {
+        "os": ["windows", "linux", "macos"],
+        "native": true,
+        "config": "tests"
+      },
+      "runtimeDeps": ["cnet_tls_ca_san_test"],
+      "test": {
+        "tool": "go",
+        "args": ["./e2e", "-timeout=150s", "-run", "^TestPurposeDiagnostics$", "-args", "-native", "${artifact:cnet_tls_ca_san_test}"],
+        "workingDirectory": "$root/cnet/tests/independent/tls",
+        "timeout": 180,
+        "environment": ["CGO_ENABLED=0", "GOWORK=off"],
+        "labels": ["cnet", "interop"]
+      }
+    },
+    "saltscore.cnet_tls_validity_diagnostics": {
+      "kind": "header_only",
+      "when": {
+        "os": ["windows", "linux", "macos"],
+        "native": true,
+        "config": "tests"
+      },
+      "runtimeDeps": ["cnet_tls_ca_san_test"],
+      "test": {
+        "tool": "go",
+        "args": ["./e2e", "-timeout=150s", "-run", "^TestValidityDiagnostics$", "-args", "-native", "${artifact:cnet_tls_ca_san_test}"],
+        "workingDirectory": "$root/cnet/tests/independent/tls",
+        "timeout": 180,
+        "environment": ["CGO_ENABLED=0", "GOWORK=off"],
+        "labels": ["cnet", "interop"]
+      }
+    },
+    "saltscore.cnet_tls_verification_time": {
+      "kind": "header_only",
+      "when": {
+        "os": ["windows", "linux", "macos"],
+        "native": true,
+        "config": "tests"
+      },
+      "runtimeDeps": ["cnet_tls_ca_san_test"],
+      "test": {
+        "tool": "go",
+        "args": ["./e2e", "-timeout=150s", "-run", "^TestVerificationTime$", "-args", "-native", "${artifact:cnet_tls_ca_san_test}"],
+        "workingDirectory": "$root/cnet/tests/independent/tls",
+        "timeout": 180,
+        "environment": ["CGO_ENABLED=0", "GOWORK=off"],
+        "labels": ["cnet", "interop"]
+      }
+    },
+    "saltscore.cnet_tls_server_verification_time": {
+      "kind": "header_only",
+      "when": {
+        "os": ["windows", "linux", "macos"],
+        "native": true,
+        "config": "tests"
+      },
+      "runtimeDeps": ["cnet_tls_ca_san_test"],
+      "test": {
+        "tool": "go",
+        "args": ["./e2e", "-timeout=150s", "-run", "^TestServerVerificationTime$", "-args", "-native", "${artifact:cnet_tls_ca_san_test}"],
+        "workingDirectory": "$root/cnet/tests/independent/tls",
+        "timeout": 180,
+        "environment": ["CGO_ENABLED=0", "GOWORK=off"],
+        "labels": ["cnet", "interop"]
+      }
+    },
+    "saltscore.cnet_tlcp_independent": {
+      "kind": "header_only",
+      "when": {
+        "os": ["windows", "linux", "macos"],
+        "native": true,
+        "config": "tests"
+      },
+      "runtimeDeps": ["cnet_tls_ca_san_test"],
+      "test": {
+        "tool": "go",
+        "args": ["./e2e", "-timeout=150s", "-args", "-native", "${artifact:cnet_tls_ca_san_test}"],
+        "workingDirectory": "$root/cnet/tests/independent/tlcp",
+        "timeout": 180,
+        "environment": ["CGO_ENABLED=0", "GOWORK=off"],
+        "labels": ["cnet", "interop"]
+      }
+    },
+    "saltscore.cnet_tlcp_crl_policy": {
+      "kind": "header_only",
+      "when": {
+        "os": ["windows", "linux", "macos"],
+        "native": true,
+        "config": "tests"
+      },
+      "runtimeDeps": ["cnet_tls_ca_san_test"],
+      "test": {
+        "tool": "go",
+        "args": ["./e2e", "-timeout=150s", "-run", "^TestTLCPCRLPolicy$", "-args", "-native", "${artifact:cnet_tls_ca_san_test}"],
+        "workingDirectory": "$root/cnet/tests/independent/tlcp",
+        "timeout": 180,
+        "environment": ["CGO_ENABLED=0", "GOWORK=off"],
+        "labels": ["cnet", "interop"]
+      }
+    },
+    "saltscore.cnet_tlcp_certificate_policy": {
+      "kind": "header_only",
+      "when": {
+        "os": ["windows", "linux", "macos"],
+        "native": true,
+        "config": "tests"
+      },
+      "runtimeDeps": ["cnet_tls_ca_san_test"],
+      "test": {
+        "tool": "go",
+        "args": ["./e2e", "-timeout=150s", "-run", "^TestTLCPCertificatePolicy$", "-args", "-native", "${artifact:cnet_tls_ca_san_test}"],
+        "workingDirectory": "$root/cnet/tests/independent/tlcp",
+        "timeout": 180,
+        "environment": ["CGO_ENABLED=0", "GOWORK=off"],
+        "labels": ["cnet", "interop"]
+      }
+    },
+    "saltscore.cnet_tlcp_ocsp_policy": {
+      "kind": "header_only",
+      "when": {
+        "os": ["windows", "linux", "macos"],
+        "native": true,
+        "config": "tests"
+      },
+      "runtimeDeps": ["cnet_tls_ca_san_test"],
+      "test": {
+        "tool": "go",
+        "args": ["./e2e", "-timeout=150s", "-run", "^TestTLCPOCSPPolicy$", "-args", "-native", "${artifact:cnet_tls_ca_san_test}"],
+        "workingDirectory": "$root/cnet/tests/independent/tlcp",
+        "timeout": 180,
+        "environment": ["CGO_ENABLED=0", "GOWORK=off"],
+        "labels": ["cnet", "interop"]
+      }
+    },
+    "saltscore.cnet_shangmi_session_resumption": {
+      "kind": "header_only",
+      "when": {
+        "os": ["windows", "linux", "macos"],
+        "native": true,
+        "config": "tests"
+      },
+      "runtimeDeps": ["cnet_tls_ca_san_test"],
+      "test": {
+        "tool": "go",
+        "args": ["./e2e", "-timeout=90s", "-run", "^TestShangMiSessionResumption$", "-args", "-native", "${artifact:cnet_tls_ca_san_test}"],
+        "workingDirectory": "$root/cnet/tests/independent/shangmi",
+        "timeout": 120,
+        "environment": ["CGO_ENABLED=0", "GOWORK=off"],
+        "labels": ["cnet", "interop"]
+      }
+    },
+    "saltscore.cnet_shangmi_tls13_independent": {
+      "kind": "header_only",
+      "when": {
+        "os": ["windows", "linux", "macos"],
+        "native": true,
+        "config": "tests"
+      },
+      "runtimeDeps": ["cnet_tls_ca_san_test"],
+      "test": {
+        "tool": "go",
+        "args": ["./e2e", "-timeout=150s", "-run", "^TestShangMi$", "-args", "-native", "${artifact:cnet_tls_ca_san_test}"],
+        "workingDirectory": "$root/cnet/tests/independent/shangmi",
+        "timeout": 180,
+        "environment": ["CGO_ENABLED=0", "GOWORK=off"],
+        "labels": ["cnet", "interop"]
+      }
+    },
+    "saltscore.cnet_shangmi_required_mtls": {
+      "kind": "header_only",
+      "when": {
+        "os": ["windows", "linux", "macos"],
+        "native": true,
+        "config": "tests"
+      },
+      "runtimeDeps": ["cnet_tls_ca_san_test"],
+      "test": {
+        "tool": "go",
+        "args": ["./e2e", "-timeout=150s", "-run", "^TestShangMiMutual$", "-args", "-native", "${artifact:cnet_tls_ca_san_test}"],
+        "workingDirectory": "$root/cnet/tests/independent/shangmi",
+        "timeout": 180,
+        "environment": ["CGO_ENABLED=0", "GOWORK=off"],
+        "labels": ["cnet", "interop"]
+      }
+    },
+    "saltscore.cnet_shangmi_mtls_independent": {
+      "kind": "header_only",
+      "when": {
+        "os": ["windows", "linux", "macos"],
+        "native": true,
+        "config": "tests"
+      },
+      "runtimeDeps": ["cnet_tls_ca_san_test"],
+      "test": {
+        "tool": "go",
+        "args": ["./e2e", "-timeout=150s", "-run", "^TestShangMiMutualIndependent$", "-args", "-native", "${artifact:cnet_tls_ca_san_test}"],
+        "workingDirectory": "$root/cnet/tests/independent/shangmi",
+        "timeout": 180,
+        "environment": ["CGO_ENABLED=0", "GOWORK=off"],
+        "labels": ["cnet", "interop"]
+      }
+    },
+    "saltscore.cnet_shangmi_mtls_native_client": {
+      "kind": "header_only",
+      "when": {
+        "os": ["windows", "linux", "macos"],
+        "native": true,
+        "config": "tests"
+      },
+      "runtimeDeps": ["cnet_tls_ca_san_test"],
+      "test": {
+        "tool": "go",
+        "args": ["./e2e", "-timeout=150s", "-run", "^TestShangMiMutualNativeClient$", "-args", "-native", "${artifact:cnet_tls_ca_san_test}"],
+        "workingDirectory": "$root/cnet/tests/independent/shangmi",
+        "timeout": 180,
+        "environment": ["CGO_ENABLED=0", "GOWORK=off"],
+        "labels": ["cnet", "interop"]
+      }
+    },
+    "saltscore.cnet_shangmi_key_update": {
+      "kind": "header_only",
+      "when": {
+        "os": ["windows", "linux", "macos"],
+        "native": true,
+        "config": "tests"
+      },
+      "runtimeDeps": ["cnet_tls_ca_san_test"],
+      "test": {
+        "tool": "go",
+        "args": ["./e2e", "-timeout=150s", "-run", "^TestShangMiKeyUpdate$", "-args", "-native", "${artifact:cnet_tls_ca_san_test}"],
+        "workingDirectory": "$root/cnet/tests/independent/shangmi",
+        "timeout": 180,
+        "environment": ["CGO_ENABLED=0", "GOWORK=off"],
+        "labels": ["cnet", "interop"]
+      }
+    },
+    "saltscore.cnet_shangmi_crl_policy": {
+      "kind": "header_only",
+      "when": {
+        "os": ["windows", "linux", "macos"],
+        "native": true,
+        "config": "tests"
+      },
+      "runtimeDeps": ["cnet_tls_ca_san_test"],
+      "test": {
+        "tool": "go",
+        "args": ["./e2e", "-timeout=150s", "-run", "^TestShangMiCNetCRLPolicy$", "-args", "-native", "${artifact:cnet_tls_ca_san_test}"],
+        "workingDirectory": "$root/cnet/tests/independent/shangmi",
+        "timeout": 180,
+        "environment": ["CGO_ENABLED=0", "GOWORK=off"],
+        "labels": ["cnet", "interop"]
+      }
+    },
+    "saltscore.cnet_shangmi_ocsp_policy": {
+      "kind": "header_only",
+      "when": {
+        "os": ["windows", "linux", "macos"],
+        "native": true,
+        "config": "tests"
+      },
+      "runtimeDeps": ["cnet_tls_ca_san_test"],
+      "test": {
+        "tool": "go",
+        "args": ["./e2e", "-timeout=150s", "-run", "^TestShangMiCNetOCSPPolicy$", "-args", "-native", "${artifact:cnet_tls_ca_san_test}"],
+        "workingDirectory": "$root/cnet/tests/independent/shangmi",
+        "timeout": 180,
+        "environment": ["CGO_ENABLED=0", "GOWORK=off"],
+        "labels": ["cnet", "interop"]
+      }
+    },
+    "saltscore.cnet_dtls_native": {
+      "kind": "header_only",
+      "when": {
+        "os": ["windows", "linux", "macos"],
+        "native": true
+      },
+      "runtimeDeps": ["cnet_dtls_native_peer"],
+      "test": {
+        "tool": "go",
+        "args": ["./e2e", "-failfast", "-v", "-timeout=90s", "-run", "^TestDTLSNative", "-args", "-dtls-native", "${artifact:cnet_dtls_native_peer}"],
+        "workingDirectory": "$root/cnet/tests/tickets",
+        "timeout": 120,
+        "environment": ["CGO_ENABLED=0", "GOWORK=off"],
+        "labels": ["cnet", "interop"]
+      }
+    },
+    "saltscore.cnet_tls_server_tickets": {
+      "kind": "header_only",
+      "when": {
+        "os": ["windows", "linux", "macos"],
+        "native": true
+      },
+      "runtimeDeps": ["cnet_tls_server_ticket_peer"],
+      "test": {
+        "tool": "go",
+        "args": ["./e2e", "-timeout=90s", "-run", "^TestServerTickets$", "-args", "-native", "${artifact:cnet_tls_server_ticket_peer}"],
+        "workingDirectory": "$root/cnet/tests/tickets",
+        "timeout": 120,
+        "environment": ["CGO_ENABLED=0", "GOWORK=off"],
+        "labels": ["cnet", "interop"]
+      }
+    },
+    "saltscore.cnet_pkix_name_constraints": {
+      "kind": "header_only",
+      "when": {
+        "os": ["windows", "linux", "macos"],
+        "native": true
+      },
+      "runtimeDeps": ["cnet_tls_server_ticket_peer"],
+      "test": {
+        "tool": "go",
+        "args": ["./e2e", "-timeout=60s", "-run", "^TestNameConstraints$", "-args", "-native", "${artifact:cnet_tls_server_ticket_peer}"],
+        "workingDirectory": "$root/cnet/tests/tickets",
+        "timeout": 90,
+        "environment": ["CGO_ENABLED=0", "GOWORK=off"],
+        "labels": ["cnet", "interop"]
+      }
+    },
+    "saltscore.cnet_tlcp_anchor_constraints": {
+      "kind": "header_only",
+      "when": {
+        "os": ["windows", "linux", "macos"],
+        "native": true,
+        "config": "tests"
+      },
+      "runtimeDeps": ["cnet_tls_ca_san_test"],
+      "test": {
+        "tool": "go",
+        "args": ["./e2e", "-timeout=60s", "-run", "^TestTLCPAnchorConstraints$", "-args", "-native", "${artifact:cnet_tls_ca_san_test}"],
+        "workingDirectory": "$root/cnet/tests/independent/tlcp",
+        "timeout": 90,
+        "environment": ["CGO_ENABLED=0", "GOWORK=off"],
+        "labels": ["cnet", "interop"]
+      }
+    },
+    "saltscore.cnet_shangmi_server_tickets": {
+      "kind": "header_only",
+      "when": {
+        "os": ["windows", "linux", "macos"],
+        "native": true
+      },
+      "runtimeDeps": ["cnet_tls_server_ticket_peer"],
+      "test": {
+        "tool": "go",
+        "args": ["./e2e", "-timeout=60s", "-run", "^TestShangMiServerTickets$", "-args", "-native", "${artifact:cnet_tls_server_ticket_peer}"],
+        "workingDirectory": "$root/cnet/tests/independent/shangmi",
+        "timeout": 90,
+        "environment": ["CGO_ENABLED=0", "GOWORK=off"],
+        "labels": ["cnet", "interop"]
+      }
+    },
+    "cnet_dtls_native_peer": {
+      "kind": "executable",
+      "testOnly": true,
+      "when": {
+        "os": ["windows", "linux", "macos"],
+        "native": true
+      },
+      "sources": {
+        "files": ["dtls_native_peer.c"]
+      },
+      "private": {
+        "deps": ["cnet", "saltsbase_native_io", "saltsbase_coroutine", "saltsbase_core"],
+        "includeDirs": ["../include", "../../crypto/include"]
+      }
+    },
+    "cnet_tls_server_ticket_peer": {
+      "kind": "executable",
+      "testOnly": true,
+      "when": {
+        "os": ["windows", "linux", "macos"],
+        "native": true
+      },
+      "sources": {
+        "files": ["tls_server_tickets.c"]
+      },
+      "private": {
+        "deps": ["cnet", "salts_crypto", "saltsbase_tinytest", "saltsbase_asn1", "saltsbase_simd", "saltsbase_native_io", "saltsbase_coroutine", "saltsbase_core"],
+        "includeDirs": ["../include", "../../crypto/include"]
+      },
+      "variants": [
+        {
+          "when": {
+            "driver": "msvc"
+          },
+          "private": {
+            "flags": ["/experimental:c11atomics"]
+          }
+        }
+      ]
+    },
+    "saltscore_runtime_plugin_a": {
+      "kind": "shared",
+      "testOnly": true,
+      "when": {
+        "os": ["windows", "linux", "macos"],
+        "native": true
+      },
+      "sources": {
+        "files": ["runtime_loaded_plugin.c"]
+      },
+      "private": {
+        "deps": ["cnet", "saltsbase_native_io", "saltsbase_coroutine", "saltsbase_core"],
+        "includeDirs": ["../include", "../../crypto/include"]
+      }
+    },
+    "saltscore_runtime_plugin_b": {
+      "kind": "shared",
+      "testOnly": true,
+      "when": {
+        "os": ["windows", "linux", "macos"],
+        "native": true
+      },
+      "sources": {
+        "files": ["runtime_loaded_plugin.c"]
+      },
+      "private": {
+        "deps": ["cnet", "saltsbase_native_io", "saltsbase_coroutine", "saltsbase_core"],
+        "includeDirs": ["../include", "../../crypto/include"]
+      }
+    },
+    "saltscore_two_plugins_test": {
+      "kind": "executable",
+      "testOnly": true,
+      "when": {
+        "os": ["windows", "linux", "macos"],
+        "native": true
+      },
+      "sources": {
+        "files": ["test_runtime_plugins.c"]
+      },
+      "private": {
+        "deps": ["saltsbase_core", "saltsbase_tinytest"]
+      },
+      "variants": [
+        {
+          "when": {
+            "os": ["linux", "android"]
+          },
+          "private": {
+            "libs": ["dl"]
+          }
+        }
+      ]
+    }
+  }
+}

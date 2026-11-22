@@ -1,5 +1,8 @@
 #include "crypto_tls_credentials.h"
+#include <crypto/dtls_stream.h>
+#include <crypto/sha256.h>
 #include "crypto_internal.h"
+#include "crypto_x509_policy.h"
 #include <gmssl/base64.h>
 #include <gmssl/aes.h>
 #include <gmssl/pbkdf2.h>
@@ -74,6 +77,27 @@ static void skip_space(const unsigned char **p, size_t *size) {
   while (*size && whitespace(**p)) { ++*p; --*size; }
 }
 
+static int certificate_admission(const unsigned char *der, size_t size,
+    size_t *consumed) {
+  salts_crypto_x509_tls_admission admission =
+      salts_crypto_x509_tls_certificate_admission(der, size, consumed);
+  if (admission == SALTS_CRYPTO_X509_TLS_ADMITTED) return CRYPTO_TLS_STREAM_OK;
+  if (admission == SALTS_CRYPTO_X509_TLS_UNSUPPORTED) return CRYPTO_TLS_STREAM_ENOTSUP;
+  return CRYPTO_TLS_STREAM_EIO;
+}
+
+static int certificate_bundle_admission(const unsigned char *der, size_t size) {
+  size_t offset = 0u;
+  while (offset < size) {
+    size_t consumed = 0u;
+    int status = certificate_admission(der + offset, size - offset, &consumed);
+    if (status != CRYPTO_TLS_STREAM_OK) return status;
+    if (consumed == 0u || consumed > size - offset) return CRYPTO_TLS_STREAM_EIO;
+    offset += consumed;
+  }
+  return offset == size && offset != 0u ? CRYPTO_TLS_STREAM_OK : CRYPTO_TLS_STREAM_EIO;
+}
+
 /* Decode exact PEM objects without FILE streams or implicit NUL termination.
  * Canonical base64 quartets reject misplaced padding and nonzero padding bits. */
 static int decode(const crypto_tls_data *input, const char *label, bool multiple,
@@ -115,10 +139,10 @@ static int decode(const crypto_tls_data *input, const char *label, bool multiple
       gmssl_secure_clear(canonical, sizeof(canonical));
     }
     if (multiple) {
-      const unsigned char *object = out + start, *cert;
-      size_t remaining = total - start, cert_size;
-      if (x509_cert_from_der(&cert, &cert_size, &object, &remaining) != 1 || remaining)
-        return CRYPTO_TLS_STREAM_EIO;
+      size_t consumed = 0u;
+      int status = certificate_admission(out + start, total - start, &consumed);
+      if (status != CRYPTO_TLS_STREAM_OK) return status;
+      if (consumed != total - start) return CRYPTO_TLS_STREAM_EIO;
     }
     if (total == start || !consume(&p, &left, "-----END ") ||
         !consume(&p, &left, label) || !consume(&p, &left, "-----")) return CRYPTO_TLS_STREAM_EIO;
@@ -135,6 +159,7 @@ int crypto_tls_memory_trust(TLS_CTX *tls, const crypto_tls_data *ca) {
   unsigned char *der = malloc(ca->size);
   if (!der) return CRYPTO_TLS_STREAM_ENOMEM;
   int status = decode(ca, "CERTIFICATE", true, der, ca->size, &size);
+  if (status == 0) status = certificate_bundle_admission(der, size);
   if (status == 0 && tls_ctx_set_ca_certificates_der(tls, der, size, TLS_DEFAULT_VERIFY_DEPTH) != 1)
     status = CRYPTO_TLS_STREAM_EIO;
   free(der);
@@ -271,6 +296,18 @@ int crypto_tls_memory_identity(TLS_CTX *tls, const crypto_tls_credentials *crede
   gmssl_secure_clear(key, sizeof(key));
   gmssl_secure_clear(enc_key, sizeof(enc_key));
   return status;
+}
+
+int crypto_dtls_srtp_identity_fingerprint(const crypto_tls_credential_object *object,
+                                         uint8_t output[32]) {
+  if (!object || !output || object->tlcp ||
+      salts_crypto_overlap(object, object->allocation_size, output, 32u))
+    return SALTS_CRYPTO_EINVAL;
+  const uint8_t *cursor = object->material.certificate_chain.data, *leaf;
+  size_t remaining = object->material.certificate_chain.size, leaf_size;
+  if (x509_cert_from_der(&leaf, &leaf_size, &cursor, &remaining) != 1)
+    return SALTS_CRYPTO_ECRYPTO;
+  return salts_crypto_sha256(leaf, leaf_size, output);
 }
 
 int crypto_tls_credential_object_retain(crypto_tls_credential_object *object) {

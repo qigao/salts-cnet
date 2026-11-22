@@ -1,6 +1,8 @@
 #ifndef CNET_MANAGED_DIAL_H
 #define CNET_MANAGED_DIAL_H
 
+#include <cnet/export.h>
+
 #include <cnet/manager.h>
 #include <cnet/recovery_policy.h>
 
@@ -51,6 +53,7 @@ typedef struct cnet_managed_dial_snapshot {
  * Both init variants reject a different client wrapper with EINVAL before
  * storage allocation or admission; matching thread/connection IDs do not
  * establish client identity. */
+SALTS_CNET_EXPORT
 int cnet_managed_dial_init(cnet_managed_dial *dial,
                             const cnet_managed_dial_config *config);
 
@@ -66,6 +69,7 @@ int cnet_managed_dial_init(cnet_managed_dial *dial,
  * retain that reservation across sequential opening retries until bind/abort.
  * Existing init remains ungated; config layout and its version are unchanged. */
 typedef int (*cnet_dial_admit_fn)(void *user);
+SALTS_CNET_EXPORT
 int cnet_managed_dial_init_admitted(cnet_managed_dial *dial,
     const cnet_managed_dial_config *config, cnet_dial_admit_fn admit, void *user);
 
@@ -78,6 +82,7 @@ int cnet_managed_dial_init_admitted(cnet_managed_dial *dial,
  * before the admission hook or attempt accounting. Retired records still count
  * until context holds end and manager_advance recycles them.
  * EBUSY out_wait_ms describes remaining backoff only, never sleeps. */
+SALTS_CNET_EXPORT
 int cnet_managed_dial_advance(cnet_managed_dial *dial, uint64_t now_ms,
                               uint64_t *out_wait_ms);
 
@@ -90,9 +95,11 @@ int cnet_managed_dial_advance(cnet_managed_dial *dial, uint64_t now_ms,
  * EBUSY; admitted close, FINAL send, directional shutdown, stopped client or
  * Manager request_close returns ESHUTDOWN before changing recovery accounting.
  * A rejected READY does not replace transport terminal or Manager recycle. */
+SALTS_CNET_EXPORT
 int cnet_managed_dial_protocol_ready(cnet_managed_dial *dial,
                                      cnet_reconnect_ticket ticket,
                                      uint64_t now_ms);
+SALTS_CNET_EXPORT
 int cnet_managed_dial_get_snapshot(cnet_managed_dial *dial,
                                    cnet_managed_dial_snapshot *out);
 
@@ -102,7 +109,9 @@ int cnet_managed_dial_get_snapshot(cnet_managed_dial *dial,
  * reports the pending admission error until close is accepted. After success,
  * repeated seal is idempotent. Existing CNet terminal/Manager recycle must still
  * complete before destroy. advance remains ESHUTDOWN after recovery is sealed. */
+SALTS_CNET_EXPORT
 int cnet_managed_dial_seal(cnet_managed_dial *dial);
+SALTS_CNET_EXPORT
 int cnet_managed_dial_destroy(cnet_managed_dial *dial); /* EBUSY until recycle. */
 
 #ifdef __cplusplus

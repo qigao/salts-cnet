@@ -85,6 +85,8 @@ static int run_signature_policy_cases(void) {
       }
     }
   }
+  uint64_t tls_features = 0;
+  REQUIRE(crypto_tls_get_features_v1_1(&tls_features) == CRYPTO_TLS_OK);
   for (unsigned bad = 0; bad < 9; ++bad) {
     cnet_tls_signature_scheme certs[2] = {CRYPTO_TLS_SIGNATURE_RSA_PKCS1_SHA256, CRYPTO_TLS_SIGNATURE_ECDSA_SECP256R1_SHA256};
     cnet_tls_client_config cc = {.size = sizeof(cc), .ca_file = "missing.pem", .minimum_version = 13,
@@ -100,14 +102,27 @@ static int run_signature_policy_cases(void) {
       case 7: cc.security_profile = CNET_TLS_SECURITY_PROFILE_SHANGMI_TLS13; break;
       case 8: certs[1] = (cnet_tls_signature_scheme)0xffff; break;
     }
-    REQUIRE(cnet_tls_client_init(&client, &cc) == (bad < 4 ? SALTS_EINVAL : SALTS_ENOTSUP));
-    REQUIRE(client.impl == NULL);
+    int expected = bad < 4 ? SALTS_EINVAL : SALTS_ENOTSUP;
+    if (bad == 4 && (tls_features & CRYPTO_TLS_FEATURE_X509_RSA_PSS_SHA256)) {
+      certs[0] = CRYPTO_TLS_SIGNATURE_ECDSA_SECP384R1_SHA384;
+      cc.ca_file = CORE_TLS_TEST_P384_CA;
+      expected = SALTS_OK;
+    }
     cnet_tls_server_config sc = {.size = sizeof(sc), .cert_file = "missing-cert.pem", .key_file = "missing-key.pem",
         .security_profile = cc.security_profile, .minimum_version = cc.minimum_version, .maximum_version = cc.maximum_version,
         .certificate_signature_algorithms = cc.certificate_signature_algorithms,
         .certificate_signature_algorithm_count = cc.certificate_signature_algorithm_count};
-    REQUIRE(cnet_tls_server_init(&server, &sc) == (bad < 4 ? SALTS_EINVAL : SALTS_ENOTSUP));
-    REQUIRE(server.impl == NULL);
+    if (expected == SALTS_OK) {
+      sc.cert_file = CORE_TLS_TEST_P384_LEAF;
+      sc.key_file = CORE_TLS_TEST_P384_KEY;
+    }
+    REQUIRE(cnet_tls_client_init(&client, &cc) == expected);
+    REQUIRE(cnet_tls_server_init(&server, &sc) == expected);
+    if (expected == SALTS_OK) {
+      REQUIRE(cnet_tls_client_destroy(&client) == SALTS_OK);
+      REQUIRE(cnet_tls_server_destroy(&server) == SALTS_OK);
+    }
+    REQUIRE(client.impl == NULL && server.impl == NULL);
   }
 cleanup:
   (void)cnet_tls_client_destroy(&client);

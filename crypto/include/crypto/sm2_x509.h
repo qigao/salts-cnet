@@ -1,5 +1,7 @@
 #ifndef SALTS_CRYPTO_SM2_X509_H
 #define SALTS_CRYPTO_SM2_X509_H
+
+#include <crypto/export.h>
 #include <crypto/status.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -26,6 +28,7 @@ extern "C" {
  * overlap certificate bytes. After admission, failure clears exactly 65 bytes;
  * admission errors preserve output. Extracting a key does NOT verify a signature.
  */
+SALTS_CRYPTO_EXPORT
 int salts_crypto_sm2_x509_public_key(const void *certificate, size_t size,
     uint8_t public_key[65]);
 
@@ -34,6 +37,7 @@ int salts_crypto_sm2_x509_public_key(const void *certificate, size_t size,
  * checked. The private scalar [1,N-1] is borrowed and never retained; signing
  * still cannot use N-1. Temporary private material is cleared by its owner.
  */
+SALTS_CRYPTO_EXPORT
 int salts_crypto_sm2_x509_matches_private_key(const void *certificate, size_t size,
     const uint8_t private_key[32]);
 
@@ -48,6 +52,7 @@ int salts_crypto_sm2_x509_matches_private_key(const void *certificate, size_t si
  * only; it does not turn the certificate into a trust anchor. Caller must
  * authenticate the issuer key and apply all enclosing certificate policies.
  */
+SALTS_CRYPTO_EXPORT
 int salts_crypto_sm2_x509_verify_signature(const void *certificate, size_t size,
     const uint8_t issuer_public_key[65], const void *issuer_identity,
     size_t issuer_identity_size);

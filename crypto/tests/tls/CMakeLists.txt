@@ -24,6 +24,10 @@ target_compile_definitions(
     "CRYPTO_CLOSE_TEST_CA=\"${_salts_crypto_source_dir}/tests/fixtures/external-io-ca-cert.pem\""
     "CRYPTO_CLOSE_TEST_SERVER_CERT=\"${_salts_crypto_source_dir}/tests/fixtures/external-io-server-cert.pem\""
     "CRYPTO_CLOSE_TEST_SERVER_KEY=\"${_salts_crypto_source_dir}/tests/fixtures/external-io-server-key.pem\""
+    "CRYPTO_TLS_ADMISSION_P256_CA=\"${_salts_crypto_source_dir}/tests/fixtures/p256-ca-sha384.pem\""
+    "CRYPTO_TLS_ADMISSION_SM2_CA=\"${_salts_crypto_source_dir}/tests/fixtures/sm2-tls-test-root-cert.pem\""
+    "CRYPTO_TLS_ADMISSION_RSA1024_CA=\"${_salts_crypto_source_dir}/tests/fixtures/unsupported-rsa1024-root-cert.pem\""
+    "CRYPTO_TLS_ADMISSION_MIXED_SYSTEM_CA=\"${_salts_crypto_source_dir}/tests/fixtures/mixed-provider-system-roots.pem\""
 )
 add_test(NAME saltscore.gmssl_tls_io_abi
          COMMAND saltscore_gmssl_tls_io_abi_test)

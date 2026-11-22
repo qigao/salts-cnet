@@ -1,5 +1,7 @@
 #ifndef CRYPTO_TLS_SM2_OCSP_POLICY_H
 #define CRYPTO_TLS_SM2_OCSP_POLICY_H
+
+#include <crypto/export.h>
 #include <crypto/tls_peer_policy.h>
 #ifdef __cplusplus
 extern "C" {
@@ -52,6 +54,7 @@ typedef struct crypto_tls_sm2_ocsp_config {
  * to select a new response/floor. Caller authenticates issuer configuration and
  * maintains fresh responses and a nondecreasing rollback floor.
  */
+SALTS_CRYPTO_EXPORT
 int crypto_tls_sm2_ocsp_peer_policy_create(const crypto_tls_sm2_ocsp_config *config,
     crypto_tls_stream_peer_policy *out_policy);
 
@@ -61,6 +64,7 @@ int crypto_tls_sm2_ocsp_peer_policy_create(const crypto_tls_sm2_ocsp_config *con
  * Declares only TLCP11/SERVER applicability; the TLS constructor rejects other
  * profiles/roles before trust I/O/retain. Does not add TLCP client authentication,
  * separate issuers/IDs or migration of established connections. */
+SALTS_CRYPTO_EXPORT
 int crypto_tlcp_sm2_ocsp_peer_policy_create(const crypto_tls_sm2_ocsp_config *config,
     crypto_tls_stream_peer_policy *out_policy);
 #ifdef __cplusplus

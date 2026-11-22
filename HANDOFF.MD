@@ -202,3 +202,45 @@
   Existing policy cases cover real UDP tagged/untagged timeout and slot reuse.
 - The full native-release-user build, all 102 CTests (263.62 seconds) and install
   passed. Logs: build/fill-kcp-{configure,build,full-ctest,install}.log.
+
+# Crypto PEM scratch on bounded stacks (2026-11-21)
+
+- File-based trust and TLCP role validation previously placed a 64 KiB
+  certificate scratch array on the caller stack. The Windows LLVM-MinGW debug
+  frame for the trust loader was 65,656 bytes, so a 64 KiB coroutine stack
+  could fail during stack probing before a small certificate was decoded.
+- Both paths now own a bounded 64 KiB heap scratch allocation for the duration
+  of PEM decoding, clear and release it on every exit, and return `ENOMEM` on
+  allocation failure. The 64 KiB certificate limit and successful behavior are
+  unchanged. Resulting debug frames are 120 bytes for trust loading and 168
+  bytes for TLCP role validation.
+- The private formal test loads the real PEM fixture and verifies the scratch
+  allocation is recorded and fully released. The complete
+  `native-release-user` build and focused `saltscore.gmssl_tls_io_abi` CTest
+  pass; the corresponding debug CTest also passes. LLDB observes `pem_read`
+  receiving output in a heap memory region distinct from the stack.
+
+# TLS system-root provider admission (2026-11-21)
+
+- GmSSL aborted an entire concatenated system-root bundle when an early root
+  used a provider-unsupported public key (the Windows store included RSA-1024
+  roots), so a later matching RSA-2048 DigiCert anchor was never reached. This
+  presented as Flowie TLS/WSS verification failure even though the server chain
+  and hostname were valid.
+- The private policy in `crypto_x509_policy.h` now classifies one bounded DER
+  certificate as malformed, structurally valid but provider-unsupported, or
+  admitted. It covers the TLS certificate families actually supported here:
+  RSA 2048..4096, P-256, P-384 and SM2, with matching certificate-signature
+  admission. This is only parser/key admission; chain, hostname, validity,
+  usage and trust validation remain at their existing enforcement boundaries.
+- System-owned trust sources on Windows, macOS, Android and PEM-bundle systems
+  skip only provider-unsupported roots and still fail malformed input or an
+  empty admitted set. Explicit CA files, CA paths and in-memory roots fail fast
+  with `ENOTSUP` instead of silently weakening caller policy. A formal mixed
+  fixture places an unsupported RSA-1024 root before an admitted RSA-2048 root
+  and verifies that system loading retains the latter.
+- The final CMake `native-release-user` graph built successfully and all 102
+  CTests passed in 300.62 seconds. With the resulting DLL staged temporarily in
+  Flowie, EMQX TCP/TLS/WS/WSS and TLS request-response all passed. HiveMQ DNS
+  resolution failed before TCP/TLS on this machine. Flowie's original DLL and
+  all temporary runtime DLLs were restored or removed after validation.

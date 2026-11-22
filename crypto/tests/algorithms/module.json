@@ -1,0 +1,159 @@
+{
+  "targets": {
+    "crypto_algorithms_cpp_header": {
+      "kind": "executable",
+      "sources": {
+        "files": ["header_cpp.cpp"]
+      },
+      "private": {
+        "deps": ["salts_crypto", "saltsbase_tinytest"],
+        "includeDirs": ["../../include"]
+      },
+      "test": {
+        "name": "crypto.algorithms.cpp17_header",
+        "labels": ["crypto", "algorithms"]
+      }
+    },
+    "salts_crypto_sha_ed448_vectors": {
+      "kind": "executable",
+      "sources": {
+        "files": ["sha_ed448_vectors.c"]
+      },
+      "private": {
+        "deps": ["salts_crypto", "saltsbase_tinytest", "gmssl"]
+      },
+      "test": {
+        "name": "crypto.algorithms.sha256_sm3_ed448_rfc8032",
+        "labels": ["crypto", "algorithms"],
+        "timeout": 120
+      }
+    },
+    "crypto_primitives_test": {
+      "kind": "executable",
+      "sources": {
+        "files": ["primitives.c", "primitives_extended.c"]
+      },
+      "private": {
+        "deps": ["salts_crypto", "saltsbase_tinytest"],
+        "defines": {
+          "CRYPTO_JOSE_RSA_FIXTURE": "\"$root/crypto/tests/fixtures/jose-rsa-private.pem\"",
+          "CRYPTO_RSA_ENCRYPTED_FIXTURE": "\"$root/crypto/tests/fixtures/jose-rsa-encrypted-private.pem\""
+        }
+      },
+      "test": {
+        "name": "crypto_primitives_test",
+        "labels": ["crypto", "algorithms"],
+        "timeout": 60
+      }
+    },
+    "crypto_tls_session_cache_test": {
+      "kind": "executable",
+      "sources": {
+        "files": ["tls_session_cache.c"]
+      },
+      "private": {
+        "deps": ["salts_crypto", "saltsbase_tinytest"]
+      },
+      "test": {
+        "name": "crypto.algorithms.tls_session_cache",
+        "labels": ["crypto", "algorithms"],
+        "timeout": 30
+      },
+      "variants": [
+        {
+          "when": {
+            "driver": "msvc"
+          },
+          "private": {
+            "flags": ["/experimental:c11atomics"]
+          }
+        }
+      ]
+    },
+    "salts_crypto_shangmi_vectors": {
+      "kind": "executable",
+      "sources": {
+        "files": ["shangmi_vectors.c"]
+      },
+      "private": {
+        "deps": ["salts_crypto", "saltsbase_tinytest"]
+      },
+      "test": {
+        "name": "crypto.algorithms.shangmi_public",
+        "labels": ["crypto", "algorithms"],
+        "timeout": 120
+      }
+    },
+    "salts_crypto_sm9_vectors": {
+      "kind": "executable",
+      "sources": {
+        "files": ["sm9_vectors.c"]
+      },
+      "private": {
+        "deps": ["salts_crypto", "saltsbase_tinytest"]
+      },
+      "test": {
+        "name": "crypto.algorithms.sm9_public",
+        "labels": ["crypto", "algorithms"],
+        "timeout": 120
+      }
+    },
+    "salts_crypto_sm9_provider_failure": {
+      "kind": "executable",
+      "sources": {
+        "files": ["sm9_provider_failure.c", "../../src/crypto_sm9.c"]
+      },
+      "private": {
+        "deps": ["salts_crypto", "saltsbase_tinytest", "gmssl", "saltsbase_asn1"]
+      },
+      "test": {
+        "name": "crypto.algorithms.sm9_provider_failure",
+        "labels": ["crypto", "algorithms"],
+        "timeout": 120
+      }
+    },
+    "salts_crypto_sm9_exchange_test": {
+      "kind": "executable",
+      "sources": {
+        "files": ["sm9_exchange_test.c"]
+      },
+      "private": {
+        "deps": ["salts_crypto", "saltsbase_tinytest"]
+      },
+      "test": {
+        "name": "crypto.algorithms.sm9_exchange",
+        "labels": ["crypto", "algorithms"],
+        "timeout": 120
+      }
+    },
+    "salts_crypto_sm2_exchange_test": {
+      "kind": "executable",
+      "sources": {
+        "files": ["sm2_exchange_test.c"]
+      },
+      "private": {
+        "deps": ["salts_crypto", "saltsbase_tinytest"]
+      },
+      "test": {
+        "name": "crypto.algorithms.sm2_exchange",
+        "labels": ["crypto", "algorithms"],
+        "timeout": 120
+      }
+    },
+    "salts_crypto_sm2_exchange_vectors": {
+      "kind": "executable",
+      "sources": {
+        "files": ["sm2_exchange_vectors.c", "../../src/crypto_sm2_exchange.c"]
+      },
+      "private": {
+        "deps": ["salts_crypto", "saltsbase_tinytest", "gmssl"]
+      },
+      "test": {
+        "name": "crypto.algorithms.sm2_exchange_vectors",
+        "labels": ["crypto", "algorithms"],
+        "timeout": 120
+      }
+    }
+  },
+  "include": ["interop.json"]
+}

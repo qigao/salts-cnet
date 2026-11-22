@@ -1,6 +1,8 @@
 /* Provider-neutral configuration for an owned SM2 CRL admission snapshot. */
 #ifndef CRYPTO_TLS_SM2_CRL_POLICY_H
 #define CRYPTO_TLS_SM2_CRL_POLICY_H
+
+#include <crypto/export.h>
 #include <crypto/tls_peer_policy.h>
 #ifdef __cplusplus
 extern "C" {
@@ -46,6 +48,7 @@ typedef struct crypto_tls_sm2_crl_config {
  * Established connections are not revalidated. No OCSP or CRL distribution.
  * Returns crypto_tls_stream_result (EINVAL, ENOMEM, EIO, ECONNABORTED or OK).
  */
+SALTS_CRYPTO_EXPORT
 int crypto_tls_sm2_crl_peer_policy_create(const crypto_tls_sm2_crl_config *config,
     crypto_tls_stream_peer_policy *out_policy);
 
@@ -60,6 +63,7 @@ int crypto_tls_sm2_crl_peer_policy_create(const crypto_tls_sm2_crl_config *confi
  * authentication/role/identity checks still precede this additional policy.
  * Does not add TLCP client authentication or silently select another profile.
  */
+SALTS_CRYPTO_EXPORT
 int crypto_tlcp_sm2_crl_peer_policy_create(const crypto_tls_sm2_crl_config *config,
     crypto_tls_stream_peer_policy *out_policy);
 

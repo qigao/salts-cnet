@@ -1,6 +1,8 @@
 #ifndef CNET_WEBSOCKET_TRANSPORT_H
 #define CNET_WEBSOCKET_TRANSPORT_H
 
+#include <cnet/export.h>
+
 #include <cnet/cnet.h>
 #include <cnet/websocket.h>
 
@@ -35,6 +37,7 @@ typedef struct cnet_websocket_transport {
  * client must remain alive until its terminal callback; all operations are
  * single-Owner, and the bridge/engine must outlive their callbacks.
  */
+SALTS_CNET_EXPORT
 int cnet_websocket_transport_init(cnet_websocket_transport *transport, cnet_client *client,
                                   cnet_connection connection,
                                   const cnet_websocket_config *configuration,
@@ -44,16 +47,19 @@ int cnet_websocket_transport_init(cnet_websocket_transport *transport, cnet_clie
  * reinitialize or destroy it separately. Borrow ends at transport destroy.
  * Example: get_session(&link, &ws); cnet_websocket_send_tagged(ws, ..., tag);
  * then alternate host CNet progress and transport_advance(&link, budget, &n). */
+SALTS_CNET_EXPORT
 int cnet_websocket_transport_session(cnet_websocket_transport *transport,
                                      cnet_websocket **out_session);
 /* Bounded engine progress, including logical terminals after native failure.
  * Returns the first bridge/engine error but still performs drain work. A
  * nonzero result never permits early destruction. out_events is always set. */
+SALTS_CNET_EXPORT
 int cnet_websocket_transport_advance(cnet_websocket_transport *transport, size_t max_frames,
                                      size_t *out_events);
 /* EBUSY until real transport terminal AND all engine callbacks/tags/output
  * settle. Does not close or poll. NULL/uninitialized input: EINVAL; foreign
  * Owner: EPERM. Success invalidates the borrowed session. */
+SALTS_CNET_EXPORT
 int cnet_websocket_transport_destroy(cnet_websocket_transport *transport);
 
 #ifdef __cplusplus

@@ -1,5 +1,7 @@
 #ifndef CRYPTO_DTLS_RECORD_INTERNAL_H
 #define CRYPTO_DTLS_RECORD_INTERNAL_H
+
+#include <crypto/export.h>
 #include <crypto/status.h>
 #include <gmssl/aes.h>
 #include <stdbool.h>
@@ -31,11 +33,14 @@ typedef struct crypto_dtls_record_view {
 
 /* Init requires zero/cleared state and nonzero epoch. Inputs never alias state.
  * Reinit a live key is ESTATE. Clear requires no outstanding native use. */
+SALTS_CRYPTO_EXPORT
 int crypto_dtls_record_init(crypto_dtls_record_epoch *state, uint16_t epoch,
     const uint8_t key[16], const uint8_t salt[4]);
+SALTS_CRYPTO_EXPORT
 void crypto_dtls_record_clear(crypto_dtls_record_epoch *state);
 /* Peek one complete record in a datagram. View is callback-scoped borrowing;
  * record_size permits walking coalesced records without flattening messages. */
+SALTS_CRYPTO_EXPORT
 int crypto_dtls_record_parse(const void *wire, size_t size, crypto_dtls_record_view *view);
 /* Output, size/type storage and state must be disjoint from inputs/each other.
  * Invalid alias leaves everything unchanged. Other admitted errors set size=0.
@@ -43,8 +48,10 @@ int crypto_dtls_record_parse(const void *wire, size_t size, crypto_dtls_record_v
  * Open requires exactly one complete record and commits replay state only on
  * authentication. DROP means replay/wrong epoch; EVERIFY means malformed/tag
  * rejection. Neither may be used as authenticated application input. */
+SALTS_CRYPTO_EXPORT
 int crypto_dtls_record_seal(crypto_dtls_record_epoch *state, uint8_t type,
     const void *plain, size_t size, void *wire, size_t capacity, size_t *wire_size);
+SALTS_CRYPTO_EXPORT
 int crypto_dtls_record_open(crypto_dtls_record_epoch *state, const void *wire, size_t size,
     void *plain, size_t capacity, size_t *plain_size, uint8_t *type);
 #endif

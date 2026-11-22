@@ -1,0 +1,420 @@
+{
+  "targets": {
+    "saltsbase_tinytest": {
+      "kind": "prebuilt",
+      "testOnly": true,
+      "public": {
+        "requiredIncludeDirs": [
+          "${envPath:SALTS_BASE_ROOT}/include"
+        ]
+      },
+      "variants": [
+        {
+          "when": {
+            "driver": "msvc"
+          },
+          "public": {
+            "libs": [
+              "${envPath:SALTS_BASE_ROOT}/lib/saltscore_tinytest.lib"
+            ]
+          }
+        },
+        {
+          "when": {
+            "driver": [
+              "llvm-mingw",
+              "clang",
+              "gcc"
+            ]
+          },
+          "public": {
+            "libs": [
+              "${envPath:SALTS_BASE_ROOT}/lib/libsaltscore_tinytest.a"
+            ]
+          }
+        }
+      ]
+    },
+    "simde": {
+      "kind": "external",
+      "package": {
+        "provider": "vcpkg",
+        "name": "simde"
+      }
+    },
+    "saltsbase_core": {
+      "kind": "prebuilt",
+      "public": {
+        "requiredIncludeDirs": [
+          "${envPath:SALTS_BASE_ROOT}/include"
+        ],
+        "defines": {
+          "HAS_ZSTD": "1"
+        }
+      },
+      "variants": [
+        {
+          "when": {
+            "os": "windows",
+            "driver": "llvm-mingw"
+          },
+          "public": {
+            "libs": [
+              "${envPath:SALTS_BASE_ROOT}/lib/libsalts.dll.a"
+            ]
+          },
+          "runtimeBins": [
+            "${envPath:SALTS_BASE_ROOT}/bin/libsalts.dll"
+          ]
+        },
+        {
+          "when": {
+            "driver": "msvc"
+          },
+          "public": {
+            "libs": [
+              "${envPath:SALTS_BASE_ROOT}/lib/salts.lib"
+            ]
+          },
+          "runtimeBins": [
+            "${envPath:SALTS_BASE_ROOT}/bin/salts.dll"
+          ]
+        },
+        {
+          "when": {
+            "os": [
+              "linux",
+              "android"
+            ]
+          },
+          "public": {
+            "libs": [
+              "${envPath:SALTS_BASE_ROOT}/lib/libsalts.so"
+            ]
+          },
+          "runtimeBins": [
+            "${envPath:SALTS_BASE_ROOT}/lib/libsalts.so"
+          ]
+        },
+        {
+          "when": {
+            "os": "macos"
+          },
+          "public": {
+            "libs": [
+              "${envPath:SALTS_BASE_ROOT}/lib/libsalts.dylib"
+            ]
+          },
+          "runtimeBins": [
+            "${envPath:SALTS_BASE_ROOT}/lib/libsalts.dylib"
+          ]
+        }
+      ]
+    },
+    "saltsbase_coroutine": {
+      "kind": "prebuilt",
+      "public": {
+        "requiredIncludeDirs": [
+          "${envPath:SALTS_BASE_ROOT}/include"
+        ],
+        "deps": [
+          "saltsbase_core"
+        ]
+      },
+      "variants": [
+        {
+          "when": {
+            "driver": [
+              "clang",
+              "gcc",
+              "llvm-mingw"
+            ]
+          },
+          "public": {
+            "libs": [
+              "${envPath:SALTS_BASE_ROOT}/lib/libcoroutine.a"
+            ]
+          }
+        },
+        {
+          "when": {
+            "driver": "msvc"
+          },
+          "public": {
+            "libs": [
+              "${envPath:SALTS_BASE_ROOT}/lib/coroutine.lib"
+            ]
+          }
+        }
+      ]
+    },
+    "saltsbase_native_io": {
+      "kind": "prebuilt",
+      "public": {
+        "requiredIncludeDirs": [
+          "${envPath:SALTS_BASE_ROOT}/include"
+        ],
+        "deps": [
+          "saltsbase_coroutine",
+          "saltsbase_core"
+        ]
+      },
+      "variants": [
+        {
+          "when": {
+            "driver": [
+              "clang",
+              "gcc",
+              "llvm-mingw"
+            ]
+          },
+          "public": {
+            "libs": [
+              "${envPath:SALTS_BASE_ROOT}/lib/libnative_io.a"
+            ]
+          }
+        },
+        {
+          "when": {
+            "driver": "msvc"
+          },
+          "public": {
+            "libs": [
+              "${envPath:SALTS_BASE_ROOT}/lib/native_io.lib"
+            ]
+          }
+        },
+        {
+          "when": {
+            "os": "windows"
+          },
+          "public": {
+            "libs": [
+              "ws2_32"
+            ]
+          }
+        }
+      ]
+    },
+    "saltsbase_uri": {
+      "kind": "prebuilt",
+      "public": {
+        "requiredIncludeDirs": [
+          "${envPath:SALTS_BASE_ROOT}/include"
+        ]
+      },
+      "variants": [
+        {
+          "when": {
+            "driver": [
+              "clang",
+              "gcc",
+              "llvm-mingw"
+            ]
+          },
+          "public": {
+            "libs": [
+              "${envPath:SALTS_BASE_ROOT}/lib/liburi_parser.a"
+            ]
+          }
+        },
+        {
+          "when": {
+            "driver": "msvc"
+          },
+          "public": {
+            "libs": [
+              "${envPath:SALTS_BASE_ROOT}/lib/uri_parser.lib"
+            ]
+          }
+        }
+      ]
+    },
+    "saltsbase_simd": {
+      "kind": "prebuilt",
+      "public": {
+        "requiredIncludeDirs": [
+          "${envPath:SALTS_BASE_ROOT}/include"
+        ]
+      },
+      "variants": [
+        {
+          "when": {
+            "driver": [
+              "clang",
+              "gcc",
+              "llvm-mingw"
+            ]
+          },
+          "public": {
+            "libs": [
+              "${envPath:SALTS_BASE_ROOT}/lib/libsimd.a"
+            ]
+          }
+        },
+        {
+          "when": {
+            "driver": "msvc"
+          },
+          "public": {
+            "libs": [
+              "${envPath:SALTS_BASE_ROOT}/lib/simd.lib"
+            ]
+          }
+        }
+      ]
+    },
+    "saltsbase_asn1": {
+      "kind": "prebuilt",
+      "public": {
+        "requiredIncludeDirs": [
+          "${envPath:SALTS_BASE_ROOT}/include"
+        ],
+        "deps": [
+          "saltsbase_simd",
+          "saltsbase_core"
+        ]
+      },
+      "variants": [
+        {
+          "when": {
+            "driver": [
+              "clang",
+              "gcc",
+              "llvm-mingw"
+            ]
+          },
+          "public": {
+            "libs": [
+              "${envPath:SALTS_BASE_ROOT}/lib/libasn1.a"
+            ]
+          }
+        },
+        {
+          "when": {
+            "driver": "msvc"
+          },
+          "public": {
+            "libs": [
+              "${envPath:SALTS_BASE_ROOT}/lib/asn1.lib"
+            ]
+          }
+        }
+      ]
+    },
+    "c-ares": {
+      "kind": "external",
+      "package": {
+        "provider": "vcpkg",
+        "name": "c-ares",
+        "pc": "libcares"
+      }
+    },
+    "gmssl": {
+      "kind": "prebuilt",
+      "public": {
+        "requiredIncludeDirs": [
+          "$vcpkg/include"
+        ],
+        "defines": {
+          "ENABLE_TLS": null,
+          "ENABLE_SECP256R1": null,
+          "ENABLE_SECP384R1": null,
+          "ENABLE_SHA1": null,
+          "ENABLE_SHA2": null,
+          "ENABLE_AES": null,
+          "ENABLE_SM9": null,
+          "ENABLE_ZUC": null,
+          "ENABLE_CMS": null,
+          "ENABLE_SM4_ECB": null,
+          "ENABLE_SM4_OFB": null,
+          "ENABLE_SM4_CFB": null,
+          "ENABLE_SM4_CCM": null,
+          "ENABLE_SM4_XTS": null,
+          "ENABLE_SM4_CBC_MAC": null
+        }
+      },
+      "variants": [
+        {
+          "when": {
+            "driver": [
+              "clang",
+              "gcc",
+              "llvm-mingw"
+            ]
+          },
+          "public": {
+            "libs": [
+              "$vcpkgConfig/lib/libgmssl.a"
+            ]
+          }
+        },
+        {
+          "when": {
+            "driver": "msvc"
+          },
+          "public": {
+            "libs": [
+              "$vcpkgConfig/lib/gmssl.lib"
+            ]
+          }
+        },
+        {
+          "when": {
+            "os": "windows"
+          },
+          "public": {
+            "libs": [
+              "ws2_32"
+            ]
+          }
+        },
+        {
+          "when": {
+            "os": "macos"
+          },
+          "public": {
+            "linkFlags": [
+              "-framework",
+              "Security"
+            ]
+          }
+        }
+      ]
+    },
+    "kcp": {
+      "kind": "prebuilt",
+      "public": {
+        "requiredIncludeDirs": [
+          "$vcpkg/include"
+        ]
+      },
+      "variants": [
+        {
+          "when": {
+            "driver": [
+              "clang",
+              "gcc",
+              "llvm-mingw"
+            ]
+          },
+          "public": {
+            "libs": [
+              "$vcpkgConfig/lib/libkcp.a"
+            ]
+          }
+        },
+        {
+          "when": {
+            "driver": "msvc"
+          },
+          "public": {
+            "libs": [
+              "$vcpkgConfig/lib/kcp.lib"
+            ]
+          }
+        }
+      ]
+    }
+  }
+}

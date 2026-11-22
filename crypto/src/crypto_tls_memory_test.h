@@ -4,6 +4,8 @@
  * process heap/RSS, NativeIO or memory-bus traffic or replaces an allocator. */
 #ifndef CRYPTO_TLS_MEMORY_TEST_H
 #define CRYPTO_TLS_MEMORY_TEST_H
+
+#include <crypto/export.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include "crypto_gmssl_copy_test.h"
@@ -37,5 +39,6 @@ typedef struct crypto_tls_test_memory_stats {
  * compiler inlining/vectorization is not machine traffic. The separate
  * provider fields are populated only in the explicit diagnostic graph.
  * Compiler-managed thread-local storage is also outside these counters. */
+SALTS_CRYPTO_EXPORT
 bool crypto_tls_stream_test_memory_snapshot(crypto_tls_test_memory_stats *out);
 #endif

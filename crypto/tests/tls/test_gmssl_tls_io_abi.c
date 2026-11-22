@@ -21,6 +21,9 @@
 #include <memory/buffer.h>
 #include <core/error_codes.h>
 #include <threads/threads.h>
+#include "crypto_tls_stream_test.h"
+#include "crypto_tls_credentials.h"
+#include "crypto_x509_policy.h"
 #if defined(_WIN32)
 #include <winsock2.h>
 #include <ws2tcpip.h>
@@ -56,6 +59,107 @@ static crypto_tls_stream *stream_pair[2];
 #include "tls_memory_credentials_cases.h"
 #include "tls_hrr_padding_cases.h"
 #include "x509_validity_print_cases.h"
+
+static int tls_admission_read_certificate(const char *path,
+    unsigned char **out, size_t *out_size) {
+  enum { CERTIFICATE_CAPACITY = 64 * 1024 };
+  unsigned char *certificate;
+  FILE *file;
+  int result;
+  if (!path || !out || !out_size) return CRYPTO_TLS_STREAM_EINVAL;
+  *out = NULL;
+  *out_size = 0u;
+  certificate = malloc(CERTIFICATE_CAPACITY);
+  if (!certificate) return CRYPTO_TLS_STREAM_ENOMEM;
+  file = fopen(path, "rb");
+  if (!file) { free(certificate); return CRYPTO_TLS_STREAM_EIO; }
+  result = pem_read(file, "CERTIFICATE", certificate, out_size, CERTIFICATE_CAPACITY);
+  (void)fclose(file);
+  if (result != 1 || *out_size == 0u) {
+    free(certificate);
+    *out_size = 0u;
+    return CRYPTO_TLS_STREAM_EIO;
+  }
+  *out = certificate;
+  return CRYPTO_TLS_STREAM_OK;
+}
+
+spec("TLS X.509 provider admission") {
+  it("admits every certificate key family used by supported TLS profiles") {
+    static const char *const paths[] = {
+      CRYPTO_CLOSE_TEST_CA,
+      CRYPTO_TLS_ADMISSION_P256_CA,
+      CRYPTO_NATIVE_BENCH_CA,
+      CRYPTO_TLS_ADMISSION_SM2_CA
+    };
+    for (size_t index = 0u; index < sizeof(paths) / sizeof(paths[0]); ++index) {
+      unsigned char *certificate = NULL;
+      size_t size = 0u, consumed = 0u;
+      check_equal(tls_admission_read_certificate(paths[index], &certificate, &size),
+                  CRYPTO_TLS_STREAM_OK);
+      if (certificate != NULL) {
+        check_equal(salts_crypto_x509_tls_certificate_admission(
+                        certificate, size, &consumed),
+                    SALTS_CRYPTO_X509_TLS_ADMITTED);
+        check_equal(consumed, size);
+        free(certificate);
+      }
+    }
+  }
+
+  it("distinguishes unsupported provider profiles from malformed DER") {
+    unsigned char *certificate = NULL;
+    size_t size = 0u, consumed = 0u;
+    check_equal(tls_admission_read_certificate(
+                    CRYPTO_TLS_ADMISSION_RSA1024_CA, &certificate, &size),
+                CRYPTO_TLS_STREAM_OK);
+    if (certificate != NULL) {
+      check_equal(salts_crypto_x509_tls_certificate_admission(
+                      certificate, size, &consumed),
+                  SALTS_CRYPTO_X509_TLS_UNSUPPORTED);
+      check_equal(consumed, size);
+      consumed = size;
+      check_equal(salts_crypto_x509_tls_certificate_admission(
+                      certificate, size - 1u, &consumed),
+                  SALTS_CRYPTO_X509_TLS_MALFORMED);
+      check_equal(consumed, 0u);
+      free(certificate);
+    }
+  }
+
+  it("skips unsupported system roots but fails explicit file and memory roots") {
+    unsigned char *certificate = NULL;
+    size_t size = 0u, count = SIZE_MAX;
+    TLS_CTX context = {0};
+    check_equal(crypto_tls_stream_test_load_pem_cert_file(
+                    CRYPTO_TLS_ADMISSION_RSA1024_CA, &count),
+                CRYPTO_TLS_STREAM_ENOTSUP);
+    check_equal(count, 0u);
+    count = SIZE_MAX;
+    check_equal(crypto_tls_stream_test_load_system_pem_cert_file(
+                    CRYPTO_TLS_ADMISSION_RSA1024_CA, &count),
+                CRYPTO_TLS_STREAM_OK);
+    check_equal(count, 0u);
+    count = SIZE_MAX;
+    check_equal(crypto_tls_stream_test_load_system_pem_cert_file(
+                    CRYPTO_TLS_ADMISSION_MIXED_SYSTEM_CA, &count),
+                CRYPTO_TLS_STREAM_OK);
+    check_equal(count, 1u);
+    check_equal(tls_admission_read_certificate(
+                    CRYPTO_TLS_ADMISSION_RSA1024_CA, &certificate, &size),
+                CRYPTO_TLS_STREAM_OK);
+    check_equal(tls_ctx_init(&context, TLS_protocol_tls13, TLS_client_mode), 1);
+    if (certificate != NULL) {
+      const crypto_tls_data root = {
+        certificate, size, CRYPTO_TLS_ENCODING_DER
+      };
+      check_equal(crypto_tls_memory_trust(&context, &root),
+                  CRYPTO_TLS_STREAM_ENOTSUP);
+      free(certificate);
+    }
+    tls_ctx_cleanup(&context);
+  }
+}
 
 spec("GmSSL certificate validity diagnostics") {
   it("preserves libc local dates, labels, indentation and trailing newlines") {
@@ -815,6 +919,20 @@ static void tls_memory_on_worker(void *user) {
   if (!crypto_tls_stream_test_memory_snapshot(&state->after)) state->status = SALTS_EIO;
 }
 spec("TLS adapter memory diagnostics") {
+  it("owns the bounded PEM certificate scratch outside the caller stack") {
+    crypto_tls_test_memory_stats before, after, delta;
+    size_t certificate_count = 0u;
+    check_true(crypto_tls_stream_test_memory_snapshot(&before));
+    check_equal(crypto_tls_stream_test_load_pem_cert_file(
+                    CRYPTO_NATIVE_BENCH_CA, &certificate_count),
+                CRYPTO_TLS_STREAM_OK);
+    check_equal(certificate_count, 1u);
+    check_true(crypto_tls_stream_test_memory_snapshot(&after));
+    check_equal(tls_mixed_memory_delta(&before, &after, &delta), SALTS_OK);
+    check_greater_equal(delta.successful_bytes, UINT64_C(64) * UINT64_C(1024));
+    check_equal(delta.failures, UINT64_C(0));
+    check_equal(delta.releases, delta.allocation_calls);
+  }
   it("isolates real TLS construction and destruction on another owner thread") {
     sync_thread_t thread;
     tls_memory_worker state = {0};
@@ -943,6 +1061,23 @@ static tls_ret_t key_update_fragmented_receive(void *user, void *data, size_t si
   wire->read_offset += size;
   wire->read_budget -= size;
   return (tls_ret_t)size;
+}
+
+spec("ECDSA SHA-512 certificate policy") {
+  static crypto_tls_stream_context *context;
+  after_each() { crypto_tls_stream_context_release(context); context = NULL; }
+  it("rejects the TLS 1.2 hash pair for a TLS 1.3 certificate policy") {
+    const crypto_tls_signature_scheme scheme = CRYPTO_TLS_SIGNATURE_ECDSA_SHA512_TLS12;
+    const crypto_tls_stream_client_config config = {
+        .size = sizeof(config),
+        .ca_file = "unused-sha512-policy-ca.pem",
+        .minimum_version = CRYPTO_TLS_STREAM_PROTOCOL_VERSION_1_3,
+        .maximum_version = CRYPTO_TLS_STREAM_PROTOCOL_VERSION_1_3,
+        .certificate_signature_algorithms = &scheme,
+        .certificate_signature_algorithm_count = 1u};
+    check_equal(crypto_tls_stream_client_context_create(&config, &context), CRYPTO_TLS_STREAM_ENOTSUP);
+    check_null(context);
+  }
 }
 
 spec("GmSSL TLS1.2 independent certificate signature offers") {

@@ -1,6 +1,8 @@
 #ifndef CNET_RECOVERY_POLICY_H
 #define CNET_RECOVERY_POLICY_H
 
+#include <cnet/export.h>
+
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -24,7 +26,9 @@ typedef struct cnet_backoff_input {
 } cnet_backoff_input;
 typedef int (*cnet_backoff_fn)(void *user, const cnet_backoff_input *input, uint64_t *delay_ms);
 typedef struct cnet_backoff_policy { cnet_backoff_fn delay; void *user; } cnet_backoff_policy;
+SALTS_CNET_EXPORT
 int cnet_backoff_fixed(void *user, const cnet_backoff_input *input, uint64_t *delay_ms);
+SALTS_CNET_EXPORT
 int cnet_backoff_exponential_jitter(void *user, const cnet_backoff_input *input, uint64_t *delay_ms);
 /* Copied per recovery episode. Pure bounded decision, no I/O/reentrant mutation.
  * Delay must be <= maximum_backoff_ms. Core still enforces attempts, deadlines,
@@ -81,28 +85,36 @@ typedef struct cnet_reconnect_snapshot {
   bool sealed;
 } cnet_reconnect_snapshot;
 
+SALTS_CNET_EXPORT
 int cnet_reconnect_init(cnet_reconnect_state *state, const cnet_reconnect_config *config);
 /* Returns EBUSY and the exact remaining delay if still waiting. No timer is
  * armed. One accepted attempt returns a unique generation token. */
+SALTS_CNET_EXPORT
 int cnet_reconnect_begin(cnet_reconnect_state *state, uint64_t now_ms,
                          cnet_reconnect_ticket *out_ticket, uint64_t *out_wait_ms);
 /* TRANSPORT_CONNECTED is not protocol READY; it does not reset backoff. */
+SALTS_CNET_EXPORT
 int cnet_reconnect_connected(cnet_reconnect_state *state,
                              cnet_reconnect_ticket ticket, uint64_t now_ms);
 /* Caller must verify full protocol handshake, authority and identity. */
+SALTS_CNET_EXPORT
 int cnet_reconnect_protocol_ready(cnet_reconnect_state *state,
                                   cnet_reconnect_ticket ticket, uint64_t now_ms);
 /* Failure of connect or protocol handshake schedules the configured bounded
  * delay (default: deterministic half-to-full jitter). Security/auth failures
  * seal instead of downgrading. */
+SALTS_CNET_EXPORT
 int cnet_reconnect_failed(cnet_reconnect_state *state, cnet_reconnect_ticket ticket,
                           cnet_reconnect_failure_kind kind, uint64_t now_ms);
 /* Only an already protocol-ready session may start a new recovery episode.
  * next_deadline_ms is its new absolute monotonic overall deadline. */
+SALTS_CNET_EXPORT
 int cnet_reconnect_lost(cnet_reconnect_state *state, cnet_reconnect_ticket ticket,
                         cnet_reconnect_failure_kind kind, uint64_t now_ms,
                         uint64_t next_deadline_ms);
+SALTS_CNET_EXPORT
 int cnet_reconnect_seal(cnet_reconnect_state *state);
+SALTS_CNET_EXPORT
 int cnet_reconnect_get_snapshot(const cnet_reconnect_state *state,
                                 cnet_reconnect_snapshot *out);
 
@@ -145,6 +157,7 @@ typedef struct cnet_retry_result {
   bool allowed;
   cnet_retry_reason reason;
 } cnet_retry_result;
+SALTS_CNET_EXPORT
 int cnet_retry_evaluate(const cnet_retry_input *input, cnet_retry_result *out);
 
 #ifdef __cplusplus

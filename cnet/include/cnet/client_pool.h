@@ -1,6 +1,8 @@
 #ifndef CNET_CLIENT_POOL_H
 #define CNET_CLIENT_POOL_H
 
+#include <cnet/export.h>
+
 #include <cnet/manager.h>
 
 #ifdef __cplusplus
@@ -51,10 +53,13 @@ typedef struct cnet_pool_selection_policy { cnet_pool_select_fn select; void *us
 /* Built-ins and custom callbacks share the same contract. Core filters exact
  * compatibility/READY first, then validates the returned eligible index and
  * reserves the real protocol token. Callbacks cannot mutate/reenter the pool. */
+SALTS_CNET_EXPORT
 int cnet_pool_select_first(void *user, const cnet_pool_candidate *candidates,
                             size_t count, uint64_t sequence, size_t *out_index);
+SALTS_CNET_EXPORT
 int cnet_pool_select_least_used(void *user, const cnet_pool_candidate *candidates,
                                  size_t count, uint64_t sequence, size_t *out_index);
+SALTS_CNET_EXPORT
 int cnet_pool_select_round_robin(void *user, const cnet_pool_candidate *candidates,
                                   size_t count, uint64_t sequence, size_t *out_index);
 
@@ -118,11 +123,13 @@ typedef struct cnet_pool_snapshot {
 /* Allocates all physical and lease records up front. All later calls are
  * owner-thread only, including callbacks; foreign owner returns EPERM.
  * Pool helper budgets are separate from authoritative Manager/CNet credits. */
+SALTS_CNET_EXPORT
 int cnet_pool_init(cnet_client_pool *pool, const cnet_pool_config *config);
 
 /* Reserves one connecting/physical budget token. Caller must subsequently
  * cnet_manager_reserve/connect on the same Owner, then bind_ready or terminal.
  * No socket is opened here. The key is copied and cannot change in place. */
+SALTS_CNET_EXPORT
 int cnet_pool_reserve_connecting(cnet_client_pool *pool, const cnet_pool_key *key,
                                  cnet_pool_connection *out_connection);
 
@@ -131,6 +138,7 @@ int cnet_pool_reserve_connecting(cnet_client_pool *pool, const cnet_pool_key *ke
  * while opening/handshaking, ESHUTDOWN after close/final-send/shutdown).
  * Validates Manager identity and refuses duplicate bindings. For multiplexed
  * capacity >1, every acquire must supply protocol reserve/release callbacks. */
+SALTS_CNET_EXPORT
 int cnet_pool_bind_ready(cnet_client_pool *pool, cnet_pool_connection connection,
                          cnet_managed_connection managed, size_t protocol_capacity);
 
@@ -142,6 +150,7 @@ int cnet_pool_bind_ready(cnet_client_pool *pool, cnet_pool_connection connection
  * draining, even before a transport terminal observer retires the Manager.
  * Opening/handshaking entries remain temporarily ineligible. Existing leases
  * and physical credits still require real terminal and explicit release. */
+SALTS_CNET_EXPORT
 int cnet_pool_try_acquire(cnet_client_pool *pool, const cnet_pool_key *key,
                           const cnet_pool_protocol_ops *protocol,
                           cnet_pool_lease *out_lease,
@@ -149,7 +158,9 @@ int cnet_pool_try_acquire(cnet_client_pool *pool, const cnet_pool_key *key,
 /* Copied on the owner outside callbacks; takes effect on the next acquire.
  * Existing leases keep their original protocol release authority. The old
  * selection user can be released after replacement returns. */
+SALTS_CNET_EXPORT
 int cnet_pool_set_selection(cnet_client_pool *pool, const cnet_pool_selection_policy *policy);
+SALTS_CNET_EXPORT
 int cnet_pool_release(cnet_client_pool *pool, cnet_pool_lease lease);
 
 /* Disable future acquisition (including when currently leased), but neither
@@ -159,13 +170,18 @@ int cnet_pool_release(cnet_client_pool *pool, cnet_pool_lease lease);
  * terminal returns EBUSY and leaves the physical record unchanged. A
  * CONNECTING entry with no binding can be aborted, but the caller must first
  * cancel any separately admitted Manager reservation. */
+SALTS_CNET_EXPORT
 int cnet_pool_begin_drain(cnet_client_pool *pool, cnet_pool_connection connection);
+SALTS_CNET_EXPORT
 int cnet_pool_terminal(cnet_client_pool *pool, cnet_pool_connection connection);
 
 /* Stops new reservations/acquisitions and marks all live entries draining.
  * Manager close/terminal and outstanding lease release remain caller duties. */
+SALTS_CNET_EXPORT
 int cnet_pool_seal(cnet_client_pool *pool);
+SALTS_CNET_EXPORT
 int cnet_pool_get_snapshot(cnet_client_pool *pool, cnet_pool_snapshot *out);
+SALTS_CNET_EXPORT
 int cnet_pool_destroy(cnet_client_pool *pool); /* EBUSY until fully drained. */
 
 #ifdef __cplusplus

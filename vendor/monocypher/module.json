@@ -1,0 +1,76 @@
+{
+  "name": "monocypher",
+  "kind": "static",
+  "visibility": [
+    "cnet",
+    "cnet_crypto_qualification"
+  ],
+  "sources": {
+    "files": [
+      "monocypher.c"
+    ]
+  },
+  "public": {
+    "includeDirs": [
+      "."
+    ],
+    "defines": {
+      "crypto_aead_ctx": "salts_cnet_private_crypto_aead_ctx",
+      "crypto_aead_init_djb": "salts_cnet_private_crypto_aead_init_djb",
+      "crypto_aead_init_ietf": "salts_cnet_private_crypto_aead_init_ietf",
+      "crypto_aead_init_x": "salts_cnet_private_crypto_aead_init_x",
+      "crypto_aead_lock": "salts_cnet_private_crypto_aead_lock",
+      "crypto_aead_read": "salts_cnet_private_crypto_aead_read",
+      "crypto_aead_unlock": "salts_cnet_private_crypto_aead_unlock",
+      "crypto_aead_write": "salts_cnet_private_crypto_aead_write",
+      "crypto_argon2": "salts_cnet_private_crypto_argon2",
+      "crypto_argon2_config": "salts_cnet_private_crypto_argon2_config",
+      "crypto_argon2_extras": "salts_cnet_private_crypto_argon2_extras",
+      "crypto_argon2_inputs": "salts_cnet_private_crypto_argon2_inputs",
+      "crypto_argon2_no_extras": "salts_cnet_private_crypto_argon2_no_extras",
+      "crypto_blake2b": "salts_cnet_private_crypto_blake2b",
+      "crypto_blake2b_ctx": "salts_cnet_private_crypto_blake2b_ctx",
+      "crypto_blake2b_final": "salts_cnet_private_crypto_blake2b_final",
+      "crypto_blake2b_init": "salts_cnet_private_crypto_blake2b_init",
+      "crypto_blake2b_keyed": "salts_cnet_private_crypto_blake2b_keyed",
+      "crypto_blake2b_keyed_init": "salts_cnet_private_crypto_blake2b_keyed_init",
+      "crypto_blake2b_update": "salts_cnet_private_crypto_blake2b_update",
+      "crypto_chacha20_djb": "salts_cnet_private_crypto_chacha20_djb",
+      "crypto_chacha20_h": "salts_cnet_private_crypto_chacha20_h",
+      "crypto_chacha20_ietf": "salts_cnet_private_crypto_chacha20_ietf",
+      "crypto_chacha20_x": "salts_cnet_private_crypto_chacha20_x",
+      "crypto_curve_to_hidden": "salts_cnet_private_crypto_curve_to_hidden",
+      "crypto_eddsa_check": "salts_cnet_private_crypto_eddsa_check",
+      "crypto_eddsa_check_equation": "salts_cnet_private_crypto_eddsa_check_equation",
+      "crypto_eddsa_key_pair": "salts_cnet_private_crypto_eddsa_key_pair",
+      "crypto_eddsa_mul_add": "salts_cnet_private_crypto_eddsa_mul_add",
+      "crypto_eddsa_reduce": "salts_cnet_private_crypto_eddsa_reduce",
+      "crypto_eddsa_scalarbase": "salts_cnet_private_crypto_eddsa_scalarbase",
+      "crypto_eddsa_sign": "salts_cnet_private_crypto_eddsa_sign",
+      "crypto_eddsa_to_x25519": "salts_cnet_private_crypto_eddsa_to_x25519",
+      "crypto_eddsa_trim_scalar": "salts_cnet_private_crypto_eddsa_trim_scalar",
+      "crypto_elligator_key_pair": "salts_cnet_private_crypto_elligator_key_pair",
+      "crypto_elligator_map": "salts_cnet_private_crypto_elligator_map",
+      "crypto_elligator_rev": "salts_cnet_private_crypto_elligator_rev",
+      "crypto_lock": "salts_cnet_private_crypto_lock",
+      "crypto_poly1305": "salts_cnet_private_crypto_poly1305",
+      "crypto_poly1305_ctx": "salts_cnet_private_crypto_poly1305_ctx",
+      "crypto_poly1305_final": "salts_cnet_private_crypto_poly1305_final",
+      "crypto_poly1305_init": "salts_cnet_private_crypto_poly1305_init",
+      "crypto_poly1305_update": "salts_cnet_private_crypto_poly1305_update",
+      "crypto_verify16": "salts_cnet_private_crypto_verify16",
+      "crypto_verify32": "salts_cnet_private_crypto_verify32",
+      "crypto_verify64": "salts_cnet_private_crypto_verify64",
+      "crypto_wipe": "salts_cnet_private_crypto_wipe",
+      "crypto_x25519": "salts_cnet_private_crypto_x25519",
+      "crypto_x25519_dirty_fast": "salts_cnet_private_crypto_x25519_dirty_fast",
+      "crypto_x25519_dirty_small": "salts_cnet_private_crypto_x25519_dirty_small",
+      "crypto_x25519_inverse": "salts_cnet_private_crypto_x25519_inverse",
+      "crypto_x25519_public_key": "salts_cnet_private_crypto_x25519_public_key",
+      "crypto_x25519_to_eddsa": "salts_cnet_private_crypto_x25519_to_eddsa"
+    }
+  },
+  "options": {
+    "symbolVisibility": "hidden"
+  }
+}

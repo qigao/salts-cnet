@@ -1,5 +1,7 @@
 #ifndef CNET_DTLS_H
 #define CNET_DTLS_H
+
+#include <cnet/export.h>
 #include <cnet/cnet.h>
 #include <crypto/dtls_stream.h>
 #ifdef __cplusplus
@@ -49,6 +51,7 @@ typedef struct cnet_dtls_info {
  * Config bytes/credentials are consumed at init; observer user lives to
  * destroy. Public wrapper address stays fixed. Failure leaves zero instance
  * unchanged. */
+SALTS_CNET_EXPORT
 int cnet_dtls_init(cnet_dtls *, const cnet_dtls_config *);
 typedef struct cnet_dtls_accept_config {
   cnet_datagram *datagram; /* Borrowed bound socket, same lifetime as client. */
@@ -62,13 +65,16 @@ typedef struct cnet_dtls_accept_config {
  * status (including EBUSY with live stream leases). CNet consumers do not link
  * a second static Crypto archive. Configuration/ownership is the Crypto
  * listener contract above; NULL destroy is OK. */
+SALTS_CNET_EXPORT
 int cnet_dtls_listener_create(const crypto_dtls_listener_config *,
                               crypto_dtls_listener **);
+SALTS_CNET_EXPORT
 int cnet_dtls_listener_destroy(crypto_dtls_listener *);
 /* Stateless server gate with canonical family/address/port/scope encoding.
  * No I/O, allocation or bridge admission. Malformed packets return OK with
  * verified=false/reply_size=0. Other errors propagate. Host owns reply storage,
  * actual raw send terminal, amplification/rate limits and receive credits. */
+SALTS_CNET_EXPORT
 int cnet_dtls_cookie_gate(const crypto_dtls_listener *,
                           const cnet_datagram_peer *, const cnet_receive_view *,
                           uint64_t now, void *reply, size_t capacity,
@@ -79,37 +85,46 @@ int cnet_dtls_cookie_gate(const crypto_dtls_listener *,
  * Host bounds the peer table and must not admit an already routed association.
  * The cookie-bearing packet is consumed/copied; do not feed it again as input.
  * Remaining progress/send/close/abort/destroy API is shared by both roles. */
+SALTS_CNET_EXPORT
 int cnet_dtls_accept(cnet_dtls *, const cnet_dtls_accept_config *,
                      const cnet_receive_view *, uint64_t now);
 /* Call from the datagram's observer. Unmatched socket/peer/tag returns OK with
  * matched=false. Successful receive copies the entire packet. ENOBUFS consumes
  * nothing: host must retain/retry before its borrowed receive view expires.
  * Host owns receive demand and must budget slots across its routed peers. */
+SALTS_CNET_EXPORT
 int cnet_dtls_receive(cnet_dtls *, cnet_datagram *, const cnet_datagram_peer *,
                       const cnet_receive_view *, bool *matched);
 /* Exact real on_send terminal only. NativeIO request/generation matching stays
  * in cnet_datagram; adapter additionally matches socket, peer and per-send tag.
  * Always route the rest of an observed batch, including after an error. */
+SALTS_CNET_EXPORT
 int cnet_dtls_send_complete(cnet_dtls *, cnet_datagram *,
                             const cnet_datagram_peer *, size_t, int, uint64_t,
                             uint64_t now, bool *matched);
 /* Before host observe, process queued input/terminals and submit bounded
  * output. Error does not waive routing/drain. One ENOBUFS-proven non-admitted
  * wire may wait for later capacity; accepted output is never resubmitted. */
+SALTS_CNET_EXPORT
 int cnet_dtls_advance(cnet_dtls *, uint64_t now, size_t *events);
 /* Copied application datagram, READY only, <=1163 bytes. One admitted tag gets
  * exactly one local send terminal (not peer receipt). Empty messages supported.
  * Callback mutation reentry is rejected. Input rejection retains no bytes/tag.
  */
+SALTS_CNET_EXPORT
 int cnet_dtls_send(cnet_dtls *, const void *, size_t, uint64_t tag);
 /* Queues authenticated close. Host must advance/route to CLOSED for delivery;
  * destroying with unprepared protocol output can discard that output. */
+SALTS_CNET_EXPORT
 int cnet_dtls_close(cnet_dtls *);
+SALTS_CNET_EXPORT
 int cnet_dtls_export(cnet_dtls *, const crypto_dtls_export_request *, void *,
                      size_t);
 /* Same exporter-bound HMAC proof through this DSO's sole Crypto instance. */
+SALTS_CNET_EXPORT
 int cnet_dtls_hmac(cnet_dtls *, const crypto_dtls_export_request *,
                    const void *, size_t, uint8_t output[32]);
+SALTS_CNET_EXPORT
 int cnet_dtls_get_info(const cnet_dtls *, cnet_dtls_info *);
 /* Stops this protocol's admission, erases keys, discards queued input. Never
  * cancels/stops the borrowed datagram or host backend. Continue routing its
@@ -119,7 +134,9 @@ int cnet_dtls_get_info(const cnet_dtls *, cnet_dtls_info *);
  * native I/O. Destroy requires
  * quiescence and rejects callback reentry; it does not implicitly stop any
  * shared owner. */
+SALTS_CNET_EXPORT
 int cnet_dtls_abort(cnet_dtls *);
+SALTS_CNET_EXPORT
 int cnet_dtls_destroy(cnet_dtls *);
 #ifdef __cplusplus
 }

@@ -27,6 +27,10 @@ extern "C" {
 #define CRYPTO_TLS_FEATURE_DNS_SAN          (UINT64_C(1) << 3)
 #define CRYPTO_TLS_FEATURE_TEXT_ALPN        (UINT64_C(1) << 4)
 #define CRYPTO_TLS_FEATURE_SESSION_INFO     (UINT64_C(1) << 5)
+/* X.509 certificate signatures using RSAE, MGF1-SHA256 and a 32-byte salt. */
+#define CRYPTO_TLS_FEATURE_X509_RSA_PSS_SHA256 (UINT64_C(1) << 6)
+/* TLS 1.2 certificate signatures using a P-384 issuer and SHA-512. */
+#define CRYPTO_TLS_FEATURE_TLS12_X509_ECDSA_P384_SHA512 (UINT64_C(1) << 7)
 
 /* Output is fully owned by the caller, and is unchanged on non-OK results. */
 typedef struct crypto_tls_session_info_v1_1 {

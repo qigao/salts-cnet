@@ -6,7 +6,7 @@
 
 static int sender_valid(crypto_dtls_sender sender) { return sender==CRYPTO_DTLS_CLIENT || sender==CRYPTO_DTLS_SERVER; }
 int crypto_dtls_transcript_init(crypto_dtls_transcript *s,uint16_t client,uint16_t server) {
-  if (!s || !client || !server) return SALTS_CRYPTO_EINVAL;
+  if (!s || ((!client) != (!server))) return SALTS_CRYPTO_EINVAL;
   if (s->ready) return SALTS_CRYPTO_ESTATE;
   memset(s,0,sizeof(*s)); sha256_init(&s->hash); s->next[0]=client; s->next[1]=server; s->ready=true;
   return SALTS_CRYPTO_OK;

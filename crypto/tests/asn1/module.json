@@ -1,0 +1,45 @@
+{
+  "targets": {
+    "crypto_asn1_crypto_test": {
+      "kind": "executable",
+      "sources": {
+        "files": ["crypto.c"]
+      },
+      "private": {
+        "deps": ["salts_crypto", "saltsbase_tinytest", "saltsbase_asn1"]
+      },
+      "test": {
+        "name": "crypto.asn1.crypto",
+        "labels": ["crypto", "asn1"]
+      }
+    },
+    "crypto_asn1_header_cpp_test": {
+      "kind": "executable",
+      "sources": {
+        "files": ["header_cpp.cpp"]
+      },
+      "private": {
+        "deps": ["salts_crypto", "saltsbase_tinytest", "saltsbase_asn1"]
+      },
+      "test": {
+        "name": "crypto.asn1.header_cpp17",
+        "labels": ["crypto", "asn1"]
+      }
+    },
+    "crypto_sm2_keys_test": {
+      "kind": "executable",
+      "sources": {
+        "files": ["sm2_keys.c", "../../src/crypto_sm2_keys.c"]
+      },
+      "private": {
+        "deps": ["salts_crypto", "saltsbase_tinytest", "gmssl", "saltsbase_asn1"]
+      },
+      "test": {
+        "name": "crypto.asn1.sm2_keys",
+        "labels": ["crypto", "asn1"],
+        "timeout": 120
+      }
+    }
+  },
+  "include": ["e2e/module.json"]
+}

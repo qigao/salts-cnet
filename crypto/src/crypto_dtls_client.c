@@ -1,4 +1,5 @@
 #include "crypto_dtls_client.h"
+#include "crypto_dtls_srtp.h"
 #include "crypto_internal.h"
 #include "crypto_tls_credentials.h"
 #include <crypto/tls_cipher.h>
@@ -55,6 +56,9 @@ static int sample(crypto_dtls_client *s,uint64_t now) {
   s->last_now=now; s->clock_sampled=true; return SALTS_CRYPTO_OK;
 }
 static int verify_chain(crypto_dtls_client *s) {
+  if (s->srtp_profiles)
+    return dtls_srtp_fingerprint(s->chain,s->chain_size,s->peer_sha256) ?
+      SALTS_CRYPTO_OK : SALTS_CRYPTO_EVERIFY;
   static const int groups[]={TLS_curve_secp256r1};
   static const int schemes[]={TLS_sig_ecdsa_secp256r1_sha256,TLS_sig_rsa_pkcs1_sha256};
   const int result=tls_cert_chain_verify_ex(TLS_protocol_tls12,X509_cert_chain_server,s->cipher,1,
@@ -94,25 +98,28 @@ static int import_identity(crypto_dtls_client *s,const crypto_tls_credentials *i
   return SALTS_CRYPTO_OK;
 }
 static int hello(crypto_dtls_client *s) {
-  /* Maximum encoded body is 958 bytes: all dynamic fields were admitted at
-   * DNS<=253, ALPN<=255 and cookie<=255. No size is inferred from a C string. */
+  /* The body bound covers DNS<=253, ALPN<=255, cookie<=255 and the finite
+   * SRTP profile list. No size is inferred from a C string. */
   uint8_t body[DTLS_HELLO_BODY_BOUND],*p=body;
   *p++=0xfe; *p++=0xfd; memcpy(p,s->client_random,32u); p+=32u; *p++=0;
   *p++=(uint8_t)s->cookie_size; memcpy(p,s->cookie,s->cookie_size); p+=s->cookie_size;
   emit16(&p,4u); emit16(&p,CRYPTO_TLS_CIPHER_ECDHE_ECDSA_AES_128_GCM_SHA256);
   emit16(&p,CRYPTO_TLS_CIPHER_ECDHE_RSA_AES_128_GCM_SHA256); *p++=1; *p++=0;
   uint8_t *extension_length=p; p+=2u;
-  emit16(&p,0u); emit16(&p,5u+s->server_name_size); emit16(&p,3u+s->server_name_size);
-  *p++=0; emit16(&p,s->server_name_size); memcpy(p,s->server_name,s->server_name_size); p+=s->server_name_size;
+  if (s->server_name_size) {
+    emit16(&p,0u); emit16(&p,5u+s->server_name_size); emit16(&p,3u+s->server_name_size);
+    *p++=0; emit16(&p,s->server_name_size); memcpy(p,s->server_name,s->server_name_size); p+=s->server_name_size;
+  }
   const uint8_t fixed[]={0,10,0,4,0,2,0,23, 0,11,0,2,1,0,
     0,13,0,6,0,4,4,3,4,1, 0,23,0,0, 0xff,1,0,1,0};
   memcpy(p,fixed,sizeof(fixed)); p+=sizeof(fixed);
   if (s->alpn_size) { emit16(&p,16u); emit16(&p,3u+s->alpn_size); emit16(&p,1u+s->alpn_size);
     *p++=(uint8_t)s->alpn_size; memcpy(p,s->alpn,s->alpn_size); p+=s->alpn_size; }
+  if (s->srtp_profiles) p+=dtls_srtp_extension(p,s->srtp_profiles);
   put16(extension_length,(size_t)(p-extension_length-2u));
   int status=new_flight(s,1u); if (status) return status;
   status=message(s,0u,1u,(uint16_t)s->client_sequence,body,(size_t)(p-body),false);
-  if (status || !s->cookie_size) return status;
+  if (status || (!s->cookie_size && !s->srtp_profiles)) return status;
   crypto_dtls_transcript_clear(&s->transcript); crypto_dtls_reassembly_clear(&s->messages);
   status=crypto_dtls_transcript_init(&s->transcript,(uint16_t)s->client_sequence,(uint16_t)s->server_first);
   if (status) return status;
@@ -122,13 +129,19 @@ static int hello(crypto_dtls_client *s) {
   return crypto_dtls_transcript_append(&s->transcript,CRYPTO_DTLS_CLIENT,&m);
 }
 int crypto_dtls_client_init(crypto_dtls_client *s,const crypto_dtls_client_config *c) {
-  if (!s || !c || salts_crypto_overlap(s,sizeof(*s),c,sizeof(*c)) || !c->roots || !c->roots_size ||
-      c->roots_size>sizeof(s->roots) || !crypto_dtls_dns_name(c->server_name,c->server_name_size) || !c->on_data ||
+  if (!s || !c || salts_crypto_overlap(s,sizeof(*s),c,sizeof(*c)) || !c->on_data ||
       c->alpn_size>sizeof(s->alpn) || (!c->alpn && c->alpn_size) ||
       salts_crypto_overlap(s,sizeof(*s),c->roots,c->roots_size) ||
       salts_crypto_overlap(s,sizeof(*s),c->server_name,c->server_name_size) ||
       salts_crypto_overlap(s,sizeof(*s),c->alpn,c->alpn_size) ||
       (c->peer_policy && salts_crypto_overlap(s,sizeof(*s),c->peer_policy,sizeof(*c->peer_policy)))) return SALTS_CRYPTO_EINVAL;
+  if (c->srtp_profiles) {
+    if (c->srtp_profiles & ~CRYPTO_DTLS_SRTP_PROFILES || !c->peer_sha256 || !c->credentials ||
+        !c->enable_exporter || c->peer_policy || c->roots || c->roots_size || c->server_name ||
+        c->server_name_size || salts_crypto_overlap(s,sizeof(*s),c->peer_sha256,sizeof(s->peer_sha256)))
+      return SALTS_CRYPTO_EINVAL;
+  } else if (!c->roots || !c->roots_size || c->roots_size>sizeof(s->roots) || c->peer_sha256 ||
+             !crypto_dtls_dns_name(c->server_name,c->server_name_size)) return SALTS_CRYPTO_EINVAL;
   if (s->phase!=CRYPTO_DTLS_CLIENT_ZERO || s->pending || s->in_callback) return SALTS_CRYPTO_ESTATE;
   const crypto_tls_stream_peer_policy *policy=c->peer_policy;
   if (policy && (!policy->check || !policy->retain || !policy->release ||
@@ -137,7 +150,7 @@ int crypto_dtls_client_init(crypto_dtls_client *s,const crypto_dtls_client_confi
       (policy->supported_profiles && !(policy->supported_profiles & CRYPTO_TLS_PEER_POLICY_STANDARD)) ||
       (policy->supported_peer_roles && !(policy->supported_peer_roles & CRYPTO_TLS_PEER_POLICY_SERVER)))) return SALTS_CRYPTO_EINVAL;
   crypto_tls_stream_peer_certificate_chain roots;
-  if (crypto_dtls_chain_views(c->roots,c->roots_size,&roots)!=0) return SALTS_CRYPTO_EINVAL;
+  if (!c->srtp_profiles && crypto_dtls_chain_views(c->roots,c->roots_size,&roots)!=0) return SALTS_CRYPTO_EINVAL;
   if (c->credentials) {
     const crypto_tls_credentials *input=c->credentials;
     if (salts_crypto_overlap(s,sizeof(*s),input,sizeof(*input))) return SALTS_CRYPTO_EINVAL;
@@ -149,9 +162,15 @@ int crypto_dtls_client_init(crypto_dtls_client *s,const crypto_dtls_client_confi
         crypto_tls_memory_validate(NULL,input,false)!=0) return SALTS_CRYPTO_EINVAL;
   }
   memset(s,0,sizeof(*s)); s->verify_index=SIZE_MAX;
+  s->mtu=CRYPTO_DTLS_CLIENT_MTU;
   int status=import_identity(s,c->credentials); if (status) goto invalid;
-  memcpy(s->roots,c->roots,c->roots_size); s->roots_size=c->roots_size;
-  memcpy(s->server_name,c->server_name,c->server_name_size); s->server_name_size=c->server_name_size;
+  s->srtp_profiles=c->srtp_profiles;
+  if (s->srtp_profiles) {
+    memcpy(s->peer_sha256,c->peer_sha256,sizeof(s->peer_sha256));
+  } else {
+    memcpy(s->roots,c->roots,c->roots_size); s->roots_size=c->roots_size;
+    memcpy(s->server_name,c->server_name,c->server_name_size); s->server_name_size=c->server_name_size;
+  }
   if (c->alpn_size) memcpy(s->alpn,c->alpn,c->alpn_size); s->alpn_size=c->alpn_size;
   s->on_data=c->on_data; s->data_context=c->data_context;
   s->exporter_enabled=c->enable_exporter;
@@ -192,11 +211,16 @@ static int server_hello(crypto_dtls_client *s,const crypto_dtls_message *m) {
         if (!s->alpn_size || n!=s->alpn_size+3u || u16(p)!=s->alpn_size+1u || p[2]!=s->alpn_size ||
             memcmp(p+3u,s->alpn,s->alpn_size)) return SALTS_CRYPTO_EVERIFY;
         alpn=true; break;
+      case CRYPTO_DTLS_EXT_USE_SRTP: bit=32u;
+        s->srtp_profile=dtls_srtp_select(p,n,s->srtp_profiles,true);
+        if (!s->srtp_profile) return SALTS_CRYPTO_EVERIFY;
+        break;
       default: return SALTS_CRYPTO_EVERIFY;
     }
     if (seen&bit) return SALTS_CRYPTO_EVERIFY; seen|=bit;
   }
-  return ems && (!s->alpn_size || alpn) ? SALTS_CRYPTO_OK : SALTS_CRYPTO_EVERIFY;
+  return ems && (!s->alpn_size || alpn) && (!s->srtp_profiles || s->srtp_profile) ?
+    SALTS_CRYPTO_OK : SALTS_CRYPTO_EVERIFY;
 }
 static int certificate(crypto_dtls_client *s,const crypto_dtls_message *m) {
   dtls_cursor c={m->body,m->size}; const uint8_t *p;
@@ -346,6 +370,7 @@ static int completed_messages(crypto_dtls_client *s) {
           next=CRYPTO_DTLS_CLIENT_DONE; break;
         }
         if (m.type!=14u || m.size) return SALTS_CRYPTO_EVERIFY;
+        if (s->srtp_profiles && !s->selected_identity) return SALTS_CRYPTO_EVERIFY;
         s->server_done_sequence=m.sequence;
         status=SALTS_CRYPTO_OK; next=CRYPTO_DTLS_CLIENT_FINISHED; break;
       case CRYPTO_DTLS_CLIENT_FINISHED: {
@@ -452,8 +477,12 @@ int crypto_dtls_client_receive(crypto_dtls_client *s,uint64_t now,const void *wi
         if (v.payload_size && v.payload[0]==3u &&
             (s->phase==CRYPTO_DTLS_CLIENT_COOKIE || s->phase==CRYPTO_DTLS_CLIENT_HELLO)) {
           status=challenge(s,v.payload,v.payload_size);
-        } else if (record[2]==0xff || s->phase==CRYPTO_DTLS_CLIENT_COOKIE) status=CRYPTO_DTLS_CLIENT_DROP;
-        else status=fragments(s,v.payload,v.payload_size,false);
+        } else if (record[2]==0xff || (s->phase==CRYPTO_DTLS_CLIENT_COOKIE && !s->srtp_profiles)) {
+          status=CRYPTO_DTLS_CLIENT_DROP;
+        } else {
+          if (s->phase==CRYPTO_DTLS_CLIENT_COOKIE) s->phase=CRYPTO_DTLS_CLIENT_HELLO;
+          status=fragments(s,v.payload,v.payload_size,false);
+        }
       } else if (v.type==20u && s->phase==CRYPTO_DTLS_CLIENT_FINISHED) {
         if (v.payload_size!=1u || v.payload[0]!=1u) { s->fatal.description=TLS_alert_decode_error; return reject(s,SALTS_CRYPTO_EVERIFY); }
         s->saw_ccs=s->read_epoch=true; status=admit_ready(s);
@@ -518,7 +547,7 @@ int crypto_dtls_client_next(crypto_dtls_client *s,uint64_t now,const uint8_t **w
   crypto_dtls_client_flight *f=&s->flight[s->flight_index];
   const uint8_t *plain=f->data; size_t n=f->size;
   if (f->handshake_type) {
-    const size_t limit=CRYPTO_DTLS_CLIENT_MTU-(f->encrypted ? CRYPTO_DTLS_RECORD_OVERHEAD : CRYPTO_DTLS_HEADER_SIZE)-12u;
+    const size_t limit=s->mtu-(f->encrypted ? CRYPTO_DTLS_RECORD_OVERHEAD : CRYPTO_DTLS_HEADER_SIZE)-12u;
     size_t fragment=f->size-s->flight_offset; if (fragment>limit) fragment=limit;
     status=crypto_dtls_fragment_write(f->handshake_type,f->sequence,f->data,f->size,s->flight_offset,fragment,
       s->scratch,sizeof(s->scratch),&n); if (status) return fail(s,status);
@@ -526,9 +555,9 @@ int crypto_dtls_client_next(crypto_dtls_client *s,uint64_t now,const uint8_t **w
   } else s->pending_advance=f->size;
   if (f->encrypted) {
     status=crypto_dtls_record_seal(&s->secrets.client_write,f->type,plain,n,
-        s->pending_wire,sizeof(s->pending_wire),&s->pending_size);
+        s->pending_wire,s->mtu,&s->pending_size);
   } else {
-    if (s->plain_sequence>CRYPTO_DTLS_MAX_SEQUENCE || n>sizeof(s->pending_wire)-13u) return fail(s,SALTS_CRYPTO_ESTATE);
+    if (s->plain_sequence>CRYPTO_DTLS_MAX_SEQUENCE || n>s->mtu-13u) return fail(s,SALTS_CRYPTO_ESTATE);
     uint8_t *p=s->pending_wire; p[0]=f->type; p[1]=0xfe; p[2]=0xfd; p[3]=p[4]=0u;
     uint64_t seq=s->plain_sequence++;
     for (size_t i=11u;i>5u;) { p[--i]=(uint8_t)seq; seq>>=8u; }
@@ -561,7 +590,7 @@ int crypto_dtls_client_sent(crypto_dtls_client *s,uint64_t now,bool success) {
   return SALTS_CRYPTO_OK;
 }
 int crypto_dtls_client_write(crypto_dtls_client *s,const void *data,size_t size) {
-  if (!s || (!data && size) || size>CRYPTO_DTLS_CLIENT_MTU-CRYPTO_DTLS_RECORD_OVERHEAD ||
+  if (!s || (!data && size) || size> (s->mtu ? s->mtu : CRYPTO_DTLS_CLIENT_MTU)-CRYPTO_DTLS_RECORD_OVERHEAD ||
       salts_crypto_overlap(s,sizeof(*s),data,size)) return SALTS_CRYPTO_EINVAL;
   if (s->in_callback || s->phase!=CRYPTO_DTLS_CLIENT_READY) return SALTS_CRYPTO_ESTATE;
   if (s->pending || s->flight_index<s->flight_count) return CRYPTO_DTLS_CLIENT_BUSY;

@@ -1,6 +1,8 @@
 #ifndef CNET_URI_H
 #define CNET_URI_H
 
+#include <cnet/export.h>
+
 #include <core/error_codes.h>
 
 #include <stdint.h>
@@ -26,6 +28,7 @@ typedef struct cnet_uri {
   uint32_t vsock_port;
 } cnet_uri;
 
+SALTS_CNET_EXPORT
 int cnet_uri_parse(const char *text, cnet_uri *out_uri);
 
 #endif /* CNET_URI_H */

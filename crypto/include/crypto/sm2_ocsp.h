@@ -1,5 +1,7 @@
 #ifndef SALTS_CRYPTO_SM2_OCSP_H
 #define SALTS_CRYPTO_SM2_OCSP_H
+
+#include <crypto/export.h>
 #include <crypto/sm2_trust.h>
 #ifdef __cplusplus
 extern "C" {
@@ -58,6 +60,7 @@ typedef struct salts_crypto_sm2_ocsp_policy {
  * trust or assurance that the certificate was issued. EINVAL rejects admission;
  * EVERIFY includes revoked/unknown/stale/unsupported/unverifiable response.
  */
+SALTS_CRYPTO_EXPORT
 int salts_crypto_sm2_check_direct_ocsp(const salts_crypto_sm2_cert_span *certificate,
     const salts_crypto_sm2_cert_span *issuer, int64_t validation_time,
     const salts_crypto_sm2_ocsp_policy *policy);
@@ -66,6 +69,7 @@ int salts_crypto_sm2_check_direct_ocsp(const salts_crypto_sm2_cert_span *certifi
  * must bind the authenticated issuer. Revoked/unknown entries may be present:
  * OK authenticates the collection, never a certificate's status. Call
  * check_direct_ocsp for each actual peer at admission time. No retained state. */
+SALTS_CRYPTO_EXPORT
 int salts_crypto_sm2_validate_direct_ocsp(const salts_crypto_sm2_cert_span *issuer,
     int64_t validation_time, const salts_crypto_sm2_ocsp_policy *policy);
 /** Explicit delegated-responder profile. The responder certificate is supplied
@@ -93,9 +97,11 @@ typedef struct salts_crypto_sm2_delegated_ocsp_policy {
   const void *responder_issuer_identity;
   size_t responder_issuer_identity_size;
 } salts_crypto_sm2_delegated_ocsp_policy;
+SALTS_CRYPTO_EXPORT
 int salts_crypto_sm2_check_delegated_ocsp(const salts_crypto_sm2_cert_span *certificate,
     const salts_crypto_sm2_cert_span *issuer, int64_t validation_time,
     const salts_crypto_sm2_delegated_ocsp_policy *policy);
+SALTS_CRYPTO_EXPORT
 int salts_crypto_sm2_validate_delegated_ocsp(const salts_crypto_sm2_cert_span *issuer,
     int64_t validation_time, const salts_crypto_sm2_delegated_ocsp_policy *policy);
 #ifdef __cplusplus

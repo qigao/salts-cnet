@@ -1,5 +1,7 @@
 #ifndef SALTS_CRYPTO_SM2_CRL_H
 #define SALTS_CRYPTO_SM2_CRL_H
+
+#include <crypto/export.h>
 #include <crypto/sm2_trust.h>
 #ifdef __cplusplus
 extern "C" {
@@ -47,6 +49,7 @@ typedef struct salts_crypto_sm2_crl_policy {
  * inputs. OK means valid full CRL and serial absent; EVERIFY includes revoked,
  * stale, unsupported or unverifiable data. EINVAL is invalid argument admission.
  */
+SALTS_CRYPTO_EXPORT
 int salts_crypto_sm2_check_crl(const salts_crypto_sm2_cert_span *certificate,
     const salts_crypto_sm2_cert_span *issuer, int64_t validation_time,
     const salts_crypto_sm2_crl_policy *policy);
@@ -55,6 +58,7 @@ int salts_crypto_sm2_check_crl(const salts_crypto_sm2_cert_span *certificate,
  * Same issuer/profile/freshness/number/entry limits as check_crl. The issuer
  * must be authenticated by the caller. OK does not mean any peer is unrevoked;
  * call check_crl for that peer at admission time, using the current time. */
+SALTS_CRYPTO_EXPORT
 int salts_crypto_sm2_validate_crl(const salts_crypto_sm2_cert_span *issuer,
     int64_t validation_time, const salts_crypto_sm2_crl_policy *policy);
 

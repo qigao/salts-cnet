@@ -1,5 +1,7 @@
 #ifndef SALTS_CRYPTO_SM2_KEYS_H
 #define SALTS_CRYPTO_SM2_KEYS_H
+
+#include <crypto/export.h>
 #include <crypto/status.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -25,8 +27,10 @@ extern "C" {
  * likewise erase outputs. Bytes beyond the documented size are untouched.
  * Single caller owns each output during a call; no mutable global state.
  */
+SALTS_CRYPTO_EXPORT
 int salts_crypto_sm2_spki_export(const uint8_t public_key[65],
     void *der, size_t capacity, size_t *written);
+SALTS_CRYPTO_EXPORT
 int salts_crypto_sm2_spki_import(const void *der, size_t size,
     uint8_t public_key[65]);
 
@@ -37,8 +41,10 @@ int salts_crypto_sm2_spki_import(const void *der, size_t size,
  * points, extra/trailing values and noncanonical DER are rejected.
  * Scalars [1,N-1] are supported; N-1 remains invalid for SM2 signing.
  */
+SALTS_CRYPTO_EXPORT
 int salts_crypto_sm2_pkcs8_export(const uint8_t private_key[32],
     void *der, size_t capacity, size_t *written);
+SALTS_CRYPTO_EXPORT
 int salts_crypto_sm2_pkcs8_import(const void *der, size_t size,
     uint8_t private_key[32]);
 
@@ -57,9 +63,11 @@ int salts_crypto_sm2_pkcs8_import(const void *der, size_t size,
  * Do not expose this synchronous, variable-time file import as a remote
  * password/decryption oracle. Certificate trust remains a separate workflow.
  */
+SALTS_CRYPTO_EXPORT
 int salts_crypto_sm2_pkcs8_encrypt(const uint8_t private_key[32],
     const void *password, size_t password_size, uint32_t iterations,
     void *der, size_t capacity, size_t *written);
+SALTS_CRYPTO_EXPORT
 int salts_crypto_sm2_pkcs8_decrypt(const void *der, size_t size,
     const void *password, size_t password_size, uint32_t max_iterations,
     uint8_t private_key[32]);
@@ -75,9 +83,11 @@ int salts_crypto_sm2_pkcs8_decrypt(const void *der, size_t size,
  *     10000, der, sizeof(der), &written);
  * Check SALTS_CRYPTO_OK before using der[0..written).
  */
+SALTS_CRYPTO_EXPORT
 int salts_crypto_sm2_pkcs8_aes256_encrypt(const uint8_t private_key[32],
     const void *password, size_t password_size, uint32_t iterations,
     void *der, size_t capacity, size_t *written);
+SALTS_CRYPTO_EXPORT
 int salts_crypto_sm2_pkcs8_aes256_decrypt(const void *der, size_t size,
     const void *password, size_t password_size, uint32_t max_iterations,
     uint8_t private_key[32]);

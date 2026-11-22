@@ -1,0 +1,75 @@
+{
+  "targets": {
+    "saltscore_gmssl_shangmi_provider_test": {
+      "kind": "executable",
+      "sources": {
+        "files": [
+          "test_gmssl_shangmi_provider.c"
+        ]
+      },
+      "private": {
+        "deps": [
+          "salts_crypto",
+          "saltsbase_tinytest",
+          "gmssl"
+        ]
+      },
+      "test": {
+        "name": "saltscore.gmssl_shangmi_provider",
+        "labels": [
+          "crypto",
+          "tls"
+        ]
+      }
+    },
+    "saltscore_gmssl_tls_io_abi_test": {
+      "kind": "executable",
+      "when": {
+        "config": [
+          "tests",
+          "benchmark"
+        ]
+      },
+      "sources": {
+        "files": [
+          "test_gmssl_tls_io_abi.c"
+        ]
+      },
+      "private": {
+        "deps": [
+          "salts_crypto",
+          "saltsbase_tinytest",
+          "saltsbase_core",
+          "saltsbase_native_io",
+          "gmssl"
+        ],
+        "includeDirs": [
+          "../../src"
+        ],
+        "defines": {
+          "SALTSCORE_EXPECT_PROVIDER_COPIES": "0",
+          "CRYPTO_NATIVE_BENCH_CA": "\"$root/crypto/tests/fixtures/p384-test-root-cert.pem\"",
+          "CRYPTO_NATIVE_BENCH_CERT": "\"$root/crypto/tests/fixtures/p384-test-server-cert.pem\"",
+          "CRYPTO_NATIVE_BENCH_KEY": "\"$root/crypto/tests/fixtures/p384-test-server-key.pem\"",
+          "CRYPTO_CLOSE_TEST_CA": "\"$root/crypto/tests/fixtures/external-io-ca-cert.pem\"",
+          "CRYPTO_CLOSE_TEST_SERVER_CERT": "\"$root/crypto/tests/fixtures/external-io-server-cert.pem\"",
+          "CRYPTO_CLOSE_TEST_SERVER_KEY": "\"$root/crypto/tests/fixtures/external-io-server-key.pem\"",
+          "CRYPTO_TLS_ADMISSION_P256_CA": "\"$root/crypto/tests/fixtures/p256-ca-sha384.pem\"",
+          "CRYPTO_TLS_ADMISSION_SM2_CA": "\"$root/crypto/tests/fixtures/sm2-tls-test-root-cert.pem\"",
+          "CRYPTO_TLS_ADMISSION_RSA1024_CA": "\"$root/crypto/tests/fixtures/unsupported-rsa1024-root-cert.pem\"",
+          "CRYPTO_TLS_ADMISSION_MIXED_SYSTEM_CA": "\"$root/crypto/tests/fixtures/mixed-provider-system-roots.pem\""
+        }
+      },
+      "test": {
+        "name": "saltscore.gmssl_tls_io_abi",
+        "labels": [
+          "crypto",
+          "tls"
+        ]
+      }
+    }
+  },
+  "include": [
+    "interop.json"
+  ]
+}

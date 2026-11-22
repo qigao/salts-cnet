@@ -1,6 +1,8 @@
 #ifndef CNET_SHARDS_H
 #define CNET_SHARDS_H
 
+#include <cnet/export.h>
+
 #include "cnet_owner.h"
 
 typedef struct cnet_shards {
@@ -41,9 +43,11 @@ typedef struct cnet_shards_layout {
 
 typedef int (*cnet_shards_event_sink_fn)(void *context, uint32_t shard, const cnet_event *event);
 
+SALTS_CNET_EXPORT
 bool cnet_shard_connection_valid(cnet_shard_connection connection);
 
 /** Initializes the production single-owner layout without creating a worker thread. */
+SALTS_CNET_EXPORT
 int cnet_shards_init(cnet_shards *shards, const cnet_shards_config *config);
 
 #if defined(CNET_INTERNAL_MULTI_OWNER_POC)
@@ -57,26 +61,34 @@ int cnet_shards_init_multi_owner_experimental(cnet_shards *shards,
 int cnet_shards_init_owner_experimental(cnet_shards *shards, uint32_t shard);
 #endif
 
+SALTS_CNET_EXPORT
 bool cnet_shards_get_layout(const cnet_shards *shards, cnet_shards_layout *out_layout);
 
 /** Advances the production single owner on the calling thread. */
+SALTS_CNET_EXPORT
 int cnet_shards_poll(cnet_shards *shards, uint32_t timeout_ms);
 
 /** Internal non-observing post-callback command/session progression. */
+SALTS_CNET_EXPORT
 int cnet_shards_flush_deferred(cnet_shards *shards);
 
 /** Non-observing progress for a single owner using a borrowed NativeIO backend. */
+SALTS_CNET_EXPORT
 int cnet_shards_advance_external(cnet_shards *shards);
+SALTS_CNET_EXPORT
 int cnet_shards_route_external_completion(cnet_shards *shards,
                                           const native_io_completion *completion,
                                           bool *out_consumed);
+SALTS_CNET_EXPORT
 int cnet_shards_external_timeout(cnet_shards *shards, uint32_t max_wait_ms,
                                  uint32_t *out_timeout_ms);
+SALTS_CNET_EXPORT
 int cnet_shards_external_requests(cnet_shards *shards,
                                   cnet_shard_connection connection,
                                   native_io_request *out_requests,
                                   size_t capacity,
                                   size_t *out_count);
+SALTS_CNET_EXPORT
 int cnet_shards_external_request_snapshots(
     cnet_shards *shards,
     cnet_shard_connection connection,
@@ -100,6 +112,7 @@ int cnet_shards_profile_take(cnet_shards *shards, cnet_owner_profile *out_profil
 #endif
 
 /** Thread-safe advisory wake for the production single owner blocked in poll. */
+SALTS_CNET_EXPORT
 int cnet_shards_wake(cnet_shards *shards);
 
 #if defined(CNET_INTERNAL_MULTI_OWNER_POC)
@@ -111,73 +124,103 @@ int cnet_shards_wake_owner(cnet_shards *shards, uint32_t shard);
  * Binds the single event sink called directly by the caller-owned progress loop. The sink
  * must copy or retain event data before returning and must never block.
  */
+SALTS_CNET_EXPORT
 int cnet_shards_bind_event_sink(cnet_shards *shards, cnet_shards_event_sink_fn sink, void *context);
 
 /** Reserves one stable shard/session pair and publishes a copied connect command. */
+SALTS_CNET_EXPORT
 int cnet_shards_connect(cnet_shards *shards, const cnet_owner_connect_payload *payload,
                         cnet_shard_connection *out_connection);
 /** Owner-local retained send ownership paths; no generic command publication. */
+SALTS_CNET_EXPORT
 int cnet_shards_send_buffer_direct(cnet_shards *shards, cnet_shard_connection connection,
                                    mem_buffer_t *buffer);
+SALTS_CNET_EXPORT
 int cnet_shards_send_slice_direct(cnet_shards *shards, cnet_shard_connection connection,
                                   const mem_slice_t *slice);
+SALTS_CNET_EXPORT
 int cnet_shards_send_slicev_direct(cnet_shards *shards, cnet_shard_connection connection,
                                    const mem_slice_t *segments, size_t segment_count);
+SALTS_CNET_EXPORT
 int cnet_shards_send_slicev_close_direct(cnet_shards *shards,
                                          cnet_shard_connection connection,
                                          const mem_slice_t *segments,
                                          size_t segment_count);
+SALTS_CNET_EXPORT
 int cnet_shards_send_buffer_close_direct(cnet_shards *shards,
                                          cnet_shard_connection connection,
                                          mem_buffer_t *buffer);
+SALTS_CNET_EXPORT
 int cnet_shards_receive(cnet_shards *shards, cnet_shard_connection connection, size_t demand);
 /**
  * Single-owner fast path used outside callbacks. Bypasses admission_lock and
  * the command queue; the owner starts I/O only from its next drive.
  */
+SALTS_CNET_EXPORT
 int cnet_shards_receive_direct(cnet_shards *shards, cnet_shard_connection connection,
                                size_t demand);
+SALTS_CNET_EXPORT
 int cnet_shards_start_tls(cnet_shards *shards, cnet_shard_connection connection,
                           const cnet_owner_start_tls_payload *payload);
+SALTS_CNET_EXPORT
 int cnet_shards_close(cnet_shards *shards, cnet_shard_connection connection);
 /** Single-owner quiescent close fast path; callbacks remain deferred to poll. */
+SALTS_CNET_EXPORT
 int cnet_shards_close_direct(cnet_shards *shards, cnet_shard_connection connection);
 
+SALTS_CNET_EXPORT
 int cnet_shards_state(cnet_shards *shards, cnet_shard_connection connection,
                       cnet_session_state *out_state);
+SALTS_CNET_EXPORT
 int cnet_shards_tcp_local_peer(cnet_shards *shards, cnet_shard_connection connection,
                                cnet_stream_peer *out_peer);
+SALTS_CNET_EXPORT
 int cnet_shards_tcp_remote_peer(cnet_shards *shards, cnet_shard_connection connection,
                                 cnet_stream_peer *out_peer);
+SALTS_CNET_EXPORT
 int cnet_shards_tcp_local_endpoint(
     cnet_shards *shards, cnet_shard_connection connection,
     cnet_stream_endpoint *out_endpoint);
+SALTS_CNET_EXPORT
 int cnet_shards_tcp_remote_endpoint(
     cnet_shards *shards, cnet_shard_connection connection,
     cnet_stream_endpoint *out_endpoint);
+SALTS_CNET_EXPORT
 int cnet_shards_tcp_option_get(cnet_shards *shards, cnet_shard_connection connection,
                                cnet_tcp_socket_option option, uint64_t *out_value);
+SALTS_CNET_EXPORT
 int cnet_shards_tcp_option_set(cnet_shards *shards, cnet_shard_connection connection,
                                cnet_tcp_socket_option option, uint64_t value);
+SALTS_CNET_EXPORT
 int cnet_shards_tcp_shutdown(cnet_shards *shards, cnet_shard_connection connection,
                              cnet_tcp_shutdown how);
+SALTS_CNET_EXPORT
 int cnet_shards_preserve_send_on_eof(cnet_shards *shards, cnet_shard_connection connection);
+SALTS_CNET_EXPORT
 int cnet_shards_tls_session_reused(cnet_shards *shards, cnet_shard_connection connection, bool *out_reused);
+SALTS_CNET_EXPORT
 int cnet_shards_tls_negotiated_version(cnet_shards *shards, cnet_shard_connection connection,
                                        char *buffer, size_t capacity, size_t *out_size);
+SALTS_CNET_EXPORT
 int cnet_shards_tls_negotiated_cipher(cnet_shards *shards, cnet_shard_connection connection,
                                       char *buffer, size_t capacity, size_t *out_size);
+SALTS_CNET_EXPORT
 int cnet_shards_tls_peer_certificate_sha256(cnet_shards *shards, cnet_shard_connection connection,
                                             char buffer[CNET_TLS_PEER_CERTIFICATE_SHA256_CAPACITY]);
+SALTS_CNET_EXPORT
 int cnet_shards_tls_server_end_point_binding(
     cnet_shards *shards, cnet_shard_connection connection,
     uint8_t *output, size_t capacity, size_t *out_size);
+SALTS_CNET_EXPORT
 int cnet_shards_tls_export_channel_binding(cnet_shards *shards, cnet_shard_connection connection,
                                            uint8_t output[CNET_TLS_CHANNEL_BINDING_BYTES]);
+SALTS_CNET_EXPORT
 int cnet_shards_take_event(cnet_shards *shards, uint32_t shard, cnet_event_view *out_event);
+SALTS_CNET_EXPORT
 int cnet_shards_release_event(cnet_shards *shards, uint32_t shard, cnet_event_view *event);
 
 /** Consumes the terminal record and releases the stable shard assignment. */
+SALTS_CNET_EXPORT
 int cnet_shards_recycle(cnet_shards *shards, cnet_shard_connection connection,
                         cnet_session_terminal *out_terminal);
 
@@ -185,8 +228,11 @@ int cnet_shards_recycle(cnet_shards *shards, cnet_shard_connection connection,
  * Closes a quiescent owner. Live connections return SALTS_EBUSY; client stop
  * closes and drives them first.
  */
+SALTS_CNET_EXPORT
 int cnet_shards_stop(cnet_shards *shards, uint32_t timeout_ms);
+SALTS_CNET_EXPORT
 bool cnet_shards_stopped(const cnet_shards *shards);
+SALTS_CNET_EXPORT
 int cnet_shards_destroy(cnet_shards *shards);
 
 #endif /* CNET_SHARDS_H */

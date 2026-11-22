@@ -1,6 +1,8 @@
 #ifndef CNET_HANDOFF_H
 #define CNET_HANDOFF_H
 
+#include <cnet/export.h>
+
 #include <cnet/cnet.h>
 
 #ifdef __cplusplus
@@ -51,11 +53,13 @@ typedef struct cnet_handoff_snapshot {
  * ERANGE; allocation failure: ENOMEM; initialized wrapper: EALREADY.
  * Failure leaves the zero wrapper unchanged. No raw CNet capacity is reserved.
  */
+SALTS_CNET_EXPORT
 int cnet_handoff_init(cnet_handoff *handoff, const cnet_handoff_config *config);
 /** Reserve one final-owner credit. ENOBUFS when reserved + queued + taken is
  * at capacity; ESHUTDOWN after seal. Output is zero on failure. A successful
  * ticket must reach publish or release, including after seal.
  */
+SALTS_CNET_EXPORT
 int cnet_handoff_reserve(cnet_handoff *handoff, cnet_handoff_ticket *out_ticket);
 /** Publish a RESERVED ticket and move an active detached TCP stream into FIFO.
  * Success empties accepted and transfers the ticket to the inbox. Every failure
@@ -65,6 +69,7 @@ int cnet_handoff_reserve(cnet_handoff *handoff, cnet_handoff_ticket *out_ticket)
  * host wake fails. The host must still arrange owner progress or cancellation.
  * peer is copied; TLS/policy objects stay with the final owner, not in entries.
  */
+SALTS_CNET_EXPORT
 int cnet_handoff_publish(cnet_handoff *handoff, cnet_handoff_ticket ticket,
                          cnet_accepted_stream *accepted);
 /** Owner takes the next published ticket and stream, including after seal.
@@ -73,19 +78,23 @@ int cnet_handoff_publish(cnet_handoff *handoff, cnet_handoff_ticket ticket,
  * Adopt or close the stream, then release the ticket after the owner no longer
  * needs its capacity (normally transport terminal or context retirement).
  */
+SALTS_CNET_EXPORT
 int cnet_handoff_take(cnet_handoff *handoff, cnet_handoff_ticket *out_ticket,
                       cnet_accepted_stream *out_accepted);
 /** Return RESERVED or TAKEN credit exactly once. Does not close a taken stream
  * or connection. EBUSY for a queued ticket, ENOENT for stale/foreign/released.
  */
+SALTS_CNET_EXPORT
 int cnet_handoff_release(cnet_handoff *handoff, cnet_handoff_ticket ticket);
 /** Idempotently block reserve/publish; does not revoke tickets or close sockets.
  * Drain queued entries using take -> close/adopt -> release on the owner.
  */
+SALTS_CNET_EXPORT
 int cnet_handoff_seal(cnet_handoff *handoff);
 /** Coherent O(1) credit/queue snapshot. drained does NOT prove producer/wake
  * quiescence and is not authorization to destroy a concurrently used inbox.
  */
+SALTS_CNET_EXPORT
 int cnet_handoff_get_snapshot(cnet_handoff *handoff, cnet_handoff_snapshot *out);
 /** Requires drained (otherwise EBUSY) AND host-established quiescence:
  * stop/join ALL producers, including publish -> wake tails, and end all owner
@@ -93,6 +102,7 @@ int cnet_handoff_get_snapshot(cnet_handoff *handoff, cnet_handoff_snapshot *out)
  * or ticket retains neither inbox nor backend. No calls may overlap destroy.
  * Empty wrapper: EALREADY. Remaining sockets/credits are never silently dropped.
  */
+SALTS_CNET_EXPORT
 int cnet_handoff_destroy(cnet_handoff *handoff);
 
 #ifdef __cplusplus

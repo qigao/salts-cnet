@@ -1,0 +1,33 @@
+{
+  "styles": {
+    "libecc": {
+      "defines": {
+        "WITH_STDLIB": null,
+        "WITH_LIBECC_CONFIG_OVERRIDE": null,
+        "WITH_CURVE_WEI448": null,
+        "WITH_CURVE_WEI25519": null,
+        "WITH_CURVE_SECP256R1": null,
+        "WITH_CURVE_SECP384R1": null,
+        "WITH_CURVE_SECP521R1": null,
+        "WITH_CURVE_SECP256K1": null,
+        "WITH_HASH_SHAKE256": null,
+        "WITH_HASH_SHA256": null,
+        "WITH_HASH_SHA384": null,
+        "WITH_HASH_SHA512": null,
+        "WITH_SIG_EDDSA448": null,
+        "WITH_SIG_EDDSA25519": null,
+        "WITH_SIG_ECDSA": null,
+        "WORDSIZE": "64",
+        "sha256_init": "salts_private_libecc_sha256_init",
+        "sha256_update": "salts_private_libecc_sha256_update",
+        "sha256_final": "salts_private_libecc_sha256_final",
+        "sha384_init": "salts_private_libecc_sha384_init",
+        "sha384_update": "salts_private_libecc_sha384_update",
+        "sha384_final": "salts_private_libecc_sha384_final",
+        "sha512_init": "salts_private_libecc_sha512_init",
+        "sha512_update": "salts_private_libecc_sha512_update",
+        "sha512_final": "salts_private_libecc_sha512_final"
+      }
+    }
+  }
+}

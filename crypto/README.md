@@ -190,6 +190,29 @@ See the [client composition and limits](docs/SHANGMI-COVERAGE.md#opaque-dtls-cli
 The [private client owner](docs/SHANGMI-COVERAGE.md#private-dtls-client-owner-work)
 documents verification, bounded sends, teardown and the exact test scope.
 
+DTLS-SRTP uses the additive `crypto_dtls_stream_create_srtp`,
+`crypto_dtls_listener_create_srtp` and `crypto_dtls_stream_accept_srtp` entry
+points. They bind each connection to the peer leaf certificate's SHA-256
+fingerprint from authenticated signaling. Both peers prove possession of the
+private key during the handshake. Ordinary DTLS clients and listeners continue
+to use their configured trust roots and name or client authentication policy.
+The SRTP endpoints require an RFC 5764 `use_srtp` profile and offer AES-GCM plus
+AES-CM/HMAC-SHA1 profiles. The selected profile becomes available at READY. Use
+`crypto_dtls_stream_export` with `EXTRACTOR-dtls_srtp` and no context to obtain
+the per-direction keys and salts, then erase the exported bytes after handing
+them to the media packet protector. A listener still verifies the DTLS cookie
+before allocating a stream. Clients can interoperate with servers that send
+ServerHello directly. [RFC 5764](https://www.rfc-editor.org/rfc/rfc5764.html)
+
+The identity constructor generates a self-signed P-256 credential for this
+fingerprint flow. Existing PEM/DER credentials can be imported as a
+`crypto_tls_credential_object` and fingerprinted with the same API. The
+transport owner supplies monotonic time, each datagram receive, and the actual
+terminal for every prepared send. Pion loopback tests verify the selected SRTP
+profile and compare exported material in both roles, including a server that
+omits HelloVerifyRequest. The native handshake suite also exercises wrong
+fingerprints and disjoint profile sets.
+
 Authenticated application delivery supports bounded backpressure: Crypto's
 `CRYPTO_DTLS_BUSY`, mapped from CNet `on_receive` returning `SALTS_ENOBUFS`,
 consumes no application data. The stream owns one deferred plaintext record and

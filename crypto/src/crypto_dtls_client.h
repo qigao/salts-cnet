@@ -1,5 +1,7 @@
 #ifndef CRYPTO_DTLS_CLIENT_INTERNAL_H
 #define CRYPTO_DTLS_CLIENT_INTERNAL_H
+
+#include <crypto/export.h>
 #include "crypto_dtls_exchange.h"
 #include "crypto_dtls_secrets.h"
 #include "crypto_dtls_wire.h"
@@ -25,6 +27,8 @@ typedef struct crypto_dtls_client_config {
   void *data_context; /* Caller keeps alive until successful clear; no reentry. */
   const crypto_tls_credentials *credentials; /* Optional sole client identity. */
   bool enable_exporter; /* Retains master until close/abort/clear; default false. */
+  unsigned srtp_profiles;
+  const uint8_t *peer_sha256;
 } crypto_dtls_client_config;
 typedef struct crypto_dtls_client_flight {
   uint8_t data[CRYPTO_DTLS_CLIENT_CHAIN_BYTES+18];
@@ -41,7 +45,7 @@ typedef struct crypto_dtls_client {
   crypto_dtls_client_flight flight[5];
   TLS_CTX identity;
   uint8_t roots[CRYPTO_DTLS_CLIENT_CHAIN_BYTES],chain[CRYPTO_DTLS_CLIENT_CHAIN_BYTES];
-  uint8_t pending_wire[CRYPTO_DTLS_CLIENT_MTU],scratch[CRYPTO_DTLS_MAX_PLAINTEXT];
+  uint8_t pending_wire[CRYPTO_DTLS_MAX_MTU],scratch[CRYPTO_DTLS_MAX_PLAINTEXT];
   uint8_t client_random[32],server_random[32],peer_point[65],server_finished[12];
   uint8_t cookie[255],alpn[255]; char server_name[CRYPTO_DTLS_CLIENT_DNS_BYTES+1];
   size_t roots_size,chain_size,chain_count,alpn_size,server_name_size,cookie_size;
@@ -49,6 +53,10 @@ typedef struct crypto_dtls_client {
   uint64_t plain_sequence,last_now;
   uint32_t client_sequence,server_first;
   unsigned challenges;
+  unsigned srtp_profiles;
+  size_t mtu;
+  uint16_t srtp_profile;
+  uint8_t peer_sha256[32];
   uint16_t cipher,signature,server_done_sequence;
   crypto_dtls_client_phase phase;
   int failure,verify_result; size_t verify_index;
@@ -64,24 +72,34 @@ typedef struct crypto_dtls_client {
  * Optional identity imported at init; input/object/password borrows end there.
  * Key erased after final-flight construction or failure; cached proof permits
  * retransmission without signing again. No tickets, downgrade or worker. */
+SALTS_CRYPTO_EXPORT
 int crypto_dtls_client_init(crypto_dtls_client *state,const crypto_dtls_client_config *config);
 /* Output borrows until EXACTLY ONE sent terminal; BUSY publishes no new view.
  * Always report the actual native terminal, including after abort. After a
  * protocol error next may publish ONE prepared fatal alert while phase remains
  * FAILED. sent still returns the original failure. Alerts are never retried. */
+SALTS_CRYPTO_EXPORT
 int crypto_dtls_client_next(crypto_dtls_client *state,uint64_t now,const uint8_t **wire,size_t *size);
+SALTS_CRYPTO_EXPORT
 int crypto_dtls_client_sent(crypto_dtls_client *state,uint64_t now,bool success);
 /* Whole peer datagram, immutable until return including during data callbacks;
  * BUSY consumes nothing while output is pending/unsent. Caller's input and all
  * output descriptors must not overlap state. */
+SALTS_CRYPTO_EXPORT
 int crypto_dtls_client_receive(crypto_dtls_client *state,uint64_t now,const void *wire,size_t size);
+SALTS_CRYPTO_EXPORT
 int crypto_dtls_client_write(crypto_dtls_client *state,const void *plain,size_t size);
+SALTS_CRYPTO_EXPORT
 int crypto_dtls_client_close(crypto_dtls_client *state);
 /* Exclusive owner, authenticated READY only, including during a pending send.
  * Rejects callback reentry and all input/output overlap with owner storage. */
+SALTS_CRYPTO_EXPORT
 int crypto_dtls_client_export(const crypto_dtls_client *,const crypto_dtls_export_request *,void *,size_t);
+SALTS_CRYPTO_EXPORT
 int crypto_dtls_client_abort(crypto_dtls_client *state);
+SALTS_CRYPTO_EXPORT
 int crypto_dtls_client_data_failed(crypto_dtls_client *);
 /* Requires actual terminal of every prepared send; BUSY leaves storage alive. */
+SALTS_CRYPTO_EXPORT
 int crypto_dtls_client_clear(crypto_dtls_client *state);
 #endif

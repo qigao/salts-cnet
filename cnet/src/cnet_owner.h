@@ -1,6 +1,8 @@
 #ifndef CNET_OWNER_H
 #define CNET_OWNER_H
 
+#include <cnet/export.h>
+
 #include <cnet/cnet.h>
 
 #include "cnet_command.h"
@@ -158,9 +160,11 @@ typedef struct cnet_owner_profile {
 } cnet_owner_profile;
 #endif
 
+SALTS_CNET_EXPORT
 int cnet_owner_init(cnet_owner *owner, const cnet_owner_config *config);
 
 /** Processes bounded commands and directly settles one NativeIO completion batch. */
+SALTS_CNET_EXPORT
 int cnet_owner_drive(cnet_owner *owner, uint32_t timeout_ms);
 
 /**
@@ -168,6 +172,7 @@ int cnet_owner_drive(cnet_owner *owner, uint32_t timeout_ms);
  * commands and immediately runs any session work they schedule, but never
  * observes NativeIO or routes another completion batch.
  */
+SALTS_CNET_EXPORT
 int cnet_owner_flush_deferred(cnet_owner *owner);
 
 /**
@@ -175,6 +180,7 @@ int cnet_owner_flush_deferred(cnet_owner *owner);
  * resolver state and deadlines without observing NativeIO. Valid only when
  * initialized with borrowed_backend.
  */
+SALTS_CNET_EXPORT
 int cnet_owner_advance_external(cnet_owner *owner);
 
 /**
@@ -182,11 +188,13 @@ int cnet_owner_advance_external(cnet_owner *owner);
  * out_consumed is false for a completion not owned by this CNet owner; such a
  * completion is untouched and may be offered to another backend consumer.
  */
+SALTS_CNET_EXPORT
 int cnet_owner_route_external_completion(cnet_owner *owner,
                                          const native_io_completion *completion,
                                          bool *out_consumed);
 
 /** Returns the next CNet-owned timer deadline, capped by max_wait_ms. */
+SALTS_CNET_EXPORT
 int cnet_owner_external_timeout(cnet_owner *owner, uint32_t max_wait_ms,
                                 uint32_t *out_timeout_ms);
 
@@ -198,6 +206,7 @@ int cnet_owner_external_timeout(cnet_owner *owner, uint32_t max_wait_ms,
  * If capacity is too small, returns SALTS_ENOBUFS and reports the required
  * count without writing a partial snapshot.
  */
+SALTS_CNET_EXPORT
 int cnet_owner_external_requests(cnet_owner *owner,
                                  cnet_session_handle session,
                                  native_io_request *out_requests,
@@ -207,6 +216,7 @@ int cnet_owner_external_requests(cnet_owner *owner,
 typedef cnet_external_request_snapshot
     cnet_owner_external_request_snapshot;
 
+SALTS_CNET_EXPORT
 int cnet_owner_external_request_snapshots(
     cnet_owner *owner,
     cnet_session_handle session,
@@ -222,6 +232,7 @@ int cnet_owner_external_request_snapshots(
  * Callback reentrancy while a completion batch is being routed must stay on
  * the deferred command path.
  */
+SALTS_CNET_EXPORT
 int cnet_owner_receive_direct(cnet_owner *owner, cnet_session_handle session, size_t demand);
 
 /**
@@ -229,16 +240,21 @@ int cnet_owner_receive_direct(cnet_owner *owner, cnet_session_handle session, si
  * write queue and schedule owner-local work; they never publish a callback
  * synchronously. TLS uses the same retained write ownership path.
  */
+SALTS_CNET_EXPORT
 int cnet_owner_send_buffer_direct(cnet_owner *owner, cnet_session_handle session,
                                   mem_buffer_t *buffer);
+SALTS_CNET_EXPORT
 int cnet_owner_send_slice_direct(cnet_owner *owner, cnet_session_handle session,
                                  const mem_slice_t *slice);
+SALTS_CNET_EXPORT
 int cnet_owner_send_slicev_direct(cnet_owner *owner, cnet_session_handle session,
                                   const mem_slice_t *segments, size_t segment_count);
 /** Admits one retained final vector through the same close-after-send write-slot semantics. */
+SALTS_CNET_EXPORT
 int cnet_owner_send_slicev_close_direct(cnet_owner *owner, cnet_session_handle session,
                                         const mem_slice_t *segments, size_t segment_count);
 /** Admits one retained final buffer using the same close-after-send write-slot semantics. */
+SALTS_CNET_EXPORT
 int cnet_owner_send_buffer_close_direct(cnet_owner *owner, cnet_session_handle session,
                                         mem_buffer_t *buffer);
 
@@ -250,9 +266,11 @@ int cnet_owner_send_buffer_close_direct(cnet_owner *owner, cnet_session_handle s
  * Non-quiescent sessions return SALTS_EBUSY so the caller can preserve FIFO
  * ordering through the deferred command path.
  */
+SALTS_CNET_EXPORT
 int cnet_owner_close_direct(cnet_owner *owner, cnet_session_handle session);
 
 /** Thread-safe advisory wake for an owner blocked in drive. */
+SALTS_CNET_EXPORT
 int cnet_owner_wake(cnet_owner *owner);
 
 #if defined(CNET_INTERNAL_TESTING)
@@ -326,47 +344,64 @@ int cnet_owner_profile_trace_bind(cnet_owner *owner,
                                   size_t capacity);
 int cnet_owner_profile_take(cnet_owner *owner, cnet_owner_profile *out_profile);
 #endif
+SALTS_CNET_EXPORT
 int cnet_owner_tcp_local_peer(cnet_owner *owner, cnet_session_handle session,
                               cnet_stream_peer *out_peer);
+SALTS_CNET_EXPORT
 int cnet_owner_tcp_remote_peer(cnet_owner *owner, cnet_session_handle session,
                                cnet_stream_peer *out_peer);
 
+SALTS_CNET_EXPORT
 int cnet_owner_tcp_local_endpoint(
     cnet_owner *owner, cnet_session_handle session,
     cnet_stream_endpoint *out_endpoint);
+SALTS_CNET_EXPORT
 int cnet_owner_tcp_remote_endpoint(
     cnet_owner *owner, cnet_session_handle session,
     cnet_stream_endpoint *out_endpoint);
 
+SALTS_CNET_EXPORT
 int cnet_owner_tcp_option_get(cnet_owner *owner, cnet_session_handle session,
                               cnet_tcp_socket_option option, uint64_t *out_value);
+SALTS_CNET_EXPORT
 int cnet_owner_tcp_option_set(cnet_owner *owner, cnet_session_handle session,
                               cnet_tcp_socket_option option, uint64_t value);
 
+SALTS_CNET_EXPORT
 int cnet_owner_tcp_shutdown(cnet_owner *owner, cnet_session_handle session,
                             cnet_tcp_shutdown how);
+SALTS_CNET_EXPORT
 int cnet_owner_preserve_send_on_eof(cnet_owner *owner, cnet_session_handle session);
 
+SALTS_CNET_EXPORT
 int cnet_owner_tls_session_reused(cnet_owner *owner, cnet_session_handle session, bool *out_reused);
+SALTS_CNET_EXPORT
 int cnet_owner_tls_negotiated_version(cnet_owner *owner, cnet_session_handle session, char *buffer,
                                       size_t capacity, size_t *out_size);
+SALTS_CNET_EXPORT
 int cnet_owner_tls_negotiated_cipher(cnet_owner *owner, cnet_session_handle session, char *buffer,
                                      size_t capacity, size_t *out_size);
+SALTS_CNET_EXPORT
 int cnet_owner_tls_peer_certificate_sha256(
     cnet_owner *owner, cnet_session_handle session,
     char buffer[CNET_TLS_PEER_CERTIFICATE_SHA256_CAPACITY]);
+SALTS_CNET_EXPORT
 int cnet_owner_tls_server_end_point_binding(
     cnet_owner *owner, cnet_session_handle session,
     uint8_t *output, size_t capacity, size_t *out_size);
+SALTS_CNET_EXPORT
 int cnet_owner_tls_export_channel_binding(
     cnet_owner *owner, cnet_session_handle session,
     uint8_t output[CNET_TLS_CHANNEL_BINDING_BYTES]);
 
 /** Clears owner metadata after the terminal notification recycled the handle. */
+SALTS_CNET_EXPORT
 int cnet_owner_release_session(cnet_owner *owner, cnet_session_handle session);
 
 /** Closes NativeIO admission after every session and request has settled. */
+SALTS_CNET_EXPORT
 int cnet_owner_close(cnet_owner *owner);
+SALTS_CNET_EXPORT
 int cnet_owner_destroy(cnet_owner *owner);
 
 #endif /* CNET_OWNER_H */

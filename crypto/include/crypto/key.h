@@ -1,6 +1,8 @@
 #ifndef CRYPTO_KEY_H_INCLUDED
 #define CRYPTO_KEY_H_INCLUDED
 
+#include <crypto/export.h>
+
 #include <crypto/symmetric.h>
 #include <crypto/ecdsa.h>
 #include <crypto/ed25519.h>
@@ -35,15 +37,20 @@ typedef enum salts_crypto_signature {
  * Example: salts_crypto_key_from_pem(pem, length, 1, &key); ...;
  *          salts_crypto_key_destroy(key);
  */
+SALTS_CRYPTO_EXPORT
 int salts_crypto_key_from_rsa(salts_crypto_bytes n, salts_crypto_bytes e, salts_crypto_bytes d,
     salts_crypto_bytes p, salts_crypto_bytes q, salts_crypto_bytes dp,
     salts_crypto_bytes dq, salts_crypto_bytes qi, salts_crypto_key **output);
+SALTS_CRYPTO_EXPORT
 int salts_crypto_key_from_ec(salts_crypto_ec_curve curve, salts_crypto_bytes public_key,
     salts_crypto_bytes private_key, salts_crypto_key **output);
+SALTS_CRYPTO_EXPORT
 int salts_crypto_key_from_ed(salts_crypto_key_kind kind, salts_crypto_bytes public_key,
     salts_crypto_bytes private_key, salts_crypto_key **output);
+SALTS_CRYPTO_EXPORT
 int salts_crypto_key_from_pem(const void *pem, size_t size, int private_key, salts_crypto_key **output);
 /** SPKI public / PKCS8 private DER. Same copying/error contract as PEM import. */
+SALTS_CRYPTO_EXPORT
 int salts_crypto_key_from_der(const void *der, size_t size, int private_key, salts_crypto_key **output);
 /** Bounded DER/PEM export, caller-owned output disjoint from key/output_size.
  * NULL output with capacity==0 queries the required byte count. Otherwise
@@ -52,8 +59,10 @@ int salts_crypto_key_from_der(const void *der, size_t size, int private_key, sal
  * key; RSA additionally requires the complete CRT tuple at import. Temporary
  * secrets are wiped. Example: key_to_der(key,0,NULL,0,&n); allocate n; export.
  */
+SALTS_CRYPTO_EXPORT
 int salts_crypto_key_to_der(const salts_crypto_key *key, int private_key,
     uint8_t *output, size_t capacity, size_t *output_size);
+SALTS_CRYPTO_EXPORT
 int salts_crypto_key_to_pem(const salts_crypto_key *key, int private_key,
     char *output, size_t capacity, size_t *output_size);
 
@@ -72,29 +81,38 @@ int salts_crypto_key_to_pem(const salts_crypto_key *key, int private_key,
  * pointers must be disjoint from every input and output buffer.
  * Caller owns/wipes exported private material; no password is retained.
  */
+SALTS_CRYPTO_EXPORT
 int salts_crypto_key_to_encrypted_der(const salts_crypto_key *key,
     const void *password, size_t password_size, uint32_t iterations,
     uint8_t *output, size_t capacity, size_t *output_size);
+SALTS_CRYPTO_EXPORT
 int salts_crypto_key_to_encrypted_pem(const salts_crypto_key *key,
     const void *password, size_t password_size, uint32_t iterations,
     char *output, size_t capacity, size_t *output_size);
+SALTS_CRYPTO_EXPORT
 int salts_crypto_key_from_encrypted_der(const void *der, size_t size,
     const void *password, size_t password_size, uint32_t max_iterations,
     salts_crypto_key **output);
+SALTS_CRYPTO_EXPORT
 int salts_crypto_key_from_encrypted_pem(const void *pem, size_t size,
     const void *password, size_t password_size, uint32_t max_iterations,
     salts_crypto_key **output);
+SALTS_CRYPTO_EXPORT
 void salts_crypto_key_destroy(salts_crypto_key *key);
+SALTS_CRYPTO_EXPORT
 salts_crypto_key_kind salts_crypto_key_type(const salts_crypto_key *key);
+SALTS_CRYPTO_EXPORT
 size_t salts_crypto_key_signature_size(const salts_crypto_key *key);
 /** Message signatures, caller-owned output. Capacity is at least signature_size.
  * PSS signing uses digest-length salt; verification accepts any encoded salt.
  * RSA hashes SHA256/384/512; ECDSA uses the selected hash with the imported curve.
  * EdDSA ignores hash. Failure leaves *size zero; invalid signatures return EVERIFY.
  */
+SALTS_CRYPTO_EXPORT
 int salts_crypto_key_sign(const salts_crypto_key *key, salts_crypto_signature scheme,
     salts_crypto_hash hash, const void *message, size_t message_size,
     uint8_t *signature, size_t capacity, size_t *size);
+SALTS_CRYPTO_EXPORT
 int salts_crypto_key_verify(const salts_crypto_key *key, salts_crypto_signature scheme,
     salts_crypto_hash hash, const void *message, size_t message_size,
     const uint8_t *signature, size_t size);
@@ -102,16 +120,20 @@ int salts_crypto_key_verify(const salts_crypto_key *key, salts_crypto_signature 
  * and output_size. Decrypt exposes no plaintext on failure (EVERIFY); key/size
  * errors return EINVAL. Encrypt output needs key_signature_size bytes.
  */
+SALTS_CRYPTO_EXPORT
 int salts_crypto_key_oaep_encrypt(const salts_crypto_key *key, salts_crypto_hash hash,
     const uint8_t *input, size_t size, uint8_t *output, size_t capacity, size_t *output_size);
+SALTS_CRYPTO_EXPORT
 int salts_crypto_key_oaep_decrypt(const salts_crypto_key *key, salts_crypto_hash hash,
     const uint8_t *input, size_t size, uint8_t *output, size_t capacity, size_t *output_size);
 
 /** Explicit OAEP label (borrowed/disjoint); otherwise the same contract and
  * result codes as the empty-label operations. MGF1 uses the selected hash. */
+SALTS_CRYPTO_EXPORT
 int salts_crypto_key_oaep_encrypt_with_label(const salts_crypto_key *key, salts_crypto_hash hash,
     const void *label, size_t label_size, const uint8_t *input, size_t size,
     uint8_t *output, size_t capacity, size_t *output_size);
+SALTS_CRYPTO_EXPORT
 int salts_crypto_key_oaep_decrypt_with_label(const salts_crypto_key *key, salts_crypto_hash hash,
     const void *label, size_t label_size, const uint8_t *input, size_t size,
     uint8_t *output, size_t capacity, size_t *output_size);
@@ -123,9 +145,11 @@ int salts_crypto_key_oaep_decrypt_with_label(const salts_crypto_key *key, salts_
  * key_sign/verify contracts; invalid sizes/parameters return EINVAL, bad
  * signatures EVERIFY, and backend failure ECRYPTO. Example: sign(...,32,...)
  * and verify(...,32,...) enforce a 32-byte salt for SHA256. */
+SALTS_CRYPTO_EXPORT
 int salts_crypto_key_pss_sign(const salts_crypto_key *key, salts_crypto_hash hash,
     size_t salt_size, const void *message, size_t message_size,
     uint8_t *signature, size_t capacity, size_t *size);
+SALTS_CRYPTO_EXPORT
 int salts_crypto_key_pss_verify(const salts_crypto_key *key, salts_crypto_hash hash,
     size_t salt_size, const void *message, size_t message_size,
     const uint8_t *signature, size_t size);

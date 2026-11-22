@@ -5,6 +5,12 @@
 
 #include "crypto_internal.h"
 
+#include <crypto/export.h>
+
+/* libecc declares this callback in its own header. */
+SALTS_CRYPTO_EXPORT int salts_crypto_libecc_get_random(unsigned char *buffer,
+                                                     uint16_t size);
+
 #include <libecc/curves/curves.h>
 #include <libecc/external_deps/rand.h>
 #include <libecc/sig/eddsa.h>

@@ -1,6 +1,8 @@
 #ifndef CNET_CLIENT_INTERNAL_H
 #define CNET_CLIENT_INTERNAL_H
 
+#include <cnet/export.h>
+
 #include <cnet/cnet.h>
 
 #include "cnet_tls.h"
@@ -12,9 +14,11 @@
 #include <stdint.h>
 
 /* Validate the fixed initializing Owner without progress or allocation. */
+SALTS_CNET_EXPORT
 int cnet_client_check_owner(cnet_client *client);
 
 /** Consumes one connected TCP socket, closing it on immediate admission failure. */
+SALTS_CNET_EXPORT
 int cnet_client_adopt_tcp(cnet_client *client, uintptr_t native_socket,
                           const cnet_observer *observer, cnet_connection *out_connection);
 
@@ -22,12 +26,14 @@ int cnet_client_adopt_tcp(cnet_client *client, uintptr_t native_socket,
  * Consumes one already-bound TCP socket and starts an asynchronous connect to
  * the copied portable peer on that same socket.
  */
+SALTS_CNET_EXPORT
 int cnet_client_adopt_bound_tcp_connect(
     cnet_client *client, uintptr_t native_socket,
     const cnet_stream_peer *remote_peer,
     const cnet_observer *observer,
     cnet_connection *out_connection);
 
+SALTS_CNET_EXPORT
 int cnet_client_adopt_bound_tcp_connect_endpoint(
     cnet_client *client, uintptr_t native_socket,
     const cnet_stream_endpoint *remote_endpoint,
@@ -39,6 +45,7 @@ int cnet_client_adopt_vsock(cnet_client *client, uintptr_t native_socket,
                             const cnet_observer *observer, cnet_connection *out_connection);
 
 /** Retains `context` and consumes the connected TCP socket on successful admission. */
+SALTS_CNET_EXPORT
 int cnet_client_adopt_tls_server(cnet_client *client, uintptr_t native_socket,
                                  cnet_tls_context *context, const cnet_observer *observer,
                                  cnet_connection *out_connection);

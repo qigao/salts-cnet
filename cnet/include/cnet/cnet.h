@@ -1,6 +1,8 @@
 #ifndef CNET_CNET_H
 #define CNET_CNET_H
 
+#include <cnet/export.h>
+
 #include <core/error_codes.h>
 #include <native_io.h>
 #include <cnet/resources.h>
@@ -396,8 +398,10 @@ typedef crypto_tls_sm2_ocsp_config cnet_tls_sm2_ocsp_config;
 /** Owned current-time OCSP snapshot; crypto/tls_sm2_ocsp_policy.h defines
  * admission, exact applicability, bounds, ownership and limitations. SALTS status.
  * Source bytes may be freed on return; caller releases the returned reference. */
+SALTS_CNET_EXPORT
 int cnet_tls_sm2_ocsp_peer_policy_create(const cnet_tls_sm2_ocsp_config *config,
     cnet_tls_peer_policy *out_policy);
+SALTS_CNET_EXPORT
 int cnet_tlcp_sm2_ocsp_peer_policy_create(const cnet_tls_sm2_ocsp_config *config,
     cnet_tls_peer_policy *out_policy);
 
@@ -414,14 +418,18 @@ typedef crypto_tls_credential_kind cnet_tls_credential_kind;
 /** Crypto-owned reusable immutable identity; see crypto/tls_credentials.h.
  * Returns SALTS status. Use a credentials descriptor with only .object set;
  * initialization imports independent keys before the caller releases it. */
+SALTS_CNET_EXPORT
 int cnet_tls_credential_object_create(const cnet_tls_credentials *input,
     cnet_tls_credential_kind kind, cnet_tls_credential_object **out);
 /** Authenticated PFX import; see crypto_tls_credential_object_from_pkcs12.
  * Returns mapped SALTS status and publishes no object on failure. */
+SALTS_CNET_EXPORT
 int cnet_tls_credential_object_from_pkcs12(const cnet_tls_data *input,
     const cnet_tls_password *password, cnet_tls_credential_kind kind,
     cnet_tls_credential_object **out);
+SALTS_CNET_EXPORT
 int cnet_tls_credential_object_retain(cnet_tls_credential_object *object);
+SALTS_CNET_EXPORT
 void cnet_tls_credential_object_release(cnet_tls_credential_object *object);
 enum {
   CNET_TLS_SERVER_IDENTITY_MAX_COUNT = CRYPTO_TLS_SERVER_IDENTITY_MAX_COUNT,
@@ -434,12 +442,14 @@ typedef crypto_tls_server_identity cnet_tls_server_identity;
  * Uses the snapshot contract in crypto/tls_sm2_crl_policy.h; returns SALTS status.
  * Attach to client/server peer_policy, then release the caller's reference via
  * policy.release(policy.context). Consumers link only Salts::CNet. */
+SALTS_CNET_EXPORT
 int cnet_tls_sm2_crl_peer_policy_create(const cnet_tls_sm2_crl_config *config,
     cnet_tls_peer_policy *out_policy);
 
 /** TLCP11 dual-server-certificate variant; peer_is_server must be true.
  * Same retained snapshot contract, checks both certificates against one issuer.
  * Unsupported client authentication returns SALTS_ENOTSUP at creation. */
+SALTS_CNET_EXPORT
 int cnet_tlcp_sm2_crl_peer_policy_create(const cnet_tls_sm2_crl_config *config,
     cnet_tls_peer_policy *out_policy);
 
@@ -549,9 +559,13 @@ typedef struct cnet_tls_client_config {
   size_t signature_algorithm_count;
   /** Independent TLS/TLCP certificate-chain signature allowlist, copied at init.
    * NULL/0 uses signature_algorithms. Explicit lists contain 1..4 unique
-   * RSA-PKCS1-SHA256 or ECDSA P256/SHA256, P384/SHA384 (STANDARD), or SM2/SM3
-   * (SHANGMI). RSA-PSS certificate signatures are unsupported. STANDARD permits
-   * TLS1.2/1.3 and ranges. TLCP clients admit SM2/SM3 or RSA-PKCS1-SHA256
+   * schemes. STANDARD supports RSA-PKCS1-SHA256, ECDSA P256/SHA256 and
+   * P384/SHA384, and RSA-PSS-RSAE-SHA256 if the Crypto SDK advertises
+   * CRYPTO_TLS_FEATURE_X509_RSA_PSS_SHA256. TLS 1.2-only profiles can configure
+   * RSA-PSS separately here. They accept CRYPTO_TLS_SIGNATURE_ECDSA_SHA512_TLS12
+   * for a P-384 issuer when the Crypto SDK advertises
+   * CRYPTO_TLS_FEATURE_TLS12_X509_ECDSA_P384_SHA512. SHANGMI supports SM2/SM3.
+   * TLCP clients admit SM2/SM3 or RSA-PKCS1-SHA256
    * certificate issuers while retaining SM2 handshake signatures; the policy is
    * local admission, without adding TLS extension 50 to TLCP. TLCP server lists
    * return ENOTSUP while client authentication is unsupported. TLS1.2 client
@@ -641,9 +655,13 @@ typedef struct cnet_tls_server_config {
   size_t signature_algorithm_count;
   /** Independent TLS/TLCP certificate-chain signature allowlist, copied at init.
    * NULL/0 uses signature_algorithms. Explicit lists contain 1..4 unique
-   * RSA-PKCS1-SHA256 or ECDSA P256/SHA256, P384/SHA384 (STANDARD), or SM2/SM3
-   * (SHANGMI). RSA-PSS certificate signatures are unsupported. STANDARD permits
-   * TLS1.2/1.3 and ranges. TLCP clients admit SM2/SM3 or RSA-PKCS1-SHA256
+   * schemes. STANDARD supports RSA-PKCS1-SHA256, ECDSA P256/SHA256 and
+   * P384/SHA384, and RSA-PSS-RSAE-SHA256 if the Crypto SDK advertises
+   * CRYPTO_TLS_FEATURE_X509_RSA_PSS_SHA256. TLS 1.2-only profiles can configure
+   * RSA-PSS separately here. They accept CRYPTO_TLS_SIGNATURE_ECDSA_SHA512_TLS12
+   * for a P-384 issuer when the Crypto SDK advertises
+   * CRYPTO_TLS_FEATURE_TLS12_X509_ECDSA_P384_SHA512. SHANGMI supports SM2/SM3.
+   * TLCP clients admit SM2/SM3 or RSA-PKCS1-SHA256
    * certificate issuers while retaining SM2 handshake signatures; the policy is
    * local admission, without adding TLS extension 50 to TLCP. TLCP server lists
    * return ENOTSUP while client authentication is unsupported. TLS1.2 client
@@ -977,6 +995,7 @@ typedef struct cnet_packet_endpoint_config {
  * @return `SALTS_OK`, `SALTS_EINVAL` for an invalid bound/backend, or a
  * resource/backend initialization error. No partial client is published.
  */
+SALTS_CNET_EXPORT
 int cnet_client_init(cnet_client *client, const cnet_client_config *config);
 
 /**
@@ -989,11 +1008,13 @@ int cnet_client_init(cnet_client *client, const cnet_client_config *config);
  * The borrowed backend must outlive the client and must not be closed while
  * any CNet request or endpoint remains live.
  */
+SALTS_CNET_EXPORT
 int cnet_client_init_external(cnet_client *client,
                               const cnet_client_config *config,
                               native_io_backend *borrowed_backend);
 
 /** Validates platform bounds and option dependencies without touching a socket. */
+SALTS_CNET_EXPORT
 int cnet_stream_socket_options_validate(const cnet_stream_socket_options *options);
 
 /**
@@ -1006,6 +1027,7 @@ int cnet_stream_socket_options_validate(const cnet_stream_socket_options *option
  * IPC/Pipe connection admission rejects enabled TCP-only policy with
  * SALTS_ENOTSUP; reset it to defaults before connecting those transports.
  */
+SALTS_CNET_EXPORT
 int cnet_client_set_stream_socket_options(cnet_client *client,
                                           const cnet_stream_socket_options *options);
 
@@ -1020,6 +1042,7 @@ int cnet_client_set_stream_socket_options(cnet_client *client,
  * `SALTS_ENOBUFS` at the hard connection/command bound, or `SALTS_ESHUTDOWN`
  * after stop begins.
  */
+SALTS_CNET_EXPORT
 int cnet_connect(cnet_client *client, const cnet_connect_options *options,
                  cnet_connection *out_connection);
 
@@ -1031,12 +1054,14 @@ int cnet_connect(cnet_client *client, const cnet_connect_options *options,
  * The observer is copied synchronously. Both peer values are copied before
  * return and never retained by pointer. Address families must match.
  */
+SALTS_CNET_EXPORT
 int cnet_connect_peer(cnet_client *client, const cnet_stream_peer *remote_peer,
                       const cnet_stream_peer *local_peer,
                       const cnet_observer *observer,
                       cnet_connection *out_connection);
 
 /** Lossless IPv6-flow-info counterpart of cnet_connect_peer(). */
+SALTS_CNET_EXPORT
 int cnet_connect_endpoint(cnet_client *client,
                           const cnet_stream_endpoint *remote_endpoint,
                           const cnet_stream_endpoint *local_endpoint,
@@ -1047,14 +1072,18 @@ int cnet_connect_endpoint(cnet_client *client,
  * Copies the current local or remote TCP endpoint for one live generation-
  * checked connection. No native descriptor is exposed.
  */
+SALTS_CNET_EXPORT
 int cnet_connection_local_peer(cnet_client *client, cnet_connection connection,
                                cnet_stream_peer *out_peer);
+SALTS_CNET_EXPORT
 int cnet_connection_remote_peer(cnet_client *client, cnet_connection connection,
                                 cnet_stream_peer *out_peer);
 
+SALTS_CNET_EXPORT
 int cnet_connection_local_endpoint(cnet_client *client,
                                    cnet_connection connection,
                                    cnet_stream_endpoint *out_endpoint);
+SALTS_CNET_EXPORT
 int cnet_connection_remote_endpoint(cnet_client *client,
                                     cnet_connection connection,
                                     cnet_stream_endpoint *out_endpoint);
@@ -1072,6 +1101,7 @@ typedef enum cnet_tcp_shutdown {
  * shutdown rejects new writes immediately and defers the native FIN until
  * already-admitted writes have drained.
  */
+SALTS_CNET_EXPORT
 int cnet_connection_shutdown(cnet_client *client,
                              cnet_connection connection,
                              cnet_tcp_shutdown how);
@@ -1085,6 +1115,7 @@ int cnet_connection_shutdown(cnet_client *client,
  * behavior unless explicitly opted in. This does not alter observer/config ABI.
  * Returns SALTS_EINVAL, SALTS_ENOENT, SALTS_ENOTSUP, SALTS_EBUSY or SALTS_OK.
  */
+SALTS_CNET_EXPORT
 int cnet_connection_preserve_send_on_eof(cnet_client *client, cnet_connection connection);
 
 /**
@@ -1093,8 +1124,10 @@ int cnet_connection_preserve_send_on_eof(cnet_client *client, cnet_connection co
  * No native descriptor is exposed. Unsupported host properties return
  * SALTS_ENOTSUP.
  */
+SALTS_CNET_EXPORT
 int cnet_connection_tcp_option_get(cnet_client *client, cnet_connection connection,
                                    cnet_tcp_socket_option option, uint64_t *out_value);
+SALTS_CNET_EXPORT
 int cnet_connection_tcp_option_set(cnet_client *client, cnet_connection connection,
                                    cnet_tcp_socket_option option, uint64_t value);
 
@@ -1109,6 +1142,7 @@ int cnet_connection_tcp_option_set(cnet_client *client, cnet_connection connecti
  * @param out_connection Cleared before validation and populated only after successful admission.
  * @return `SALTS_OK`, `SALTS_EINVAL`, `SALTS_ENOTSUP`, or a bounded admission error.
  */
+SALTS_CNET_EXPORT
 int cnet_client_adopt_vsock(cnet_client *client, uintptr_t native_socket,
                             const cnet_observer *observer, cnet_connection *out_connection);
 
@@ -1129,6 +1163,7 @@ int cnet_client_adopt_vsock(cnet_client *client, uintptr_t native_socket,
  * plaintext TCP; `SALTS_EBUSY` unless the stream is connected and quiescent;
  * `SALTS_ENOENT` for a stale handle; or a bounded queue error.
  */
+SALTS_CNET_EXPORT
 int cnet_start_tls(cnet_client *client, cnet_connection connection,
                    const cnet_start_tls_options *options);
 
@@ -1143,6 +1178,7 @@ int cnet_start_tls(cnet_client *client, cnet_connection connection,
  * @return The same connection-state, capacity, and shutdown results as
  * `cnet_start_tls()`, plus `SALTS_EINVAL` for an invalid server context.
  */
+SALTS_CNET_EXPORT
 int cnet_start_tls_server(cnet_client *client, cnet_connection connection,
                           const cnet_tls_server *server);
 
@@ -1180,10 +1216,12 @@ typedef struct cnet_send_options {
  * A successful completion precedes the existing observer.on_send notification;
  * that notification remains enabled and is not another operation completion.
  * Convenience send_buffer/slice/slicev use this same admission and accounting. */
+SALTS_CNET_EXPORT
 int cnet_send(cnet_client *client, cnet_connection connection,
               const cnet_send_options *options, cnet_operation *out_operation,
               cnet_admission_limit *out_limit);
 /* Owner-only accounting. Zero connection returns aggregate usage. */
+SALTS_CNET_EXPORT
 int cnet_client_send_usage(cnet_client *client, cnet_connection connection,
                             cnet_send_usage *out);
 /* Owner-only, outside callbacks/progress. Copied policy applies to subsequent
@@ -1191,6 +1229,7 @@ int cnet_client_send_usage(cnet_client *client, cnet_connection connection,
  * Old policy user can be released after replacement returns. Hard limits and
  * resource providers are immutable for this client lifetime. Replacing this
  * client gate leaves all connection-specific gates in place. */
+SALTS_CNET_EXPORT
 int cnet_client_set_send_admission(cnet_client *client,
                                    const cnet_send_admission_policy *policy);
 /* Extra gate for one live connection generation, initially empty. Hard limits,
@@ -1201,8 +1240,10 @@ int cnet_client_set_send_admission(cnet_client *client,
  * notification. Existing operations keep their retained storage and completion.
  * Stale/unknown handle: ENOENT; sealed connection: ESHUTDOWN; invalid binding:
  * EINVAL; wrong owner: EPERM; callbacks/progress: EBUSY. No change on failure. */
+SALTS_CNET_EXPORT
 int cnet_set_send_admission(cnet_client *client, cnet_connection connection,
                              const cnet_send_admission_policy *policy);
+SALTS_CNET_EXPORT
 int cnet_send_buffer(cnet_client *client, cnet_connection connection, mem_buffer_t *buffer);
 
 /**
@@ -1214,6 +1255,7 @@ int cnet_send_buffer(cnet_client *client, cnet_connection connection, mem_buffer
  * immutable until the logical send terminal. Invalid, forged, stale or
  * out-of-range slices return SALTS_EINVAL without retaining.
  */
+SALTS_CNET_EXPORT
 int cnet_send_slice(cnet_client *client, cnet_connection connection, const mem_slice_t *slice);
 
 /**
@@ -1243,6 +1285,7 @@ int cnet_send_slice(cnet_client *client, cnet_connection connection, const mem_s
  * retaining or silently copying. Invalid, empty, forged, out-of-range, or
  * over-limit vectors are rejected without lasting ownership.
  */
+SALTS_CNET_EXPORT
 int cnet_send_slicev(cnet_client *client, cnet_connection connection,
                      const mem_slice_t *segments, size_t segment_count);
 
@@ -1257,6 +1300,7 @@ int cnet_send_slicev(cnet_client *client, cnet_connection connection,
  * Unsupported transports return SALTS_ENOTSUP without retaining or silently
  * copying.
  */
+SALTS_CNET_EXPORT
 int cnet_send_slicev_and_close(cnet_client *client, cnet_connection connection,
                                const mem_slice_t *segments, size_t segment_count);
 
@@ -1270,6 +1314,7 @@ int cnet_send_slicev_and_close(cnet_client *client, cnet_connection connection,
  * SALTS_OK but must not mutate data/used/capacity while CNet owns its retain.
  * Rejection retains no lasting reference.
  */
+SALTS_CNET_EXPORT
 int cnet_send_buffer_and_close(cnet_client *client, cnet_connection connection,
                                mem_buffer_t *buffer);
 
@@ -1283,6 +1328,7 @@ int cnet_send_buffer_and_close(cnet_client *client, cnet_connection connection,
  * otherwise SALTS_EBUSY is returned so already-admitted demand cannot switch
  * lifetime contracts in flight.
  */
+SALTS_CNET_EXPORT
 int cnet_set_receive_slice_handler(cnet_client *client,
                                    cnet_connection connection,
                                    cnet_receive_slice_fn handler,
@@ -1295,6 +1341,7 @@ int cnet_set_receive_slice_handler(cnet_client *client,
  * @return The same handle/state/queue errors as `cnet_send`; zero demand is
  * `SALTS_EINVAL`.
  */
+SALTS_CNET_EXPORT
 int cnet_receive(cnet_client *client, cnet_connection connection, size_t demand);
 
 /**
@@ -1306,6 +1353,7 @@ int cnet_receive(cnet_client *client, cnet_connection connection, size_t demand)
  * @return `SALTS_OK`, `SALTS_EALREADY`, `SALTS_ENOENT`, `SALTS_ESHUTDOWN`, or
  * a bounded queue error.
  */
+SALTS_CNET_EXPORT
 int cnet_close(cnet_client *client, cnet_connection connection);
 
 /**
@@ -1325,6 +1373,7 @@ int cnet_close(cnet_client *client, cnet_connection connection);
  * recursive polling, `SALTS_ESHUTDOWN` after stop begins, or the first owner
  * progress error.
  */
+SALTS_CNET_EXPORT
 int cnet_client_poll(cnet_client *client, uint32_t timeout_ms, size_t *out_events);
 
 #define CNET_PROGRESS_STRATEGY_VERSION 1u
@@ -1379,6 +1428,7 @@ typedef struct cnet_progress_strategy {
  * the wait by its next timer/cancellation-check deadline. Other threads may
  * use cnet_client_wake(), not this progress function.
  */
+SALTS_CNET_EXPORT
 int cnet_client_poll_strategy(cnet_client *client,
                               const cnet_progress_strategy *strategy,
                               uint32_t timeout_ms, size_t *out_events);
@@ -1388,6 +1438,7 @@ int cnet_client_poll_strategy(cnet_client *client,
  * observing NativeIO. Valid only for a client created by
  * cnet_client_init_external(). Callbacks remain ordered and execute inline.
  */
+SALTS_CNET_EXPORT
 int cnet_client_advance_external(cnet_client *client, size_t *out_events);
 
 /**
@@ -1398,6 +1449,7 @@ int cnet_client_advance_external(cnet_client *client, size_t *out_events);
  * close. NativeIO observation invalidates its request identity before CNet
  * settles the request/backing; stop/destroy remain busy until routing drains it.
  */
+SALTS_CNET_EXPORT
 int cnet_client_route_external_completion(
     cnet_client *client,
     const native_io_completion *completion,
@@ -1409,6 +1461,7 @@ int cnet_client_route_external_completion(
  * runtime should arm this deadline alongside its NativeIO wait and call
  * cnet_client_advance_external() when it expires.
  */
+SALTS_CNET_EXPORT
 int cnet_client_external_timeout(cnet_client *client,
                                  uint32_t max_wait_ms,
                                  uint32_t *out_timeout_ms);
@@ -1423,6 +1476,7 @@ int cnet_client_external_timeout(cnet_client *client,
  * small, SALTS_ENOBUFS reports the required count in out_count without writing
  * a partial snapshot.
  */
+SALTS_CNET_EXPORT
 int cnet_client_external_requests(cnet_client *client,
                                   cnet_connection connection,
                                   native_io_request *out_requests,
@@ -1442,6 +1496,7 @@ typedef struct cnet_external_request_snapshot {
   native_io_operation_kind operation_kind;
 } cnet_external_request_snapshot;
 
+SALTS_CNET_EXPORT
 int cnet_client_external_request_snapshots(
     cnet_client *client,
     cnet_connection connection,
@@ -1454,6 +1509,7 @@ int cnet_client_external_request_snapshots(
  * connection has reached its terminal callback. It never observes NativeIO.
  * SALTS_EBUSY means the embedding runtime must continue routing/advancing.
  */
+SALTS_CNET_EXPORT
 int cnet_client_stop_external(cnet_client *client);
 
 /**
@@ -1464,6 +1520,7 @@ int cnet_client_stop_external(cnet_client *client);
  *
  * @return SALTS_OK, SALTS_EINVAL, SALTS_ESHUTDOWN, or a native wake error.
  */
+SALTS_CNET_EXPORT
 int cnet_client_wake(cnet_client *client);
 
 /**
@@ -1479,12 +1536,14 @@ int cnet_client_wake(cnet_client *client);
  * External-progress clients return SALTS_ENOTSUP here. They must drive
  * completions externally and finish with cnet_client_stop_external().
  */
+SALTS_CNET_EXPORT
 int cnet_client_stop(cnet_client *client, uint32_t timeout_ms);
 
 /**
  * Requires a completed stop. Calling from this client's callback is rejected.
  * A NULL internal implementation is already destroyed and returns `SALTS_OK`.
  */
+SALTS_CNET_EXPORT
 int cnet_client_destroy(cnet_client *client);
 
 /**
@@ -1497,6 +1556,7 @@ int cnet_client_destroy(cnet_client *client);
  * @return `SALTS_OK`, `SALTS_EINVAL`, `SALTS_EALREADY`, `SALTS_ERANGE`,
  * `SALTS_ENOMEM`, or `SALTS_EIO` for trust/certificate/GmSSL setup failure.
  */
+SALTS_CNET_EXPORT
 int cnet_tls_client_init(cnet_tls_client *client, const cnet_tls_client_config *config);
 
 /**
@@ -1506,6 +1566,7 @@ int cnet_tls_client_init(cnet_tls_client *client, const cnet_tls_client_config *
  * wrapper.
  * @return `SALTS_OK`, or `SALTS_EINVAL` for a NULL wrapper.
  */
+SALTS_CNET_EXPORT
 int cnet_tls_client_destroy(cnet_tls_client *client);
 
 /**
@@ -1518,6 +1579,7 @@ int cnet_tls_client_destroy(cnet_tls_client *client);
  * @return `SALTS_OK`, `SALTS_EINVAL`, `SALTS_EALREADY`, `SALTS_ERANGE`,
  * `SALTS_ENOMEM`, or `SALTS_EIO` for certificate/GmSSL setup failure.
  */
+SALTS_CNET_EXPORT
 int cnet_tls_server_init(cnet_tls_server *server, const cnet_tls_server_config *config);
 
 /**
@@ -1526,6 +1588,7 @@ int cnet_tls_server_init(cnet_tls_server *server, const cnet_tls_server_config *
  * using the same `server` wrapper.
  * @return `SALTS_OK` (including an already destroyed wrapper), or `SALTS_EINVAL`.
  */
+SALTS_CNET_EXPORT
 int cnet_tls_server_destroy(cnet_tls_server *server);
 
 /**
@@ -1535,6 +1598,7 @@ int cnet_tls_server_destroy(cnet_tls_server *server);
  * for a plaintext connection. Other errors are `SALTS_ENOTCONN`,
  * `SALTS_EMSGSIZE`, and the standard invalid/stale-handle statuses.
  */
+SALTS_CNET_EXPORT
 int cnet_tls_negotiated_alpn(cnet_client *client, cnet_connection connection, char *buffer,
                              size_t capacity, size_t *out_size);
 
@@ -1545,6 +1609,7 @@ int cnet_tls_negotiated_alpn(cnet_client *client, cnet_connection connection, ch
  * incomplete TLS handshakes return `SALTS_ENOTCONN`; an undersized buffer
  * returns `SALTS_EMSGSIZE`.
  */
+SALTS_CNET_EXPORT
 int cnet_tls_negotiated_version(cnet_client *client, cnet_connection connection, char *buffer,
                                 size_t capacity, size_t *out_size);
 
@@ -1552,6 +1617,7 @@ int cnet_tls_negotiated_version(cnet_client *client, cnet_connection connection,
  * OPEN TLS connection. False on errors; plain streams return ENOTSUP, stale
  * generations ENOENT and non-open TLS connections ENOTCONN. Invalid pointers
  * return EINVAL. out_reused borrows caller storage only during this call. */
+SALTS_CNET_EXPORT
 int cnet_tls_session_reused(cnet_client *client, cnet_connection connection, bool *out_reused);
 
 /**
@@ -1560,6 +1626,7 @@ int cnet_tls_session_reused(cnet_client *client, cnet_connection connection, boo
  * excludes it. Plaintext returns `SALTS_ENOTSUP`; incomplete TLS handshakes
  * return `SALTS_ENOTCONN`; an undersized buffer returns `SALTS_EMSGSIZE`.
  */
+SALTS_CNET_EXPORT
 int cnet_tls_negotiated_cipher(cnet_client *client, cnet_connection connection, char *buffer,
                                size_t capacity, size_t *out_size);
 
@@ -1571,6 +1638,7 @@ int cnet_tls_negotiated_cipher(cnet_client *client, cnet_connection connection, 
  * Other errors are `SALTS_ENOTCONN` and the standard invalid/stale-handle
  * statuses. Resumed clients inspect the revalidated original peer certificate.
  */
+SALTS_CNET_EXPORT
 int cnet_tls_peer_certificate_sha256(cnet_client *client, cnet_connection connection,
                                      char buffer[CNET_TLS_PEER_CERTIFICATE_SHA256_CAPACITY]);
 
@@ -1588,6 +1656,7 @@ int cnet_tls_peer_certificate_sha256(cnet_client *client, cnet_connection connec
  * digest returns `SALTS_ENOTSUP`; an undersized output returns
  * `SALTS_EMSGSIZE` with the required width in `out_size`.
  */
+SALTS_CNET_EXPORT
 int cnet_tls_server_end_point_binding(cnet_client *client, cnet_connection connection,
                                       uint8_t *output, size_t capacity,
                                       size_t *out_size);
@@ -1598,6 +1667,7 @@ int cnet_tls_server_end_point_binding(cnet_client *client, cnet_connection conne
  * valid only while the TLS connection remains open. Plaintext returns
  * `SALTS_ENOTSUP`; incomplete TLS handshakes return `SALTS_ENOTCONN`.
  */
+SALTS_CNET_EXPORT
 int cnet_tls_export_channel_binding(cnet_client *client, cnet_connection connection,
                                     uint8_t output[CNET_TLS_CHANNEL_BINDING_BYTES]);
 
@@ -1606,9 +1676,11 @@ int cnet_tls_export_channel_binding(cnet_client *client, cnet_connection connect
  * ownership may move from initialization to a worker before the first wait or
  * accept, but calls must not overlap.
  */
+SALTS_CNET_EXPORT
 int cnet_listener_init(cnet_listener *listener, const cnet_listener_config *config);
 
 /** Validates the versioned listener policy without creating a socket. */
+SALTS_CNET_EXPORT
 int cnet_listener_options_validate(const cnet_listener_options *options);
 
 /**
@@ -1616,9 +1688,11 @@ int cnet_listener_options_validate(const cnet_listener_options *options);
  * per-socket options to be queried/mutated before bind/connect without
  * exposing the native socket identity.
  */
+SALTS_CNET_EXPORT
 int cnet_listener_open(cnet_listener *listener,
                        native_io_backend_kind backend,
                        cnet_datagram_address_family family);
+SALTS_CNET_EXPORT
 int cnet_listener_open_ex(cnet_listener *listener,
                           native_io_backend_kind backend,
                           cnet_datagram_address_family family,
@@ -1628,9 +1702,11 @@ int cnet_listener_open_ex(cnet_listener *listener,
  * Binds an already-open unbound TCP owner to one numeric portable peer.
  * Port zero requests an ephemeral port. The owner remains non-listening.
  */
+SALTS_CNET_EXPORT
 int cnet_listener_bind_open_peer(cnet_listener *listener,
                                  const cnet_stream_peer *local_peer);
 
+SALTS_CNET_EXPORT
 int cnet_listener_bind_open_endpoint(
     cnet_listener *listener,
     const cnet_stream_endpoint *local_endpoint);
@@ -1641,7 +1717,9 @@ int cnet_listener_bind_open_endpoint(
  * listening exactly once. This is useful for protocols that expose bind and
  * listen as distinct semantic states.
  */
+SALTS_CNET_EXPORT
 int cnet_listener_bind(cnet_listener *listener, const cnet_listener_config *config);
+SALTS_CNET_EXPORT
 int cnet_listener_bind_ex(cnet_listener *listener, const cnet_listener_config *config,
                           const cnet_listener_options *options);
 
@@ -1650,24 +1728,29 @@ int cnet_listener_bind_ex(cnet_listener *listener, const cnet_listener_config *c
  * ephemeral port. The peer is copied synchronously; no text parsing or DNS is
  * involved.
  */
+SALTS_CNET_EXPORT
 int cnet_listener_bind_peer(cnet_listener *listener,
                             native_io_backend_kind backend,
                             const cnet_stream_peer *local_peer);
+SALTS_CNET_EXPORT
 int cnet_listener_bind_peer_ex(cnet_listener *listener,
                                native_io_backend_kind backend,
                                const cnet_stream_peer *local_peer,
                                const cnet_listener_options *options);
 
+SALTS_CNET_EXPORT
 int cnet_listener_bind_endpoint(
     cnet_listener *listener,
     native_io_backend_kind backend,
     const cnet_stream_endpoint *local_endpoint);
+SALTS_CNET_EXPORT
 int cnet_listener_bind_endpoint_ex(
     cnet_listener *listener,
     native_io_backend_kind backend,
     const cnet_stream_endpoint *local_endpoint,
     const cnet_listener_options *options);
 
+SALTS_CNET_EXPORT
 int cnet_listener_listen(cnet_listener *listener, size_t backlog);
 
 /**
@@ -1675,12 +1758,15 @@ int cnet_listener_listen(cnet_listener *listener, size_t backlog);
  * ownership. Before listen this only stores the hint; while listening it asks
  * the platform to update the existing queue.
  */
+SALTS_CNET_EXPORT
 int cnet_listener_set_backlog(cnet_listener *listener, size_t backlog);
 
 /** Live TCP options on one unbound/bound/listening TCP owner. */
+SALTS_CNET_EXPORT
 int cnet_listener_tcp_option_get(cnet_listener *listener,
                                  cnet_tcp_socket_option option,
                                  uint64_t *out_value);
+SALTS_CNET_EXPORT
 int cnet_listener_tcp_option_set(cnet_listener *listener,
                                  cnet_tcp_socket_option option,
                                  uint64_t value);
@@ -1690,11 +1776,13 @@ int cnet_listener_tcp_option_set(cnet_listener *listener,
  * asynchronous client connect on that exact socket. An unbound owner receives
  * an implicit same-family ephemeral bind before ConnectEx/connect admission.
  */
+SALTS_CNET_EXPORT
 int cnet_listener_connect_peer(cnet_listener *listener, cnet_client *client,
                                const cnet_stream_peer *remote_peer,
                                const cnet_observer *observer,
                                cnet_connection *out_connection);
 
+SALTS_CNET_EXPORT
 int cnet_listener_connect_endpoint(
     cnet_listener *listener, cnet_client *client,
     const cnet_stream_endpoint *remote_endpoint,
@@ -1702,12 +1790,15 @@ int cnet_listener_connect_endpoint(
     cnet_connection *out_connection);
 
 /** Creates and listens in one call; equivalent to bind_ex + listen. */
+SALTS_CNET_EXPORT
 int cnet_listener_init_ex(cnet_listener *listener, const cnet_listener_config *config,
                           const cnet_listener_options *options);
 
 /** Copies the currently bound numeric TCP endpoint. */
+SALTS_CNET_EXPORT
 int cnet_listener_local(const cnet_listener *listener, cnet_stream_peer *out_local);
 
+SALTS_CNET_EXPORT
 int cnet_listener_local_endpoint(const cnet_listener *listener,
                                  cnet_stream_endpoint *out_local);
 
@@ -1720,10 +1811,12 @@ int cnet_listener_local_endpoint(const cnet_listener *listener,
  * @param config Versioned configuration with an explicit supported backend and nonzero backlog.
  * @return `SALTS_OK`, `SALTS_EINVAL`, `SALTS_EALREADY`, `SALTS_ENOTSUP`, or a native socket error.
  */
+SALTS_CNET_EXPORT
 int cnet_listener_init_vsock(cnet_listener *listener,
                              const cnet_vsock_listener_config *config);
 
 /** Returns the bound host-order port, including an OS-selected ephemeral port. */
+SALTS_CNET_EXPORT
 int cnet_listener_port(const cnet_listener *listener, uint16_t *out_port);
 
 /**
@@ -1733,12 +1826,14 @@ int cnet_listener_port(const cnet_listener *listener, uint16_t *out_port);
  * @param out_local Cleared before validation and populated on success.
  * @return `SALTS_OK`, `SALTS_EINVAL`, `SALTS_ESHUTDOWN`, `SALTS_ENOTSUP`, or a native socket error.
  */
+SALTS_CNET_EXPORT
 int cnet_listener_vsock_local(const cnet_listener *listener, cnet_vsock_peer *out_local);
 
 /**
  * Waits for accept readiness. Timeout is successful with `out_ready == 0`.
  * This function does not accept or allocate a connection.
  */
+SALTS_CNET_EXPORT
 int cnet_listener_wait(cnet_listener *listener, uint32_t timeout_ms, int *out_ready);
 
 /**
@@ -1749,6 +1844,7 @@ int cnet_listener_wait(cnet_listener *listener, uint32_t timeout_ms, int *out_re
  *
  * This is mutually exclusive with cnet_listener_wait() for progress ownership.
  */
+SALTS_CNET_EXPORT
 int cnet_listener_attach_external(cnet_listener *listener,
                                   native_io_backend *borrowed_backend);
 
@@ -1760,6 +1856,7 @@ int cnet_listener_attach_external(cnet_listener *listener,
  * SALTS_EALREADY means a terminal accepted child is already pending consumption
  * by cnet_listener_accept*().
  */
+SALTS_CNET_EXPORT
 int cnet_listener_submit_external_accept(cnet_listener *listener,
                                          native_io_request *out_request);
 
@@ -1769,6 +1866,7 @@ int cnet_listener_submit_external_accept(cnet_listener *listener,
  * consumes the backend-private child escrow into CNet listener ownership; no
  * native handle crosses this API.
  */
+SALTS_CNET_EXPORT
 int cnet_listener_route_external_completion(
     cnet_listener *listener,
     const native_io_completion *completion,
@@ -1781,6 +1879,7 @@ int cnet_listener_route_external_completion(
  * the native peer and leaves `out_connection` zero. The child preserves the
  * listener's TCP policy; the client's future-connection policy is not applied.
  */
+SALTS_CNET_EXPORT
 int cnet_listener_accept(cnet_listener *listener, cnet_client *client,
                          const cnet_observer *observer, cnet_connection *out_connection);
 
@@ -1788,6 +1887,7 @@ int cnet_listener_accept(cnet_listener *listener, cnet_client *client,
  * Accepts one plaintext TCP peer and also copies its portable remote endpoint.
  * `out_peer` is cleared on failure and remains independent of the connection lifetime.
  */
+SALTS_CNET_EXPORT
 int cnet_listener_accept_peer(cnet_listener *listener, cnet_client *client,
                               const cnet_observer *observer, cnet_connection *out_connection,
                               cnet_stream_peer *out_peer);
@@ -1803,6 +1903,7 @@ int cnet_listener_accept_peer(cnet_listener *listener, cnet_client *client,
  * The caller must pass an empty/zero-initialized descriptor. A live descriptor
  * returns SALTS_EALREADY and is left unchanged.
  */
+SALTS_CNET_EXPORT
 int cnet_listener_accept_detached(cnet_listener *listener,
                                   cnet_accepted_stream *out_accepted);
 
@@ -1813,6 +1914,7 @@ int cnet_listener_accept_detached(cnet_listener *listener,
  * attempt, including bounded admission failure; ownership is never returned to
  * the caller.
  */
+SALTS_CNET_EXPORT
 int cnet_client_adopt_accepted(cnet_client *client,
                                cnet_accepted_stream *accepted,
                                const cnet_observer *observer,
@@ -1823,6 +1925,7 @@ int cnet_client_adopt_accepted(cnet_client *client,
  * created only on the final CNet owner; the detached descriptor carries no TLS
  * provider/runtime state.
  */
+SALTS_CNET_EXPORT
 int cnet_client_adopt_accepted_tls(cnet_client *client,
                                    cnet_accepted_stream *accepted,
                                    const cnet_tls_server *server,
@@ -1833,6 +1936,7 @@ int cnet_client_adopt_accepted_tls(cnet_client *client,
  * Closes one still-detached stream and empties the descriptor.
  * Empty/double-close returns SALTS_EALREADY.
  */
+SALTS_CNET_EXPORT
 int cnet_accepted_stream_close(cnet_accepted_stream *accepted);
 
 /**
@@ -1843,6 +1947,7 @@ int cnet_accepted_stream_close(cnet_accepted_stream *accepted);
  * @param out_connection Cleared before validation and populated only after successful admission.
  * @return The VSOCK peer-accept statuses; no pending peer returns `SALTS_ETIMEDOUT`.
  */
+SALTS_CNET_EXPORT
 int cnet_listener_accept_vsock(cnet_listener *listener, cnet_client *client,
                                const cnet_observer *observer,
                                cnet_connection *out_connection);
@@ -1857,6 +1962,7 @@ int cnet_listener_accept_vsock(cnet_listener *listener, cnet_client *client,
  * @param out_peer Cleared before validation and populated with host-order CID/port on success.
  * @return `SALTS_OK`, validation/lifecycle errors, `SALTS_ETIMEDOUT`, or a native socket error.
  */
+SALTS_CNET_EXPORT
 int cnet_listener_accept_vsock_peer(cnet_listener *listener, cnet_client *client,
                                     const cnet_observer *observer,
                                     cnet_connection *out_connection,
@@ -1869,25 +1975,30 @@ int cnet_listener_accept_vsock_peer(cnet_listener *listener, cnet_client *client
  * @return The plaintext accept statuses, plus `SALTS_ENOTSUP` when `client`
  * has no bounded TLS storage or `SALTS_EINVAL` for an invalid TLS context.
  */
+SALTS_CNET_EXPORT
 int cnet_listener_accept_tls(cnet_listener *listener, cnet_client *client,
                              const cnet_tls_server *server, const cnet_observer *observer,
                              cnet_connection *out_connection);
 
 /** TLS counterpart of `cnet_listener_accept_peer()`. */
+SALTS_CNET_EXPORT
 int cnet_listener_accept_tls_peer(cnet_listener *listener, cnet_client *client,
                                   const cnet_tls_server *server, const cnet_observer *observer,
                                   cnet_connection *out_connection, cnet_stream_peer *out_peer);
 
 /** Closes listener admission. Existing CNet connections are unaffected. */
+SALTS_CNET_EXPORT
 int cnet_listener_close(cnet_listener *listener);
 
 /** Requires a closed listener and releases its platform-module reference. */
+SALTS_CNET_EXPORT
 int cnet_listener_destroy(cnet_listener *listener);
 
 /**
  * Binds one numeric IPv4/IPv6 UDP endpoint and preallocates all request,
  * receive, send and completion storage. No worker thread is created.
  */
+SALTS_CNET_EXPORT
 int cnet_datagram_init(cnet_datagram *datagram, const cnet_datagram_config *config);
 
 /** SDK capability for the complete borrowed-backend datagram progress API. */
@@ -1904,6 +2015,7 @@ int cnet_datagram_init(cnet_datagram *datagram, const cnet_datagram_config *conf
  * Returns SALTS_OK, SALTS_EINVAL, SALTS_EALREADY, SALTS_ESHUTDOWN,
  * SALTS_ENOBUFS, SALTS_ERANGE, SALTS_ENOMEM, SALTS_ENOTSUP, or a native error.
  */
+SALTS_CNET_EXPORT
 int cnet_datagram_init_external(cnet_datagram *datagram, const cnet_datagram_config *config,
                                  native_io_backend *backend);
 
@@ -1912,32 +2024,43 @@ int cnet_datagram_init_external(cnet_datagram *datagram, const cnet_datagram_con
 /** Opens an unbound IP datagram socket on a borrowed backend. config.host/port
  * must be NULL/zero. All other bounds/observer rules match external init.
  * No receive/send admission is allowed before bind. No worker is created. */
+SALTS_CNET_EXPORT
 int cnet_datagram_open_external(cnet_datagram *datagram, const cnet_datagram_config *config,
                                native_io_backend *backend, cnet_datagram_address_family family);
 /** Binds once; endpoint permits an unspecified IP and port zero. Preserves
  * IPv6 flow-info/scope. EALREADY on rebinding, EBUSY on callback reentry. */
+SALTS_CNET_EXPORT
 int cnet_datagram_bind_endpoint(cnet_datagram *datagram, const cnet_stream_endpoint *endpoint);
 /** Native UDP connect/disconnect. NULL disconnects. Requires a bound socket
  * and no retained receive/send requests; EBUSY preserves the association.
  * Query the local address again after successful association/disassociation. */
+SALTS_CNET_EXPORT
 int cnet_datagram_associate_endpoint(cnet_datagram *datagram, const cnet_stream_endpoint *endpoint);
+SALTS_CNET_EXPORT
 int cnet_datagram_local_endpoint(const cnet_datagram *datagram, cnet_stream_endpoint *out);
+SALTS_CNET_EXPORT
 int cnet_datagram_remote_endpoint(const cnet_datagram *datagram, cnet_stream_endpoint *out);
 /** Lossless peer query allowed only during on_receive; its returned copy owns no socket. */
+SALTS_CNET_EXPORT
 int cnet_datagram_received_endpoint(const cnet_datagram *datagram, cnet_stream_endpoint *out);
 /** Stops receive demand and requests cancellation without early release. Route
  * the actual terminal before quiescent becomes true. Accepted send terminals
  * still run. Pause is idempotent and does not stop the socket or backend. */
+SALTS_CNET_EXPORT
 int cnet_datagram_pause_receive(cnet_datagram *datagram);
+SALTS_CNET_EXPORT
 int cnet_datagram_quiescent(const cnet_datagram *datagram, bool *out);
 /** UDP supports HOP_LIMIT, RECEIVE_BUFFER_BYTES and SEND_BUFFER_BYTES only.
  * Queries report platform values; unsupported options return ENOTSUP.
  * Values above platform int range clamp to INT_MAX; zero is invalid. */
+SALTS_CNET_EXPORT
 int cnet_datagram_option_get(const cnet_datagram *datagram, cnet_tcp_socket_option option, uint64_t *out);
+SALTS_CNET_EXPORT
 int cnet_datagram_option_set(cnet_datagram *datagram, cnet_tcp_socket_option option, uint64_t value);
 /** Endpoint NULL uses the current native association. Empty payloads are real
  * datagrams; NULL data is allowed only with size zero. Same terminal tag and
  * copied ownership contract as cnet_datagram_send. */
+SALTS_CNET_EXPORT
 int cnet_datagram_send_endpoint(cnet_datagram *datagram, const cnet_stream_endpoint *endpoint,
                                 const void *data, size_t size, uint64_t tag);
 
@@ -1949,6 +2072,7 @@ int cnet_datagram_send_endpoint(cnet_datagram *datagram, const cnet_stream_endpo
  * Returns SALTS_OK, a rearm/cleanup error, SALTS_EINVAL, SALTS_ENOTSUP for an
  * owned instance, or SALTS_EBUSY for recursive progress/callback execution.
  */
+SALTS_CNET_EXPORT
 int cnet_datagram_advance_external(cnet_datagram *datagram, size_t *out_events);
 
 /**
@@ -1962,6 +2086,7 @@ int cnet_datagram_advance_external(cnet_datagram *datagram, size_t *out_events);
  * Returns SALTS_OK, SALTS_EINVAL, SALTS_ENOTSUP, SALTS_EBUSY, or a receive/rearm
  * error. out_consumed and out_events are required and cleared before validation.
  */
+SALTS_CNET_EXPORT
 int cnet_datagram_route_external_completion(cnet_datagram *datagram,
                                              const native_io_completion *completion,
                                              bool *out_consumed, size_t *out_events);
@@ -1978,15 +2103,18 @@ int cnet_datagram_route_external_completion(cnet_datagram *datagram,
  * Never closes/destroys the host backend. Repeated calls are safe.
  * Returns SALTS_OK, SALTS_EBUSY, SALTS_EINVAL, SALTS_ENOTSUP, or the first error.
  */
+SALTS_CNET_EXPORT
 int cnet_datagram_stop_external(cnet_datagram *datagram, bool *out_stopped);
 
 /** Returns the host-order bound port, including an OS-selected ephemeral port. */
+SALTS_CNET_EXPORT
 int cnet_datagram_port(const cnet_datagram *datagram, uint16_t *out_port);
 
 /**
  * Adds exactly demand receive values. Each successful callback consumes one;
  * overflow fails without changing current demand.
  */
+SALTS_CNET_EXPORT
 int cnet_datagram_receive(cnet_datagram *datagram, size_t demand);
 
 /**
@@ -1994,6 +2122,7 @@ int cnet_datagram_receive(cnet_datagram *datagram, size_t demand);
  * The opaque tag is copied with the peer and payload. A successful call
  * publishes exactly one terminal on_send callback with the same tag.
  */
+SALTS_CNET_EXPORT
 int cnet_datagram_send(cnet_datagram *datagram, const cnet_datagram_peer *peer, const void *data,
                        size_t size, uint64_t tag);
 
@@ -2001,9 +2130,11 @@ int cnet_datagram_send(cnet_datagram *datagram, const cnet_datagram_peer *peer, 
  * Advances NativeIO and invokes callbacks inline on the non-overlapping owner.
  * An idle timeout is successful with zero events.
  */
+SALTS_CNET_EXPORT
 int cnet_datagram_poll(cnet_datagram *datagram, uint32_t timeout_ms, size_t *out_events);
 
 /** The only datagram operation allowed concurrently from a non-owner thread. */
+SALTS_CNET_EXPORT
 int cnet_datagram_wake(cnet_datagram *datagram);
 
 /**
@@ -2012,15 +2143,18 @@ int cnet_datagram_wake(cnet_datagram *datagram);
  * send has reached its terminal callback. `SALTS_ETIMEDOUT` leaves the bounded
  * drain retryable without discarding the first concrete error.
  */
+SALTS_CNET_EXPORT
 int cnet_datagram_stop(cnet_datagram *datagram, uint32_t timeout_ms);
 
 /** Requires a completed stop and releases all fixed storage. */
+SALTS_CNET_EXPORT
 int cnet_datagram_destroy(cnet_datagram *datagram);
 
 /**
  * Creates one protocol-only session from a zero-initialized owner and
  * preallocates its receive message buffer. A live owner returns SALTS_EALREADY.
  */
+SALTS_CNET_EXPORT
 int cnet_kcp_init(cnet_kcp *session, const cnet_kcp_config *config);
 
 /** Sets the segment transmission limit, including the initial transmission.
@@ -2030,9 +2164,11 @@ int cnet_kcp_init(cnet_kcp *session, const cnet_kcp_config *config);
  * destroy. An idle session without unacknowledged segments does not time out.
  * Example: init(&kcp,&config); set_dead_link(&kcp,5); send(...); update(...).
  */
+SALTS_CNET_EXPORT
 int cnet_kcp_set_dead_link(cnet_kcp *session, uint32_t max_transmissions);
 
 /** OK while usable, ETIMEDOUT after transmission exhaustion, EINVAL if not live. */
+SALTS_CNET_EXPORT
 int cnet_kcp_terminal_status(const cnet_kcp *session);
 
 /**
@@ -2041,54 +2177,70 @@ int cnet_kcp_terminal_status(const cnet_kcp *session);
  * At most 127 new segments may be added per call, after any stream-tail merge.
  * Exceeding this limit or max_message_bytes returns SALTS_EMSGSIZE without retaining input.
  */
+SALTS_CNET_EXPORT
 int cnet_kcp_send(cnet_kcp *session, const void *data, size_t size);
 
 /** Borrows one wire datagram until return and synchronously emits complete messages. */
+SALTS_CNET_EXPORT
 int cnet_kcp_input(cnet_kcp *session, const void *data, size_t size);
 
 /** Advances the KCP clock and synchronously emits wire packets through output. */
+SALTS_CNET_EXPORT
 int cnet_kcp_update(cnet_kcp *session, uint32_t now_ms);
 
 /** Returns KCP's next absolute 32-bit millisecond update time. */
+SALTS_CNET_EXPORT
 int cnet_kcp_check(const cnet_kcp *session, uint32_t now_ms, uint32_t *out_next_ms);
 
 /** Releases all queued segments and receive storage; no UDP/timer calls may overlap. */
+SALTS_CNET_EXPORT
 int cnet_kcp_destroy(cnet_kcp *session);
 
 /** Creates a zero-initialized PSK v1/FEC session without emitting wire data. */
+SALTS_CNET_EXPORT
 int cnet_secure_kcp_init(cnet_secure_kcp *session, const cnet_secure_kcp_config *config);
 
 /** Same segment limit as plain KCP; set before start (EBUSY afterwards).
  * Also bounds client handshake transmissions. After the final unanswered hello's
  * retry interval, update/check/input return ETIMEDOUT and no new hello is sent.
  * Passive idle servers do not expire; authentication failures never reset limits. */
+SALTS_CNET_EXPORT
 int cnet_secure_kcp_set_dead_link(cnet_secure_kcp *session, uint32_t max_transmissions);
 
 /** ETIMEDOUT after handshake/data exhaustion; EBUSY while handshaking, else OK. */
+SALTS_CNET_EXPORT
 int cnet_secure_kcp_terminal_status(const cnet_secure_kcp *session);
 
 /** Starts the role state machine; a client synchronously emits its first authenticated hello. */
+SALTS_CNET_EXPORT
 int cnet_secure_kcp_start(cnet_secure_kcp *session, uint32_t now_ms);
 
 /** Returns true only after the authenticated hello exchange and KCP activation complete. */
+SALTS_CNET_EXPORT
 bool cnet_secure_kcp_established(const cnet_secure_kcp *session);
 
 /** Copies the session-derived non-zero KCP conversation after establishment. */
+SALTS_CNET_EXPORT
 int cnet_secure_kcp_conversation(const cnet_secure_kcp *session, uint32_t *out_conversation);
 
 /** Copies one application message into bounded KCP storage; handshaking returns SALTS_EBUSY. */
+SALTS_CNET_EXPORT
 int cnet_secure_kcp_send(cnet_secure_kcp *session, const void *data, size_t size);
 
 /** Borrows one complete TKSH or TKF1 datagram and authenticates it before state mutation. */
+SALTS_CNET_EXPORT
 int cnet_secure_kcp_input(cnet_secure_kcp *session, const void *data, size_t size);
 
 /** Advances handshake retry and established KCP timers. */
+SALTS_CNET_EXPORT
 int cnet_secure_kcp_update(cnet_secure_kcp *session, uint32_t now_ms);
 
 /** Returns the next absolute millisecond deadline for handshake or KCP progress. */
+SALTS_CNET_EXPORT
 int cnet_secure_kcp_check(const cnet_secure_kcp *session, uint32_t now_ms, uint32_t *out_next_ms);
 
 /** Releases KCP/FEC storage and wipes copied and derived secret material. */
+SALTS_CNET_EXPORT
 int cnet_secure_kcp_destroy(cnet_secure_kcp *session);
 
 /**
@@ -2097,6 +2249,7 @@ int cnet_secure_kcp_destroy(cnet_secure_kcp *session);
  * A passive plain KCP session is admitted only on a valid sequence-zero
  * PUSH. Explicitly opened sessions accept normal out-of-order input.
  */
+SALTS_CNET_EXPORT
 int cnet_packet_endpoint_init(cnet_packet_endpoint *endpoint,
                               const cnet_packet_endpoint_config *config);
 
@@ -2107,6 +2260,7 @@ int cnet_packet_endpoint_init(cnet_packet_endpoint *endpoint,
  * ETIMEDOUT, and drains its real UDP writes before recycling its generation.
  * Example: endpoint_init(...); endpoint_set_kcp_dead_link(&ep,5); session_open(...).
  */
+SALTS_CNET_EXPORT
 int cnet_packet_endpoint_set_kcp_dead_link(cnet_packet_endpoint *endpoint,
                                           uint32_t max_transmissions);
 
@@ -2116,6 +2270,7 @@ int cnet_packet_endpoint_set_kcp_dead_link(cnet_packet_endpoint *endpoint,
  * KCP stream mode is rejected because it does not retain logical-message
  * boundaries. Passing NULL preserves `cnet_packet_endpoint_init()` behavior.
  */
+SALTS_CNET_EXPORT
 int cnet_packet_endpoint_init_ex(cnet_packet_endpoint *endpoint,
                                  const cnet_packet_endpoint_config *config,
                                  const cnet_packet_terminal_config *terminal);
@@ -2127,16 +2282,20 @@ int cnet_packet_endpoint_init_ex(cnet_packet_endpoint *endpoint,
  * The backend must outlive the endpoint and concurrent wake callers. Failed
  * initialization leaves the endpoint unpublished and the backend open.
  */
+SALTS_CNET_EXPORT
 int cnet_packet_endpoint_init_external(cnet_packet_endpoint *endpoint,
     const cnet_packet_endpoint_config *config,
     const cnet_packet_terminal_config *terminal, native_io_backend *backend);
 
 /** Returns the host-order UDP port shared by all endpoint sessions. */
+SALTS_CNET_EXPORT
 int cnet_packet_endpoint_port(const cnet_packet_endpoint *endpoint, uint16_t *out_port);
 
+SALTS_CNET_EXPORT
 bool cnet_packet_session_valid(cnet_packet_session session);
 
 /** Copies immutable protocol, peer and conversation identity for a live session. */
+SALTS_CNET_EXPORT
 int cnet_packet_session_get_info(const cnet_packet_endpoint *endpoint, cnet_packet_session session,
                                  cnet_packet_session_info *out_info);
 
@@ -2146,13 +2305,16 @@ int cnet_packet_session_get_info(const cnet_packet_endpoint *endpoint, cnet_pack
  * its conversation id is derived during the handshake. Duplicate keys return
  * SALTS_EALREADY.
  */
+SALTS_CNET_EXPORT
 int cnet_packet_session_open(cnet_packet_endpoint *endpoint, const cnet_datagram_peer *peer,
                              uint32_t conversation, cnet_packet_session *out_session);
 
 /** Closes one generation-checked session after its copied UDP writes drain. */
+SALTS_CNET_EXPORT
 int cnet_packet_session_close(cnet_packet_endpoint *endpoint, cnet_packet_session session);
 
 /** Copies and admits one UDP datagram or one reliable ordered KCP message. */
+SALTS_CNET_EXPORT
 int cnet_packet_send(cnet_packet_endpoint *endpoint, cnet_packet_session session, const void *data,
                      size_t size);
 
@@ -2162,11 +2324,13 @@ int cnet_packet_send(cnet_packet_endpoint *endpoint, cnet_packet_session session
  * operation and produces no terminal callback. A missing terminal policy
  * returns `SALTS_ENOTSUP`; tagged-operation capacity returns `SALTS_ENOBUFS`.
  */
+SALTS_CNET_EXPORT
 int cnet_packet_send_tagged(cnet_packet_endpoint *endpoint, cnet_packet_session session,
                             const void *data, size_t size, uint64_t tag);
 
 /** Drives socket completions and all due KCP timers on the owned backend.
  * A borrowed endpoint returns SALTS_ENOTSUP. */
+SALTS_CNET_EXPORT
 int cnet_packet_poll(cnet_packet_endpoint *endpoint, uint32_t timeout_ms, size_t *out_events);
 
 /**
@@ -2176,6 +2340,7 @@ int cnet_packet_poll(cnet_packet_endpoint *endpoint, uint32_t timeout_ms, size_t
  * out_events counts UDP I/O callbacks, as in cnet_packet_poll(). KCP timers
  * may publish packet callbacks even when that count is zero.
  */
+SALTS_CNET_EXPORT
 int cnet_packet_advance_external(cnet_packet_endpoint *endpoint,
                                  size_t timer_budget, size_t *out_events);
 
@@ -2184,6 +2349,7 @@ int cnet_packet_advance_external(cnet_packet_endpoint *endpoint,
  * is capped at max_wait_ms. Due timers return zero, including any left by the
  * advance budget. An idle endpoint without active KCP timers returns the cap.
  */
+SALTS_CNET_EXPORT
 int cnet_packet_external_timeout(const cnet_packet_endpoint *endpoint,
                                   uint32_t max_wait_ms, uint32_t *out_timeout_ms);
 
@@ -2195,10 +2361,12 @@ int cnet_packet_external_timeout(const cnet_packet_endpoint *endpoint,
  * Receive views are borrowed through callback return. out_events counts UDP
  * I/O callbacks and both outputs are cleared before validation.
  */
+SALTS_CNET_EXPORT
 int cnet_packet_route_external_completion(cnet_packet_endpoint *endpoint,
     const native_io_completion *completion, bool *out_consumed, size_t *out_events);
 
 /** The only packet endpoint operation allowed concurrently from a non-owner thread. */
+SALTS_CNET_EXPORT
 int cnet_packet_wake(cnet_packet_endpoint *endpoint);
 
 /**
@@ -2207,6 +2375,7 @@ int cnet_packet_wake(cnet_packet_endpoint *endpoint);
  * accepted tagged send has published exactly one terminal callback.
  * A borrowed endpoint returns SALTS_ENOTSUP.
  */
+SALTS_CNET_EXPORT
 int cnet_packet_endpoint_stop(cnet_packet_endpoint *endpoint, uint32_t timeout_ms);
 
 /**
@@ -2218,9 +2387,11 @@ int cnet_packet_endpoint_stop(cnet_packet_endpoint *endpoint, uint32_t timeout_m
  * safe. Owned endpoints return SALTS_ENOTSUP. Recursive progress, query, or
  * stop on an active packet callback returns SALTS_EBUSY.
  */
+SALTS_CNET_EXPORT
 int cnet_packet_endpoint_stop_external(cnet_packet_endpoint *endpoint, bool *out_stopped);
 
 /** Requires completed stop and releases the peer index and all fixed storage. */
+SALTS_CNET_EXPORT
 int cnet_packet_endpoint_destroy(cnet_packet_endpoint *endpoint);
 
 #ifdef __cplusplus

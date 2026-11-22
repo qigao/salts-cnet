@@ -1,0 +1,94 @@
+{
+  "forEach": [
+    {
+      "files": [
+        "wire_test.c"
+      ],
+      "namePrefix": "cnet_sctp_",
+      "target": {
+        "kind": "executable",
+        "private": {
+          "deps": [
+            "cnet_sctp_wire",
+            "saltsbase_tinytest"
+          ]
+        },
+        "options": {
+          "werror": true
+        },
+        "test": {
+          "labels": [
+            "sctp"
+          ]
+        }
+      }
+    },
+    {
+      "files": [
+        "public_api_test.c"
+      ],
+      "namePrefix": "cnet_sctp_",
+      "target": {
+        "kind": "executable",
+        "private": {
+          "deps": [
+            "cnet_sctp_session",
+            "saltsbase_tinytest"
+          ]
+        },
+        "options": {
+          "werror": true
+        },
+        "test": {
+          "labels": [
+            "sctp"
+          ]
+        }
+      }
+    },
+    {
+      "files": [
+        "assoc_data_test.c",
+        "assoc_test.c",
+        "bundle_test.c",
+        "collision_test.c",
+        "congestion_test.c",
+        "data_test.c",
+        "dcep_test.c",
+        "fast_recovery_test.c",
+        "fragment_test.c",
+        "init_params_test.c",
+        "interleaving_test.c",
+        "pr_sctp_test.c",
+        "sack_recovery_test.c",
+        "session_test.c",
+        "zero_window_test.c"
+      ],
+      "namePrefix": "cnet_sctp_",
+      "target": {
+        "kind": "executable",
+        "private": {
+          "includeDirs": [
+            "../src"
+          ],
+          "deps": [
+            "cnet_sctp_session",
+            "saltsbase_tinytest"
+          ]
+        },
+        "options": {
+          "werror": true
+        },
+        "test": {
+          "labels": [
+            "sctp"
+          ]
+        }
+      }
+    }
+  ],
+  "include": [
+    "interop.json",
+    "posix.json"
+  ]
+}

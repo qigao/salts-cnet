@@ -1,0 +1,187 @@
+{
+  "targets": {
+    "cnet_sctp_test_provider_dso": {
+      "kind": "shared",
+      "testOnly": true,
+      "when": {
+        "os": [
+          "linux",
+          "macos"
+        ],
+        "native": true
+      },
+      "sources": {
+        "files": [
+          "provider_dso_fixture.c"
+        ]
+      },
+      "private": {
+        "flags": [
+          "-pthread"
+        ],
+        "linkFlags": [
+          "-pthread"
+        ]
+      },
+      "options": {
+        "werror": true
+      }
+    },
+    "cnet_sctp_owner_thread_test": {
+      "kind": "executable",
+      "when": {
+        "os": [
+          "linux",
+          "macos"
+        ],
+        "native": true
+      },
+      "sources": {
+        "files": [
+          "owner_thread_test.c"
+        ]
+      },
+      "private": {
+        "includeDirs": [
+          "../src"
+        ],
+        "deps": [
+          "cnet_sctp_session",
+          "saltsbase_tinytest"
+        ],
+        "flags": [
+          "-pthread"
+        ],
+        "linkFlags": [
+          "-pthread"
+        ]
+      },
+      "options": {
+        "werror": true
+      },
+      "test": {
+        "labels": [
+          "sctp",
+          "posix"
+        ],
+        "timeout": 60
+      }
+    },
+    "cnet_sctp_provider_dso_test": {
+      "kind": "executable",
+      "when": {
+        "os": [
+          "linux",
+          "macos"
+        ],
+        "native": true
+      },
+      "sources": {
+        "files": [
+          "provider_dso_test.c"
+        ]
+      },
+      "private": {
+        "includeDirs": [
+          "../src"
+        ],
+        "deps": [
+          "cnet_sctp_session",
+          "saltsbase_tinytest"
+        ],
+        "flags": [
+          "-pthread"
+        ],
+        "linkFlags": [
+          "-pthread"
+        ]
+      },
+      "options": {
+        "werror": true
+      },
+      "runtimeDeps": [
+        "cnet_sctp_test_provider_dso"
+      ],
+      "variants": [
+        {
+          "when": {
+            "os": "linux"
+          },
+          "private": {
+            "libs": [
+              "dl"
+            ]
+          }
+        }
+      ],
+      "test": {
+        "args": [
+          "${artifact:cnet_sctp_test_provider_dso}"
+        ],
+        "labels": [
+          "sctp",
+          "posix"
+        ],
+        "timeout": 90
+      }
+    },
+    "cnet_sctp_session_provider_dso_test": {
+      "kind": "executable",
+      "when": {
+        "os": [
+          "linux",
+          "macos"
+        ],
+        "native": true
+      },
+      "sources": {
+        "files": [
+          "session_provider_dso_test.c"
+        ]
+      },
+      "private": {
+        "includeDirs": [
+          "../src"
+        ],
+        "deps": [
+          "cnet_sctp_session",
+          "saltsbase_tinytest"
+        ],
+        "flags": [
+          "-pthread"
+        ],
+        "linkFlags": [
+          "-pthread"
+        ]
+      },
+      "options": {
+        "werror": true
+      },
+      "runtimeDeps": [
+        "cnet_sctp_test_provider_dso"
+      ],
+      "variants": [
+        {
+          "when": {
+            "os": "linux"
+          },
+          "private": {
+            "libs": [
+              "dl"
+            ]
+          }
+        }
+      ],
+      "test": {
+        "args": [
+          "${artifact:cnet_sctp_test_provider_dso}"
+        ],
+        "labels": [
+          "sctp",
+          "posix"
+        ],
+        "timeout": 90
+      }
+    }
+  }
+}

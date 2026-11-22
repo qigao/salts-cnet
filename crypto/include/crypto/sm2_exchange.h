@@ -1,5 +1,7 @@
 #ifndef SALTS_CRYPTO_SM2_EXCHANGE_H
 #define SALTS_CRYPTO_SM2_EXCHANGE_H
+
+#include <crypto/export.h>
 #include <crypto/sm2.h>
 #ifdef __cplusplus
 extern "C" {
@@ -42,21 +44,26 @@ typedef union salts_crypto_sm2_exchange_ctx {
   uint8_t bytes[SALTS_CRYPTO_SM2_EXCHANGE_CONTEXT_SIZE];
 } salts_crypto_sm2_exchange_ctx;
 
+SALTS_CRYPTO_EXPORT
 int salts_crypto_sm2_exchange_start(salts_crypto_sm2_exchange_ctx *ctx,
     const uint8_t private_key[32], const uint8_t peer_public[65],
     const void *initiator_id, size_t initiator_id_size,
     const void *responder_id, size_t responder_id_size,
     size_t key_size, uint8_t share_a[65]);
+SALTS_CRYPTO_EXPORT
 int salts_crypto_sm2_exchange_respond(salts_crypto_sm2_exchange_ctx *ctx,
     const uint8_t private_key[32], const uint8_t peer_public[65],
     const void *initiator_id, size_t initiator_id_size,
     const void *responder_id, size_t responder_id_size,
     size_t key_size, const uint8_t share_a[65], uint8_t share_b[65], uint8_t confirm_b[32]);
+SALTS_CRYPTO_EXPORT
 int salts_crypto_sm2_exchange_finish_initiator(salts_crypto_sm2_exchange_ctx *ctx,
     const uint8_t share_b[65], const uint8_t confirm_b[32], uint8_t confirm_a[32],
     void *secret, size_t capacity, size_t *written);
+SALTS_CRYPTO_EXPORT
 int salts_crypto_sm2_exchange_finish_responder(salts_crypto_sm2_exchange_ctx *ctx,
     const uint8_t confirm_a[32], void *secret, size_t capacity, size_t *written);
+SALTS_CRYPTO_EXPORT
 void salts_crypto_sm2_exchange_clear(salts_crypto_sm2_exchange_ctx *ctx);
 
 #ifdef __cplusplus

@@ -11,7 +11,7 @@
 #endif
 typedef struct endpoint {
   crypto_dtls_server_context context; crypto_dtls_server server;
-  uint8_t application[32768],peer[32]; size_t application_size,peer_size;
+  uint8_t application[32768],peer[32],fingerprint[32]; size_t application_size,peer_size;
   int references,checks; bool reject;
 } endpoint;
 static unsigned get32(const uint8_t *p) { return (unsigned)p[0]<<24u | (unsigned)p[1]<<16u | (unsigned)p[2]<<8u | p[3]; }
@@ -63,6 +63,13 @@ int main(int argc,char **argv) {
         const bool strict=strcmp(argv[2],"strict")==0;
         crypto_dtls_server_config config={input[1] ? &object_input : &raw,input[0] ? &roots : NULL,
           input[0] ? &policy : NULL,strict ? "localhost" : NULL,strict ? 9u : 0u,"test",4u,10000u,input[0]!=0u,argc==4};
+        if (!strcmp(argv[1],"srtp")) {
+          if (roots_size!=sizeof(e->fingerprint)) status=SALTS_CRYPTO_EINVAL;
+          if (!status) memcpy(e->fingerprint,roots.data,sizeof(e->fingerprint));
+          config=(crypto_dtls_server_config){.credentials=input[1] ? &object_input : &raw,
+            .cookie_lifetime_ms=10000u,.require_client_certificate=true,.enable_exporter=true,
+            .srtp_profiles=CRYPTO_DTLS_SRTP_PROFILES};
+        }
         if (!status) status=crypto_dtls_server_context_init(&e->context,&config);
         crypto_tls_credential_object_release(object); break;
       }
@@ -75,7 +82,8 @@ int main(int argc,char **argv) {
           crypto_dtls_cookie_result gate; size_t reply_size=0;
           status=crypto_dtls_cookie_gate(&e->context.cookie,address,address_size,wire,wire_size,now,reply,sizeof(reply),&reply_size,&gate);
           if (!status && gate.address_verified) {
-            status=crypto_dtls_server_accept(&e->server,&e->context,address,address_size,wire,wire_size,now,application,e);
+            status=crypto_dtls_server_accept_pinned(&e->server,&e->context,address,address_size,wire,wire_size,
+              now,application,e,e->context.srtp_profiles ? e->fingerprint : NULL);
             memcpy(e->peer,address,address_size); e->peer_size=address_size;
           } else if (!status) { output=reply; output_size=reply_size; }
         } else if (address_size!=e->peer_size || memcmp(address,e->peer,address_size)) status=CRYPTO_DTLS_SERVER_DROP;
@@ -83,6 +91,13 @@ int main(int argc,char **argv) {
         if (e->application_size) { output=e->application; output_size=e->application_size; }
         break;
       }
+      case 'P':
+        status=SALTS_CRYPTO_ESTATE;
+        if (e->server.phase==CRYPTO_DTLS_SERVER_READY && e->server.srtp_profile) {
+          put32(e->application,e->server.srtp_profile);
+          output=e->application; output_size=4u; status=0;
+        }
+        break;
       case 'E': {
         if (size<7u || input[0]>1u) { status=SALTS_CRYPTO_EINVAL; break; }
         const size_t label=(size_t)input[1]*256u+input[2],context=(size_t)input[3]*256u+input[4],n=(size_t)input[5]*256u+input[6];

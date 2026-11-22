@@ -3,6 +3,7 @@ package independent
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/binary"
@@ -87,10 +88,16 @@ func runServer(t *testing.T, rsaServer bool, clientKind string, loss bool, failu
 		clientRoots, clientCert = roleIdentity(t, false, false, false)
 	}
 	mode := "accept"
+	srtp := clientKind == "srtp"
 	if failure == "policy" {
 		mode = "reject"
 	}
-	exporter := loss && failure == ""
+	if srtp {
+		mode = "srtp"
+		fingerprint := sha256.Sum256(clientCert.Certificate[0])
+		clientRoots = fingerprint[:]
+	}
+	exporter := (loss || srtp) && failure == ""
 	args := []string{mode, "static"}
 	if exporter {
 		args = append(args, "exporter")
@@ -127,6 +134,10 @@ func runServer(t *testing.T, rsaServer bool, clientKind string, loss bool, failu
 	if mtls && failure != "missing" {
 		config.Certificates = []tls.Certificate{clientCert}
 	}
+	if srtp {
+		config.SupportedProtocols = nil
+		config.SRTPProtectionProfiles = []dtls.SRTPProtectionProfile{dtls.SRTP_AEAD_AES_128_GCM}
+	}
 	if failure == "ems" {
 		config.ExtendedMasterSecret = dtls.DisableExtendedMasterSecret
 	}
@@ -151,6 +162,15 @@ func runServer(t *testing.T, rsaServer bool, clientKind string, loss bool, failu
 			return
 		}
 		material, e := exportedMaterial(connection)
+		if srtp {
+			profile, negotiated := connection.SelectedSRTPProtectionProfile()
+			state, ok := connection.ConnectionState()
+			if !ok || !negotiated || profile != dtls.SRTP_AEAD_AES_128_GCM {
+				finished <- fmt.Errorf("Pion did not negotiate SRTP profile 7")
+				return
+			}
+			material, e = state.ExportKeyingMaterial("EXTRACTOR-dtls_srtp", nil, 56)
+		}
 		if e != nil {
 			finished <- e
 			return
@@ -227,6 +247,12 @@ func runServer(t *testing.T, rsaServer bool, clientKind string, loss bool, failu
 			break
 		}
 		if n.phase == 6 && !leaseChecked {
+			if srtp {
+				status, value := n.rpc('P', nil)
+				if status != 0 || len(value) != 4 || binary.BigEndian.Uint32(value) != uint32(dtls.SRTP_AEAD_AES_128_GCM) {
+					t.Fatal("native server did not negotiate SRTP profile 7")
+				}
+			}
 			if n.refs != 1 || (n.flags&32 != 0) == exporter || n.flags&16 == 0 {
 				t.Fatalf("admission/erasure flags=%x leases=%d", n.flags, n.refs)
 			}
@@ -351,7 +377,11 @@ func runServer(t *testing.T, rsaServer bool, clientKind string, loss bool, failu
 			case "pion-to-native":
 				select {
 				case material := <-exported:
-					nativeExport(t, n, exporter, material)
+					if srtp {
+						nativeExportLabel(t, n, "EXTRACTOR-dtls_srtp", 56, true, material)
+					} else {
+						nativeExport(t, n, exporter, material)
+					}
 				case <-time.After(time.Second):
 					t.Fatal("missing peer exporter")
 				}
@@ -383,7 +413,7 @@ func runServer(t *testing.T, rsaServer bool, clientKind string, loss bool, failu
 		t.Fatal("CertificateVerify reorder was not exercised")
 	}
 	want := uint16(0)
-	if mtls {
+	if mtls && !srtp {
 		want = 1
 	}
 	if n.checks != want {
@@ -408,6 +438,7 @@ func TestDTLSServerAgainstPion(t *testing.T) {
 	if *serverEndpoint == "" {
 		t.Fatal("missing native DTLS server endpoint")
 	}
+	t.Run("srtp", func(t *testing.T) { runServer(t, false, "srtp", false, "") })
 	for _, rsaServer := range []bool{false, true} {
 		for _, kind := range []string{"none", "ec", "rsa", "reordered"} {
 			for _, loss := range []bool{false, true} {

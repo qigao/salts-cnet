@@ -1,6 +1,8 @@
 #ifndef CNET_SG_HOST_H
 #define CNET_SG_HOST_H
 
+#include <cnet/export.h>
+
 #include <cnet/cnet.h>
 #include <native_io_sharded.h>
 
@@ -30,6 +32,7 @@ typedef struct cnet_sg_host_routes {
  * its own completion; subsequent events in the batch still progress.
  * out_accepts counts completed detached accepts; caller must accept/adopt.
  * out_sharded counts SG-owned completions already finally settled. */
+SALTS_CNET_EXPORT
 int cnet_sg_host_route_batch(const native_io_sharded_completion *events,
                              size_t count, const cnet_sg_host_routes *routes,
                              size_t *out_accepts, size_t *out_sharded);
@@ -41,6 +44,7 @@ int cnet_sg_host_route_batch(const native_io_sharded_completion *events,
  * against another object; the whole batch is still examined. No observe occurs.
  * Returns EINVAL for malformed arrays, otherwise the first route error. Output
  * counters have the same meaning as route_batch; UDP callbacks run inline. */
+SALTS_CNET_EXPORT
 int cnet_sg_host_route_batch_with_datagrams(
     const native_io_sharded_completion *events, size_t count,
     const cnet_sg_host_routes *routes, cnet_datagram *const *datagrams,

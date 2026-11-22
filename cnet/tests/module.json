@@ -1,0 +1,297 @@
+{
+  "targets": {
+    "saltscore_wsparser_test": {
+      "kind": "executable",
+      "sources": {
+        "files": [
+          "test_wsparser.c"
+        ]
+      },
+      "private": {
+        "deps": [
+          "saltscore_wsparser",
+          "saltsbase_tinytest"
+        ]
+      },
+      "test": {
+        "name": "saltscore.wsparser",
+        "labels": [
+          "cnet",
+          "wsparser"
+        ]
+      }
+    },
+    "cnet_resources_test": {
+      "kind": "executable",
+      "sources": {
+        "files": [
+          "test_cnet_resources.c"
+        ]
+      },
+      "private": {
+        "deps": [
+          "cnet",
+          "saltsbase_tinytest",
+          "saltsbase_core"
+        ],
+        "includeDirs": [
+          "../src"
+        ]
+      },
+      "test": {
+        "name": "cnet_resources_test",
+        "labels": [
+          "cnet"
+        ]
+      }
+    },
+    "cnet_policy_test": {
+      "kind": "executable",
+      "sources": {
+        "files": [
+          "test_cnet_policy.c"
+        ]
+      },
+      "private": {
+        "deps": [
+          "cnet",
+          "saltsbase_tinytest",
+          "salts_crypto",
+          "saltsbase_native_io",
+          "saltsbase_core"
+        ]
+      },
+      "test": {
+        "name": "saltscore.cnet_policy",
+        "labels": [
+          "cnet"
+        ]
+      },
+      "variants": [
+        {
+          "when": {
+            "driver": "msvc"
+          },
+          "private": {
+            "flags": [
+              "/experimental:c11atomics"
+            ]
+          }
+        }
+      ]
+    },
+    "cnet_kcp_fault_test": {
+      "kind": "executable",
+      "sources": {
+        "files": [
+          "test_kcp_faults.c"
+        ]
+      },
+      "private": {
+        "deps": [
+          "cnet",
+          "saltsbase_tinytest"
+        ]
+      },
+      "test": {
+        "name": "cnet_kcp_fault_test",
+        "labels": [
+          "cnet"
+        ]
+      }
+    },
+    "cnet_dtls_header_cpp": {
+      "kind": "executable",
+      "sources": {
+        "files": [
+          "dtls_header_cpp.cpp"
+        ]
+      },
+      "private": {
+        "deps": [
+          "cnet",
+          "saltsbase_tinytest",
+          "salts_crypto"
+        ]
+      },
+      "test": {
+        "name": "saltscore.cnet_dtls_cpp17",
+        "labels": [
+          "cnet"
+        ],
+        "timeout": 60
+      }
+    },
+    "saltscore_websocket_utf8_test": {
+      "kind": "executable",
+      "sources": {
+        "files": [
+          "websocket_utf8_test.c"
+        ]
+      },
+      "private": {
+        "deps": [
+          "cnet",
+          "saltsbase_tinytest"
+        ]
+      },
+      "test": {
+        "name": "saltscore_websocket_utf8_test",
+        "labels": [
+          "cnet"
+        ]
+      }
+    },
+    "saltscore_websocket_utf8_benchmark": {
+      "kind": "executable",
+      "when": {
+        "config": "benchmark"
+      },
+      "sources": {
+        "files": [
+          "websocket_utf8_benchmark.c"
+        ]
+      },
+      "private": {
+        "deps": [
+          "cnet",
+          "saltsbase_tinytest"
+        ]
+      },
+      "test": {
+        "name": "saltscore_websocket_utf8_benchmark",
+        "labels": [
+          "benchmark",
+          "cnet"
+        ],
+        "timeout": 120
+      }
+    },
+    "cnet_tls_ca_san_test": {
+      "kind": "executable",
+      "when": {
+        "config": [
+          "tests",
+          "benchmark"
+        ]
+      },
+      "sources": {
+        "files": [
+          "test_cnet_tls_ca_san.c"
+        ]
+      },
+      "private": {
+        "includeDirs": [
+          "../src",
+          "../../crypto/src",
+          "../../crypto/tests/tls"
+        ],
+        "deps": [
+          "cnet",
+          "salts_crypto",
+          "saltsbase_core",
+          "saltsbase_native_io",
+          "saltsbase_tinytest"
+        ],
+        "defines": {
+          "SALTSCORE_EXPECT_PROVIDER_COPIES": "0",
+          "CORE_TLS_TEST_P384_CA": "\"$root/crypto/tests/fixtures/p384-test-root-cert.pem\"",
+          "CORE_TLS_TEST_P384_WRONG_CA": "\"$root/crypto/tests/fixtures/p384-test-wrong-root-cert.pem\"",
+          "CORE_TLS_TEST_P384_LEAF": "\"$root/crypto/tests/fixtures/p384-test-server-cert.pem\"",
+          "CORE_TLS_TEST_P384_KEY": "\"$root/crypto/tests/fixtures/p384-test-server-key.pem\"",
+          "CORE_TLS_TEST_EXTERNAL_CA": "\"$root/crypto/tests/fixtures/external-io-ca-cert.pem\""
+        }
+      },
+      "variants": [
+        {
+          "when": {
+            "driver": "msvc"
+          },
+          "private": {
+            "flags": [
+              "/experimental:c11atomics"
+            ]
+          }
+        }
+      ],
+      "test": {
+        "name": "saltscore.cnet_tls_ca_san",
+        "labels": [
+          "cnet",
+          "tls"
+        ],
+        "timeout": 65
+      }
+    },
+    "saltscore_runtime_owner_probe": {
+      "kind": "shared",
+      "testOnly": true,
+      "sources": {
+        "files": [
+          "runtime_owner_module.c"
+        ]
+      },
+      "private": {
+        "deps": [
+          "saltsbase_core"
+        ]
+      }
+    },
+    "cnet_tcp_loopback_test": {
+      "kind": "executable",
+      "sources": {
+        "files": [
+          "test_cnet_tcp_loopback.c"
+        ]
+      },
+      "private": {
+        "deps": [
+          "cnet",
+          "saltscore_runtime_owner_probe",
+          "saltsbase_native_io",
+          "saltsbase_core",
+          "saltsbase_tinytest"
+        ],
+        "defines": {
+          "CORE_TLS_TEST_P384_LEAF": "\"$root/crypto/tests/fixtures/p384-test-server-cert.pem\"",
+          "CORE_TLS_TEST_P384_KEY": "\"$root/crypto/tests/fixtures/p384-test-server-key.pem\""
+        }
+      },
+      "variants": [
+        {
+          "when": {
+            "os": "windows"
+          },
+          "private": {
+            "libs": [
+              "ws2_32"
+            ]
+          }
+        },
+        {
+          "when": {
+            "driver": "msvc"
+          },
+          "private": {
+            "flags": [
+              "/experimental:c11atomics"
+            ]
+          }
+        }
+      ],
+      "test": {
+        "name": "saltscore.cnet_tcp_loopback",
+        "labels": [
+          "cnet",
+          "loopback"
+        ],
+        "timeout": 20
+      }
+    }
+  },
+  "include": [
+    "interop.json",
+    "crypto-static/module.json",
+    "benchmarks.json"
+  ]
+}

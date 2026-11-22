@@ -1,5 +1,7 @@
 #ifndef SALTS_CRYPTO_SM4_H
 #define SALTS_CRYPTO_SM4_H
+
+#include <crypto/export.h>
 #include <crypto/status.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -26,6 +28,7 @@ typedef enum salts_crypto_sm4_mode {
  * exactly 16 bytes except ECB (NULL). decrypt is 0 or 1. Output capacity
  * is at least size; it must not overlap any input. IV is never modified.
  * Protocols must authenticate unauthenticated modes separately. */
+SALTS_CRYPTO_EXPORT
 int salts_crypto_sm4_crypt(salts_crypto_sm4_mode mode, int decrypt,
     const void *key, size_t key_size, const uint8_t iv[16],
     const void *input, size_t size, void *output, size_t capacity);
@@ -43,10 +46,12 @@ typedef enum salts_crypto_sm4_aead {
  * bytes. Invalid arguments leave outputs unchanged. Auth failure clears
  * exactly size output bytes and returns EVERIFY; plaintext is usable only
  * after OK. No plaintext is exposed through callbacks during verification. */
+SALTS_CRYPTO_EXPORT
 int salts_crypto_sm4_aead_encrypt(salts_crypto_sm4_aead mode,
     const uint8_t key[16], const void *nonce, size_t nonce_size,
     const void *aad, size_t aad_size, const void *input, size_t size,
     void *output, size_t capacity, void *tag, size_t tag_size);
+SALTS_CRYPTO_EXPORT
 int salts_crypto_sm4_aead_decrypt(salts_crypto_sm4_aead mode,
     const uint8_t key[16], const void *nonce, size_t nonce_size,
     const void *aad, size_t aad_size, const void *input, size_t size,

@@ -1,6 +1,8 @@
 #ifndef CNET_MANAGER_H
 #define CNET_MANAGER_H
 
+#include <cnet/export.h>
+
 #include <cnet/ipc.h>
 
 #ifdef __cplusplus
@@ -84,6 +86,7 @@ typedef struct cnet_manager_snapshot {
  * Must initialize on the borrowed client's fixed Owner; another thread returns
  * EPERM before storage allocation or publishing a Manager implementation.
  */
+SALTS_CNET_EXPORT
 int cnet_manager_init(cnet_manager *manager, const cnet_manager_config *config);
 
 /** Reserves one record and one helper admission credit; copies attachment.
@@ -91,11 +94,13 @@ int cnet_manager_init(cnet_manager *manager, const cnet_manager_config *config);
  * Output is zero on rejection: ENOBUFS at either bound, ESHUTDOWN after seal.
  * Successful reserve must reach connect/adopt or cancel, even during shutdown.
  */
+SALTS_CNET_EXPORT
 int cnet_manager_reserve(cnet_manager *manager, const cnet_manager_attachment *attachment,
                          cnet_managed_connection *out_managed);
 /** Cancels RESERVED only (EBUSY for BOUND, EALREADY for RETIRED). Returns credit
  * immediately; record/cleanup wait for advance and any explicit context hold.
  */
+SALTS_CNET_EXPORT
 int cnet_manager_cancel(cnet_manager *manager, cnet_managed_connection managed);
 
 /** Consumes a valid RESERVED record on every attempt, including invalid options,
@@ -104,6 +109,7 @@ int cnet_manager_cancel(cnet_manager *manager, cnet_managed_connection managed);
  * ignoring options.observer. Supports tcp/tls/ipc stream URIs (ENOTSUP otherwise).
  * Binding is complete before return, without polling or allocation by the helper.
  */
+SALTS_CNET_EXPORT
 int cnet_manager_connect(cnet_manager *manager, cnet_managed_connection managed,
                          const cnet_connect_options *options, cnet_connection *out_connection);
 /** TCP/TLS detached adoption. A non-NULL tls selects TLS. A valid RESERVED attempt
@@ -111,6 +117,7 @@ int cnet_manager_connect(cnet_manager *manager, cnet_managed_connection managed,
  * failure. Invalid manager/identity/state leaves accepted untouched. This is an
  * owner-local consuming call, NOT a cross-thread queue-publication contract.
  */
+SALTS_CNET_EXPORT
 int cnet_manager_adopt(cnet_manager *manager, cnet_managed_connection managed,
                        cnet_accepted_stream *accepted, const cnet_tls_server *tls,
                        cnet_connection *out_connection);
@@ -121,6 +128,7 @@ int cnet_manager_adopt(cnet_manager *manager, cnet_managed_connection managed,
  * Invalid descriptors return EINVAL. Output is zero on failure. The attachment
  * observer and context hold govern the admitted connection's lifetime.
  */
+SALTS_CNET_EXPORT
 int cnet_manager_adopt_ipc(cnet_manager *manager, cnet_managed_connection managed,
                            cnet_ipc_accepted *accepted, cnet_connection *out_connection);
 
@@ -128,6 +136,7 @@ int cnet_manager_adopt_ipc(cnet_manager *manager, cnet_managed_connection manage
  * backend. Follows cnet_client_adopt_ipc_listener() for child ownership.
  * A valid RESERVED attempt retires the reservation on failure.
  */
+SALTS_CNET_EXPORT
 int cnet_manager_adopt_ipc_listener(cnet_manager *manager, cnet_managed_connection managed,
                                     cnet_ipc_listener *listener, cnet_connection *out_connection);
 
@@ -135,30 +144,36 @@ int cnet_manager_adopt_ipc_listener(cnet_manager *manager, cnet_managed_connecti
  * recycle during a callback; cleanup runs later in advance. Transport/observer
  * borrows still apply when released before terminal.
  */
+SALTS_CNET_EXPORT
 int cnet_manager_release_context(cnet_manager *manager, cnet_managed_connection managed);
 /** O(1) identity lookup. ENOENT for stale/foreign identity; output is a borrowed
  * snapshot and its context must not outlive the record. Does not validate sends.
  */
+SALTS_CNET_EXPORT
 int cnet_manager_lookup(cnet_manager *manager, cnet_managed_connection managed,
                         cnet_manager_entry *out_entry);
 /** O(1) inspection for bounded host enumeration. Index is zero-based and must
  * be below record_capacity; ENOENT for a free slot, ERANGE for an invalid index.
  */
+SALTS_CNET_EXPORT
 int cnet_manager_inspect(cnet_manager *manager, size_t index, cnet_manager_entry *out_entry);
 /** Owned receive-slice adapter preserving CNet transfer semantics and manager
  * callback guards. Use this instead of installing a raw handler on a managed
  * connection. NULL restores the attachment's borrowed receive observer.
  */
+SALTS_CNET_EXPORT
 int cnet_manager_set_receive_slice_handler(cnet_manager *manager, cnet_managed_connection managed,
                                            cnet_receive_slice_fn handler, void *user);
 
 /** Seal is idempotent; blocks new reserve/connect/adopt, not raw client operations.
  * Existing reservations must still be canceled/consumed. No close is implied.
  */
+SALTS_CNET_EXPORT
 int cnet_manager_seal(cnet_manager *manager);
 /** Idempotently seals and schedules cancellation of RESERVED and close of BOUND
  * records. Does not close unmanaged neighbors or release context holds.
  */
+SALTS_CNET_EXPORT
 int cnet_manager_request_close(cnet_manager *manager);
 /** Visits at most budget records (positive), round-robin, issuing pending closes
  * or recycling ready attachments. Never polls/waits. out_work counts actions;
@@ -168,15 +183,18 @@ int cnet_manager_request_close(cnet_manager *manager);
  * No scanning when there is no runnable management work. Recursive advance or
  * advance from a managed callback/cleanup returns EBUSY.
  */
+SALTS_CNET_EXPORT
 int cnet_manager_advance(cnet_manager *manager, size_t budget, size_t *out_work);
 /** O(1) obligations snapshot; drained means no record or callback obligations,
  * independent of any previously returned error. Not proof of client quiescence.
  */
+SALTS_CNET_EXPORT
 int cnet_manager_get_snapshot(cnet_manager *manager, cnet_manager_snapshot *out_snapshot);
 /** Requires drained and no active callback/advance; otherwise EBUSY. No implicit
  * cleanup, close, or client/backend destruction. Zero wrapper returns EALREADY.
  * Owner-only operations return EPERM from another thread; invalid inputs EINVAL.
  */
+SALTS_CNET_EXPORT
 int cnet_manager_destroy(cnet_manager *manager);
 
 #ifdef __cplusplus

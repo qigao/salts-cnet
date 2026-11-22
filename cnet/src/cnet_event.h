@@ -1,6 +1,8 @@
 #ifndef CNET_EVENT_H
 #define CNET_EVENT_H
 
+#include <cnet/export.h>
+
 #include "cnet_session.h"
 
 #include <memory/buffer.h>
@@ -85,9 +87,12 @@ typedef struct cnet_event_view {
 
 typedef int (*cnet_event_keep_waiting_fn)(void *context);
 
+SALTS_CNET_EXPORT
 int cnet_event_queue_init(cnet_event_queue *queue, const cnet_event_queue_config *config);
+SALTS_CNET_EXPORT
 bool cnet_event_queue_get_config(const cnet_event_queue *queue,
                                  cnet_event_queue_config *out_config);
+SALTS_CNET_EXPORT
 bool cnet_event_queue_get_stats(const cnet_event_queue *queue,
                                 cnet_event_queue_stats *out_stats);
 
@@ -96,22 +101,29 @@ bool cnet_event_queue_get_stats(const cnet_event_queue *queue,
  * The wrapper must remain alive until every publisher has returned, including
  * publishers rejected after close/destroy. Reinitialization requires quiescence.
  */
+SALTS_CNET_EXPORT
 int cnet_event_queue_publish(cnet_event_queue *queue, const cnet_event *event);
 
 /** Single-consumer take; empty-open returns `SALTS_ETIMEDOUT`. */
+SALTS_CNET_EXPORT
 int cnet_event_queue_take(cnet_event_queue *queue, cnet_event_view *out_view);
 /** Sleeps without polling until an event arrives or `keep_waiting` becomes false and wakes. */
+SALTS_CNET_EXPORT
 int cnet_event_queue_take_wait(cnet_event_queue *queue, cnet_event_view *out_view,
                                cnet_event_keep_waiting_fn keep_waiting, void *context);
 /** Wakes blocked takers so they can re-check their stop predicate. */
+SALTS_CNET_EXPORT
 int cnet_event_queue_wake(cnet_event_queue *queue);
 /** A taken view may be released exactly once by its dispatcher consumer. */
+SALTS_CNET_EXPORT
 int cnet_event_queue_release(cnet_event_queue *queue, cnet_event_view *view);
 
 /** Stops new publication and returns `SALTS_EBUSY` until entered publishers leave. */
+SALTS_CNET_EXPORT
 int cnet_event_queue_close(cnet_event_queue *queue);
 
 /** Requires completed close, no borrowed views, and a fully drained, quiescent consumer. */
+SALTS_CNET_EXPORT
 int cnet_event_queue_destroy(cnet_event_queue *queue);
 
 #endif /* CNET_EVENT_H */

@@ -1,5 +1,7 @@
 #ifndef CRYPTO_DTLS_SERVER_INTERNAL_H
 #define CRYPTO_DTLS_SERVER_INTERNAL_H
+
+#include <crypto/export.h>
 #include "crypto_dtls_cookie.h"
 #include "crypto_dtls_exchange.h"
 #include "crypto_dtls_secrets.h"
@@ -21,6 +23,7 @@ typedef struct crypto_dtls_server_config {
   uint32_t cookie_lifetime_ms;
   bool require_client_certificate;
   bool enable_exporter;
+  unsigned srtp_profiles;
 } crypto_dtls_server_config;
 typedef struct crypto_dtls_server_context {
   TLS_CTX identity;
@@ -30,6 +33,7 @@ typedef struct crypto_dtls_server_context {
   char server_name[CRYPTO_DTLS_WIRE_DNS_BYTES+1]; uint8_t alpn[255];
   size_t server_name_size,alpn_size,chain_size;
   uint16_t cipher,signature;
+  unsigned srtp_profiles;
   bool ready,require_client_certificate,policy_retained,in_callback,exporter_enabled;
 } crypto_dtls_server_context;
 typedef enum crypto_dtls_server_phase {
@@ -54,9 +58,12 @@ typedef struct crypto_dtls_server {
   crypto_dtls_flight_timer timer;
   crypto_dtls_fatal fatal;
   crypto_dtls_server_message flight[5];
-  uint8_t pending_wire[CRYPTO_DTLS_SERVER_MTU],scratch[CRYPTO_DTLS_MAX_PLAINTEXT];
+  uint8_t pending_wire[CRYPTO_DTLS_MAX_MTU],scratch[CRYPTO_DTLS_MAX_PLAINTEXT];
   uint8_t chain[CRYPTO_DTLS_WIRE_CHAIN_BYTES],client_random[32],server_random[32];
   uint8_t hello_hash[32],client_finished[12],server_finished[12];
+  uint8_t peer_sha256[32];
+  uint16_t srtp_profile;
+  size_t mtu;
   size_t chain_size,flight_count,flight_index,flight_offset,pending_size,pending_advance;
   uint64_t plain_sequence,last_now;
   uint16_t client_first,client_finished_sequence,server_finished_sequence;
@@ -71,30 +78,46 @@ typedef struct crypto_dtls_server {
 /* Private fixed DTLS1.2 profile. Context init/clear/admission lifecycle is
  * exclusive; separate admitted stream owners may execute concurrently.
  * Context storage lives through successful clear, which rejects active leases. */
+SALTS_CRYPTO_EXPORT
 int crypto_dtls_server_context_init(crypto_dtls_server_context *,const crypto_dtls_server_config *);
+SALTS_CRYPTO_EXPORT
 int crypto_dtls_server_context_clear(crypto_dtls_server_context *);
 /* Stateless listener uses crypto_dtls_cookie_gate BEFORE reserving stream
  * storage. Accept independently validates that proof, then acquires a lease.
  * Invalid cookie leaves zero stream unchanged and returns DROP. Config bytes
  * and incoming packet are immutable borrows during calls only. */
+SALTS_CRYPTO_EXPORT
 int crypto_dtls_server_accept(crypto_dtls_server *,crypto_dtls_server_context *,
     const void *address,size_t address_size,const void *wire,size_t size,uint64_t now,
     int (*on_data)(void *,const uint8_t *,size_t),void *data_context);
+SALTS_CRYPTO_EXPORT
+int crypto_dtls_server_accept_pinned(crypto_dtls_server *,crypto_dtls_server_context *,
+    const void *address,size_t address_size,const void *wire,size_t size,uint64_t now,
+    int (*on_data)(void *,const uint8_t *,size_t),void *data_context,const uint8_t *peer_sha256);
 /* FAILED may still publish one sealed fatal; sent preserves original failure.
  * No retry. Clear may discard an unprepared alert, never a native wire borrow. */
+SALTS_CRYPTO_EXPORT
 int crypto_dtls_server_next(crypto_dtls_server *,uint64_t now,const uint8_t **wire,size_t *size);
 /* Exactly one actual terminal per successful next, even after abort. */
+SALTS_CRYPTO_EXPORT
 int crypto_dtls_server_sent(crypto_dtls_server *,uint64_t now,bool success);
 /* Caller pins the peer address at admission. Wire is immutable through callback
  * and return. BUSY consumes nothing; caller retains input until actual sends
  * drain. No callback mutation reentry; data borrow expires on callback return. */
+SALTS_CRYPTO_EXPORT
 int crypto_dtls_server_receive(crypto_dtls_server *,uint64_t now,const void *wire,size_t size);
+SALTS_CRYPTO_EXPORT
 int crypto_dtls_server_write(crypto_dtls_server *,const void *plain,size_t size);
+SALTS_CRYPTO_EXPORT
 int crypto_dtls_server_close(crypto_dtls_server *);
 /* Same private exporter contract as client; context/owner bytes cannot alias
  * inputs/output. READY means the final Finished's actual send has completed. */
+SALTS_CRYPTO_EXPORT
 int crypto_dtls_server_export(const crypto_dtls_server *,const crypto_dtls_export_request *,void *,size_t);
+SALTS_CRYPTO_EXPORT
 int crypto_dtls_server_abort(crypto_dtls_server *);
+SALTS_CRYPTO_EXPORT
 int crypto_dtls_server_data_failed(crypto_dtls_server *);
+SALTS_CRYPTO_EXPORT
 int crypto_dtls_server_clear(crypto_dtls_server *);
 #endif

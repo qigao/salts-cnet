@@ -1,6 +1,8 @@
 #ifndef CNET_DESTINATION_POLICY_H
 #define CNET_DESTINATION_POLICY_H
 
+#include <cnet/export.h>
+
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -73,6 +75,7 @@ typedef struct cnet_destination_result {
  * cannot bypass validation by submitting a modified/invalid borrowed snapshot.
  * Does not allocate or change source storage.
  */
+SALTS_CNET_EXPORT
 int cnet_destination_validate(const cnet_destination_hint *endpoints, size_t count);
 
 /*
@@ -92,6 +95,7 @@ int cnet_destination_validate(const cnet_destination_hint *endpoints, size_t cou
  * and protocol-capacity admission is still responsible for final rejection.
  * No hidden retry, alternate TLS profile, origin coalescing or fallback occurs.
  */
+SALTS_CNET_EXPORT
 int cnet_destination_choose(const cnet_destination_selection *selection,
                             cnet_destination_result *out);
 

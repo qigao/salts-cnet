@@ -8,6 +8,7 @@ import (
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/rsa"
+	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
@@ -79,7 +80,11 @@ func newClientPolicy(t *testing.T, root []byte, exporter bool, policy string, id
 		op = 'J'
 	}
 	status, _ := n.rpc(op, body)
-	if status != 0 || n.refs != 1 {
+	wantRefs := int32(1)
+	if policy == "srtp" {
+		wantRefs = 0
+	}
+	if status != 0 || n.refs != wantRefs {
 		t.Fatalf("init status=%d refs=%d\n%s", status, n.refs, n.diagnostics())
 	}
 	return n
@@ -93,10 +98,14 @@ func exportedMaterial(connection *dtls.Conn) ([]byte, error) {
 }
 func nativeExport(t *testing.T, n *nativeClient, enabled bool, expected []byte) {
 	t.Helper()
-	label := []byte("EXPERIMENTAL-salts-dtls")
+	nativeExportLabel(t, n, "EXPERIMENTAL-salts-dtls", 65, enabled, expected)
+}
+
+func nativeExportLabel(t *testing.T, n *nativeClient, label string, size uint16, enabled bool, expected []byte) {
+	t.Helper()
 	request := make([]byte, 7)
 	binary.BigEndian.PutUint16(request[1:3], uint16(len(label)))
-	binary.BigEndian.PutUint16(request[5:7], 65)
+	binary.BigEndian.PutUint16(request[5:7], size)
 	status, value := n.rpc('E', append(request, label...))
 	if !enabled {
 		if status != -5 || len(value) != 0 {
@@ -304,7 +313,11 @@ func TestDTLSClientAgainstPion(t *testing.T) {
 	}
 	for _, rsaLeaf := range []bool{false, true} {
 		for _, loss := range []bool{false, true} {
-			for _, clientKind := range []string{"none", "ec", "rsa", "reject"} {
+			for _, clientKind := range []string{"none", "ec", "rsa", "reject", "srtp", "srtp_no_cookie"} {
+				srtp := clientKind == "srtp" || clientKind == "srtp_no_cookie"
+				if srtp && (rsaLeaf || loss) {
+					continue
+				}
 				t.Run(fmt.Sprintf("rsa_%t/drop_finished_%t/client_%s", rsaLeaf, loss, clientKind), func(t *testing.T) {
 					root, cert := identity(t, rsaLeaf)
 					var clientCertificate []tls.Certificate
@@ -325,14 +338,20 @@ func TestDTLSClientAgainstPion(t *testing.T) {
 					if rsaLeaf {
 						suite = dtls.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256
 					}
-					listener, err := dtls.Listen("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)}, &dtls.Config{
+					config := &dtls.Config{
 						Certificates: []tls.Certificate{cert}, CipherSuites: []dtls.CipherSuiteID{suite},
 						SignatureSchemes: []tls.SignatureScheme{tls.ECDSAWithP256AndSHA256, tls.PKCS1WithSHA256},
 						ClientAuth:       clientAuth, ClientCAs: clientRoots,
 						LoggerFactory:  observer,
 						EllipticCurves: []pioncurve.Curve{pioncurve.P256}, ExtendedMasterSecret: dtls.RequireExtendedMasterSecret,
 						SupportedProtocols: []string{"test"}, MTU: 512, FlightInterval: 150 * time.Millisecond,
-					})
+					}
+					if srtp {
+						config.SupportedProtocols = nil
+						config.SRTPProtectionProfiles = []dtls.SRTPProtectionProfile{dtls.SRTP_AEAD_AES_128_GCM}
+						config.InsecureSkipVerifyHello = clientKind == "srtp_no_cookie"
+					}
+					listener, err := dtls.Listen("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)}, config)
 					if err != nil {
 						t.Fatal(err)
 					}
@@ -380,7 +399,17 @@ func TestDTLSClientAgainstPion(t *testing.T) {
 							finished <- fmt.Errorf("wrong native application payload")
 							return
 						}
-						material, e := exportedMaterial(connection.(*dtls.Conn))
+						peer := connection.(*dtls.Conn)
+						material, e := exportedMaterial(peer)
+						if srtp {
+							profile, negotiated := peer.SelectedSRTPProtectionProfile()
+							state, ok := peer.ConnectionState()
+							if !ok || !negotiated || profile != dtls.SRTP_AEAD_AES_128_GCM {
+								finished <- fmt.Errorf("Pion did not negotiate SRTP profile 7")
+								return
+							}
+							material, e = state.ExportKeyingMaterial("EXTRACTOR-dtls_srtp", nil, 56)
+						}
 						if e != nil {
 							finished <- e
 							return
@@ -406,7 +435,12 @@ func TestDTLSClientAgainstPion(t *testing.T) {
 					if clientKind == "reject" {
 						policy = "reject"
 					}
-					n := newClientPolicy(t, root, loss, policy, clientCertificate...)
+					if srtp {
+						policy = "srtp"
+						fingerprint := sha256.Sum256(cert.Certificate[0])
+						root = fingerprint[:]
+					}
+					n := newClientPolicy(t, root, loss || srtp, policy, clientCertificate...)
 					nativeExport(t, n, false, nil) // Not READY, even if enabled.
 					sentApplication, echo, dropped, fragmented := false, false, false, false
 					deadline := time.Now().Add(9 * time.Second)
@@ -438,7 +472,12 @@ func TestDTLSClientAgainstPion(t *testing.T) {
 							break
 						}
 						if n.phase == 7 && !sentApplication {
-							if n.checks != 1 {
+							if srtp {
+								status, value := n.rpc('P', nil)
+								if status != 0 || len(value) != 4 || binary.BigEndian.Uint32(value) != uint32(dtls.SRTP_AEAD_AES_128_GCM) {
+									t.Fatal("native client did not negotiate SRTP profile 7")
+								}
+							} else if n.checks != 1 {
 								t.Fatalf("peer policy checks=%d", n.checks)
 							}
 							if status, _ := n.rpc('W', []byte("native-to-pion")); status != 0 {
@@ -480,11 +519,15 @@ func TestDTLSClientAgainstPion(t *testing.T) {
 							echo = true
 							select {
 							case material := <-exported:
-								nativeExport(t, n, loss, material)
+								if srtp {
+									nativeExportLabel(t, n, "EXTRACTOR-dtls_srtp", 56, true, material)
+								} else {
+									nativeExport(t, n, loss, material)
+								}
 							case <-time.After(time.Second):
 								t.Fatal("missing peer exporter")
 							}
-							if (n.flags&32 != 0) == loss {
+							if (n.flags&32 != 0) == (loss || srtp) {
 								t.Fatal("exporter master retention mismatch")
 							}
 							if status, _ = n.rpc('O', nil); status != 0 {

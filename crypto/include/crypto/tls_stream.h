@@ -3,6 +3,8 @@
  */
 #ifndef CRYPTO_TLS_STREAM_H
 #define CRYPTO_TLS_STREAM_H
+
+#include <crypto/export.h>
 #include <crypto/tls_peer_policy.h>
 #include <crypto/tls_credentials.h>
 #include <crypto/tls_diagnostic.h>
@@ -195,9 +197,13 @@ typedef struct crypto_tls_stream_client_config {
   size_t signature_algorithm_count;
   /** Independent TLS/TLCP certificate-chain signature allowlist, copied at init.
    * NULL/0 uses signature_algorithms. Explicit lists contain 1..4 unique
-   * RSA-PKCS1-SHA256 or ECDSA P256/SHA256, P384/SHA384 (STANDARD), or SM2/SM3
-   * (SHANGMI). RSA-PSS certificate signatures are unsupported. STANDARD permits
-   * TLS1.2/1.3 and ranges. TLCP clients admit SM2/SM3 or RSA-PKCS1-SHA256
+   * schemes. STANDARD supports RSA-PKCS1-SHA256, ECDSA P256/SHA256 and
+   * P384/SHA384, and RSA-PSS-RSAE-SHA256 if the Crypto SDK advertises
+   * CRYPTO_TLS_FEATURE_X509_RSA_PSS_SHA256. TLS 1.2-only profiles can configure
+   * RSA-PSS separately here. They accept CRYPTO_TLS_SIGNATURE_ECDSA_SHA512_TLS12
+   * for a P-384 issuer when the Crypto SDK advertises
+   * CRYPTO_TLS_FEATURE_TLS12_X509_ECDSA_P384_SHA512. SHANGMI supports SM2/SM3.
+   * TLCP clients admit SM2/SM3 or RSA-PKCS1-SHA256
    * certificate issuers while retaining SM2 handshake signatures; the policy is
    * local admission, without adding TLS extension 50 to TLCP. TLCP server lists
    * return ENOTSUP while client authentication is unsupported. TLS1.2 client
@@ -299,9 +305,13 @@ typedef struct crypto_tls_stream_server_config {
   size_t signature_algorithm_count;
   /** Independent TLS/TLCP certificate-chain signature allowlist, copied at init.
    * NULL/0 uses signature_algorithms. Explicit lists contain 1..4 unique
-   * RSA-PKCS1-SHA256 or ECDSA P256/SHA256, P384/SHA384 (STANDARD), or SM2/SM3
-   * (SHANGMI). RSA-PSS certificate signatures are unsupported. STANDARD permits
-   * TLS1.2/1.3 and ranges. TLCP clients admit SM2/SM3 or RSA-PKCS1-SHA256
+   * schemes. STANDARD supports RSA-PKCS1-SHA256, ECDSA P256/SHA256 and
+   * P384/SHA384, and RSA-PSS-RSAE-SHA256 if the Crypto SDK advertises
+   * CRYPTO_TLS_FEATURE_X509_RSA_PSS_SHA256. TLS 1.2-only profiles can configure
+   * RSA-PSS separately here. They accept CRYPTO_TLS_SIGNATURE_ECDSA_SHA512_TLS12
+   * for a P-384 issuer when the Crypto SDK advertises
+   * CRYPTO_TLS_FEATURE_TLS12_X509_ECDSA_P384_SHA512. SHANGMI supports SM2/SM3.
+   * TLCP clients admit SM2/SM3 or RSA-PKCS1-SHA256
    * certificate issuers while retaining SM2 handshake signatures; the policy is
    * local admission, without adding TLS extension 50 to TLCP. TLCP server lists
    * return ENOTSUP while client authentication is unsupported. TLS1.2 client
@@ -353,6 +363,7 @@ typedef struct crypto_tls_stream crypto_tls_stream;
 /* Exclusive progress owner, including after failed handshake. Copies the first
  * failure until destroy. ENOENT with a zero value means no recorded failure;
  * it is not proof of successful authentication. Invalid pointers: EINVAL. */
+SALTS_CRYPTO_EXPORT
 int crypto_tls_stream_get_diagnostic(const crypto_tls_stream *stream,
     crypto_tls_diagnostic *out_diagnostic);
 
@@ -363,15 +374,20 @@ int crypto_tls_stream_get_diagnostic(const crypto_tls_stream *stream,
  * Client verification is mandatory. Explicit CA sources never fall back to
  * system trust. Security profiles cannot downgrade to each other.
  * Creates set *out_context=NULL on failure. */
+SALTS_CRYPTO_EXPORT
 int crypto_tls_stream_client_context_create(
     const crypto_tls_stream_client_config *config,
     crypto_tls_stream_context **out_context);
+SALTS_CRYPTO_EXPORT
 int crypto_tls_stream_server_context_create(
     const crypto_tls_stream_server_config *config,
     crypto_tls_stream_context **out_context);
+SALTS_CRYPTO_EXPORT
 void crypto_tls_stream_context_retain(crypto_tls_stream_context *context);
+SALTS_CRYPTO_EXPORT
 void crypto_tls_stream_context_release(crypto_tls_stream_context *context);
 /* Borrowed immutable override, or NULL; valid until the context is released. */
+SALTS_CRYPTO_EXPORT
 const char *crypto_tls_stream_context_server_name(const crypto_tls_stream_context *context);
 
 /* Success retains context; failure retains nothing and sets *out_stream=NULL.
@@ -388,8 +404,10 @@ const char *crypto_tls_stream_context_server_name(const crypto_tls_stream_contex
  * failed TLS stream or reinterpret it as plaintext. Admission EINVAL/ENOBUFS,
  * empty-output ENOENT and incomplete OK results do not authorize teardown of
  * buffers still borrowed by native I/O. */
+SALTS_CRYPTO_EXPORT
 int crypto_tls_stream_create(crypto_tls_stream_context *context, bool server,
     const char *server_name, size_t io_buffer_bytes, crypto_tls_stream **out_stream);
+SALTS_CRYPTO_EXPORT
 void crypto_tls_stream_destroy(crypto_tls_stream *stream);
 
 /* After an established stream reports fatal EIO/EPROTO/ECONNABORTED, all
@@ -399,29 +417,42 @@ void crypto_tls_stream_destroy(crypto_tls_stream *stream);
  * not terminal. Ciphertext queues and native I/O storage remain owned until
  * quiescent destruction; failure does not cancel host requests or free buffers.
  * Negotiated metadata remains historical inspection, not readiness evidence. */
+SALTS_CRYPTO_EXPORT
 int crypto_tls_stream_handshake(crypto_tls_stream *state, bool *out_complete);
+SALTS_CRYPTO_EXPORT
 bool crypto_tls_stream_handshake_complete(const crypto_tls_stream *state);
 /* Owned historical metadata after successful authenticated readiness. Before
  * completion: ENOTCONN with false. Invalid arguments: EINVAL. Owner-thread only;
  * true is actual peer-accepted PSK_DHE, never merely an offered/cached ticket. */
+SALTS_CRYPTO_EXPORT
 int crypto_tls_stream_session_reused(const crypto_tls_stream *state, bool *out_reused);
 /* Narrow within context bounds before the first handshake call. DEFAULT uses
  * the corresponding context bound; widening returns ENOTSUP without changing
  * state. Changes after the first handshake call are rejected. */
+SALTS_CRYPTO_EXPORT
 int crypto_tls_stream_set_protocol_range(crypto_tls_stream *state,
                                       crypto_tls_stream_protocol_version minimum,
                                       crypto_tls_stream_protocol_version maximum);
+SALTS_CRYPTO_EXPORT
 void *crypto_tls_stream_read_buffer(crypto_tls_stream *state);
+SALTS_CRYPTO_EXPORT
 void *crypto_tls_stream_write_buffer(crypto_tls_stream *state);
+SALTS_CRYPTO_EXPORT
 size_t crypto_tls_stream_io_buffer_bytes(const crypto_tls_stream *state);
+SALTS_CRYPTO_EXPORT
 size_t crypto_tls_stream_cipher_input_capacity(const crypto_tls_stream *state);
 /* Owner-thread query only; false for an invalid stream. This checks the
  * output ring, not ciphertext already borrowed by a native write. */
+SALTS_CRYPTO_EXPORT
 bool crypto_tls_stream_cipher_output_empty(const crypto_tls_stream *state);
+SALTS_CRYPTO_EXPORT
 int crypto_tls_stream_feed_cipher(crypto_tls_stream *state, const void *data, size_t size);
 /* ENOENT with *out_size=0 means no queued ciphertext, not a connection error. */
+SALTS_CRYPTO_EXPORT
 int crypto_tls_stream_take_cipher(crypto_tls_stream *state, void *buffer, size_t capacity, size_t *out_size);
+SALTS_CRYPTO_EXPORT
 int crypto_tls_stream_write(crypto_tls_stream *state, const void *data, size_t size, bool *out_complete);
+SALTS_CRYPTO_EXPORT
 int crypto_tls_stream_read(crypto_tls_stream *state, void *buffer, size_t capacity, size_t *out_size,
                   bool *out_peer_closed);
 /**
@@ -429,6 +460,7 @@ int crypto_tls_stream_read(crypto_tls_stream *state, void *buffer, size_t capaci
  * out_plaintext_pending is true when application data is retained in the
  * engine's plaintext buffer until receive demand exists.
  */
+SALTS_CRYPTO_EXPORT
 int crypto_tls_stream_probe_peer_close(crypto_tls_stream *state, bool *out_peer_closed,
                               bool *out_plaintext_pending);
 /* out_peer_notify_received is true only for an authenticated TLS close_notify.
@@ -436,35 +468,45 @@ int crypto_tls_stream_probe_peer_close(crypto_tls_stream *state, bool *out_peer_
  * An incomplete write returns EBUSY without starting shutdown; finish that
  * identical write first. Once shutdown starts, new writes return ENOTCONN,
  * including when output backpressure delays the first close_notify byte. */
+SALTS_CRYPTO_EXPORT
 int crypto_tls_stream_shutdown(crypto_tls_stream *state, bool *out_notify_generated,
                       bool *out_peer_notify_received);
 /* ALPN and peer-chain views borrow immutable stream storage until destroy.
  * The standalone chain parser instead borrows its input DER for every view.
  * Inspection never substitutes for handshake authentication. */
+SALTS_CRYPTO_EXPORT
 int crypto_tls_stream_get_negotiated_alpn(const crypto_tls_stream *state, const unsigned char **out_data,
                                  size_t *out_size);
+SALTS_CRYPTO_EXPORT
 int crypto_tls_stream_negotiated_version(const crypto_tls_stream *state, char *buffer, size_t capacity,
                                       size_t *out_size);
+SALTS_CRYPTO_EXPORT
 int crypto_tls_stream_negotiated_cipher(const crypto_tls_stream *state, char *buffer, size_t capacity,
                                      size_t *out_size);
+SALTS_CRYPTO_EXPORT
 int crypto_tls_stream_peer_certificate_sha256(
     const crypto_tls_stream *state,
     char buffer[CRYPTO_TLS_STREAM_PEER_CERTIFICATE_SHA256_CAPACITY]);
+SALTS_CRYPTO_EXPORT
 int crypto_tls_stream_peer_certificate_chain_parse(
     const uint8_t *data, size_t size,
     crypto_tls_stream_peer_certificate_chain *out_chain);
+SALTS_CRYPTO_EXPORT
 int crypto_tls_stream_get_peer_certificate_chain(
     const crypto_tls_stream *state,
     crypto_tls_stream_peer_certificate_chain *out_chain);
+SALTS_CRYPTO_EXPORT
 int crypto_tls_stream_server_end_point_binding_from_certificate(
     const uint8_t *certificate, size_t certificate_size,
     uint8_t *output, size_t capacity, size_t *out_size);
 /* RFC 5929: hashes the server's handshake certificate on BOTH endpoints.
  * A server uses its selected local leaf; a client uses its verified peer leaf.
  * Client certificates used for mTLS do not change this binding. */
+SALTS_CRYPTO_EXPORT
 int crypto_tls_stream_server_end_point_binding(
     const crypto_tls_stream *state, uint8_t *output, size_t capacity,
     size_t *out_size);
+SALTS_CRYPTO_EXPORT
 int crypto_tls_stream_export_channel_binding(
     const crypto_tls_stream *state, uint8_t output[CRYPTO_TLS_STREAM_CHANNEL_BINDING_BYTES]);
 

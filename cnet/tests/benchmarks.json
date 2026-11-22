@@ -1,0 +1,254 @@
+{
+  "targets": {
+    "saltscore.cnet_tls_mixed_r0_p0": {
+      "kind": "header_only", "when": { "config": "benchmark", "native": true },
+      "runtimeDeps": ["saltscore_gmssl_tls_io_abi_test"],
+      "test": {
+        "program": "${artifact:saltscore_gmssl_tls_io_abi_test}",
+        "args": ["--filter", "measures direct mixed TLS control, repetition 0"],
+        "environment": ["SALTSCORE_NATIVE_TLS_MIXED_BENCHMARK=1"],
+        "labels": ["benchmark", "cnet_tls_mixed_measurements"], "timeout": 65
+      }
+    },
+    "saltscore.cnet_tls_mixed_r0_p1": {
+      "kind": "header_only", "when": { "config": "benchmark", "native": true },
+      "runtimeDeps": ["cnet_tls_ca_san_test"],
+      "test": {
+        "program": "${artifact:cnet_tls_ca_san_test}",
+        "args": ["--filter", "measures mixed TLS control, repetition 0 scenario 0"],
+        "environment": ["cnet_TLS_MIXED_BENCHMARK=1"],
+        "labels": ["benchmark", "cnet_tls_mixed_measurements"], "timeout": 65
+      }
+    },
+    "saltscore.cnet_tls_mixed_r0_p2": {
+      "kind": "header_only", "when": { "config": "benchmark", "native": true },
+      "runtimeDeps": ["cnet_tls_ca_san_test"],
+      "test": {
+        "program": "${artifact:cnet_tls_ca_san_test}",
+        "args": ["--filter", "measures mixed TLS control, repetition 0 scenario 1"],
+        "environment": ["cnet_TLS_MIXED_BENCHMARK=1"],
+        "labels": ["benchmark", "cnet_tls_mixed_measurements"], "timeout": 65
+      }
+    },
+    "saltscore.cnet_tls_mixed_r0_p3": {
+      "kind": "header_only", "when": { "config": "benchmark", "native": true },
+      "runtimeDeps": ["cnet_tls_ca_san_test"],
+      "test": {
+        "program": "${artifact:cnet_tls_ca_san_test}",
+        "args": ["--filter", "measures mixed TLS control, repetition 0 scenario 2"],
+        "environment": ["cnet_TLS_MIXED_BENCHMARK=1"],
+        "labels": ["benchmark", "cnet_tls_mixed_measurements"], "timeout": 65
+      }
+    },
+    "saltscore.cnet_tls_mixed_r0_p4": {
+      "kind": "header_only", "when": { "config": "benchmark", "native": true },
+      "runtimeDeps": ["cnet_tls_ca_san_test"],
+      "test": {
+        "program": "${artifact:cnet_tls_ca_san_test}",
+        "args": ["--filter", "measures mixed TLS control, repetition 0 scenario 3"],
+        "environment": ["cnet_TLS_MIXED_BENCHMARK=1"],
+        "labels": ["benchmark", "cnet_tls_mixed_measurements"], "timeout": 65
+      }
+    },
+    "saltscore.cnet_tls_mixed_r1_p0": {
+      "kind": "header_only", "when": { "config": "benchmark", "native": true },
+      "runtimeDeps": ["cnet_tls_ca_san_test"],
+      "test": {
+        "program": "${artifact:cnet_tls_ca_san_test}",
+        "args": ["--filter", "measures mixed TLS control, repetition 1 scenario 0"],
+        "environment": ["cnet_TLS_MIXED_BENCHMARK=1"],
+        "labels": ["benchmark", "cnet_tls_mixed_measurements"], "timeout": 65
+      }
+    },
+    "saltscore.cnet_tls_mixed_r1_p1": {
+      "kind": "header_only", "when": { "config": "benchmark", "native": true },
+      "runtimeDeps": ["cnet_tls_ca_san_test"],
+      "test": {
+        "program": "${artifact:cnet_tls_ca_san_test}",
+        "args": ["--filter", "measures mixed TLS control, repetition 1 scenario 1"],
+        "environment": ["cnet_TLS_MIXED_BENCHMARK=1"],
+        "labels": ["benchmark", "cnet_tls_mixed_measurements"], "timeout": 65
+      }
+    },
+    "saltscore.cnet_tls_mixed_r1_p2": {
+      "kind": "header_only", "when": { "config": "benchmark", "native": true },
+      "runtimeDeps": ["cnet_tls_ca_san_test"],
+      "test": {
+        "program": "${artifact:cnet_tls_ca_san_test}",
+        "args": ["--filter", "measures mixed TLS control, repetition 1 scenario 2"],
+        "environment": ["cnet_TLS_MIXED_BENCHMARK=1"],
+        "labels": ["benchmark", "cnet_tls_mixed_measurements"], "timeout": 65
+      }
+    },
+    "saltscore.cnet_tls_mixed_r1_p3": {
+      "kind": "header_only", "when": { "config": "benchmark", "native": true },
+      "runtimeDeps": ["cnet_tls_ca_san_test"],
+      "test": {
+        "program": "${artifact:cnet_tls_ca_san_test}",
+        "args": ["--filter", "measures mixed TLS control, repetition 1 scenario 3"],
+        "environment": ["cnet_TLS_MIXED_BENCHMARK=1"],
+        "labels": ["benchmark", "cnet_tls_mixed_measurements"], "timeout": 65
+      }
+    },
+    "saltscore.cnet_tls_mixed_r1_p4": {
+      "kind": "header_only", "when": { "config": "benchmark", "native": true },
+      "runtimeDeps": ["saltscore_gmssl_tls_io_abi_test"],
+      "test": {
+        "program": "${artifact:saltscore_gmssl_tls_io_abi_test}",
+        "args": ["--filter", "measures direct mixed TLS control, repetition 1"],
+        "environment": ["SALTSCORE_NATIVE_TLS_MIXED_BENCHMARK=1"],
+        "labels": ["benchmark", "cnet_tls_mixed_measurements"], "timeout": 65
+      }
+    },
+    "saltscore.cnet_tls_mixed_r2_p0": {
+      "kind": "header_only", "when": { "config": "benchmark", "native": true },
+      "runtimeDeps": ["cnet_tls_ca_san_test"],
+      "test": {
+        "program": "${artifact:cnet_tls_ca_san_test}",
+        "args": ["--filter", "measures mixed TLS control, repetition 2 scenario 1"],
+        "environment": ["cnet_TLS_MIXED_BENCHMARK=1"],
+        "labels": ["benchmark", "cnet_tls_mixed_measurements"], "timeout": 65
+      }
+    },
+    "saltscore.cnet_tls_mixed_r2_p1": {
+      "kind": "header_only", "when": { "config": "benchmark", "native": true },
+      "runtimeDeps": ["cnet_tls_ca_san_test"],
+      "test": {
+        "program": "${artifact:cnet_tls_ca_san_test}",
+        "args": ["--filter", "measures mixed TLS control, repetition 2 scenario 2"],
+        "environment": ["cnet_TLS_MIXED_BENCHMARK=1"],
+        "labels": ["benchmark", "cnet_tls_mixed_measurements"], "timeout": 65
+      }
+    },
+    "saltscore.cnet_tls_mixed_r2_p2": {
+      "kind": "header_only", "when": { "config": "benchmark", "native": true },
+      "runtimeDeps": ["cnet_tls_ca_san_test"],
+      "test": {
+        "program": "${artifact:cnet_tls_ca_san_test}",
+        "args": ["--filter", "measures mixed TLS control, repetition 2 scenario 3"],
+        "environment": ["cnet_TLS_MIXED_BENCHMARK=1"],
+        "labels": ["benchmark", "cnet_tls_mixed_measurements"], "timeout": 65
+      }
+    },
+    "saltscore.cnet_tls_mixed_r2_p3": {
+      "kind": "header_only", "when": { "config": "benchmark", "native": true },
+      "runtimeDeps": ["saltscore_gmssl_tls_io_abi_test"],
+      "test": {
+        "program": "${artifact:saltscore_gmssl_tls_io_abi_test}",
+        "args": ["--filter", "measures direct mixed TLS control, repetition 2"],
+        "environment": ["SALTSCORE_NATIVE_TLS_MIXED_BENCHMARK=1"],
+        "labels": ["benchmark", "cnet_tls_mixed_measurements"], "timeout": 65
+      }
+    },
+    "saltscore.cnet_tls_mixed_r2_p4": {
+      "kind": "header_only", "when": { "config": "benchmark", "native": true },
+      "runtimeDeps": ["cnet_tls_ca_san_test"],
+      "test": {
+        "program": "${artifact:cnet_tls_ca_san_test}",
+        "args": ["--filter", "measures mixed TLS control, repetition 2 scenario 0"],
+        "environment": ["cnet_TLS_MIXED_BENCHMARK=1"],
+        "labels": ["benchmark", "cnet_tls_mixed_measurements"], "timeout": 65
+      }
+    },
+    "saltscore.cnet_tls_mixed_r3_p0": {
+      "kind": "header_only", "when": { "config": "benchmark", "native": true },
+      "runtimeDeps": ["cnet_tls_ca_san_test"],
+      "test": {
+        "program": "${artifact:cnet_tls_ca_san_test}",
+        "args": ["--filter", "measures mixed TLS control, repetition 3 scenario 2"],
+        "environment": ["cnet_TLS_MIXED_BENCHMARK=1"],
+        "labels": ["benchmark", "cnet_tls_mixed_measurements"], "timeout": 65
+      }
+    },
+    "saltscore.cnet_tls_mixed_r3_p1": {
+      "kind": "header_only", "when": { "config": "benchmark", "native": true },
+      "runtimeDeps": ["cnet_tls_ca_san_test"],
+      "test": {
+        "program": "${artifact:cnet_tls_ca_san_test}",
+        "args": ["--filter", "measures mixed TLS control, repetition 3 scenario 3"],
+        "environment": ["cnet_TLS_MIXED_BENCHMARK=1"],
+        "labels": ["benchmark", "cnet_tls_mixed_measurements"], "timeout": 65
+      }
+    },
+    "saltscore.cnet_tls_mixed_r3_p2": {
+      "kind": "header_only", "when": { "config": "benchmark", "native": true },
+      "runtimeDeps": ["saltscore_gmssl_tls_io_abi_test"],
+      "test": {
+        "program": "${artifact:saltscore_gmssl_tls_io_abi_test}",
+        "args": ["--filter", "measures direct mixed TLS control, repetition 3"],
+        "environment": ["SALTSCORE_NATIVE_TLS_MIXED_BENCHMARK=1"],
+        "labels": ["benchmark", "cnet_tls_mixed_measurements"], "timeout": 65
+      }
+    },
+    "saltscore.cnet_tls_mixed_r3_p3": {
+      "kind": "header_only", "when": { "config": "benchmark", "native": true },
+      "runtimeDeps": ["cnet_tls_ca_san_test"],
+      "test": {
+        "program": "${artifact:cnet_tls_ca_san_test}",
+        "args": ["--filter", "measures mixed TLS control, repetition 3 scenario 0"],
+        "environment": ["cnet_TLS_MIXED_BENCHMARK=1"],
+        "labels": ["benchmark", "cnet_tls_mixed_measurements"], "timeout": 65
+      }
+    },
+    "saltscore.cnet_tls_mixed_r3_p4": {
+      "kind": "header_only", "when": { "config": "benchmark", "native": true },
+      "runtimeDeps": ["cnet_tls_ca_san_test"],
+      "test": {
+        "program": "${artifact:cnet_tls_ca_san_test}",
+        "args": ["--filter", "measures mixed TLS control, repetition 3 scenario 1"],
+        "environment": ["cnet_TLS_MIXED_BENCHMARK=1"],
+        "labels": ["benchmark", "cnet_tls_mixed_measurements"], "timeout": 65
+      }
+    },
+    "saltscore.cnet_tls_mixed_r4_p0": {
+      "kind": "header_only", "when": { "config": "benchmark", "native": true },
+      "runtimeDeps": ["cnet_tls_ca_san_test"],
+      "test": {
+        "program": "${artifact:cnet_tls_ca_san_test}",
+        "args": ["--filter", "measures mixed TLS control, repetition 4 scenario 3"],
+        "environment": ["cnet_TLS_MIXED_BENCHMARK=1"],
+        "labels": ["benchmark", "cnet_tls_mixed_measurements"], "timeout": 65
+      }
+    },
+    "saltscore.cnet_tls_mixed_r4_p1": {
+      "kind": "header_only", "when": { "config": "benchmark", "native": true },
+      "runtimeDeps": ["saltscore_gmssl_tls_io_abi_test"],
+      "test": {
+        "program": "${artifact:saltscore_gmssl_tls_io_abi_test}",
+        "args": ["--filter", "measures direct mixed TLS control, repetition 4"],
+        "environment": ["SALTSCORE_NATIVE_TLS_MIXED_BENCHMARK=1"],
+        "labels": ["benchmark", "cnet_tls_mixed_measurements"], "timeout": 65
+      }
+    },
+    "saltscore.cnet_tls_mixed_r4_p2": {
+      "kind": "header_only", "when": { "config": "benchmark", "native": true },
+      "runtimeDeps": ["cnet_tls_ca_san_test"],
+      "test": {
+        "program": "${artifact:cnet_tls_ca_san_test}",
+        "args": ["--filter", "measures mixed TLS control, repetition 4 scenario 0"],
+        "environment": ["cnet_TLS_MIXED_BENCHMARK=1"],
+        "labels": ["benchmark", "cnet_tls_mixed_measurements"], "timeout": 65
+      }
+    },
+    "saltscore.cnet_tls_mixed_r4_p3": {
+      "kind": "header_only", "when": { "config": "benchmark", "native": true },
+      "runtimeDeps": ["cnet_tls_ca_san_test"],
+      "test": {
+        "program": "${artifact:cnet_tls_ca_san_test}",
+        "args": ["--filter", "measures mixed TLS control, repetition 4 scenario 1"],
+        "environment": ["cnet_TLS_MIXED_BENCHMARK=1"],
+        "labels": ["benchmark", "cnet_tls_mixed_measurements"], "timeout": 65
+      }
+    },
+    "saltscore.cnet_tls_mixed_r4_p4": {
+      "kind": "header_only", "when": { "config": "benchmark", "native": true },
+      "runtimeDeps": ["cnet_tls_ca_san_test"],
+      "test": {
+        "program": "${artifact:cnet_tls_ca_san_test}",
+        "args": ["--filter", "measures mixed TLS control, repetition 4 scenario 2"],
+        "environment": ["cnet_TLS_MIXED_BENCHMARK=1"],
+        "labels": ["benchmark", "cnet_tls_mixed_measurements"], "timeout": 65
+      }
+    }
+  }
+}

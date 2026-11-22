@@ -1,6 +1,8 @@
 #ifndef CRYPTO_ECDSA_H_INCLUDED
 #define CRYPTO_ECDSA_H_INCLUDED
 
+#include <crypto/export.h>
+
 #include <crypto/status.h>
 
 #include <stddef.h>
@@ -26,12 +28,15 @@ typedef enum salts_crypto_ec_curve {
  * output is cleared. Invalid arguments return EINVAL without changing output.
  * NULL data is allowed only for size zero; data_size must fit uint32_t.
  */
+SALTS_CRYPTO_EXPORT
 int salts_crypto_ecdsa_public_key(salts_crypto_ec_curve curve,
     const uint8_t *private_key, size_t private_size, uint8_t *public_key, size_t public_size);
+SALTS_CRYPTO_EXPORT
 int salts_crypto_ecdsa_sign(salts_crypto_ec_curve curve,
     const uint8_t *private_key, size_t private_size, const void *data, size_t data_size,
     uint8_t *signature, size_t signature_size);
 /** Returns EVERIFY for invalid points/signatures, EINVAL for invalid sizes. */
+SALTS_CRYPTO_EXPORT
 int salts_crypto_ecdsa_verify(salts_crypto_ec_curve curve,
     const uint8_t *public_key, size_t public_size, const void *data, size_t data_size,
     const uint8_t *signature, size_t signature_size);

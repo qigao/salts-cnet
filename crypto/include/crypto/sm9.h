@@ -1,5 +1,7 @@
 #ifndef SALTS_CRYPTO_SM9_H
 #define SALTS_CRYPTO_SM9_H
+
+#include <crypto/export.h>
 #include <crypto/status.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -38,22 +40,30 @@ typedef struct salts_crypto_sm9_enc_key {
  * pointers/lengths/overlap leave outputs untouched. Once processing begins,
  * failures erase output key/signature buffers and facade-owned working state.
  * Caller remains responsible for erasing the master secret itself. */
+SALTS_CRYPTO_EXPORT
 int salts_crypto_sm9_master_generate(salts_crypto_sm9_purpose purpose,
     uint8_t secret[32], void *public_key, size_t capacity);
+SALTS_CRYPTO_EXPORT
 int salts_crypto_sm9_master_public(salts_crypto_sm9_purpose purpose,
     const uint8_t secret[32], void *public_key, size_t capacity);
+SALTS_CRYPTO_EXPORT
 int salts_crypto_sm9_sign_extract(const uint8_t master[32],
     const void *identity, size_t identity_size, salts_crypto_sm9_sign_key *key);
+SALTS_CRYPTO_EXPORT
 int salts_crypto_sm9_enc_extract(const uint8_t master[32],
     const void *identity, size_t identity_size, salts_crypto_sm9_enc_key *key);
+SALTS_CRYPTO_EXPORT
 void salts_crypto_sm9_sign_key_clear(salts_crypto_sm9_sign_key *key);
+SALTS_CRYPTO_EXPORT
 void salts_crypto_sm9_enc_key_clear(salts_crypto_sm9_enc_key *key);
 
 /* SM9 signatures use canonical GM/T 0080 DER { OCTET STRING h, BIT STRING S }.
  * Sign hashes the message internally; do not pass a digest in its place.
  * All imported points are canonical, finite and in the prime-order subgroup. */
+SALTS_CRYPTO_EXPORT
 int salts_crypto_sm9_sign(const salts_crypto_sm9_sign_key *key,
     const void *message, size_t size, uint8_t signature[104]);
+SALTS_CRYPTO_EXPORT
 int salts_crypto_sm9_verify(const uint8_t master_public[129],
     const void *identity, size_t identity_size, const void *message, size_t size,
     const void *signature, size_t signature_size);
@@ -64,9 +74,11 @@ int salts_crypto_sm9_verify(const uint8_t master_public[129],
  * written must not overlap any buffer. After admission, failure erases the
  * maximum-size output and sets written=0. Plaintext is copied only after
  * authentication succeeds. Invalid cipher/identity returns EVERIFY. */
+SALTS_CRYPTO_EXPORT
 int salts_crypto_sm9_encrypt(const uint8_t master_public[65],
     const void *identity, size_t identity_size, const void *plaintext, size_t size,
     void *ciphertext, size_t capacity, size_t *written);
+SALTS_CRYPTO_EXPORT
 int salts_crypto_sm9_decrypt(const salts_crypto_sm9_enc_key *key,
     const void *identity, size_t identity_size, const void *ciphertext, size_t size,
     void *plaintext, size_t capacity, size_t *written);
@@ -75,9 +87,11 @@ int salts_crypto_sm9_decrypt(const salts_crypto_sm9_enc_key *key,
  * KEM does not authenticate the sender or provide key confirmation: a changed
  * identity or valid capsule can derive a different secret successfully.
  * The enclosing protocol must authenticate/confirm before using that secret. */
+SALTS_CRYPTO_EXPORT
 int salts_crypto_sm9_encapsulate(const uint8_t master_public[65],
     const void *identity, size_t identity_size, void *secret, size_t secret_size,
     uint8_t capsule[65]);
+SALTS_CRYPTO_EXPORT
 int salts_crypto_sm9_decapsulate(const salts_crypto_sm9_enc_key *key,
     const void *identity, size_t identity_size, const uint8_t capsule[65],
     void *secret, size_t secret_size);

@@ -1,5 +1,7 @@
 #ifndef SALTS_CRYPTO_SM2_TRUST_H
 #define SALTS_CRYPTO_SM2_TRUST_H
+
+#include <crypto/export.h>
 #include <crypto/status.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -96,6 +98,7 @@ typedef struct salts_crypto_sm2_trust_policy {
  * Admitted rejection returns EVERIFY, clears exactly 65 output bytes and never
  * publishes a partial result. Only complete success releases the leaf key.
  */
+SALTS_CRYPTO_EXPORT
 int salts_crypto_sm2_validate_pinned_chain(const salts_crypto_sm2_chain_entry *chain,
     size_t count, const salts_crypto_sm2_trust_policy *policy, uint8_t public_key[65]);
 

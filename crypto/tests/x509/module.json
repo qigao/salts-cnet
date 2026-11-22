@@ -1,0 +1,126 @@
+{
+  "targets": {
+    "crypto_sm2_x509_test": {
+      "kind": "executable",
+      "sources": {
+        "files": ["sm2_x509.c"]
+      },
+      "private": {
+        "deps": ["salts_crypto", "saltsbase_tinytest", "gmssl", "saltsbase_asn1"]
+      },
+      "test": {
+        "name": "crypto.x509.sm2_signatures",
+        "labels": ["crypto", "x509"],
+        "timeout": 120
+      }
+    },
+    "crypto_sm2_trust_admission": {
+      "kind": "executable",
+      "sources": {
+        "files": ["sm2_trust_admission.c"]
+      },
+      "private": {
+        "deps": ["salts_crypto", "saltsbase_tinytest"]
+      },
+      "test": {
+        "name": "crypto.x509.sm2_trust_admission",
+        "labels": ["crypto", "x509"]
+      }
+    },
+    "crypto_sm2_crl_admission": {
+      "kind": "executable",
+      "sources": {
+        "files": ["sm2_crl_admission.c"]
+      },
+      "private": {
+        "deps": ["salts_crypto", "saltsbase_tinytest"]
+      },
+      "test": {
+        "name": "crypto.x509.sm2_crl_admission",
+        "labels": ["crypto", "x509"]
+      }
+    },
+    "crypto_sm2_cms_admission": {
+      "kind": "executable",
+      "sources": {
+        "files": ["sm2_cms_admission.c"]
+      },
+      "private": {
+        "deps": ["salts_crypto", "saltsbase_tinytest"]
+      },
+      "test": {
+        "name": "crypto.x509.sm2_cms_admission",
+        "labels": ["crypto", "x509"]
+      }
+    },
+    "crypto_sm2_ocsp_admission": {
+      "kind": "executable",
+      "sources": {
+        "files": ["sm2_ocsp_admission.c"]
+      },
+      "private": {
+        "deps": ["salts_crypto", "saltsbase_tinytest"]
+      },
+      "test": {
+        "name": "crypto.x509.sm2_ocsp_admission",
+        "labels": ["crypto", "x509"]
+      }
+    },
+    "crypto_x509_der_fixture": {
+      "kind": "static",
+      "testOnly": true,
+      "sources": {
+        "files": ["test_x509_der.c"]
+      },
+      "private": {
+        "deps": ["salts_crypto", "saltsbase_asn1"],
+        "defines": {
+          "main": "crypto_x509_real_legacy_entry",
+          "CRYPTO_X509_TEST_P256_PEM": "\"$root/crypto/tests/fixtures/p256-leaf-sha384.pem\"",
+          "CRYPTO_X509_TEST_P384_PEM": "\"$root/crypto/tests/fixtures/p384-leaf-sha384.pem\""
+        }
+      }
+    },
+    "crypto_x509_der_conformance": {
+      "kind": "executable",
+      "sources": {
+        "files": ["real_der_tinytest.c"]
+      },
+      "private": {
+        "deps": ["crypto_x509_der_fixture", "salts_crypto", "saltsbase_tinytest"]
+      },
+      "test": {
+        "name": "crypto.x509.real_der_and_negative",
+        "labels": ["crypto", "x509"],
+        "timeout": 120
+      }
+    },
+    "crypto_x509_saltsnet_fixture": {
+      "kind": "static",
+      "testOnly": true,
+      "sources": {
+        "files": ["test_saltsnet_x509_der.c"]
+      },
+      "private": {
+        "deps": ["salts_crypto", "saltsbase_asn1"],
+        "defines": {
+          "main": "crypto_x509_saltsnet_legacy_entry"
+        }
+      }
+    },
+    "crypto_x509_moved_saltsnet_fixture": {
+      "kind": "executable",
+      "sources": {
+        "files": ["saltsnet_der_tinytest.c"]
+      },
+      "private": {
+        "deps": ["crypto_x509_saltsnet_fixture", "salts_crypto", "saltsbase_tinytest"]
+      },
+      "test": {
+        "name": "crypto.x509.migrated_saltsnet_fixture",
+        "labels": ["crypto", "x509"]
+      }
+    }
+  },
+  "include": ["interop.json"]
+}

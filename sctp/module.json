@@ -1,0 +1,84 @@
+{
+  "include": [
+    "tests/module.json",
+    "examples/module.json"
+  ],
+  "targets": {
+    "cnet_sctp_wire": {
+      "kind": "static",
+      "sources": {
+        "files": [
+          "src/sctp_wire.c"
+        ]
+      },
+      "public": {
+        "includeDirs": [
+          "include"
+        ]
+      },
+      "private": {
+        "includeDirs": [
+          "src"
+        ]
+      },
+      "options": {
+        "werror": true
+      }
+    },
+    "cnet_sctp_session": {
+      "kind": "static",
+      "sources": {
+        "files": [
+          "src/sctp_assoc.c",
+          "src/sctp_collision.c",
+          "src/sctp_data.c",
+          "src/sctp_dcep.c",
+          "src/sctp_init_params.c",
+          "src/sctp_session.c",
+          "src/sctp_webrtc.c"
+        ]
+      },
+      "public": {
+        "includeDirs": [
+          "include"
+        ],
+        "deps": [
+          "cnet_sctp_wire"
+        ]
+      },
+      "private": {
+        "includeDirs": [
+          "src"
+        ]
+      },
+      "options": {
+        "werror": true
+      }
+    },
+    "cnet_sctp_dtls": {
+      "kind": "static",
+      "sources": {
+        "files": [
+          "src/sctp_dtls_bridge.c"
+        ]
+      },
+      "public": {
+        "includeDirs": [
+          "include"
+        ],
+        "deps": [
+          "cnet_sctp_session",
+          "cnet"
+        ]
+      },
+      "private": {
+        "includeDirs": [
+          "src"
+        ]
+      },
+      "options": {
+        "werror": true
+      }
+    }
+  }
+}

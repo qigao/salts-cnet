@@ -1,6 +1,8 @@
 #ifndef CNET_IPC_H
 #define CNET_IPC_H
 
+#include <cnet/export.h>
+
 #include <cnet/cnet.h>
 
 #ifdef __cplusplus
@@ -64,6 +66,7 @@ typedef struct cnet_ipc_wait_source {
  * Returns SALTS_OK, SALTS_EINVAL, SALTS_EALREADY, SALTS_ENOTSUP, SALTS_ERANGE,
  * SALTS_ENOMEM, or a native error. OS permissions/umask remain authoritative.
  */
+SALTS_CNET_EXPORT
 int cnet_ipc_listener_init(cnet_ipc_listener *listener, const cnet_ipc_listener_config *config);
 
 /** Attach a listener to a matching IOCP, epoll or kqueue backend on the
@@ -71,6 +74,7 @@ int cnet_ipc_listener_init(cnet_ipc_listener *listener, const cnet_ipc_listener_
  * any borrowed wait source before attaching. On Windows attach before
  * standalone progress submits accepts. An attached listener uses submit/route.
  */
+SALTS_CNET_EXPORT
 int cnet_ipc_listener_attach_external(cnet_ipc_listener *listener,
                                       native_io_backend *borrowed_backend);
 
@@ -78,6 +82,7 @@ int cnet_ipc_listener_attach_external(cnet_ipc_listener *listener,
  * the active request. A full detached queue returns ENOBUFS before admission.
  * Stop seals admission with ESHUTDOWN. Failure clears out_request.
  */
+SALTS_CNET_EXPORT
 int cnet_ipc_listener_submit_external_accept(cnet_ipc_listener *listener,
                                              native_io_request *out_request);
 
@@ -87,6 +92,7 @@ int cnet_ipc_listener_submit_external_accept(cnet_ipc_listener *listener,
  * consumes the request once. Foreign and stale requests leave out_consumed
  * false. The embedding owner is responsible for observing the backend.
  */
+SALTS_CNET_EXPORT
 int cnet_ipc_listener_route_external_completion(cnet_ipc_listener *listener,
                                                  const native_io_completion *completion,
                                                  bool *out_consumed);
@@ -97,6 +103,7 @@ int cnet_ipc_listener_route_external_completion(cnet_ipc_listener *listener,
  * error without discarding other observed terminals. Recursive use is EBUSY.
  * Returns ENOTSUP while the listener is attached to an external backend.
  */
+SALTS_CNET_EXPORT
 int cnet_ipc_listener_advance(cnet_ipc_listener *listener, size_t max_events, size_t *out_events);
 
 /** Moves one completed child to an empty output; ENOENT when none is ready,
@@ -105,6 +112,7 @@ int cnet_ipc_listener_advance(cnet_ipc_listener *listener, size_t max_events, si
  * A Windows external listener uses cnet_client_adopt_ipc_listener() and returns
  * ENOTSUP here because its ready children carry live IOCP attachments.
  */
+SALTS_CNET_EXPORT
 int cnet_ipc_listener_accept_detached(cnet_ipc_listener *listener, cnet_ipc_accepted *out_accepted);
 
 /**
@@ -115,6 +123,7 @@ int cnet_ipc_listener_accept_detached(cnet_ipc_listener *listener, cnet_ipc_acce
  * Never close or reset sources. Host supplies its own command/stop wake source
  * and obeys native wait limits. Returns ENOTSUP for an attached listener.
  */
+SALTS_CNET_EXPORT
 int cnet_ipc_listener_wait_sources(const cnet_ipc_listener *listener,
                                    cnet_ipc_wait_source *out_sources, size_t capacity,
                                    size_t *out_count, bool *out_ready);
@@ -125,11 +134,14 @@ int cnet_ipc_listener_wait_sources(const cnet_ipc_listener *listener,
  * backend. Errors are independent of quiescence. Detached children keep their
  * existing ownership.
  */
+SALTS_CNET_EXPORT
 int cnet_ipc_listener_stop(cnet_ipc_listener *listener, bool *out_stopped);
 /** Requires completed stop; idempotent on an empty wrapper. */
+SALTS_CNET_EXPORT
 int cnet_ipc_listener_destroy(cnet_ipc_listener *listener);
 
 /** Closes using the resource kind and clears the descriptor. Empty is EALREADY. */
+SALTS_CNET_EXPORT
 int cnet_ipc_accepted_close(cnet_ipc_accepted *accepted);
 
 /** Consumes a valid descriptor on the final client's owner, including failed
@@ -137,6 +149,7 @@ int cnet_ipc_accepted_close(cnet_ipc_accepted *accepted);
  * ordinary CNet connection admission errors; admitted connections use the
  * existing send/receive/close and owned/external progress APIs.
  */
+SALTS_CNET_EXPORT
 int cnet_client_adopt_ipc(cnet_client *client, cnet_ipc_accepted *accepted,
                           const cnet_observer *observer, cnet_connection *out_connection);
 
@@ -146,6 +159,7 @@ int cnet_client_adopt_ipc(cnet_client *client, cnet_ipc_accepted *accepted,
  * even on failure. Windows keeps the accept's IOCP endpoint for data I/O.
  * An empty listener returns ENOENT. The client may outlive the listener.
  */
+SALTS_CNET_EXPORT
 int cnet_client_adopt_ipc_listener(cnet_client *client, cnet_ipc_listener *listener,
                                    const cnet_observer *observer, cnet_connection *out_connection);
 

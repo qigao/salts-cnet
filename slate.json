@@ -1,0 +1,46 @@
+{
+  "include": [
+    "slates/Platforms.json",
+    "slates/DefaultPreset.json",
+    "slates/LibEcc.json",
+    "slates/Tools.json"
+  ],
+  "env": [
+    "LLVM_MINGW_ROOT",
+    "VSDEVCMD_BAT",
+    "VCPKG_INSTALLED_DIR",
+    "ANDROID_NDK_TOOLCHAIN_DIR",
+    "SALTS_BASE_ROOT"
+  ],
+  "defaultPreset": "release",
+  "modules": [
+    "third_party",
+    "vendor",
+    "crypto",
+    "cnet",
+    "sctp"
+  ],
+  "presets": {
+    "tests": {
+      "inherits": "release",
+      "tests": true,
+      "config": "tests"
+    },
+    "debug-msvc": {
+      "inherits": "debug",
+      "targetPlatform": "windows-x64",
+      "toolchain": "msvc-win64",
+      "vsDevCmd": "${envPath:VSDEVCMD_BAT}"
+    },
+    "debug-mingw": {
+      "inherits": "debug",
+      "targetPlatform": "windows-x64",
+      "toolchain": "llvm-mingw-x64"
+    },
+    "benchmark": {
+      "inherits": "release",
+      "config": "benchmark",
+      "tests": true
+    }
+  }
+}

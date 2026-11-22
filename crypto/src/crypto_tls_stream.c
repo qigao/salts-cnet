@@ -7,6 +7,7 @@
 #include "crypto_tls_credentials.h"
 #include "crypto_tls_session_cache.h"
 #include "crypto_internal.h"
+#include "crypto_x509_policy.h"
 
 #if defined(CRYPTO_TLS_STREAM_TESTING)
   #include "crypto_tls_stream_test.h"
@@ -301,6 +302,26 @@ static void crypto_tls_stream_der_bundle_dispose(crypto_tls_stream_der_bundle *b
   memset(bundle, 0, sizeof(*bundle));
 }
 
+static int crypto_tls_stream_der_bundle_append_certificate(
+    crypto_tls_stream_der_bundle *bundle, const unsigned char *data, size_t size,
+    bool system_source, bool *out_appended) {
+  size_t consumed = 0u;
+  salts_crypto_x509_tls_admission admission;
+  if (out_appended != NULL) *out_appended = false;
+  admission = salts_crypto_x509_tls_certificate_admission(data, size, &consumed);
+  if (admission == SALTS_CRYPTO_X509_TLS_MALFORMED || consumed != size)
+    return CRYPTO_TLS_STREAM_EIO;
+  if (admission == SALTS_CRYPTO_X509_TLS_UNSUPPORTED)
+    return system_source ? CRYPTO_TLS_STREAM_OK : CRYPTO_TLS_STREAM_ENOTSUP;
+  if (admission != SALTS_CRYPTO_X509_TLS_ADMITTED)
+    return CRYPTO_TLS_STREAM_EIO;
+  {
+    int status = crypto_tls_stream_der_bundle_append(bundle, data, size);
+    if (status == CRYPTO_TLS_STREAM_OK && out_appended != NULL) *out_appended = true;
+    return status;
+  }
+}
+
 static bool crypto_tls_stream_ca_hash_name(const char *name) {
   size_t index;
   if (name == NULL) return false;
@@ -332,8 +353,9 @@ static int crypto_tls_stream_pem_seek_entry(FILE *file) {
 
 static int crypto_tls_stream_append_pem_cert_file(crypto_tls_stream_der_bundle *bundle,
                                          const char *path,
-                                         size_t *out_count) {
-  unsigned char certificate[CRYPTO_TLS_STREAM_CERT_MAX_BYTES];
+                                         size_t *out_count,
+                                         bool system_source) {
+  unsigned char *certificate = NULL;
   FILE *file;
   size_t count = 0u;
   int status = CRYPTO_TLS_STREAM_OK;
@@ -341,9 +363,13 @@ static int crypto_tls_stream_append_pem_cert_file(crypto_tls_stream_der_bundle *
   if (bundle == NULL || path == NULL) return CRYPTO_TLS_STREAM_EINVAL;
   file = fopen(path, "rb");
   if (file == NULL) return CRYPTO_TLS_STREAM_EIO;
-  for (;;) {
+  certificate = (unsigned char *)crypto_tls_stream_malloc(
+      CRYPTO_TLS_STREAM_CERT_MAX_BYTES);
+  if (certificate == NULL) status = CRYPTO_TLS_STREAM_ENOMEM;
+  while (status == CRYPTO_TLS_STREAM_OK) {
     size_t size = 0u;
     int result;
+    bool appended = false;
 
     status = crypto_tls_stream_pem_seek_entry(file);
     if (status == CRYPTO_TLS_STREAM_EOF) {
@@ -353,24 +379,43 @@ static int crypto_tls_stream_append_pem_cert_file(crypto_tls_stream_der_bundle *
     if (status != CRYPTO_TLS_STREAM_OK) break;
 
     result = pem_read(file, "CERTIFICATE", certificate, &size,
-                      sizeof(certificate));
+                      CRYPTO_TLS_STREAM_CERT_MAX_BYTES);
     if (result <= 0 || size == 0u) {
       status = CRYPTO_TLS_STREAM_EIO;
       break;
     }
-    status = crypto_tls_stream_der_bundle_append(bundle, certificate, size);
+    status = crypto_tls_stream_der_bundle_append_certificate(
+        bundle, certificate, size, system_source, &appended);
     if (status != CRYPTO_TLS_STREAM_OK) break;
-    ++count;
+    if (appended) ++count;
   }
   (void)fclose(file);
-  memset(certificate, 0, sizeof(certificate));
-  if (status == CRYPTO_TLS_STREAM_OK && count == 0u) status = CRYPTO_TLS_STREAM_EIO;
+  if (certificate != NULL)
+    memset(certificate, 0, CRYPTO_TLS_STREAM_CERT_MAX_BYTES);
+  crypto_tls_stream_free(certificate);
+  if (status == CRYPTO_TLS_STREAM_OK && count == 0u && !system_source)
+    status = CRYPTO_TLS_STREAM_EIO;
   if (out_count != NULL) *out_count = count;
   return status;
 }
 
+#if defined(CRYPTO_TLS_STREAM_TESTING)
+int crypto_tls_stream_test_load_pem_cert_file(const char *path, size_t *out_count) {
+  crypto_tls_stream_der_bundle bundle = {0};
+  int status = crypto_tls_stream_append_pem_cert_file(&bundle, path, out_count, false);
+  crypto_tls_stream_der_bundle_dispose(&bundle);
+  return status;
+}
+int crypto_tls_stream_test_load_system_pem_cert_file(const char *path, size_t *out_count) {
+  crypto_tls_stream_der_bundle bundle = {0};
+  int status = crypto_tls_stream_append_pem_cert_file(&bundle, path, out_count, true);
+  crypto_tls_stream_der_bundle_dispose(&bundle);
+  return status;
+}
+#endif
+
 static int crypto_tls_stream_tlcp_certificate_roles_valid(const char *path) {
-  unsigned char certificate[CRYPTO_TLS_STREAM_CERT_MAX_BYTES];
+  unsigned char *certificate = NULL;
   FILE *file;
   unsigned int role;
   int status = CRYPTO_TLS_STREAM_OK;
@@ -378,7 +423,10 @@ static int crypto_tls_stream_tlcp_certificate_roles_valid(const char *path) {
   if (path == NULL) return CRYPTO_TLS_STREAM_EINVAL;
   file = fopen(path, "rb");
   if (file == NULL) return CRYPTO_TLS_STREAM_EIO;
-  for (role = 0u; role < 2u; ++role) {
+  certificate = (unsigned char *)crypto_tls_stream_malloc(
+      CRYPTO_TLS_STREAM_CERT_MAX_BYTES);
+  if (certificate == NULL) status = CRYPTO_TLS_STREAM_ENOMEM;
+  for (role = 0u; status == CRYPTO_TLS_STREAM_OK && role < 2u; ++role) {
     const unsigned char *extensions = NULL;
     size_t extensions_size = 0u;
     const unsigned char *encoded_usage = NULL;
@@ -392,7 +440,7 @@ static int crypto_tls_stream_tlcp_certificate_roles_valid(const char *path) {
     status = crypto_tls_stream_pem_seek_entry(file);
     if (status != CRYPTO_TLS_STREAM_OK ||
         pem_read(file, "CERTIFICATE", certificate, &certificate_size,
-                 sizeof(certificate)) != 1 ||
+                 CRYPTO_TLS_STREAM_CERT_MAX_BYTES) != 1 ||
         certificate_size == 0u ||
         x509_cert_get_exts(certificate, certificate_size,
                            &extensions, &extensions_size) != 1 ||
@@ -417,13 +465,16 @@ static int crypto_tls_stream_tlcp_certificate_roles_valid(const char *path) {
     }
   }
   (void)fclose(file);
-  memset(certificate, 0, sizeof(certificate));
+  if (certificate != NULL)
+    memset(certificate, 0, CRYPTO_TLS_STREAM_CERT_MAX_BYTES);
+  crypto_tls_stream_free(certificate);
   return status;
 }
 
 static int crypto_tls_stream_append_ca_path(crypto_tls_stream_der_bundle *bundle,
                                    const char *directory,
-                                   size_t *out_count) {
+                                   size_t *out_count,
+                                   bool system_source) {
   size_t count = 0u;
   int status = CRYPTO_TLS_STREAM_OK;
   if (bundle == NULL || directory == NULL || directory[0] == '\0')
@@ -448,7 +499,8 @@ static int crypto_tls_stream_append_ca_path(crypto_tls_stream_der_bundle *bundle
         status = CRYPTO_TLS_STREAM_ERANGE;
         break;
       }
-      status = crypto_tls_stream_append_pem_cert_file(bundle, path, &file_count);
+      status = crypto_tls_stream_append_pem_cert_file(
+          bundle, path, &file_count, system_source);
       if (status != CRYPTO_TLS_STREAM_OK) break;
       count += file_count;
     } while (FindNextFileA(search, &data) != 0);
@@ -469,21 +521,24 @@ static int crypto_tls_stream_append_ca_path(crypto_tls_stream_der_bundle *bundle
         status = CRYPTO_TLS_STREAM_ERANGE;
         break;
       }
-      status = crypto_tls_stream_append_pem_cert_file(bundle, path, &file_count);
+      status = crypto_tls_stream_append_pem_cert_file(
+          bundle, path, &file_count, system_source);
       if (status != CRYPTO_TLS_STREAM_OK) break;
       count += file_count;
     }
     (void)closedir(dir);
   }
 #endif
-  if (status == CRYPTO_TLS_STREAM_OK && count == 0u) status = CRYPTO_TLS_STREAM_EIO;
+  if (status == CRYPTO_TLS_STREAM_OK && count == 0u && !system_source)
+    status = CRYPTO_TLS_STREAM_EIO;
   if (out_count != NULL) *out_count = count;
   return status;
 }
 
 static int crypto_tls_stream_load_explicit_trust(TLS_CTX *tls,
                                         const char *ca_file,
-                                        const char *ca_path) {
+                                        const char *ca_path,
+                                        bool system_source) {
   crypto_tls_stream_der_bundle bundle = {0};
   size_t count = 0u;
   int status = CRYPTO_TLS_STREAM_OK;
@@ -491,12 +546,14 @@ static int crypto_tls_stream_load_explicit_trust(TLS_CTX *tls,
   if (tls == NULL || (ca_file == NULL && ca_path == NULL)) return CRYPTO_TLS_STREAM_EINVAL;
   if (ca_file != NULL) {
     size_t file_count = 0u;
-    status = crypto_tls_stream_append_pem_cert_file(&bundle, ca_file, &file_count);
+    status = crypto_tls_stream_append_pem_cert_file(
+        &bundle, ca_file, &file_count, system_source);
     if (status == CRYPTO_TLS_STREAM_OK) count += file_count;
   }
   if (status == CRYPTO_TLS_STREAM_OK && ca_path != NULL) {
     size_t path_count = 0u;
-    status = crypto_tls_stream_append_ca_path(&bundle, ca_path, &path_count);
+    status = crypto_tls_stream_append_ca_path(
+        &bundle, ca_path, &path_count, system_source);
     if (status == CRYPTO_TLS_STREAM_OK) count += path_count;
   }
   if (status == CRYPTO_TLS_STREAM_OK && count == 0u) status = CRYPTO_TLS_STREAM_EIO;
@@ -518,8 +575,9 @@ static int crypto_tls_stream_append_windows_store(crypto_tls_stream_der_bundle *
   store = CertOpenSystemStoreA(0u, name);
   if (store == NULL) return CRYPTO_TLS_STREAM_EIO;
   while ((certificate = CertEnumCertificatesInStore(store, certificate)) != NULL) {
-    status = crypto_tls_stream_der_bundle_append(bundle, certificate->pbCertEncoded,
-                                        (size_t)certificate->cbCertEncoded);
+    status = crypto_tls_stream_der_bundle_append_certificate(
+        bundle, certificate->pbCertEncoded,
+        (size_t)certificate->cbCertEncoded, true, NULL);
     if (status != CRYPTO_TLS_STREAM_OK) break;
   }
   (void)CertCloseStore(store, 0u);
@@ -549,9 +607,9 @@ static int crypto_tls_stream_load_apple_anchors(crypto_tls_stream_der_bundle *bu
       status = CRYPTO_TLS_STREAM_EIO;
       break;
     }
-    status = crypto_tls_stream_der_bundle_append(
+    status = crypto_tls_stream_der_bundle_append_certificate(
         bundle, (const unsigned char *)CFDataGetBytePtr(der),
-        (size_t)CFDataGetLength(der));
+        (size_t)CFDataGetLength(der), true, NULL);
     CFRelease(der);
     if (status != CRYPTO_TLS_STREAM_OK) break;
   }
@@ -600,7 +658,7 @@ static int crypto_tls_stream_load_system_trust(TLS_CTX *tls) {
   #endif
 #elif defined(__ANDROID__)
   return crypto_tls_stream_load_explicit_trust(
-      tls, NULL, "/system/etc/security/cacerts");
+      tls, NULL, "/system/etc/security/cacerts", true);
 #else
   static const char *const paths[] = {
       "/etc/ssl/certs/ca-certificates.crt",
@@ -612,10 +670,10 @@ static int crypto_tls_stream_load_system_trust(TLS_CTX *tls) {
 
   if (environment != NULL && environment[0] != '\0' &&
       crypto_tls_stream_file_readable(environment))
-    return crypto_tls_stream_load_explicit_trust(tls, environment, NULL);
+    return crypto_tls_stream_load_explicit_trust(tls, environment, NULL, true);
   for (index = 0u; index < sizeof(paths) / sizeof(paths[0]); ++index) {
     if (crypto_tls_stream_file_readable(paths[index]))
-      return crypto_tls_stream_load_explicit_trust(tls, paths[index], NULL);
+      return crypto_tls_stream_load_explicit_trust(tls, paths[index], NULL, true);
   }
   return CRYPTO_TLS_STREAM_EIO;
 #endif
@@ -972,7 +1030,7 @@ static int crypto_tls_stream_configure_variant(crypto_tls_stream_context *contex
   if (context->verify_peer) {
     status = ca_data != NULL ? crypto_tls_memory_trust(tls, ca_data) :
         (ca_file != NULL || ca_path != NULL)
-                 ? crypto_tls_stream_load_explicit_trust(tls, ca_file, ca_path)
+                 ? crypto_tls_stream_load_explicit_trust(tls, ca_file, ca_path, false)
                  : crypto_tls_stream_load_system_trust(tls);
     if (status != CRYPTO_TLS_STREAM_OK) return status;
     tls->verify_depth = (int)context->verification_depth;
@@ -986,8 +1044,8 @@ static int crypto_tls_stream_configure_variant(crypto_tls_stream_context *contex
   } else if (cert_file != NULL) {
     int certificate_result;
     if (variant == CRYPTO_TLS_STREAM_VARIANT_TLCP11 && context->server) {
-      if (crypto_tls_stream_tlcp_certificate_roles_valid(cert_file) != CRYPTO_TLS_STREAM_OK)
-        return CRYPTO_TLS_STREAM_EIO;
+      status = crypto_tls_stream_tlcp_certificate_roles_valid(cert_file);
+      if (status != CRYPTO_TLS_STREAM_OK) return status;
       certificate_result = tls_ctx_set_tlcp_server_certificate_and_keys(
           tls, cert_file, key_file,
           key_password != NULL ? key_password : "");
@@ -1115,9 +1173,25 @@ static int crypto_tls_stream_context_create_common(
       } else if (security_profile == CRYPTO_TLS_STREAM_SECURITY_PROFILE_TLCP11) {
         if (certificate_signatures[i] != CRYPTO_TLS_SIGNATURE_SM2_SM3 &&
             certificate_signatures[i] != CRYPTO_TLS_SIGNATURE_RSA_PKCS1_SHA256) return CRYPTO_TLS_STREAM_ENOTSUP;
-      } else if (certificate_signatures[i] != CRYPTO_TLS_SIGNATURE_RSA_PKCS1_SHA256 &&
-          certificate_signatures[i] != CRYPTO_TLS_SIGNATURE_ECDSA_SECP256R1_SHA256 &&
-          certificate_signatures[i] != CRYPTO_TLS_SIGNATURE_ECDSA_SECP384R1_SHA384) return CRYPTO_TLS_STREAM_ENOTSUP;
+      } else {
+        switch (certificate_signatures[i]) {
+        case CRYPTO_TLS_SIGNATURE_RSA_PKCS1_SHA256:
+        case CRYPTO_TLS_SIGNATURE_ECDSA_SECP256R1_SHA256:
+        case CRYPTO_TLS_SIGNATURE_ECDSA_SECP384R1_SHA384:
+#ifdef GMSSL_X509_RSA_PSS_SHA256
+        case CRYPTO_TLS_SIGNATURE_RSA_PSS_RSAE_SHA256:
+#endif
+          break;
+#ifdef GMSSL_TLS12_X509_ECDSA_P384_SHA512
+        case CRYPTO_TLS_SIGNATURE_ECDSA_SHA512_TLS12:
+          if (maximum != CRYPTO_TLS_STREAM_PROTOCOL_VERSION_1_2)
+            return CRYPTO_TLS_STREAM_ENOTSUP;
+          break;
+#endif
+        default:
+          return CRYPTO_TLS_STREAM_ENOTSUP;
+        }
+      }
     }
   }
   status = crypto_tls_stream_validate_signatures(signature_algorithms, signature_algorithm_count,

@@ -1,0 +1,791 @@
+{
+  "targets": {
+    "saltscore.cnet_crypto_static_original_owner_tls12_tls13": {
+      "kind": "header_only",
+      "when": {
+        "os": [
+          "windows",
+          "linux",
+          "macos"
+        ],
+        "native": true
+      },
+      "runtimeDeps": [
+        "cnet_crypto_static_original_owner"
+      ],
+      "test": {
+        "program": "${artifact:cnet_crypto_static_original_owner}",
+        "timeout": 120,
+        "labels": [
+          "cnet",
+          "integration"
+        ]
+      }
+    },
+    "saltscore.cnet_crypto_static_original_owner_go_mtls": {
+      "kind": "header_only",
+      "when": {
+        "os": [
+          "windows",
+          "linux",
+          "macos"
+        ],
+        "native": true
+      },
+      "runtimeDeps": [
+        "cnet_crypto_static_original_owner"
+      ],
+      "test": {
+        "tool": "go",
+        "args": [
+          "./e2e",
+          "-timeout=340s",
+          "-run",
+          "^TestPrivateRequiredMTLS$",
+          "-args",
+          "-private-native",
+          "${artifact:cnet_crypto_static_original_owner}"
+        ],
+        "workingDirectory": "$root/cnet/tests/independent/tls",
+        "timeout": 360,
+        "environment": [
+          "CGO_ENABLED=0",
+          "GOWORK=off"
+        ],
+        "labels": [
+          "cnet",
+          "interop"
+        ]
+      }
+    },
+    "saltscore.cnet_crypto_static_go_san_tls12": {
+      "kind": "header_only",
+      "when": {
+        "os": [
+          "windows",
+          "linux",
+          "macos"
+        ],
+        "native": true
+      },
+      "runtimeDeps": [
+        "cnet_crypto_static_original_owner"
+      ],
+      "test": {
+        "tool": "go",
+        "args": [
+          "./e2e",
+          "-timeout=65s",
+          "-run",
+          "^TestExternalSAN$",
+          "-args",
+          "-private-native",
+          "${artifact:cnet_crypto_static_original_owner}",
+          "-protocol",
+          "tls12",
+          "-fixtures",
+          "$root/crypto/tests/fixtures"
+        ],
+        "workingDirectory": "$root/cnet/tests/independent/tls",
+        "timeout": 75,
+        "environment": [
+          "CGO_ENABLED=0",
+          "GOWORK=off"
+        ],
+        "labels": [
+          "cnet",
+          "interop"
+        ]
+      }
+    },
+    "saltscore.cnet_crypto_static_go_san_tls13": {
+      "kind": "header_only",
+      "when": {
+        "os": [
+          "windows",
+          "linux",
+          "macos"
+        ],
+        "native": true
+      },
+      "runtimeDeps": [
+        "cnet_crypto_static_original_owner"
+      ],
+      "test": {
+        "tool": "go",
+        "args": [
+          "./e2e",
+          "-timeout=65s",
+          "-run",
+          "^TestExternalSAN$",
+          "-args",
+          "-private-native",
+          "${artifact:cnet_crypto_static_original_owner}",
+          "-protocol",
+          "tls13",
+          "-fixtures",
+          "$root/crypto/tests/fixtures"
+        ],
+        "workingDirectory": "$root/cnet/tests/independent/tls",
+        "timeout": 75,
+        "environment": [
+          "CGO_ENABLED=0",
+          "GOWORK=off"
+        ],
+        "labels": [
+          "cnet",
+          "interop"
+        ]
+      }
+    },
+    "saltscore.cnet_crypto_m6_two_plugin_shared_owner": {
+      "kind": "header_only",
+      "when": {
+        "os": [
+          "windows",
+          "linux",
+          "macos"
+        ],
+        "native": true
+      },
+      "runtimeDeps": [
+        "cnet_m6_two_plugin_loader",
+        "cnet_m6_plugin_a",
+        "cnet_m6_plugin_b"
+      ],
+      "test": {
+        "program": "${artifact:cnet_m6_two_plugin_loader}",
+        "args": [
+          "${artifact:cnet_m6_plugin_a}",
+          "${artifact:cnet_m6_plugin_b}"
+        ],
+        "timeout": 120,
+        "labels": [
+          "cnet",
+          "integration"
+        ]
+      }
+    },
+    "saltscore.cnet_crypto_m6_two_plugin_concurrent_mtls": {
+      "kind": "header_only",
+      "when": {
+        "os": [
+          "windows",
+          "linux",
+          "macos"
+        ],
+        "native": true
+      },
+      "runtimeDeps": [
+        "cnet_m6_two_plugin_loader",
+        "cnet_m6_plugin_a",
+        "cnet_m6_plugin_b"
+      ],
+      "test": {
+        "tool": "go",
+        "args": [
+          "./e2e",
+          "-timeout=460s",
+          "-run",
+          "^TestPluginMTLS$",
+          "-args",
+          "-plugin-loader",
+          "${artifact:cnet_m6_two_plugin_loader}",
+          "-plugin-a",
+          "${artifact:cnet_m6_plugin_a}",
+          "-plugin-b",
+          "${artifact:cnet_m6_plugin_b}"
+        ],
+        "workingDirectory": "$root/cnet/tests/independent/tls",
+        "timeout": 480,
+        "environment": [
+          "CGO_ENABLED=0",
+          "GOWORK=off"
+        ],
+        "labels": [
+          "cnet",
+          "interop"
+        ]
+      }
+    },
+    "cnet_crypto_qualification": {
+      "kind": "static",
+      "testOnly": true,
+      "when": {
+        "os": [
+          "windows",
+          "linux",
+          "macos"
+        ],
+        "native": true
+      },
+      "sources": {
+        "files": [
+          "../../src/cnet_client_pool.c",
+          "../../src/cnet_client.c",
+          "../../src/cnet_command.c",
+          "../../src/cnet_datagram.c",
+          "../../src/cnet_destination_policy.c",
+          "../../src/cnet_dispatcher.c",
+          "../../src/cnet_dtls.c",
+          "../../src/cnet_event.c",
+          "../../src/cnet_handoff.c",
+          "../../src/cnet_ipc.c",
+          "../../src/cnet_kcp_fec.c",
+          "../../src/cnet_kcp_secure.c",
+          "../../src/cnet_kcp.c",
+          "../../src/cnet_listener.c",
+          "../../src/cnet_managed_dial.c",
+          "../../src/cnet_manager.c",
+          "../../src/cnet_module.c",
+          "../../src/cnet_owner_strategy.c",
+          "../../src/cnet_owner.c",
+          "../../src/cnet_packet_endpoint.c",
+          "../../src/cnet_recovery_policy.c",
+          "../../src/cnet_resolver.c",
+          "../../src/cnet_resources.c",
+          "../../src/cnet_secure_kcp.c",
+          "../../src/cnet_session.c",
+          "../../src/cnet_sg_host.c",
+          "../../src/cnet_shards.c",
+          "../../src/cnet_transport.c",
+          "../../src/cnet_uri.c",
+          "../../src/cnet_websocket.c",
+          "../../src/cnet_write_queue.c",
+          "../../src/cnet_tls_crypto_qualification.c",
+          "cnet_crypto_owner_admission.c",
+          "public_context.c"
+        ]
+      },
+      "private": {
+        "includeDirs": [
+          "../../include",
+          "../../src",
+          "."
+        ],
+        "deps": [
+          "saltscore_wsparser",
+          "saltsbase_core",
+          "saltsbase_native_io",
+          "saltsbase_uri",
+          "saltsbase_simd",
+          "saltsbase_asn1",
+          "salts_crypto",
+          "monocypher",
+          "reed",
+          "c-ares",
+          "kcp"
+        ]
+      },
+      "variants": [
+        {
+          "when": {
+            "driver": "msvc"
+          },
+          "private": {
+            "flags": [
+              "/experimental:c11atomics"
+            ]
+          }
+        },
+        {
+          "when": {
+            "driver": [
+              "clang",
+              "gcc",
+              "llvm-mingw"
+            ]
+          },
+          "private": {
+            "flags": [
+              "-Werror=implicit-function-declaration",
+              "-Werror=incompatible-pointer-types",
+              "-Werror=return-type"
+            ]
+          }
+        },
+        {
+          "when": {
+            "os": "linux"
+          },
+          "private": {
+            "defines": {
+              "_DEFAULT_SOURCE": "1",
+              "_POSIX_C_SOURCE": "200809L"
+            }
+          }
+        },
+        {
+          "when": {
+            "os": "macos"
+          },
+          "private": {
+            "defines": {
+              "_DARWIN_C_SOURCE": "1"
+            }
+          }
+        }
+      ]
+    },
+    "cnet_crypto_legacy_owner": {
+      "kind": "static",
+      "testOnly": true,
+      "when": {
+        "os": [
+          "windows",
+          "linux",
+          "macos"
+        ],
+        "native": true
+      },
+      "sources": {
+        "files": [
+          "owner.c"
+        ]
+      },
+      "private": {
+        "includeDirs": [
+          "../../include",
+          "../../src",
+          "."
+        ],
+        "deps": [
+          "saltsbase_core",
+          "saltsbase_native_io",
+          "salts_crypto"
+        ],
+        "defines": {
+          "SDK_CA_FILE": "\"$root/crypto/tests/fixtures/external-io-ca-cert.pem\"",
+          "SDK_SERVER_CERT_FILE": "\"$root/crypto/tests/fixtures/external-io-server-cert.pem\"",
+          "SDK_SERVER_KEY_FILE": "\"$root/crypto/tests/fixtures/external-io-server-key.pem\"",
+          "main": "cnet_crypto_legacy_main"
+        }
+      },
+      "variants": [
+        {
+          "when": {
+            "driver": "msvc"
+          },
+          "private": {
+            "flags": [
+              "/experimental:c11atomics"
+            ]
+          }
+        },
+        {
+          "when": {
+            "driver": [
+              "clang",
+              "gcc",
+              "llvm-mingw"
+            ]
+          },
+          "private": {
+            "flags": [
+              "-Werror=implicit-function-declaration",
+              "-Werror=incompatible-pointer-types",
+              "-Werror=return-type"
+            ]
+          }
+        },
+        {
+          "when": {
+            "os": "linux"
+          },
+          "private": {
+            "defines": {
+              "_DEFAULT_SOURCE": "1",
+              "_POSIX_C_SOURCE": "200809L"
+            }
+          }
+        },
+        {
+          "when": {
+            "os": "macos"
+          },
+          "private": {
+            "defines": {
+              "_DARWIN_C_SOURCE": "1"
+            }
+          }
+        }
+      ]
+    },
+    "cnet_crypto_static_original_owner": {
+      "kind": "executable",
+      "testOnly": true,
+      "when": {
+        "os": [
+          "windows",
+          "linux",
+          "macos"
+        ],
+        "native": true
+      },
+      "sources": {
+        "files": [
+          "owner_tinytest.c"
+        ]
+      },
+      "private": {
+        "deps": [
+          "cnet_crypto_legacy_owner",
+          "cnet_crypto_qualification",
+          "saltsbase_core",
+          "salts_crypto",
+          "saltsbase_native_io",
+          "saltsbase_tinytest"
+        ],
+        "includeDirs": [
+          "../../include",
+          "../../src",
+          "."
+        ],
+        "defines": {
+          "SDK_CA_FILE": "\"$root/crypto/tests/fixtures/external-io-ca-cert.pem\"",
+          "SDK_SERVER_CERT_FILE": "\"$root/crypto/tests/fixtures/external-io-server-cert.pem\"",
+          "SDK_SERVER_KEY_FILE": "\"$root/crypto/tests/fixtures/external-io-server-key.pem\""
+        }
+      },
+      "variants": [
+        {
+          "when": {
+            "driver": "msvc"
+          },
+          "private": {
+            "flags": [
+              "/experimental:c11atomics"
+            ]
+          }
+        },
+        {
+          "when": {
+            "driver": [
+              "clang",
+              "gcc",
+              "llvm-mingw"
+            ]
+          },
+          "private": {
+            "flags": [
+              "-Werror=implicit-function-declaration",
+              "-Werror=incompatible-pointer-types",
+              "-Werror=return-type"
+            ]
+          }
+        },
+        {
+          "when": {
+            "os": "linux"
+          },
+          "private": {
+            "defines": {
+              "_DEFAULT_SOURCE": "1",
+              "_POSIX_C_SOURCE": "200809L"
+            }
+          }
+        },
+        {
+          "when": {
+            "os": "macos"
+          },
+          "private": {
+            "defines": {
+              "_DARWIN_C_SOURCE": "1"
+            }
+          }
+        },
+        {
+          "when": {
+            "os": "windows"
+          },
+          "private": {
+            "libs": [
+              "crypt32"
+            ]
+          }
+        },
+        {
+          "when": {
+            "os": "macos"
+          },
+          "private": {
+            "linkFlags": [
+              "-framework",
+              "CoreFoundation",
+              "-framework",
+              "Security"
+            ]
+          }
+        }
+      ]
+    },
+    "cnet_crypto_m6_shared": {
+      "kind": "shared",
+      "testOnly": true,
+      "when": {
+        "os": [
+          "windows",
+          "linux",
+          "macos"
+        ],
+        "native": true
+      },
+      "sources": {
+        "files": [
+          "owner.c",
+          "m6_shared_owner.c"
+        ]
+      },
+      "public": {
+        "includeDirs": [
+          "../../include",
+          "."
+        ]
+      },
+      "private": {
+        "includeDirs": [
+          "../../src"
+        ],
+        "deps": [
+          "cnet_crypto_qualification",
+          "saltsbase_core",
+          "saltsbase_native_io",
+          "salts_crypto"
+        ],
+        "defines": {
+          "SDK_CA_FILE": "\"$root/crypto/tests/fixtures/external-io-ca-cert.pem\"",
+          "SDK_SERVER_CERT_FILE": "\"$root/crypto/tests/fixtures/external-io-server-cert.pem\"",
+          "SDK_SERVER_KEY_FILE": "\"$root/crypto/tests/fixtures/external-io-server-key.pem\"",
+          "CNET_M6_BUILD_SHARED": "1",
+          "main": "cnet_crypto_legacy_main"
+        }
+      },
+      "variants": [
+        {
+          "when": {
+            "driver": "msvc"
+          },
+          "private": {
+            "flags": [
+              "/experimental:c11atomics"
+            ]
+          }
+        },
+        {
+          "when": {
+            "driver": [
+              "clang",
+              "gcc",
+              "llvm-mingw"
+            ]
+          },
+          "private": {
+            "flags": [
+              "-Werror=implicit-function-declaration",
+              "-Werror=incompatible-pointer-types",
+              "-Werror=return-type"
+            ]
+          }
+        },
+        {
+          "when": {
+            "os": "linux"
+          },
+          "private": {
+            "defines": {
+              "_DEFAULT_SOURCE": "1",
+              "_POSIX_C_SOURCE": "200809L"
+            }
+          }
+        },
+        {
+          "when": {
+            "os": "macos"
+          },
+          "private": {
+            "defines": {
+              "_DARWIN_C_SOURCE": "1"
+            }
+          }
+        },
+        {
+          "when": {
+            "os": "windows"
+          },
+          "private": {
+            "libs": [
+              "crypt32"
+            ]
+          }
+        },
+        {
+          "when": {
+            "os": "macos"
+          },
+          "private": {
+            "linkFlags": [
+              "-framework",
+              "CoreFoundation",
+              "-framework",
+              "Security"
+            ]
+          }
+        }
+      ]
+    },
+    "cnet_m6_legacy_loader": {
+      "kind": "static",
+      "testOnly": true,
+      "when": {
+        "os": [
+          "windows",
+          "linux",
+          "macos"
+        ],
+        "native": true
+      },
+      "sources": {
+        "files": [
+          "m6_loader.c"
+        ]
+      },
+      "private": {
+        "deps": [
+          "saltsbase_core"
+        ],
+        "defines": {
+          "main": "cnet_m6_legacy_main"
+        }
+      },
+      "variants": [
+        {
+          "when": {
+            "driver": "msvc"
+          },
+          "private": {
+            "flags": [
+              "/experimental:c11atomics"
+            ]
+          }
+        }
+      ]
+    },
+    "cnet_m6_two_plugin_loader": {
+      "kind": "executable",
+      "testOnly": true,
+      "when": {
+        "os": [
+          "windows",
+          "linux",
+          "macos"
+        ],
+        "native": true
+      },
+      "sources": {
+        "files": [
+          "m6_loader_tinytest.c"
+        ]
+      },
+      "private": {
+        "deps": [
+          "cnet_m6_legacy_loader",
+          "saltsbase_core",
+          "saltsbase_tinytest"
+        ]
+      },
+      "variants": [
+        {
+          "when": {
+            "driver": "msvc"
+          },
+          "private": {
+            "flags": [
+              "/experimental:c11atomics"
+            ]
+          }
+        },
+        {
+          "when": {
+            "os": "linux"
+          },
+          "private": {
+            "libs": [
+              "dl"
+            ]
+          }
+        }
+      ]
+    },
+    "cnet_m6_plugin_a": {
+      "kind": "shared",
+      "testOnly": true,
+      "when": {
+        "os": [
+          "windows",
+          "linux",
+          "macos"
+        ],
+        "native": true
+      },
+      "sources": {
+        "files": [
+          "m6_plugin.c"
+        ]
+      },
+      "private": {
+        "deps": [
+          "cnet_crypto_m6_shared",
+          "saltsbase_core"
+        ]
+      },
+      "variants": [
+        {
+          "when": {
+            "driver": "msvc"
+          },
+          "private": {
+            "flags": [
+              "/experimental:c11atomics"
+            ]
+          }
+        }
+      ]
+    },
+    "cnet_m6_plugin_b": {
+      "kind": "shared",
+      "testOnly": true,
+      "when": {
+        "os": [
+          "windows",
+          "linux",
+          "macos"
+        ],
+        "native": true
+      },
+      "sources": {
+        "files": [
+          "m6_plugin.c"
+        ]
+      },
+      "private": {
+        "deps": [
+          "cnet_crypto_m6_shared",
+          "saltsbase_core"
+        ]
+      },
+      "variants": [
+        {
+          "when": {
+            "driver": "msvc"
+          },
+          "private": {
+            "flags": [
+              "/experimental:c11atomics"
+            ]
+          }
+        }
+      ]
+    }
+  }
+}

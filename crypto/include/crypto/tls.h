@@ -5,10 +5,12 @@
 #ifndef CRYPTO_TLS_H_INCLUDED
 #define CRYPTO_TLS_H_INCLUDED
 
+#include <crypto/export.h>
+
 #include <stddef.h>
 #include <stdint.h>
 
-#define CRYPTO_TLS_API
+#define CRYPTO_TLS_API SALTS_CRYPTO_EXPORT
 
 #ifdef __cplusplus
 extern "C" {

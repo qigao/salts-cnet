@@ -1,6 +1,8 @@
 #ifndef CNET_RESOURCES_H
 #define CNET_RESOURCES_H
 
+#include <cnet/export.h>
+
 #include <memory/buffer.h>
 #include <stdbool.h>
 #include <stddef.h>
@@ -80,8 +82,11 @@ typedef struct cnet_send_admission_policy {
   void *user;
 } cnet_send_admission_policy;
 
+SALTS_CNET_EXPORT
 bool cnet_allocator_valid(const cnet_allocator *allocator);
+SALTS_CNET_EXPORT
 bool cnet_resources_valid(const cnet_resources *resources);
+SALTS_CNET_EXPORT
 int cnet_buffer_acquire(const cnet_buffer_provider *provider, size_t bytes,
                          mem_buffer_t **out);
 

@@ -1,6 +1,8 @@
 #ifndef CRYPTO_INTERNAL_H_INCLUDED
 #define CRYPTO_INTERNAL_H_INCLUDED
 
+#include <crypto/export.h>
+
 #include <stddef.h>
 #include <stdint.h>
 
@@ -14,6 +16,7 @@ static inline int salts_crypto_overlap(const void *a, size_t an,
 }
 
 /* Single Crypto owner; OS CSPRNG has no platform/CFlow dependency. */
+SALTS_CRYPTO_EXPORT
 int salts_crypto_random_bytes(void *buffer, size_t size);
 
 static inline void salts_crypto_secure_zero(void *buffer, size_t size) {

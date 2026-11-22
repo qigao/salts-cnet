@@ -1,0 +1,300 @@
+{
+  "targets": {
+    "crypto.algorithms.dtls_record": {
+      "kind": "header_only",
+      "when": {
+        "os": ["windows", "linux", "macos"],
+        "native": true
+      },
+      "runtimeDeps": ["crypto_dtls_record_test"],
+      "test": {
+        "tool": "go",
+        "args": ["./e2e", "-timeout=50s", "-run", "^TestDTLSRecordOracle$", "-args", "-record-suite", "${artifact:crypto_dtls_record_test}"],
+        "workingDirectory": "$root/crypto/tests/algorithms/independent",
+        "timeout": 60,
+        "environment": ["CGO_ENABLED=0", "GOWORK=off"],
+        "labels": ["crypto", "interop"]
+      }
+    },
+    "crypto.algorithms.dtls_handshake": {
+      "kind": "header_only",
+      "when": {
+        "os": ["windows", "linux", "macos"],
+        "native": true
+      },
+      "runtimeDeps": ["crypto_dtls_handshake_test", "crypto_dtls_secrets_test", "crypto_dtls_exchange_test", "crypto_dtls_client_cases_test", "crypto_dtls_server_cases_test"],
+      "test": {
+        "tool": "go",
+        "args": ["./e2e", "-timeout=100s", "-run", "^TestDTLSHandshakeOracle$", "-args", "-handshake-suite", "${artifact:crypto_dtls_handshake_test}", "-secrets-suite", "${artifact:crypto_dtls_secrets_test}", "-exchange-suite", "${artifact:crypto_dtls_exchange_test}", "-client-suite", "${artifact:crypto_dtls_client_cases_test}", "-server-suite", "${artifact:crypto_dtls_server_cases_test}"],
+        "workingDirectory": "$root/crypto/tests/algorithms/independent",
+        "timeout": 120,
+        "environment": ["CGO_ENABLED=0", "GOWORK=off"],
+        "labels": ["crypto", "interop"]
+      }
+    },
+    "crypto.algorithms.dtls_client_independent": {
+      "kind": "header_only",
+      "when": {
+        "os": ["windows", "linux", "macos"],
+        "native": true
+      },
+      "runtimeDeps": ["crypto_dtls_client_endpoint"],
+      "test": {
+        "tool": "go",
+        "args": ["./e2e", "-timeout=75s", "-run", "^TestScriptedDTLSClient$", "-args", "-dtls-client", "${artifact:crypto_dtls_client_endpoint}"],
+        "workingDirectory": "$root/crypto/tests/algorithms/independent",
+        "timeout": 90,
+        "environment": ["CGO_ENABLED=0", "GOWORK=off"],
+        "labels": ["crypto", "interop"]
+      }
+    },
+    "crypto.algorithms.dtls_server_independent": {
+      "kind": "header_only",
+      "when": {
+        "os": ["windows", "linux", "macos"],
+        "native": true
+      },
+      "runtimeDeps": ["crypto_dtls_server_endpoint"],
+      "test": {
+        "tool": "go",
+        "args": ["./e2e", "-timeout=75s", "-run", "^TestScriptedDTLSServer$", "-args", "-dtls-server", "${artifact:crypto_dtls_server_endpoint}"],
+        "workingDirectory": "$root/crypto/tests/algorithms/independent",
+        "timeout": 90,
+        "environment": ["CGO_ENABLED=0", "GOWORK=off"],
+        "labels": ["crypto", "interop"]
+      }
+    },
+    "crypto.algorithms.dtls_client_pion": {
+      "kind": "header_only",
+      "when": {
+        "os": ["windows", "linux", "macos"],
+        "native": true
+      },
+      "runtimeDeps": ["crypto_dtls_client_endpoint"],
+      "test": {
+        "tool": "go",
+        "args": ["./e2e", "-failfast", "-v", "-timeout=60s", "-run", "^TestDTLSClientAgainstPion$", "-args", "-dtls-client", "${artifact:crypto_dtls_client_endpoint}"],
+        "workingDirectory": "$root/crypto/tests/algorithms/independent",
+        "timeout": 120,
+        "environment": ["CGO_ENABLED=0", "GOWORK=off"],
+        "labels": ["crypto", "interop"]
+      }
+    },
+    "crypto.algorithms.dtls_server_pion": {
+      "kind": "header_only",
+      "when": {
+        "os": ["windows", "linux", "macos"],
+        "native": true
+      },
+      "runtimeDeps": ["crypto_dtls_server_endpoint"],
+      "test": {
+        "tool": "go",
+        "args": ["./e2e", "-failfast", "-v", "-timeout=90s", "-run", "^TestDTLSServerAgainstPion$", "-args", "-dtls-server", "${artifact:crypto_dtls_server_endpoint}"],
+        "workingDirectory": "$root/crypto/tests/algorithms/independent",
+        "timeout": 120,
+        "environment": ["CGO_ENABLED=0", "GOWORK=off"],
+        "labels": ["crypto", "interop"]
+      }
+    },
+    "crypto_dtls_client_cases_test": {
+      "kind": "executable",
+      "testOnly": true,
+      "when": {
+        "os": ["windows", "linux", "macos"],
+        "native": true
+      },
+      "sources": {
+        "files": ["dtls_client_cases.c"]
+      },
+      "private": {
+        "deps": ["salts_crypto", "saltsbase_tinytest", "gmssl", "saltsbase_asn1", "saltsbase_simd", "saltsbase_core"],
+        "includeDirs": ["../../include"]
+      },
+      "variants": [
+        {
+          "when": {
+            "driver": "msvc"
+          },
+          "private": {
+            "flags": ["/experimental:c11atomics"]
+          }
+        }
+      ]
+    },
+    "crypto_dtls_client_endpoint": {
+      "kind": "executable",
+      "testOnly": true,
+      "when": {
+        "os": ["windows", "linux", "macos"],
+        "native": true
+      },
+      "sources": {
+        "files": ["dtls_client_endpoint.c"]
+      },
+      "private": {
+        "deps": ["salts_crypto", "gmssl", "saltsbase_asn1", "saltsbase_simd", "saltsbase_core"],
+        "includeDirs": ["../../include"]
+      },
+      "variants": [
+        {
+          "when": {
+            "driver": "msvc"
+          },
+          "private": {
+            "flags": ["/experimental:c11atomics"]
+          }
+        }
+      ]
+    },
+    "crypto_dtls_exchange_test": {
+      "kind": "executable",
+      "testOnly": true,
+      "when": {
+        "os": ["windows", "linux", "macos"],
+        "native": true
+      },
+      "sources": {
+        "files": ["dtls_exchange.c"]
+      },
+      "private": {
+        "deps": ["salts_crypto", "saltsbase_tinytest", "gmssl", "saltsbase_asn1", "saltsbase_simd", "saltsbase_core"],
+        "includeDirs": ["../../include"]
+      },
+      "variants": [
+        {
+          "when": {
+            "driver": "msvc"
+          },
+          "private": {
+            "flags": ["/experimental:c11atomics"]
+          }
+        }
+      ]
+    },
+    "crypto_dtls_handshake_test": {
+      "kind": "executable",
+      "testOnly": true,
+      "when": {
+        "os": ["windows", "linux", "macos"],
+        "native": true
+      },
+      "sources": {
+        "files": ["dtls_handshake.c"]
+      },
+      "private": {
+        "deps": ["salts_crypto", "saltsbase_tinytest", "gmssl", "saltsbase_asn1", "saltsbase_simd", "saltsbase_core"],
+        "includeDirs": ["../../include"]
+      },
+      "variants": [
+        {
+          "when": {
+            "driver": "msvc"
+          },
+          "private": {
+            "flags": ["/experimental:c11atomics"]
+          }
+        }
+      ]
+    },
+    "crypto_dtls_record_test": {
+      "kind": "executable",
+      "testOnly": true,
+      "when": {
+        "os": ["windows", "linux", "macos"],
+        "native": true
+      },
+      "sources": {
+        "files": ["dtls_record.c"]
+      },
+      "private": {
+        "deps": ["salts_crypto", "saltsbase_tinytest", "gmssl", "saltsbase_asn1", "saltsbase_simd", "saltsbase_core"],
+        "includeDirs": ["../../include"]
+      },
+      "variants": [
+        {
+          "when": {
+            "driver": "msvc"
+          },
+          "private": {
+            "flags": ["/experimental:c11atomics"]
+          }
+        }
+      ]
+    },
+    "crypto_dtls_secrets_test": {
+      "kind": "executable",
+      "testOnly": true,
+      "when": {
+        "os": ["windows", "linux", "macos"],
+        "native": true
+      },
+      "sources": {
+        "files": ["dtls_secrets.c"]
+      },
+      "private": {
+        "deps": ["salts_crypto", "saltsbase_tinytest", "gmssl", "saltsbase_asn1", "saltsbase_simd", "saltsbase_core"],
+        "includeDirs": ["../../include"]
+      },
+      "variants": [
+        {
+          "when": {
+            "driver": "msvc"
+          },
+          "private": {
+            "flags": ["/experimental:c11atomics"]
+          }
+        }
+      ]
+    },
+    "crypto_dtls_server_cases_test": {
+      "kind": "executable",
+      "testOnly": true,
+      "when": {
+        "os": ["windows", "linux", "macos"],
+        "native": true
+      },
+      "sources": {
+        "files": ["dtls_server_cases.c"]
+      },
+      "private": {
+        "deps": ["salts_crypto", "saltsbase_tinytest", "gmssl", "saltsbase_asn1", "saltsbase_simd", "saltsbase_core"],
+        "includeDirs": ["../../include"]
+      },
+      "variants": [
+        {
+          "when": {
+            "driver": "msvc"
+          },
+          "private": {
+            "flags": ["/experimental:c11atomics"]
+          }
+        }
+      ]
+    },
+    "crypto_dtls_server_endpoint": {
+      "kind": "executable",
+      "testOnly": true,
+      "when": {
+        "os": ["windows", "linux", "macos"],
+        "native": true
+      },
+      "sources": {
+        "files": ["dtls_server_endpoint.c"]
+      },
+      "private": {
+        "deps": ["salts_crypto", "gmssl", "saltsbase_asn1", "saltsbase_simd", "saltsbase_core"],
+        "includeDirs": ["../../include"]
+      },
+      "variants": [
+        {
+          "when": {
+            "driver": "msvc"
+          },
+          "private": {
+            "flags": ["/experimental:c11atomics"]
+          }
+        }
+      ]
+    }
+  }
+}

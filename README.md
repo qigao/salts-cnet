@@ -306,6 +306,30 @@ packaging contract and is not qualified by this SDK matrix. It requires
 its own coordinated release migration; changing this CI scope does not create
 or replace a published package or tag.
 
+### Build and test with Slate
+
+Slate builds the `cnet` and `salts_crypto` shared libraries, the SCTP libraries,
+and their private dependencies. Set the compiler and ABI-matched vcpkg and
+SaltsBase SDK paths in `.env`. Shared-library exports use CNet and Crypto API
+headers on Windows and linker export filters on Unix. Crypto keeps the three
+curve adapter archive members linked so their API entries are exported.
+
+```powershell
+slate build --target cnet
+slate build --preset tests
+slate test --preset tests
+slate test --preset debug-mingw
+slate test --preset benchmark --label benchmark
+slate run --target cnet_sctp_wire_example
+slate install --targets cnet salts_crypto --components runtime,dev
+```
+
+The `tests` preset enables the Crypto and CNet memory-test hooks and selects
+the native and Go interoperability suites. The VS Code workspace uses this
+preset for its Slate tree. Go tests require Go on PATH. Use a Slate executable
+with external test and artifact-reference support. The `SaltsCNet` CMake package
+uses the CMake presets above.
+
 ## WebSocket SIMD measurements
 
 CNet uses SaltsBase's public `<simd.h>` / `Salts::SIMD` to scan complete

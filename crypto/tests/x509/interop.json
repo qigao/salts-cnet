@@ -1,0 +1,191 @@
+{
+  "targets": {
+    "crypto.x509.sm2_ocsp_independent": {
+      "kind": "header_only",
+      "when": {
+        "os": ["windows", "linux", "macos"],
+        "native": true
+      },
+      "runtimeDeps": ["crypto_sm2_ocsp_peer"],
+      "test": {
+        "tool": "go",
+        "args": ["./e2e", "-timeout=90s", "-run", "^TestSM2OCSP$", "-args", "-ocsp-peer", "${artifact:crypto_sm2_ocsp_peer}"],
+        "workingDirectory": "$root/crypto/tests/x509/independent",
+        "timeout": 180,
+        "environment": ["CGO_ENABLED=0", "GOWORK=off"],
+        "labels": ["crypto", "interop"]
+      }
+    },
+    "crypto.x509.sm2_ocsp_delegation": {
+      "kind": "header_only",
+      "when": {
+        "os": ["windows", "linux", "macos"],
+        "native": true
+      },
+      "runtimeDeps": ["crypto_sm2_ocsp_peer"],
+      "test": {
+        "tool": "go",
+        "args": ["./e2e", "-timeout=90s", "-run", "^TestSM2OCSPDelegation$", "-args", "-ocsp-peer", "${artifact:crypto_sm2_ocsp_peer}"],
+        "workingDirectory": "$root/crypto/tests/x509/independent",
+        "timeout": 180,
+        "environment": ["CGO_ENABLED=0", "GOWORK=off"],
+        "labels": ["crypto", "interop"]
+      }
+    },
+    "crypto.x509.sm2_cms_independent": {
+      "kind": "header_only",
+      "when": {
+        "os": ["windows", "linux", "macos"],
+        "native": true
+      },
+      "runtimeDeps": ["crypto_sm2_cms_peer"],
+      "test": {
+        "tool": "go",
+        "args": ["./e2e", "-timeout=90s", "-run", "^TestSM2CMS$", "-args", "-cms-peer", "${artifact:crypto_sm2_cms_peer}"],
+        "workingDirectory": "$root/crypto/tests/x509/independent",
+        "timeout": 180,
+        "environment": ["CGO_ENABLED=0", "GOWORK=off"],
+        "labels": ["crypto", "interop"]
+      }
+    },
+    "crypto.x509.sm2_cms_envelope_independent": {
+      "kind": "header_only",
+      "when": {
+        "os": ["windows", "linux", "macos"],
+        "native": true
+      },
+      "runtimeDeps": ["crypto_sm2_cms_peer"],
+      "test": {
+        "tool": "go",
+        "args": ["./e2e", "-timeout=90s", "-run", "^TestSM2CMSEnvelope$", "-args", "-cms-peer", "${artifact:crypto_sm2_cms_peer}"],
+        "workingDirectory": "$root/crypto/tests/x509/independent",
+        "timeout": 180,
+        "environment": ["CGO_ENABLED=0", "GOWORK=off"],
+        "labels": ["crypto", "interop"]
+      }
+    },
+    "crypto.x509.sm2_independent": {
+      "kind": "header_only",
+      "when": {
+        "os": ["windows", "linux", "macos"],
+        "native": true
+      },
+      "runtimeDeps": ["crypto_sm2_x509_peer"],
+      "test": {
+        "tool": "go",
+        "args": ["./e2e", "-timeout=90s", "-run", "^TestSM2Certificates$", "-args", "-peer", "${artifact:crypto_sm2_x509_peer}"],
+        "workingDirectory": "$root/crypto/tests/x509/independent",
+        "timeout": 180,
+        "environment": ["CGO_ENABLED=0", "GOWORK=off"],
+        "labels": ["crypto", "interop"]
+      }
+    },
+    "crypto.x509.sm2_pinned_trust": {
+      "kind": "header_only",
+      "when": {
+        "os": ["windows", "linux", "macos"],
+        "native": true
+      },
+      "runtimeDeps": ["crypto_sm2_trust_peer"],
+      "test": {
+        "tool": "go",
+        "args": ["./e2e", "-timeout=90s", "-run", "^TestPinnedChain$", "-args", "-trust-peer", "${artifact:crypto_sm2_trust_peer}"],
+        "workingDirectory": "$root/crypto/tests/x509/independent",
+        "timeout": 180,
+        "environment": ["CGO_ENABLED=0", "GOWORK=off"],
+        "labels": ["crypto", "interop"]
+      }
+    },
+    "crypto.x509.sm2_crl_independent": {
+      "kind": "header_only",
+      "when": {
+        "os": ["windows", "linux", "macos"],
+        "native": true
+      },
+      "runtimeDeps": ["crypto_sm2_crl_peer"],
+      "test": {
+        "tool": "go",
+        "args": ["./e2e", "-timeout=90s", "-run", "^TestSM2CRL$", "-args", "-crl-peer", "${artifact:crypto_sm2_crl_peer}"],
+        "workingDirectory": "$root/crypto/tests/x509/independent",
+        "timeout": 180,
+        "environment": ["CGO_ENABLED=0", "GOWORK=off"],
+        "labels": ["crypto", "interop"]
+      }
+    },
+    "crypto_sm2_cms_peer": {
+      "kind": "executable",
+      "testOnly": true,
+      "when": {
+        "os": ["windows", "linux", "macos"],
+        "native": true
+      },
+      "sources": {
+        "files": ["sm2_cms_peer.c"]
+      },
+      "private": {
+        "deps": ["salts_crypto", "saltsbase_asn1", "saltsbase_simd", "saltsbase_core"],
+        "includeDirs": ["../../include"]
+      }
+    },
+    "crypto_sm2_crl_peer": {
+      "kind": "executable",
+      "testOnly": true,
+      "when": {
+        "os": ["windows", "linux", "macos"],
+        "native": true
+      },
+      "sources": {
+        "files": ["sm2_crl_peer.c"]
+      },
+      "private": {
+        "deps": ["salts_crypto", "saltsbase_asn1", "saltsbase_simd", "saltsbase_core"],
+        "includeDirs": ["../../include"]
+      }
+    },
+    "crypto_sm2_ocsp_peer": {
+      "kind": "executable",
+      "testOnly": true,
+      "when": {
+        "os": ["windows", "linux", "macos"],
+        "native": true
+      },
+      "sources": {
+        "files": ["sm2_ocsp_peer.c"]
+      },
+      "private": {
+        "deps": ["salts_crypto", "saltsbase_asn1", "saltsbase_simd", "saltsbase_core"],
+        "includeDirs": ["../../include"]
+      }
+    },
+    "crypto_sm2_trust_peer": {
+      "kind": "executable",
+      "testOnly": true,
+      "when": {
+        "os": ["windows", "linux", "macos"],
+        "native": true
+      },
+      "sources": {
+        "files": ["sm2_trust_peer.c"]
+      },
+      "private": {
+        "deps": ["salts_crypto", "saltsbase_asn1", "saltsbase_simd", "saltsbase_core"],
+        "includeDirs": ["../../include"]
+      }
+    },
+    "crypto_sm2_x509_peer": {
+      "kind": "executable",
+      "testOnly": true,
+      "when": {
+        "os": ["windows", "linux", "macos"],
+        "native": true
+      },
+      "sources": {
+        "files": ["sm2_peer.c"]
+      },
+      "private": {
+        "deps": ["salts_crypto", "saltsbase_asn1", "saltsbase_simd", "saltsbase_core"],
+        "includeDirs": ["../../include"]
+      }
+    }
+  }
+}

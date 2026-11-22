@@ -1,5 +1,7 @@
 #ifndef CRYPTO_DTLS_STREAM_H
 #define CRYPTO_DTLS_STREAM_H
+
+#include <crypto/export.h>
 #include <crypto/status.h>
 #include <crypto/tls_credentials.h>
 #include <crypto/tls_peer_policy.h>
@@ -18,6 +20,8 @@ enum {
   CRYPTO_DTLS_DROP = 3,
   CRYPTO_DTLS_ENOMEM = -6,
   CRYPTO_DTLS_MTU = 1200,
+  CRYPTO_DTLS_MIN_MTU = 576,
+  CRYPTO_DTLS_MAX_MTU = 2048,
   CRYPTO_DTLS_MAX_DATAGRAM_BYTES = 16421,
   CRYPTO_DTLS_MAX_APPLICATION_BYTES = 1163,
   CRYPTO_DTLS_COOKIE_REPLY_BYTES = 60,
@@ -74,6 +78,7 @@ typedef struct crypto_dtls_stream_config {
  * retains once until successful destroy. User lives until destroy. on_data
  * borrows one authenticated record until return; mutation reentry is rejected.
  * Output slot must not alias config or its inputs. Failure publishes NULL. */
+SALTS_CRYPTO_EXPORT
 int crypto_dtls_stream_create(const crypto_dtls_stream_config *,
                               crypto_dtls_stream **);
 typedef struct crypto_dtls_listener_config {
@@ -93,8 +98,10 @@ typedef struct crypto_dtls_listener_config {
  * distinct admitted streams can progress concurrently. Destroy returns BUSY
  * until all streams are destroyed, and rejects policy-release recursion.
  * NULL destroy is OK. No automatic listener shutdown or stream cancellation. */
+SALTS_CRYPTO_EXPORT
 int crypto_dtls_listener_create(const crypto_dtls_listener_config *,
                                 crypto_dtls_listener **);
+SALTS_CRYPTO_EXPORT
 int crypto_dtls_listener_destroy(crypto_dtls_listener *);
 /* Allocation-free cookie gate, no stream lease. Canonical peer bytes (1..32)
  * must include family/IP/port, never sockaddr padding; same encoding at accept.
@@ -107,6 +114,7 @@ int crypto_dtls_listener_destroy(crypto_dtls_listener *);
  * unchanged; admitted errors clear both outputs. Input borrowed until return.
  * Caller owns reply send storage/terminal, rate/capacity limits and peer table.
  */
+SALTS_CRYPTO_EXPORT
 int crypto_dtls_listener_gate(const crypto_dtls_listener *, const void *peer,
                               size_t peer_size, const void *wire, size_t,
                               uint64_t now, void *reply, size_t capacity,
@@ -118,33 +126,92 @@ int crypto_dtls_listener_gate(const crypto_dtls_listener *, const void *peer,
  * error and one possible fatal to drain through next/sent. Destroy that stream
  * to release its listener lease. on_data/user follow the client callback rules.
  * Host must bound simultaneous stream admissions; no hidden peer table. */
+SALTS_CRYPTO_EXPORT
 int crypto_dtls_stream_accept(crypto_dtls_listener *, const void *peer,
                               size_t peer_size, const void *wire, size_t,
                               uint64_t now, crypto_dtls_data_fn, void *user,
                               crypto_dtls_stream **);
+/* RFC 5764 profile IDs and corresponding bits in the offered profile mask. */
+enum {
+  CRYPTO_DTLS_SRTP_AES128_CM_SHA1_80 = 1,
+  CRYPTO_DTLS_SRTP_AES128_CM_SHA1_32 = 2,
+  CRYPTO_DTLS_SRTP_AEAD_AES_128_GCM = 7,
+  CRYPTO_DTLS_SRTP_AEAD_AES_256_GCM = 8,
+  CRYPTO_DTLS_SRTP_PROFILES = (1u << CRYPTO_DTLS_SRTP_AES128_CM_SHA1_80) |
+                             (1u << CRYPTO_DTLS_SRTP_AES128_CM_SHA1_32) |
+                             (1u << CRYPTO_DTLS_SRTP_AEAD_AES_128_GCM) |
+                             (1u << CRYPTO_DTLS_SRTP_AEAD_AES_256_GCM),
+  CRYPTO_DTLS_FINGERPRINT_BYTES = 32
+};
+/* Both sides authenticate the leaf certificate by the SHA-256 of its DER,
+ * obtained through authenticated signaling. The fingerprint is copied during
+ * admission. The handshake still requires proof of the private key. Profiles
+ * must be a nonempty subset of CRYPTO_DTLS_SRTP_PROFILES. No MKI is negotiated.
+ * Exports are enabled, and absence of a shared profile fails the handshake.
+ * The ordinary DTLS lifecycle, output alias and callback rules apply. */
+SALTS_CRYPTO_EXPORT
+int crypto_dtls_stream_create_srtp(const crypto_tls_credentials *,
+    const uint8_t peer_sha256[CRYPTO_DTLS_FINGERPRINT_BYTES], unsigned profiles,
+    crypto_dtls_data_fn, void *user, crypto_dtls_stream **);
+SALTS_CRYPTO_EXPORT
+int crypto_dtls_listener_create_srtp(const crypto_tls_credentials *,
+    unsigned profiles, uint32_t cookie_lifetime_ms, crypto_dtls_listener **);
+SALTS_CRYPTO_EXPORT
+int crypto_dtls_stream_accept_srtp(crypto_dtls_listener *,
+    const void *peer, size_t peer_size, const void *wire, size_t wire_size,
+    uint64_t now, const uint8_t peer_sha256[CRYPTO_DTLS_FINGERPRINT_BYTES],
+    crypto_dtls_data_fn, void *user, crypto_dtls_stream **);
+/* READY-only. Returns ESTATE for sessions without an SRTP profile. */
+SALTS_CRYPTO_EXPORT
+int crypto_dtls_stream_srtp_profile(const crypto_dtls_stream *, uint16_t *);
+/* Create a caller-owned, single P-256 self-signed identity for SDP pinning.
+ * Uses the system wall clock and a one-year certificate validity interval.
+ * Release the identity with crypto_tls_credential_object_release(). */
+SALTS_CRYPTO_EXPORT
+int crypto_dtls_srtp_identity_create(crypto_tls_credential_object **);
+/* SHA-256 of the leaf certificate DER for the SDP fingerprint. */
+SALTS_CRYPTO_EXPORT
+int crypto_dtls_srtp_identity_fingerprint(const crypto_tls_credential_object *,
+    uint8_t output[CRYPTO_DTLS_FINGERPRINT_BYTES]);
 /* One immutable datagram borrowed until EXACTLY ONE sent terminal. Use
  * monotonic milliseconds. IDLE publishes no output; BUSY leaves previous output
  * intact. FAILED can still publish ONE fatal; sent preserves the original
  * error. */
+SALTS_CRYPTO_EXPORT
 int crypto_dtls_stream_next(crypto_dtls_stream *, uint64_t now,
                             const uint8_t **, size_t *);
+/* During a handshake, returns the monotonic millisecond deadline for the next
+ * flight retry. IDLE means no timer is armed. On nonzero status the output is
+ * unchanged. On expiry the transport owner calls next() with the sampled time. */
+SALTS_CRYPTO_EXPORT
+int crypto_dtls_stream_retransmit_deadline(const crypto_dtls_stream *, uint64_t *);
+/* Set the outbound datagram limit before first next(). The default is 1200.
+ * The limit must fit the client's complete ClientHello and a maximal cookie.
+ * The record overhead is 37 bytes for this profile. */
+SALTS_CRYPTO_EXPORT
+int crypto_dtls_stream_set_mtu(crypto_dtls_stream *, size_t);
 /* Actual local terminal, or proven non-admission. Accepted async output must
  * wait for its real completion; cancellation/deadline does not release it. */
+SALTS_CRYPTO_EXPORT
 int crypto_dtls_stream_sent(crypto_dtls_stream *, uint64_t now, bool success);
 /* Whole peer datagram borrowed through return. BUSY consumes nothing; caller
  * keeps/retries it after sends settle. DROP is unauthenticated record discard.
  */
+SALTS_CRYPTO_EXPORT
 int crypto_dtls_stream_receive(crypto_dtls_stream *, uint64_t now, const void *,
                                size_t);
 /* Copies one application datagram on success, READY only. BUSY retains no
  * input. max=1163; empty messages allowed. Completion is the later actual wire
  * terminal. */
+SALTS_CRYPTO_EXPORT
 int crypto_dtls_stream_write(crypto_dtls_stream *, const void *, size_t);
+SALTS_CRYPTO_EXPORT
 int crypto_dtls_stream_close(crypto_dtls_stream *);
 /* Export is opt-in and READY-only, even with pending sends. No state mutation.
  * Printable label, reserved handshake prefix collisions rejected. Absent versus
  * present-empty context is distinct. Invalid args/state leave output unchanged;
  * native PRF failure clears it. Caller owns and erases exported bytes. */
+SALTS_CRYPTO_EXPORT
 int crypto_dtls_stream_export(const crypto_dtls_stream *,
                               const crypto_dtls_export_request *, void *,
                               size_t);
@@ -155,16 +222,20 @@ int crypto_dtls_stream_export(const crypto_dtls_stream *,
  * The application chooses a purpose-specific exporter label/context. */
 /* Exporter material is shared with the peer. A server-only cookie MAC MUST
  * additionally use a secret local context/key, never just a public label. */
+SALTS_CRYPTO_EXPORT
 int crypto_dtls_stream_hmac(const crypto_dtls_stream *,
                             const crypto_dtls_export_request *, const void *,
                             size_t, uint8_t output[32]);
+SALTS_CRYPTO_EXPORT
 int crypto_dtls_stream_get_info(const crypto_dtls_stream *,
                                 crypto_dtls_stream_info *);
 /* Abort discards unprepared output, never a pending wire borrow. Destroy is
  * BUSY until every prepared output has an actual terminal. NULL destroy is OK.
  * No implicit I/O or wait. All non-success results leave the object allocated.
  */
+SALTS_CRYPTO_EXPORT
 int crypto_dtls_stream_abort(crypto_dtls_stream *);
+SALTS_CRYPTO_EXPORT
 int crypto_dtls_stream_destroy(crypto_dtls_stream *);
 #ifdef __cplusplus
 }

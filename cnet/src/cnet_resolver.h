@@ -1,6 +1,8 @@
 #ifndef CNET_RESOLVER_H
 #define CNET_RESOLVER_H
 
+#include <cnet/export.h>
+
 #include <core/error_codes.h>
 
 #include <stdbool.h>
@@ -32,13 +34,16 @@ typedef struct cnet_resolver_result {
   unsigned char address[CNET_RESOLVER_ADDRESS_CAPACITY];
 } cnet_resolver_result;
 
+SALTS_CNET_EXPORT
 bool cnet_resolver_query_valid(cnet_resolver_query query);
+SALTS_CNET_EXPORT
 int cnet_resolver_init(cnet_resolver *resolver, const cnet_resolver_config *config);
 
 /**
  * Starts one bounded asynchronous query. The hostname is copied before return.
  * SOCK_STREAM and SOCK_DGRAM are the only accepted socket types.
  */
+SALTS_CNET_EXPORT
 int cnet_resolver_submit(cnet_resolver *resolver, const char *host, uint16_t port, int socket_type,
                          uintptr_t user_data, cnet_resolver_query *out_query);
 
@@ -50,21 +55,27 @@ int cnet_resolver_test_apply_requested_port(void *address, size_t address_length
 #endif
 
 /** Nonblocking caller-owned c-ares socket and timeout progress. */
+SALTS_CNET_EXPORT
 int cnet_resolver_poll(cnet_resolver *resolver);
 
 /** True while a query or untaken result retains one bounded slot. */
+SALTS_CNET_EXPORT
 bool cnet_resolver_has_pending(cnet_resolver *resolver);
 
 /** Logical per-query cancellation; the stable slot is recycled only by take. */
+SALTS_CNET_EXPORT
 int cnet_resolver_cancel(cnet_resolver *resolver, cnet_resolver_query query);
 
 /** Single-owner nonblocking result take; empty-open returns SALTS_ETIMEDOUT. */
+SALTS_CNET_EXPORT
 int cnet_resolver_take(cnet_resolver *resolver, cnet_resolver_result *out_result);
 
 /** Stops admission and synchronously cancels all c-ares channel queries. */
+SALTS_CNET_EXPORT
 int cnet_resolver_close(cnet_resolver *resolver, uint32_t timeout_ms);
 
 /** Requires closed admission and every result to have been taken. */
+SALTS_CNET_EXPORT
 int cnet_resolver_destroy(cnet_resolver *resolver);
 
 #endif /* CNET_RESOLVER_H */

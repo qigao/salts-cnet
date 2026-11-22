@@ -75,11 +75,24 @@ int main(int argc,char **argv) {
           from_object.object=object;
         }
         const char *alpn=argc>=4 ? argv[3] : "test";
-        const crypto_dtls_client_config config={input+13u,roots,argv[1],strlen(argv[1]),alpn,strlen(alpn),
+        crypto_dtls_client_config config={input+13u,roots,argv[1],strlen(argv[1]),alpn,strlen(alpn),
           strcmp(argv[2],"none")==0 ? NULL : &peer_policy,application,e,cert ? (input[0] ? &from_object : &raw) : NULL,argc==5};
+        if (!strcmp(argv[2],"srtp")) {
+          if (roots!=32u) status=SALTS_CRYPTO_EINVAL;
+          config=(crypto_dtls_client_config){.on_data=application,.data_context=e,
+            .credentials=&from_object,.enable_exporter=true,.peer_sha256=input+13u,
+            .srtp_profiles=CRYPTO_DTLS_SRTP_PROFILES};
+        }
         if (!status) status=crypto_dtls_client_init(&e->client,&config);
         crypto_tls_credential_object_release(object); break;
       }
+      case 'P':
+        status=SALTS_CRYPTO_ESTATE;
+        if (e->client.phase==CRYPTO_DTLS_CLIENT_READY && e->client.srtp_profile) {
+          put32(e->application,e->client.srtp_profile);
+          output=e->application; output_size=4u; status=0;
+        }
+        break;
       case 'E': {
         if (size<7u || input[0]>1u) { status=SALTS_CRYPTO_EINVAL; break; }
         const size_t label=(size_t)input[1]*256u+input[2],context=(size_t)input[3]*256u+input[4],n=(size_t)input[5]*256u+input[6];

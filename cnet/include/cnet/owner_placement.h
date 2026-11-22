@@ -1,6 +1,8 @@
 #ifndef CNET_OWNER_PLACEMENT_H
 #define CNET_OWNER_PLACEMENT_H
 
+#include <cnet/export.h>
+
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -72,6 +74,7 @@ typedef struct cnet_owner_placement_input {
  * ROUND_ROBIN / LOWEST_PRESSURE: O(owner_count) over a bounded host topology.
  * No global policy state, locks or actor scheduler are involved.
  */
+SALTS_CNET_EXPORT
 int cnet_owner_placement_choose(const cnet_owner_placement_input *input,
                                 size_t *out_owner);
 

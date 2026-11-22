@@ -1,5 +1,7 @@
 #ifndef CRYPTO_DTLS_COOKIE_INTERNAL_H
 #define CRYPTO_DTLS_COOKIE_INTERNAL_H
+
+#include <crypto/export.h>
 #include <crypto/dtls_stream.h>
 #include <stdbool.h>
 #include <stddef.h>
@@ -24,7 +26,9 @@ typedef struct crypto_dtls_cookie_result {
   bool address_verified;
 } crypto_dtls_cookie_result;
 
+SALTS_CRYPTO_EXPORT
 int crypto_dtls_cookie_init(crypto_dtls_cookie_context *ctx,uint32_t lifetime_ms);
+SALTS_CRYPTO_EXPORT
 void crypto_dtls_cookie_clear(crypto_dtls_cookie_context *ctx);
 /* Canonical address includes family/IP/port without sockaddr padding. Exactly
  * one unfragmented epoch-zero DTLS1.2 ClientHello is admitted. An invalid/absent
@@ -35,6 +39,7 @@ void crypto_dtls_cookie_clear(crypto_dtls_cookie_context *ctx);
  * All outputs are disjoint from inputs/context/each other. Alias failure leaves
  * them unchanged; other admitted errors publish no result/reply. A valid MAC
  * with a future issuance timestamp is ESTATE (clock regression), not a retry. */
+SALTS_CRYPTO_EXPORT
 int crypto_dtls_cookie_gate(const crypto_dtls_cookie_context *ctx,const void *address,size_t address_size,
     const void *datagram,size_t size,uint64_t now,void *reply,size_t capacity,size_t *reply_size,
     crypto_dtls_cookie_result *result);

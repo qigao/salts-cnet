@@ -1,0 +1,165 @@
+{
+  "include": [
+    "tests/module.json"
+  ],
+  "targets": {
+    "saltscore_wsparser": {
+      "kind": "static",
+      "visibility": [
+        "cnet",
+        "saltscore_wsparser_test",
+        "cnet_crypto_qualification"
+      ],
+      "sources": {
+        "files": [
+          "src/wsparser/websocket_frame_parser.c"
+        ]
+      },
+      "public": {
+        "includeDirs": [
+          "src/wsparser"
+        ]
+      },
+      "options": {
+        "symbolVisibility": "hidden"
+      }
+    },
+    "cnet": {
+      "kind": "shared",
+      "sources": {
+        "files": [
+          "src/cnet_client_pool.c",
+          "src/cnet_client.c",
+          "src/cnet_command.c",
+          "src/cnet_datagram.c",
+          "src/cnet_destination_policy.c",
+          "src/cnet_dispatcher.c",
+          "src/cnet_dtls.c",
+          "src/cnet_event.c",
+          "src/cnet_handoff.c",
+          "src/cnet_ipc.c",
+          "src/cnet_kcp_fec.c",
+          "src/cnet_kcp_secure.c",
+          "src/cnet_kcp.c",
+          "src/cnet_listener.c",
+          "src/cnet_managed_dial.c",
+          "src/cnet_manager.c",
+          "src/cnet_module.c",
+          "src/cnet_owner_strategy.c",
+          "src/cnet_owner.c",
+          "src/cnet_packet_endpoint.c",
+          "src/cnet_recovery_policy.c",
+          "src/cnet_resolver.c",
+          "src/cnet_resources.c",
+          "src/cnet_secure_kcp.c",
+          "src/cnet_session.c",
+          "src/cnet_sg_host.c",
+          "src/cnet_shards.c",
+          "src/cnet_tls.c",
+          "src/cnet_transport.c",
+          "src/cnet_uri.c",
+          "src/cnet_websocket.c",
+          "src/cnet_write_queue.c"
+        ]
+      },
+      "public": {
+        "includeDirs": [
+          "include",
+          "../crypto/include"
+        ],
+        "deps": [
+          "saltsbase_native_io"
+        ]
+      },
+      "private": {
+        "includeDirs": [
+          "src"
+        ],
+        "deps": [
+          "saltscore_wsparser",
+          "saltsbase_uri",
+          "saltsbase_simd",
+          "saltsbase_core",
+          "monocypher",
+          "reed",
+          "c-ares",
+          "kcp",
+          "salts_crypto"
+        ],
+        "defines": {
+          "SALTS_CNET_BUILD": null
+        }
+      },
+      "install": {
+        "headers": [
+          {
+            "from": "include/cnet",
+            "to": "include/cnet"
+          }
+        ]
+      },
+      "variants": [
+        {
+          "when": {
+            "config": [
+              "tests",
+              "benchmark"
+            ]
+          },
+          "private": {
+            "includeDirs": [
+              "../crypto/src"
+            ],
+            "defines": {
+              "CNET_TLS_MEMORY_TESTING": null
+            }
+          }
+        },
+        {
+          "when": {
+            "os": "android"
+          },
+          "private": {
+            "linkFlags": [
+              "-Wl,-z,max-page-size=16384",
+              "-Wl,-z,common-page-size=16384"
+            ]
+          }
+        },
+        {
+          "when": {
+            "driver": "llvm-mingw"
+          },
+          "private": {
+            "linkFlags": [
+              "-Wl,--exclude-all-symbols"
+            ]
+          }
+        },
+        {
+          "when": {
+            "os": [
+              "linux",
+              "android"
+            ]
+          },
+          "private": {
+            "libs": [
+              "$moduledir/exports.ld"
+            ]
+          }
+        },
+        {
+          "when": {
+            "os": "macos"
+          },
+          "private": {
+            "linkFlags": [
+              "-Wl,-exported_symbol,_cnet_*"
+            ]
+          }
+        }
+      ]
+    }
+  }
+}

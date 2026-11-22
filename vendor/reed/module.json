@@ -1,0 +1,22 @@
+{
+  "name": "reed",
+  "kind": "static",
+  "sources": {
+    "files": [
+      "gf256.c"
+    ]
+  },
+  "public": {
+    "includeDirs": [
+      "."
+    ]
+  },
+  "private": {
+    "deps": [
+      "simde"
+    ]
+  },
+  "options": {
+    "symbolVisibility": "hidden"
+  }
+}

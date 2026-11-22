@@ -1,6 +1,8 @@
 #ifndef CNET_COMMAND_H
 #define CNET_COMMAND_H
 
+#include <cnet/export.h>
+
 #include "cnet_session.h"
 
 #include <cnet/cnet.h>
@@ -79,22 +81,28 @@ typedef struct cnet_command_view {
   uint64_t _sequence;
 } cnet_command_view;
 
+SALTS_CNET_EXPORT
 int cnet_command_queue_init(cnet_command_queue *queue, const cnet_command_queue_config *config);
 
 /** Single-owner, nonblocking; full capacity returns `SALTS_ENOBUFS`. */
+SALTS_CNET_EXPORT
 int cnet_command_queue_publish(cnet_command_queue *queue, const cnet_command *command);
 
 /** Single-owner, nonblocking; empty-open returns `SALTS_ETIMEDOUT`. */
+SALTS_CNET_EXPORT
 int cnet_command_queue_take(cnet_command_queue *queue, cnet_command_view *out_view);
+SALTS_CNET_EXPORT
 int cnet_command_queue_release(cnet_command_queue *queue, cnet_command_view *view);
 
 /**
  * Closes admission on the owner thread. A repeated close returns
  * `SALTS_EALREADY`.
  */
+SALTS_CNET_EXPORT
 int cnet_command_queue_close(cnet_command_queue *queue);
 
 /** Returns one owner-thread diagnostic snapshot. */
+SALTS_CNET_EXPORT
 bool cnet_command_queue_get_stats(const cnet_command_queue *queue,
                                   cnet_command_queue_stats *out_stats);
 
@@ -107,6 +115,7 @@ int cnet_command_queue_profile_take(cnet_command_queue *queue,
 #endif
 
 /** Requires closed admission, no borrowed view, and a fully drained queue. */
+SALTS_CNET_EXPORT
 int cnet_command_queue_destroy(cnet_command_queue *queue);
 
 #endif /* CNET_COMMAND_H */

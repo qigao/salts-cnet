@@ -9,6 +9,8 @@
 #ifndef CRYPTO_TLS_CIPHER_BIO_H_INCLUDED
 #define CRYPTO_TLS_CIPHER_BIO_H_INCLUDED
 
+#include <crypto/export.h>
+
 #include <crypto/tls.h>
 
 #ifdef __cplusplus
@@ -36,6 +38,7 @@ typedef struct crypto_tls_cipher_bio_snapshot {
 /* BIO owns two private, fixed-capacity ciphertext rings. No native
  * handles, sockets, plaintext or GmSSL state are allocated by this module.
  */
+SALTS_CRYPTO_EXPORT
 crypto_tls_result crypto_tls_cipher_bio_create(
     size_t capacity, crypto_tls_cipher_bio **out_bio);
 
@@ -47,8 +50,10 @@ crypto_tls_result crypto_tls_cipher_bio_create(
  * destroy() MUST return BUSY for any outstanding descriptor lease, even
  * after cancel. Host must quiesce both TLS owner and NativeIO completions.
  */
+SALTS_CRYPTO_EXPORT
 crypto_tls_result crypto_tls_cipher_bio_acquire_io(
     crypto_tls_cipher_bio *bio, crypto_tls_io *out_io);
+SALTS_CRYPTO_EXPORT
 crypto_tls_result crypto_tls_cipher_bio_release_io(
     crypto_tls_cipher_bio *bio);
 
@@ -56,6 +61,7 @@ crypto_tls_result crypto_tls_cipher_bio_release_io(
  * entire size is copied, or BIO_CAPACITY with unchanged input ring.
  * Caller retains its source bytes only until this call returns.
  * Valid only on the single TLS/NativeIO Owner thread. */
+SALTS_CRYPTO_EXPORT
 crypto_tls_result crypto_tls_cipher_bio_feed_cipher(
     crypto_tls_cipher_bio *bio, const uint8_t *cipher, size_t size);
 
@@ -63,6 +69,7 @@ crypto_tls_result crypto_tls_cipher_bio_feed_cipher(
  * FIFO order; AGAIN/empty sets out_size=0 and changes no output bytes.
  * Caller owns the copied data and must retain any NativeIO send backing
  * until its terminal completion before reusing/freeing it. */
+SALTS_CRYPTO_EXPORT
 crypto_tls_result crypto_tls_cipher_bio_take_cipher(
     crypto_tls_cipher_bio *bio, uint8_t *cipher, size_t capacity,
     size_t *out_size);
@@ -71,6 +78,7 @@ crypto_tls_result crypto_tls_cipher_bio_take_cipher(
  * its input ring drains, the TLS read callback returns 0 for transport EOF.
  * This does NOT fabricate a TLS close_notify or claim authenticated close.
  */
+SALTS_CRYPTO_EXPORT
 crypto_tls_result crypto_tls_cipher_bio_end_input(
     crypto_tls_cipher_bio *bio);
 
@@ -78,12 +86,14 @@ crypto_tls_result crypto_tls_cipher_bio_end_input(
  * TLS callback. All subsequent IO callbacks return IO_ERROR; it never
  * destroys TLS state or borrowed NativeIO buffers.
  */
+SALTS_CRYPTO_EXPORT
 crypto_tls_result crypto_tls_cipher_bio_cancel(
     crypto_tls_cipher_bio *bio);
 
 /* Owner-thread snapshot. The provided struct_size must match exactly.
  * Unchanged on failure. Capacity is per direction, not combined.
  */
+SALTS_CRYPTO_EXPORT
 crypto_tls_result crypto_tls_cipher_bio_get_snapshot(
     const crypto_tls_cipher_bio *bio,
     crypto_tls_cipher_bio_snapshot *out_snapshot);
@@ -93,6 +103,7 @@ crypto_tls_result crypto_tls_cipher_bio_get_snapshot(
  * another thread that could still call cancel() using this pointer.
  * The function cannot make arbitrary stale caller pointers safe.
  */
+SALTS_CRYPTO_EXPORT
 crypto_tls_result crypto_tls_cipher_bio_destroy(
     crypto_tls_cipher_bio **bio);
 

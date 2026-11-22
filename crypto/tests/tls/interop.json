@@ -1,0 +1,45 @@
+{
+  "targets": {
+    "saltscore.crypto_tls_shangmi_revocation": {
+      "kind": "header_only",
+      "when": {
+        "os": ["windows", "linux", "macos"],
+        "native": true
+      },
+      "runtimeDeps": ["saltscore_crypto_tls_peer_policy_test"],
+      "test": {
+        "tool": "go",
+        "args": ["./e2e", "-timeout=150s", "-run", "^TestShangMiRevocation$", "-args", "-native", "${artifact:saltscore_crypto_tls_peer_policy_test}"],
+        "workingDirectory": "$root/cnet/tests/independent/shangmi",
+        "timeout": 180,
+        "environment": ["CGO_ENABLED=0", "GOWORK=off"],
+        "labels": ["crypto", "interop"]
+      }
+    },
+    "saltscore_crypto_tls_peer_policy_test": {
+      "kind": "executable",
+      "testOnly": true,
+      "when": {
+        "os": ["windows", "linux", "macos"],
+        "native": true
+      },
+      "sources": {
+        "files": ["test_crypto_tls_peer_policy.c"]
+      },
+      "private": {
+        "deps": ["salts_crypto", "saltsbase_asn1", "saltsbase_simd", "saltsbase_core"],
+        "includeDirs": ["../../include"]
+      },
+      "variants": [
+        {
+          "when": {
+            "driver": "msvc"
+          },
+          "private": {
+            "flags": ["/experimental:c11atomics"]
+          }
+        }
+      ]
+    }
+  }
+}

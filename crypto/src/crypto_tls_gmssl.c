@@ -6,6 +6,7 @@
 #include <crypto/tls_peer.h>
 #include <crypto/tls_auth.h>
 #include <crypto/tls_close.h>
+#include <gmssl/oid.h>
 #include <gmssl/tls.h>
 #include <gmssl/x509_cer.h>
 
@@ -695,6 +696,12 @@ crypto_tls_result crypto_tls_get_features_v1_1(uint64_t *out_features)
     *out_features =
         CRYPTO_TLS_FEATURE_TLS12_ECDHE_RSA |
         CRYPTO_TLS_FEATURE_TLS13_RSA_PSS |
+#ifdef GMSSL_X509_RSA_PSS_SHA256
+        CRYPTO_TLS_FEATURE_X509_RSA_PSS_SHA256 |
+#endif
+#ifdef GMSSL_TLS12_X509_ECDSA_P384_SHA512
+        CRYPTO_TLS_FEATURE_TLS12_X509_ECDSA_P384_SHA512 |
+#endif
         CRYPTO_TLS_FEATURE_EXPLICIT_CA_FILE |
         CRYPTO_TLS_FEATURE_DNS_SAN |
         CRYPTO_TLS_FEATURE_TEXT_ALPN |

@@ -1,5 +1,7 @@
 #ifndef SALTS_CRYPTO_SM2_CMS_ENVELOPE_H
 #define SALTS_CRYPTO_SM2_CMS_ENVELOPE_H
+
+#include <crypto/export.h>
 #include <crypto/sm2_cms.h>
 #ifdef __cplusplus
 extern "C" {
@@ -51,8 +53,10 @@ typedef struct salts_crypto_sm2_cms_envelope_key {
  * ECRYPTO for allocation failure. No size-query or partially verified output.
  * Success writes only the complete result and updates written, preserving tail.
  */
+SALTS_CRYPTO_EXPORT
 int salts_crypto_sm2_cms_envelope_encrypt(const salts_crypto_sm2_cms_envelope_recipient *recipient,
     const void *content, size_t content_size, void *output, size_t capacity, size_t *written);
+SALTS_CRYPTO_EXPORT
 int salts_crypto_sm2_cms_envelope_decrypt(const salts_crypto_sm2_cms_envelope_key *key,
     const void *der, size_t der_size, void *output, size_t capacity, size_t *written);
 #ifdef __cplusplus

@@ -1,0 +1,7 @@
+{
+  "include": [
+    "libecc/module.json",
+    "monocypher/module.json",
+    "reed/module.json"
+  ]
+}

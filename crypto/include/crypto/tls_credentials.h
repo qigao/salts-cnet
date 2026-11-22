@@ -1,6 +1,8 @@
 /* Bounded, provider-neutral inputs consumed during TLS context creation. */
 #ifndef CRYPTO_TLS_CREDENTIALS_H
 #define CRYPTO_TLS_CREDENTIALS_H
+
+#include <crypto/export.h>
 #include <stddef.h>
 
 typedef enum crypto_tls_encoding {
@@ -84,6 +86,7 @@ extern "C" {
  * on entry and be disjoint from every input descriptor/byte span. Alias errors
  * return EINVAL preserving all storage; other failures set *out=NULL.
  * Use {.size=sizeof(crypto_tls_credentials), .object=object} in TLS configs. */
+SALTS_CRYPTO_EXPORT
 int crypto_tls_credential_object_create(const crypto_tls_credentials *input,
     crypto_tls_credential_kind kind, crypto_tls_credential_object **out);
 /** Import a password-authenticated DER PFX v3 into an immutable identity.
@@ -102,13 +105,16 @@ int crypto_tls_credential_object_create(const crypto_tls_credentials *input,
  * This imports identity material, not trust. No file access. Error/ownership
  * contract matches create; ENOTSUP denotes unsupported algorithm/content type.
  * On success caller may erase the PFX and password immediately. */
+SALTS_CRYPTO_EXPORT
 int crypto_tls_credential_object_from_pkcs12(const crypto_tls_data *input,
     const crypto_tls_password *password, crypto_tls_credential_kind kind,
     crypto_tls_credential_object **out);
 /** Retain an existing live object; EINVAL for NULL, ERANGE on reference overflow. */
+SALTS_CRYPTO_EXPORT
 int crypto_tls_credential_object_retain(crypto_tls_credential_object *object);
 /** Release one reference; NULL is allowed. Last release erases private material.
  * Release cannot race an initialization that only borrows this reference. */
+SALTS_CRYPTO_EXPORT
 void crypto_tls_credential_object_release(crypto_tls_credential_object *object);
 #ifdef __cplusplus
 }

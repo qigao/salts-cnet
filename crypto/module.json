@@ -1,0 +1,256 @@
+{
+  "include": [
+    "tests/module.json"
+  ],
+  "targets": {
+    "salts_crypto": {
+      "kind": "shared",
+      "sources": {
+        "files": [
+          "src/asn1/crypto.c",
+          "src/crypto_aes.c",
+          "src/crypto_dtls_client.c",
+          "src/crypto_dtls_cookie.c",
+          "src/crypto_dtls_exchange.c",
+          "src/crypto_dtls_handshake.c",
+          "src/crypto_dtls_record.c",
+          "src/crypto_dtls_secrets.c",
+          "src/crypto_dtls_server.c",
+          "src/crypto_dtls_srtp.c",
+          "src/crypto_dtls_stream.c",
+          "src/crypto_dtls_wire.c",
+          "src/crypto_key_export.c",
+          "src/crypto_key_pem.c",
+          "src/crypto_key_wrap.c",
+          "src/crypto_key.c",
+          "src/crypto_random.c",
+          "src/crypto_sha256.c",
+          "src/crypto_sm2_cms_envelope.c",
+          "src/crypto_sm2_cms.c",
+          "src/crypto_sm2_crl.c",
+          "src/crypto_sm2_exchange.c",
+          "src/crypto_sm2_keys.c",
+          "src/crypto_sm2_ocsp.c",
+          "src/crypto_sm2_trust.c",
+          "src/crypto_sm2_x509.c",
+          "src/crypto_sm2.c",
+          "src/crypto_sm3.c",
+          "src/crypto_sm4.c",
+          "src/crypto_sm9.c",
+          "src/crypto_symmetric.c",
+          "src/crypto_tls_cipher_bio.c",
+          "src/crypto_tls_credentials.c",
+          "src/crypto_tls_gmssl.c",
+          "src/crypto_tls_pkcs12.c",
+          "src/crypto_tls_session_cache.c",
+          "src/crypto_tls_sm2_crl_policy.c",
+          "src/crypto_tls_sm2_ocsp_policy.c",
+          "src/crypto_tls_stream.c",
+          "src/crypto_x509_der.c",
+          "src/crypto_x509_policy.c",
+          "src/crypto_zuc.c"
+        ]
+      },
+      "public": {
+        "includeDirs": [
+          "include"
+        ],
+        "deps": [
+          "saltsbase_asn1"
+        ]
+      },
+      "private": {
+        "deps": [
+          "gmssl",
+          "crypto_curve_adapters",
+          "crypto_libecc"
+        ],
+        "defines": {
+          "SALTS_CRYPTO_BUILD": null
+        }
+      },
+      "variants": [
+        {
+          "when": {
+            "os": "windows"
+          },
+          "public": {
+            "libs": [
+              "bcrypt",
+              "ws2_32",
+              "crypt32"
+            ]
+          }
+        },
+        {
+          "when": {
+            "driver": "msvc"
+          },
+          "private": {
+            "flags": [
+              "/experimental:c11atomics"
+            ]
+          }
+        },
+        {
+          "when": {
+            "os": "macos"
+          },
+          "public": {
+            "linkFlags": [
+              "-framework",
+              "Security",
+              "-framework",
+              "CoreFoundation"
+            ]
+          }
+        },
+        {
+          "when": {
+            "os": [
+              "linux",
+              "android"
+            ]
+          },
+          "public": {
+            "libs": [
+              "m",
+              "dl"
+            ]
+          }
+        },
+        {
+          "when": {
+            "config": [
+              "tests",
+              "benchmark"
+            ]
+          },
+          "private": {
+            "defines": {
+              "CRYPTO_TLS_STREAM_TESTING": null
+            }
+          }
+        },
+        {
+          "when": {
+            "os": "android"
+          },
+          "private": {
+            "linkFlags": [
+              "-Wl,-z,max-page-size=16384",
+              "-Wl,-z,common-page-size=16384"
+            ]
+          }
+        },
+        {
+          "when": {
+            "driver": "llvm-mingw"
+          },
+          "private": {
+            "linkFlags": [
+              "-Wl,--exclude-all-symbols",
+              "-Wl,-u,salts_crypto_ecdsa_sign",
+              "-Wl,-u,salts_crypto_ed25519_sign",
+              "-Wl,-u,salts_crypto_ed448_sign"
+            ]
+          }
+        },
+        {
+          "when": {
+            "driver": "msvc"
+          },
+          "private": {
+            "linkFlags": [
+              "/INCLUDE:salts_crypto_ecdsa_sign",
+              "/INCLUDE:salts_crypto_ed25519_sign",
+              "/INCLUDE:salts_crypto_ed448_sign"
+            ]
+          }
+        },
+        {
+          "when": {
+            "os": [
+              "linux",
+              "android"
+            ]
+          },
+          "private": {
+            "libs": [
+              "$moduledir/exports.ld"
+            ],
+            "linkFlags": [
+              "-Wl,-u,salts_crypto_ecdsa_sign",
+              "-Wl,-u,salts_crypto_ed25519_sign",
+              "-Wl,-u,salts_crypto_ed448_sign"
+            ]
+          }
+        },
+        {
+          "when": {
+            "os": "macos"
+          },
+          "private": {
+            "linkFlags": [
+              "-Wl,-exported_symbol,_crypto_*",
+              "-Wl,-exported_symbol,_salts_crypto_*",
+              "-Wl,-u,_salts_crypto_ecdsa_sign",
+              "-Wl,-u,_salts_crypto_ed25519_sign",
+              "-Wl,-u,_salts_crypto_ed448_sign"
+            ]
+          }
+        }
+      ],
+      "install": {
+        "headers": [
+          {
+            "from": "include/crypto",
+            "to": "include/crypto"
+          }
+        ]
+      }
+    },
+    "crypto_curve_adapters": {
+      "kind": "static",
+      "sources": {
+        "files": [
+          "src/crypto_ed448.c",
+          "src/crypto_ed25519.c",
+          "src/crypto_ecdsa.c"
+        ]
+      },
+      "visibility": [
+        "salts_crypto"
+      ],
+      "extends": [
+        "libecc"
+      ],
+      "private": {
+        "includeDirs": [
+          "include",
+          "../vendor/libecc/include"
+        ],
+        "deps": [
+          "gmssl",
+          "saltsbase_asn1",
+          "crypto_libecc"
+        ],
+        "defines": {
+          "SALTS_CRYPTO_BUILD": null
+        }
+      },
+      "variants": [
+        {
+          "when": {
+            "driver": "msvc"
+          },
+          "private": {
+            "flags": [
+              "/experimental:c11atomics"
+            ]
+          }
+        }
+      ]
+    }
+  }
+}

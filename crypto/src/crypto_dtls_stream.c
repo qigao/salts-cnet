@@ -17,7 +17,7 @@ struct crypto_dtls_stream {
   uint8_t waiting[CRYPTO_DTLS_MAX_PLAINTEXT],
       ingress[CRYPTO_DTLS_MAX_DATAGRAM_BYTES];
   size_t waiting_size, ingress_size, ingress_offset;
-  bool destroying, server_role, in_delivery, data_pending;
+  bool destroying, server_role, in_delivery, data_pending, started;
 };
 struct crypto_dtls_listener {
   crypto_dtls_server_context context;
@@ -132,24 +132,27 @@ static bool output_alias(const crypto_dtls_stream_config *c,
                               k->encryption_key_password.data,
                               k->encryption_key_password.size);
 }
-int crypto_dtls_stream_create(const crypto_dtls_stream_config *c,
-                              crypto_dtls_stream **out) {
+static int stream_create(const crypto_dtls_stream_config *c, unsigned profiles,
+                         const uint8_t *peer_sha256, crypto_dtls_stream **out) {
   if (!out)
     return SALTS_CRYPTO_EINVAL;
   if (!c) {
     *out = NULL;
     return SALTS_CRYPTO_EINVAL;
   }
-  if (output_alias(c, out))
+  if (output_alias(c, out) || (peer_sha256 &&
+      salts_crypto_overlap(peer_sha256, CRYPTO_DTLS_FINGERPRINT_BYTES, out, sizeof(*out))))
     return SALTS_CRYPTO_EINVAL;
   *out = NULL;
-  if (!c->on_data || !c->roots.data || !c->roots.size ||
-      crypto_tls_memory_validate(&c->roots, c->credentials, false) != 0)
+  const crypto_tls_data *roots = profiles ? NULL : &c->roots;
+  if (!c->on_data || (profiles ? !c->credentials || !peer_sha256 ||
+      (profiles & ~CRYPTO_DTLS_SRTP_PROFILES) : !c->roots.data || !c->roots.size) ||
+      crypto_tls_memory_validate(roots, c->credentials, false) != 0)
     return SALTS_CRYPTO_EINVAL;
   TLS_CTX trust = {0};
   int status = SALTS_CRYPTO_ECRYPTO;
-  if (tls_ctx_init(&trust, TLS_protocol_tls12, 1) != 1 ||
-      crypto_tls_memory_trust(&trust, &c->roots) != 0)
+  if (roots && (tls_ctx_init(&trust, TLS_protocol_tls12, 1) != 1 ||
+      crypto_tls_memory_trust(&trust, roots) != 0))
     goto done;
   crypto_dtls_stream *s = calloc(1u, sizeof(*s));
   if (!s) {
@@ -158,7 +161,7 @@ int crypto_dtls_stream_create(const crypto_dtls_stream_config *c,
   }
   s->on_data = c->on_data;
   s->user = c->user;
-  const crypto_dtls_client_config cfg = {trust.cacerts,
+  const crypto_dtls_client_config cfg = {roots ? trust.cacerts : NULL,
                                          trust.cacertslen,
                                          c->server_name,
                                          c->server_name_size,
@@ -168,7 +171,9 @@ int crypto_dtls_stream_create(const crypto_dtls_stream_config *c,
                                          data,
                                          s,
                                          c->credentials,
-                                         c->enable_exporter};
+                                         c->enable_exporter,
+                                         profiles,
+                                         peer_sha256};
   status = crypto_dtls_client_init(&s->client, &cfg);
   if (status) {
     salts_crypto_secure_zero(s, sizeof(*s));
@@ -180,6 +185,31 @@ done:
   salts_crypto_secure_zero(&trust, sizeof(trust));
   return status;
 }
+int crypto_dtls_stream_create(const crypto_dtls_stream_config *c,
+                              crypto_dtls_stream **out) {
+  return stream_create(c, 0, NULL, out);
+}
+int crypto_dtls_stream_create_srtp(const crypto_tls_credentials *credentials,
+    const uint8_t *peer_sha256, unsigned profiles, crypto_dtls_data_fn on_data,
+    void *user, crypto_dtls_stream **out) {
+  const crypto_dtls_stream_config c = {
+      .credentials = credentials, .on_data = on_data, .user = user, .enable_exporter = true};
+  return stream_create(&c, profiles, peer_sha256, out);
+}
+int crypto_dtls_stream_set_mtu(crypto_dtls_stream *s, size_t mtu) {
+  if (!s || mtu < CRYPTO_DTLS_MIN_MTU || mtu > CRYPTO_DTLS_MAX_MTU)
+    return SALTS_CRYPTO_EINVAL;
+  if (s->started || s->destroying || s->in_delivery)
+    return SALTS_CRYPTO_ESTATE;
+  if (!s->server_role && s->client.flight[0].size + sizeof(s->client.cookie) +
+          CRYPTO_DTLS_HEADER_SIZE + CRYPTO_DTLS_HANDSHAKE_HEADER > mtu)
+    return SALTS_CRYPTO_EINVAL;
+  if (s->server_role)
+    s->server.mtu = mtu;
+  else
+    s->client.mtu = mtu;
+  return SALTS_CRYPTO_OK;
+}
 int crypto_dtls_stream_next(crypto_dtls_stream *s, uint64_t now,
                             const uint8_t **wire, size_t *n) {
   if (!s || !wire || !n ||
@@ -189,6 +219,7 @@ int crypto_dtls_stream_next(crypto_dtls_stream *s, uint64_t now,
     return SALTS_CRYPTO_EINVAL;
   if (s->in_delivery)
     return SALTS_CRYPTO_ESTATE;
+  s->started = true;
   int status = pump_input(s, now);
   if (status < 0 && !failed(s))
     return status;
@@ -343,6 +374,19 @@ int crypto_dtls_stream_get_info(const crypto_dtls_stream *s,
   out->pending_receive = s->data_pending || s->ingress_size;
   return SALTS_CRYPTO_OK;
 }
+int crypto_dtls_stream_retransmit_deadline(const crypto_dtls_stream *s, uint64_t *out) {
+  if (!s || !out || salts_crypto_overlap(s, sizeof(*s), out, sizeof(*out)))
+    return SALTS_CRYPTO_EINVAL;
+  crypto_dtls_stream_info info;
+  int status = crypto_dtls_stream_get_info(s, &info);
+  if (status)
+    return status;
+  const crypto_dtls_flight_timer *timer = s->server_role ? &s->server.timer : &s->client.timer;
+  if (info.state != CRYPTO_DTLS_HANDSHAKING || timer->phase != CRYPTO_DTLS_TIMER_WAIT)
+    return CRYPTO_DTLS_IDLE;
+  *out = timer->deadline;
+  return SALTS_CRYPTO_OK;
+}
 int crypto_dtls_stream_hmac(const crypto_dtls_stream *s,
                             const crypto_dtls_export_request *r,
                             const void *data, size_t n, uint8_t out[32]) {
@@ -398,8 +442,8 @@ int crypto_dtls_stream_destroy(crypto_dtls_stream *s) {
   return SALTS_CRYPTO_OK;
 }
 
-int crypto_dtls_listener_create(const crypto_dtls_listener_config *c,
-                                crypto_dtls_listener **out) {
+static int listener_create(const crypto_dtls_listener_config *c, unsigned profiles,
+                           crypto_dtls_listener **out) {
   if (!out)
     return SALTS_CRYPTO_EINVAL;
   if (!c) {
@@ -428,7 +472,7 @@ int crypto_dtls_listener_create(const crypto_dtls_listener_config *c,
       c->credentials,    c->client_roots,       c->peer_policy,
       c->server_name,    c->server_name_size,   c->alpn,
       c->alpn_size,      c->cookie_lifetime_ms, c->require_client_certificate,
-      c->enable_exporter};
+      c->enable_exporter, profiles};
   int n = crypto_dtls_server_context_init(&l->context, &cfg);
   if (n) {
     salts_crypto_secure_zero(l, sizeof(*l));
@@ -437,6 +481,17 @@ int crypto_dtls_listener_create(const crypto_dtls_listener_config *c,
   }
   *out = l;
   return SALTS_CRYPTO_OK;
+}
+int crypto_dtls_listener_create(const crypto_dtls_listener_config *c,
+                                crypto_dtls_listener **out) {
+  return listener_create(c, 0, out);
+}
+int crypto_dtls_listener_create_srtp(const crypto_tls_credentials *credentials,
+    unsigned profiles, uint32_t cookie_lifetime_ms, crypto_dtls_listener **out) {
+  const crypto_dtls_listener_config c = {
+      .credentials = credentials, .cookie_lifetime_ms = cookie_lifetime_ms,
+      .require_client_certificate = true, .enable_exporter = true};
+  return listener_create(&c, profiles, out);
 }
 int crypto_dtls_listener_destroy(crypto_dtls_listener *l) {
   if (!l)
@@ -488,18 +543,21 @@ int crypto_dtls_listener_gate(const crypto_dtls_listener *l, const void *peer,
     *verified = result.address_verified;
   return status == SALTS_CRYPTO_EVERIFY ? CRYPTO_DTLS_DROP : status;
 }
-int crypto_dtls_stream_accept(crypto_dtls_listener *l, const void *peer,
+static int stream_accept(crypto_dtls_listener *l, const void *peer,
                               size_t peer_size, const void *wire, size_t n,
                               uint64_t now, crypto_dtls_data_fn on_data,
-                              void *user, crypto_dtls_stream **out) {
+                              void *user, bool srtp, const uint8_t *peer_sha256,
+                              crypto_dtls_stream **out) {
   if (!out)
     return SALTS_CRYPTO_EINVAL;
   if ((l && salts_crypto_overlap(l, sizeof(*l), out, sizeof(*out))) ||
       salts_crypto_overlap(peer, peer_size, out, sizeof(*out)) ||
-      salts_crypto_overlap(wire, n, out, sizeof(*out)))
+      salts_crypto_overlap(wire, n, out, sizeof(*out)) || (peer_sha256 &&
+      salts_crypto_overlap(peer_sha256, CRYPTO_DTLS_FINGERPRINT_BYTES, out, sizeof(*out))))
     return SALTS_CRYPTO_EINVAL;
   *out = NULL;
-  if (!on_data)
+  if (!l || !on_data || (l->context.srtp_profiles != 0) != srtp ||
+      (srtp && !peer_sha256))
     return SALTS_CRYPTO_EINVAL;
   uint8_t reply[CRYPTO_DTLS_COOKIE_REPLY_BYTES];
   size_t reply_size;
@@ -518,8 +576,8 @@ int crypto_dtls_stream_accept(crypto_dtls_listener *l, const void *peer,
   s->server_role = true;
   s->on_data = on_data;
   s->user = user;
-  status = crypto_dtls_server_accept(&s->server, &l->context, peer, peer_size,
-                                     wire, n, now, data, s);
+  status = crypto_dtls_server_accept_pinned(&s->server, &l->context, peer, peer_size,
+                                            wire, n, now, data, s, peer_sha256);
   if (status && !s->server.context) {
     salts_crypto_secure_zero(s, sizeof(*s));
     free(s);
@@ -529,5 +587,30 @@ int crypto_dtls_stream_accept(crypto_dtls_listener *l, const void *peer,
    * can drain its sealed fatal; get_info owns handshake success/failure truth.
    */
   *out = s;
+  return SALTS_CRYPTO_OK;
+}
+int crypto_dtls_stream_accept(crypto_dtls_listener *l, const void *peer,
+                              size_t peer_size, const void *wire, size_t n,
+                              uint64_t now, crypto_dtls_data_fn on_data,
+                              void *user, crypto_dtls_stream **out) {
+  return stream_accept(l, peer, peer_size, wire, n, now, on_data, user, false, NULL, out);
+}
+int crypto_dtls_stream_accept_srtp(crypto_dtls_listener *l, const void *peer,
+    size_t peer_size, const void *wire, size_t n, uint64_t now,
+    const uint8_t *peer_sha256, crypto_dtls_data_fn on_data, void *user,
+    crypto_dtls_stream **out) {
+  return stream_accept(l, peer, peer_size, wire, n, now, on_data, user, true, peer_sha256, out);
+}
+int crypto_dtls_stream_srtp_profile(const crypto_dtls_stream *s, uint16_t *out) {
+  if (!s || !out || salts_crypto_overlap(s, sizeof(*s), out, sizeof(*out)))
+    return SALTS_CRYPTO_EINVAL;
+  crypto_dtls_stream_info info;
+  int status = crypto_dtls_stream_get_info(s, &info);
+  if (status)
+    return status;
+  const uint16_t profile = s->server_role ? s->server.srtp_profile : s->client.srtp_profile;
+  if (info.state != CRYPTO_DTLS_READY || !profile)
+    return SALTS_CRYPTO_ESTATE;
+  *out = profile;
   return SALTS_CRYPTO_OK;
 }

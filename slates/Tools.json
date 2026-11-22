@@ -1,0 +1,12 @@
+{
+  "tools": {
+    "go": {
+      "program": "go",
+      "args": [
+        "test",
+        "-mod=readonly",
+        "-count=1"
+      ]
+    }
+  }
+}

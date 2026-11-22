@@ -1,6 +1,8 @@
 #ifndef CNET_TLS_H
 #define CNET_TLS_H
 
+#include <cnet/export.h>
+
 #include <cnet/cnet.h>
 
 #include <stdbool.h>
@@ -40,30 +42,48 @@ typedef struct cnet_tls_state {
   bool close_notify_started;
 } cnet_tls_state;
 
+SALTS_CNET_EXPORT
 int cnet_tls_client_context_create(const cnet_tls_client_config *config,
                                    cnet_tls_context **out_context);
+SALTS_CNET_EXPORT
 cnet_tls_context *cnet_tls_client_context(const cnet_tls_client *client);
+SALTS_CNET_EXPORT
 const char *cnet_tls_client_server_name(const cnet_tls_client *client);
+SALTS_CNET_EXPORT
 cnet_tls_context *cnet_tls_server_context(const cnet_tls_server *server);
+SALTS_CNET_EXPORT
 void cnet_tls_context_retain(cnet_tls_context *context);
+SALTS_CNET_EXPORT
 void cnet_tls_context_release(cnet_tls_context *context);
 
 /** Takes ownership of `context` only on success. */
+SALTS_CNET_EXPORT
 int cnet_tls_state_init(cnet_tls_state *state, cnet_tls_context *context, bool server,
                         const char *server_name, size_t io_buffer_bytes);
+SALTS_CNET_EXPORT
 void cnet_tls_state_destroy(cnet_tls_state *state);
 
+SALTS_CNET_EXPORT
 int cnet_tls_handshake(cnet_tls_state *state, bool *out_complete);
+SALTS_CNET_EXPORT
 int cnet_tls_get_diagnostic(const cnet_tls_state *state, crypto_tls_diagnostic *out);
+SALTS_CNET_EXPORT
 bool cnet_tls_state_handshake_complete(const cnet_tls_state *state);
+SALTS_CNET_EXPORT
 int cnet_tls_state_set_protocol_range(cnet_tls_state *state,
                                       cnet_tls_protocol_version minimum,
                                       cnet_tls_protocol_version maximum);
+SALTS_CNET_EXPORT
 void *cnet_tls_state_read_buffer(cnet_tls_state *state);
+SALTS_CNET_EXPORT
 void *cnet_tls_state_write_buffer(cnet_tls_state *state);
+SALTS_CNET_EXPORT
 size_t cnet_tls_state_io_buffer_bytes(const cnet_tls_state *state);
+SALTS_CNET_EXPORT
 size_t cnet_tls_cipher_input_capacity(const cnet_tls_state *state);
+SALTS_CNET_EXPORT
 bool cnet_tls_cipher_output_empty(const cnet_tls_state *state);
+SALTS_CNET_EXPORT
 int cnet_tls_feed_cipher(cnet_tls_state *state, const void *data, size_t size);
 #if defined(CNET_INTERNAL_TESTING)
 /* Internal diagnostics only; compiled only into the test-profile archive. */
@@ -71,8 +91,11 @@ int cnet_tls_diagnostic_send_stats(const cnet_tls_state *state,
                                    size_t *calls, size_t *requested,
                                    size_t *accepted, size_t *queued);
 #endif
+SALTS_CNET_EXPORT
 int cnet_tls_take_cipher(cnet_tls_state *state, void *buffer, size_t capacity, size_t *out_size);
+SALTS_CNET_EXPORT
 int cnet_tls_write(cnet_tls_state *state, const void *data, size_t size, bool *out_complete);
+SALTS_CNET_EXPORT
 int cnet_tls_read(cnet_tls_state *state, void *buffer, size_t capacity, size_t *out_size,
                   bool *out_peer_closed);
 /**
@@ -80,34 +103,46 @@ int cnet_tls_read(cnet_tls_state *state, void *buffer, size_t capacity, size_t *
  * out_plaintext_pending is true when application data is retained in the
  * engine's plaintext buffer until receive demand exists.
  */
+SALTS_CNET_EXPORT
 int cnet_tls_probe_peer_close(cnet_tls_state *state, bool *out_peer_closed,
                               bool *out_plaintext_pending);
 /* out_peer_notify_received is true only for an authenticated TLS close_notify.
  * A socket EOF cannot satisfy a locally initiated reciprocal shutdown. */
+SALTS_CNET_EXPORT
 int cnet_tls_shutdown(cnet_tls_state *state, bool *out_notify_generated,
                       bool *out_peer_notify_received);
+SALTS_CNET_EXPORT
 int cnet_tls_get_negotiated_alpn(const cnet_tls_state *state, const unsigned char **out_data,
                                  size_t *out_size);
+SALTS_CNET_EXPORT
 int cnet_tls_state_session_reused(const cnet_tls_state *state, bool *out_reused);
+SALTS_CNET_EXPORT
 int cnet_tls_state_negotiated_version(const cnet_tls_state *state, char *buffer, size_t capacity,
                                       size_t *out_size);
+SALTS_CNET_EXPORT
 int cnet_tls_state_negotiated_cipher(const cnet_tls_state *state, char *buffer, size_t capacity,
                                      size_t *out_size);
+SALTS_CNET_EXPORT
 int cnet_tls_state_peer_certificate_sha256(
     const cnet_tls_state *state,
     char buffer[CNET_TLS_PEER_CERTIFICATE_SHA256_CAPACITY]);
+SALTS_CNET_EXPORT
 int cnet_tls_peer_certificate_chain_parse(
     const uint8_t *data, size_t size,
     cnet_tls_peer_certificate_chain *out_chain);
+SALTS_CNET_EXPORT
 int cnet_tls_state_peer_certificate_chain(
     const cnet_tls_state *state,
     cnet_tls_peer_certificate_chain *out_chain);
+SALTS_CNET_EXPORT
 int cnet_tls_server_end_point_binding_from_certificate(
     const uint8_t *certificate, size_t certificate_size,
     uint8_t *output, size_t capacity, size_t *out_size);
+SALTS_CNET_EXPORT
 int cnet_tls_state_server_end_point_binding(
     const cnet_tls_state *state, uint8_t *output, size_t capacity,
     size_t *out_size);
+SALTS_CNET_EXPORT
 int cnet_tls_state_export_channel_binding(
     const cnet_tls_state *state, uint8_t output[CNET_TLS_CHANNEL_BINDING_BYTES]);
 

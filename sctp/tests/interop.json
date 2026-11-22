@@ -1,0 +1,35 @@
+{
+  "targets": {
+    "saltscore.sctp_dtls_native": {
+      "kind": "header_only",
+      "when": {
+        "os": ["windows", "linux", "macos"],
+        "native": true
+      },
+      "runtimeDeps": ["cnet_sctp_dtls_native_peer"],
+      "test": {
+        "tool": "go",
+        "args": ["./e2e", "-failfast", "-v", "-timeout=120s", "-args", "-native", "${artifact:cnet_sctp_dtls_native_peer}"],
+        "workingDirectory": "$root/sctp/tests/secure",
+        "timeout": 150,
+        "environment": ["CGO_ENABLED=0", "GOWORK=off"],
+        "labels": ["sctp", "interop"]
+      }
+    },
+    "cnet_sctp_dtls_native_peer": {
+      "kind": "executable",
+      "testOnly": true,
+      "when": {
+        "os": ["windows", "linux", "macos"],
+        "native": true
+      },
+      "sources": {
+        "files": ["dtls_native_peer.c"]
+      },
+      "private": {
+        "deps": ["cnet_sctp_dtls", "cnet_sctp_session", "cnet_sctp_wire", "cnet", "saltsbase_native_io", "saltsbase_coroutine", "saltsbase_core"],
+        "includeDirs": ["../include", "../../cnet/include", "../../crypto/include"]
+      }
+    }
+  }
+}

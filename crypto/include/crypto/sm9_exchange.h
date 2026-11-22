@@ -1,5 +1,7 @@
 #ifndef SALTS_CRYPTO_SM9_EXCHANGE_H
 #define SALTS_CRYPTO_SM9_EXCHANGE_H
+
+#include <crypto/export.h>
 #include <crypto/sm9.h>
 #ifdef __cplusplus
 extern "C" {
@@ -14,8 +16,10 @@ typedef struct salts_crypto_sm9_exchange_key {
   uint8_t private_point[129];
   uint8_t master_public[65];
 } salts_crypto_sm9_exchange_key;
+SALTS_CRYPTO_EXPORT
 int salts_crypto_sm9_exchange_extract(const uint8_t master[32],
     const void *identity, size_t identity_size, salts_crypto_sm9_exchange_key *key);
+SALTS_CRYPTO_EXPORT
 void salts_crypto_sm9_exchange_key_clear(salts_crypto_sm9_exchange_key *key);
 
 /* Single-owner, caller-allocated state: no heap, borrowed pointers, I/O, timers
@@ -45,21 +49,26 @@ typedef union salts_crypto_sm9_exchange_ctx {
   uint8_t bytes[SALTS_CRYPTO_SM9_EXCHANGE_CONTEXT_SIZE];
 } salts_crypto_sm9_exchange_ctx;
 
+SALTS_CRYPTO_EXPORT
 int salts_crypto_sm9_exchange_start(salts_crypto_sm9_exchange_ctx *ctx,
     const salts_crypto_sm9_exchange_key *key,
     const void *initiator_id, size_t initiator_id_size,
     const void *responder_id, size_t responder_id_size,
     size_t key_size, uint8_t share_a[65]);
+SALTS_CRYPTO_EXPORT
 int salts_crypto_sm9_exchange_respond(salts_crypto_sm9_exchange_ctx *ctx,
     const salts_crypto_sm9_exchange_key *key,
     const void *initiator_id, size_t initiator_id_size,
     const void *responder_id, size_t responder_id_size,
     size_t key_size, const uint8_t share_a[65], uint8_t share_b[65], uint8_t confirm_b[32]);
+SALTS_CRYPTO_EXPORT
 int salts_crypto_sm9_exchange_finish_initiator(salts_crypto_sm9_exchange_ctx *ctx,
     const uint8_t share_b[65], const uint8_t confirm_b[32], uint8_t confirm_a[32],
     void *secret, size_t capacity, size_t *written);
+SALTS_CRYPTO_EXPORT
 int salts_crypto_sm9_exchange_finish_responder(salts_crypto_sm9_exchange_ctx *ctx,
     const uint8_t confirm_a[32], void *secret, size_t capacity, size_t *written);
+SALTS_CRYPTO_EXPORT
 void salts_crypto_sm9_exchange_clear(salts_crypto_sm9_exchange_ctx *ctx);
 
 #ifdef __cplusplus

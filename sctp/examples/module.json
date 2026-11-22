@@ -1,0 +1,17 @@
+{
+  "targets": {
+    "cnet_sctp_wire_example": {
+      "kind": "executable",
+      "sources": {
+        "files": [
+          "wire_packet.c"
+        ]
+      },
+      "private": {
+        "deps": [
+          "cnet_sctp_wire"
+        ]
+      }
+    }
+  }
+}

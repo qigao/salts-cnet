@@ -1,5 +1,7 @@
 #ifndef SALTS_CRYPTO_ZUC_H
 #define SALTS_CRYPTO_ZUC_H
+
+#include <crypto/export.h>
 #include <crypto/status.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -17,6 +19,7 @@ typedef enum salts_crypto_zuc_variant {
  * (packed 184-bit IV). Caller must never reuse a key/IV pair for distinct
  * messages. Encryption and decryption are identical and unauthenticated.
  * Output must not overlap key, IV or input; capacity must cover size. */
+SALTS_CRYPTO_EXPORT
 int salts_crypto_zuc_crypt(salts_crypto_zuc_variant variant,
     const void *key, size_t key_size, const void *iv, size_t iv_size,
     const void *input, size_t size, void *output, size_t capacity);
@@ -25,9 +28,11 @@ int salts_crypto_zuc_crypt(salts_crypto_zuc_variant variant,
  * unused low bits of the final byte are ignored. ZUC128 tag=4 bytes;
  * ZUC256 tag=4,8,16 bytes. Tag must not overlap key, IV or input.
  * Verify compares all tag bytes and returns EVERIFY on a mismatch. */
+SALTS_CRYPTO_EXPORT
 int salts_crypto_zuc_mac(salts_crypto_zuc_variant variant,
     const void *key, size_t key_size, const void *iv, size_t iv_size,
     const void *input, size_t bits, void *tag, size_t tag_size);
+SALTS_CRYPTO_EXPORT
 int salts_crypto_zuc_verify(salts_crypto_zuc_variant variant,
     const void *key, size_t key_size, const void *iv, size_t iv_size,
     const void *input, size_t bits, const void *tag, size_t tag_size);

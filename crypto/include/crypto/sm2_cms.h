@@ -1,5 +1,7 @@
 #ifndef SALTS_CRYPTO_SM2_CMS_H
 #define SALTS_CRYPTO_SM2_CMS_H
+
+#include <crypto/export.h>
 #include <crypto/sm2_trust.h>
 #include <stdbool.h>
 #ifdef __cplusplus
@@ -60,6 +62,7 @@ typedef struct salts_crypto_sm2_cms_verify_config {
  * clears exactly MAX_DER output bytes and sets written=0. Success publishes only
  * the complete DER; bytes beyond written are unchanged. No size-query signing.
  */
+SALTS_CRYPTO_EXPORT
 int salts_crypto_sm2_cms_sign(const salts_crypto_sm2_cms_sign_config *config,
     const void *content, size_t content_size, void *output, size_t capacity,
     size_t *written);
@@ -84,6 +87,7 @@ int salts_crypto_sm2_cms_sign(const salts_crypto_sm2_cms_sign_config *config,
  * content escapes. Operational failures return EVERIFY; malformed caller policy
  * returns EINVAL before touching output or invoking callbacks.
  */
+SALTS_CRYPTO_EXPORT
 int salts_crypto_sm2_cms_verify(const salts_crypto_sm2_cms_verify_config *config,
     const void *der, size_t der_size, const void *detached_content,
     size_t detached_size, void *output, size_t capacity, size_t *written);

@@ -1,6 +1,8 @@
 #ifndef CNET_WEBSOCKET_H
 #define CNET_WEBSOCKET_H
 
+#include <cnet/export.h>
+
 #include <core/error_codes.h>
 #include <memory/buffer.h>
 
@@ -99,6 +101,7 @@ typedef struct cnet_websocket_config {
  * @return SALTS_OK, SALTS_EINVAL for an invalid configuration, SALTS_ERANGE
  * for capacity arithmetic overflow, or SALTS_ENOMEM.
  */
+SALTS_CNET_EXPORT
 int cnet_websocket_init(cnet_websocket *websocket, const cnet_websocket_config *config);
 
 #define CNET_WEBSOCKET_TAGGED_SEND_VERSION 1u
@@ -129,6 +132,7 @@ typedef struct cnet_websocket_tagged_policy {
  * total storage overflow, or SALTS_EINVAL for an invalid policy/version.
  * Failure leaves the wrapper uninitialized; existing live wrappers are unchanged.
  */
+SALTS_CNET_EXPORT
 int cnet_websocket_init_tagged(cnet_websocket *websocket, const cnet_websocket_config *config,
                                 const cnet_websocket_tagged_policy *policy);
 
@@ -141,6 +145,7 @@ int cnet_websocket_init_tagged(cnet_websocket *websocket, const cnet_websocket_c
  * SALTS_EMSGSIZE, SALTS_ECHARSET, SALTS_ESHUTDOWN, or SALTS_EBUSY while a prior
  * tag/legacy fragment/output is pending. Legacy data sends cannot interleave.
  */
+SALTS_CNET_EXPORT
 int cnet_websocket_send_tagged(cnet_websocket *websocket,
                                 cnet_websocket_message_type message_type,
                                 const void *data, size_t size, uint64_t tag);
@@ -157,18 +162,23 @@ int cnet_websocket_send_tagged(cnet_websocket *websocket,
  * Returns SALTS_OK, SALTS_EINVAL, SALTS_ENOTSUP, SALTS_EBUSY for recursion, or
  * the progress error. Destroy remains busy while an accepted tag is unsettled.
  */
+SALTS_CNET_EXPORT
 int cnet_websocket_advance(cnet_websocket *websocket, size_t max_frames, size_t *out_events);
 
 /** Destroy all fixed storage. Active callback/feed/write execution returns SALTS_EBUSY. */
+SALTS_CNET_EXPORT
 int cnet_websocket_destroy(cnet_websocket *websocket);
 
 /** Copy the current state into out_state. */
+SALTS_CNET_EXPORT
 int cnet_websocket_state_get(const cnet_websocket *websocket, cnet_websocket_state *out_state);
 
 /** Copy the first terminal error, or SALTS_OK when no terminal error exists. */
+SALTS_CNET_EXPORT
 int cnet_websocket_last_error(const cnet_websocket *websocket, int *out_status);
 
 /** Return true while exactly one complete output frame is retained for retry. */
+SALTS_CNET_EXPORT
 bool cnet_websocket_has_pending_output(const cnet_websocket *websocket);
 
 /**
@@ -179,6 +189,7 @@ bool cnet_websocket_has_pending_output(const cnet_websocket *websocket);
  * @return SALTS_OK, SALTS_EINVAL, SALTS_EBUSY, SALTS_ENOSPC,
  * SALTS_ESHUTDOWN, or the terminal protocol/charset/size/write error.
  */
+SALTS_CNET_EXPORT
 int cnet_websocket_feed(cnet_websocket *websocket, const void *data, size_t size);
 
 /**
@@ -188,6 +199,7 @@ int cnet_websocket_feed(cnet_websocket *websocket, const void *data, size_t size
  * retained frame; inspect cnet_websocket_has_pending_output(). Other write
  * errors are terminal and move the session to CNET_WEBSOCKET_FAILED.
  */
+SALTS_CNET_EXPORT
 int cnet_websocket_flush(cnet_websocket *websocket);
 
 /**
@@ -197,6 +209,7 @@ int cnet_websocket_flush(cnet_websocket *websocket);
  * A successful terminal clears that frame and resumes buffered input/state
  * progress. A failed terminal records status and makes the session FAILED.
  */
+SALTS_CNET_EXPORT
 int cnet_websocket_write_complete(cnet_websocket *websocket, size_t bytes, int status);
 
 /**
@@ -210,20 +223,25 @@ int cnet_websocket_write_complete(cnet_websocket *websocket, size_t bytes, int s
  * backpressure. While that slot is occupied, further sends return SALTS_EBUSY.
  * A non-backpressure write error is returned and makes the session terminal.
  */
+SALTS_CNET_EXPORT
 int cnet_websocket_send_fragment(cnet_websocket *websocket,
                                  cnet_websocket_message_type message_type, const void *data,
                                  size_t size, bool final_fragment);
 
 /** Send one complete, strictly valid UTF-8 text message. */
+SALTS_CNET_EXPORT
 int cnet_websocket_send_text(cnet_websocket *websocket, const void *data, size_t size);
 
 /** Send one complete binary message. */
+SALTS_CNET_EXPORT
 int cnet_websocket_send_binary(cnet_websocket *websocket, const void *data, size_t size);
 
 /** Send an unfragmented Ping control frame with at most 125 payload bytes. */
+SALTS_CNET_EXPORT
 int cnet_websocket_send_ping(cnet_websocket *websocket, const void *data, size_t size);
 
 /** Send an unfragmented Pong control frame with at most 125 payload bytes. */
+SALTS_CNET_EXPORT
 int cnet_websocket_send_pong(cnet_websocket *websocket, const void *data, size_t size);
 
 /**
@@ -235,6 +253,7 @@ int cnet_websocket_send_pong(cnet_websocket *websocket, const void *data, size_t
  * SALTS_OK includes admission into the retained slot after transport
  * backpressure; inspect cnet_websocket_has_pending_output().
  */
+SALTS_CNET_EXPORT
 int cnet_websocket_close(cnet_websocket *websocket, uint16_t code, const void *reason,
                          size_t reason_size);
 
@@ -248,6 +267,7 @@ int cnet_websocket_close(cnet_websocket *websocket, uint16_t code, const void *r
 /* Call only after the adapter has drained all transport borrows of output.
  * In tagged mode this cancels an unfinished message; advance dispatches its
  * terminal. Notification of a socket error alone does not prove drain. */
+SALTS_CNET_EXPORT
 int cnet_websocket_transport_closed(cnet_websocket *websocket);
 
 #ifdef __cplusplus

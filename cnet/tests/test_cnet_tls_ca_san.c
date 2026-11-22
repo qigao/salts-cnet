@@ -9,6 +9,7 @@
 #include <cnet/client_pool.h>
 #include <core/clock.h>
 #include <core/error_codes.h>
+#include <crypto/tls_ext.h>
 #include <memory/buffer.h>
 
 #include <stdbool.h>
