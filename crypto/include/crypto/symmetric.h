@@ -132,6 +132,32 @@ int salts_crypto_aes_key_unwrap(const uint8_t *key, size_t key_size,
  * MD5 must not be used to design new authentication or signature protocols. */
 int salts_crypto_md5(const void *data, size_t size, uint8_t output[SALTS_CRYPTO_MD5_DIGEST_SIZE]);
 
+/** Legacy protocol HMAC-MD5 (for example, SNMPv3 USM). The caller owns the
+ * 16-byte output. NULL inputs require zero length. Invalid arguments return
+ * EINVAL without modifying the output.
+ * Example: salts_crypto_hmac_md5(key, key_size, packet, size, mac).
+ */
+int salts_crypto_hmac_md5(const void *key, size_t key_size, const void *data,
+                          size_t size, uint8_t output[SALTS_CRYPTO_MD5_DIGEST_SIZE]);
+
+#define SALTS_CRYPTO_DES_BLOCK_SIZE 8U
+#define SALTS_CRYPTO_AES128_BLOCK_SIZE 16U
+
+/** Legacy protocol privacy operations. Pass decrypt=0 to encrypt or 1 to
+ * decrypt. DES-CBC accepts whole 8-byte blocks. AES-128-CFB128 accepts any
+ * length. The caller owns all buffers and handles padding where required.
+ * Input and output may be identical or disjoint, and output must be disjoint
+ * from the key and IV. NULL input/output requires zero length. EINVAL leaves
+ * output unchanged. Backend errors return ECRYPTO and clear the output.
+ * Example: salts_crypto_aes128_cfb_crypt(0, key, iv, in, size, out, capacity).
+ */
+int salts_crypto_des_cbc_crypt(int decrypt,
+    const uint8_t key[SALTS_CRYPTO_DES_BLOCK_SIZE], const uint8_t iv[SALTS_CRYPTO_DES_BLOCK_SIZE],
+    const void *input, size_t size, void *output, size_t capacity);
+int salts_crypto_aes128_cfb_crypt(int decrypt,
+    const uint8_t key[SALTS_CRYPTO_AES128_BLOCK_SIZE], const uint8_t iv[SALTS_CRYPTO_AES128_BLOCK_SIZE],
+    const void *input, size_t size, void *output, size_t capacity);
+
 #ifdef __cplusplus
 }
 #endif
