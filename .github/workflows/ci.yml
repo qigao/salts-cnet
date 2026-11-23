@@ -16,14 +16,23 @@ on:
       - "sctp/**"
       - "vendor/**"
   workflow_dispatch:
+    inputs:
+      salts_base_version:
+        description: Exact published SaltsBase SDK version
+        required: false
+        type: string
+      vcpkg_cache_version:
+        description: Exact published vcpkg-cache version
+        required: false
+        type: string
 
 permissions:
   contents: read
   packages: read
 
 env:
-  VCPKG_CACHE_VERSION: ${{ vars.VCPKG_CACHE_VERSION }}
-  SALTS_BASE_VERSION: ${{ vars.SALTS_BASE_VERSION }}
+  VCPKG_CACHE_VERSION: ${{ inputs.vcpkg_cache_version || vars.VCPKG_CACHE_VERSION }}
+  SALTS_BASE_VERSION: ${{ inputs.salts_base_version || vars.SALTS_BASE_VERSION }}
 
 concurrency:
   group: saltscore-ci-${{ github.event.pull_request.number || github.ref }}
