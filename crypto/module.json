@@ -23,6 +23,7 @@
           "src/crypto_key_pem.c",
           "src/crypto_key_wrap.c",
           "src/crypto_key.c",
+          "src/crypto_legacy.c",
           "src/crypto_random.c",
           "src/crypto_sha256.c",
           "src/crypto_sm2_cms_envelope.c",

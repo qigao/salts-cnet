@@ -46,6 +46,14 @@ physical runtime ownership, library filenames or the `Salts::` namespace.
 
 ## General primitives and key lifecycle
 
+SNMPv3 interoperability uses the HMAC-MD5, DES-CBC and AES-128-CFB128
+entry points in `<crypto/symmetric.h>`. The installed `SaltsCNet` package
+reports their availability via `SaltsCNet_LEGACY_SNMP_CRYPTO`. These entry
+points serve existing protocols and keep provider state private. With an SDK
+without this capability, keep the existing application and SDK pair together.
+HMAC-MD5 and DES-CBC are provided only for existing protocol interoperability;
+new security designs must not use these legacy primitives.
+
 SaltsCNet 0.1.15 extends `<crypto/symmetric.h>` and `<crypto/key.h>` with the
 streaming, HKDF, AES-CBC/CTR, RSA parameter and key-export APIs below. These
 additions are not in the v0.1.14 SDK. Existing one-shot and signature defaults
