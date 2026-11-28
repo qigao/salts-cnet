@@ -16,14 +16,23 @@ on:
       - "sctp/**"
       - "vendor/**"
   workflow_dispatch:
+    inputs:
+      salts_base_version:
+        description: Exact published SaltsBase SDK version
+        required: false
+        type: string
+      vcpkg_cache_version:
+        description: Exact published vcpkg-cache version
+        required: false
+        type: string
 
 permissions:
   contents: read
   packages: read
 
 env:
-  VCPKG_CACHE_VERSION: ${{ vars.VCPKG_CACHE_VERSION }}
-  SALTS_BASE_VERSION: ${{ vars.SALTS_BASE_VERSION }}
+  VCPKG_CACHE_VERSION: ${{ inputs.vcpkg_cache_version || vars.VCPKG_CACHE_VERSION }}
+  SALTS_BASE_VERSION: ${{ inputs.salts_base_version || vars.SALTS_BASE_VERSION }}
 
 concurrency:
   group: saltscore-ci-${{ github.event.pull_request.number || github.ref }}
@@ -119,10 +128,23 @@ jobs:
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           } finally { Pop-Location }
 
+      - uses: ./build/ci-infrastructure/vcpkg-cache/.github/actions/setup-llvm-mingw
+        if: matrix.compiler == 'llvm-mingw'
+        env:
+          QIGAO_PREPARED_INPUTS: ${{ github.workspace }}/build/ci-inputs
+        with:
+          target: ${{ matrix.target }}
+
+      - name: Install native ccache
+        id: ccache
+        uses: ./build/ci-infrastructure/vcpkg-cache/.github/actions/setup-ccache
+
       - uses: actions/setup-python@v5
         id: test-python
         with:
           python-version: '3.12'
+          # The pinned cryptography fixture uses Windows x64 wheels.
+          architecture: ${{ runner.os == 'Windows' && 'x64' || '' }}
 
       - name: Restore the prepared SaltsBase SDK
         shell: pwsh
@@ -176,39 +198,17 @@ jobs:
         run: |
           "VCPKG_INSTALLED_DIR=$env:SDK_ROOT" >> $env:GITHUB_ENV
 
-      - name: Restore prepared Windows LLVM-MinGW compiler
-        id: windows-llvm
-        if: matrix.compiler == 'llvm-mingw'
-        shell: pwsh
-        env:
-          QIGAO_PREPARED_INPUTS: ${{ github.workspace }}/build/ci-inputs
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $lockFile = 'build/ci-inputs/locks/windows-compiler.lock.json'
-          $lock = Get-Content $lockFile -Raw | ConvertFrom-Json
-          $payload = [IO.Path]::GetFileNameWithoutExtension(([Uri]$lock.source.url).AbsolutePath)
-          & python build/ci-infrastructure/vcpkg-cache/scripts/restore-native-dependency.py `
-            locked $lockFile --destination build/ci-llvm-mingw --payload $payload `
-            --executable bin/x86_64-w64-mingw32-clang.exe `
-            --executable bin/x86_64-w64-mingw32-clang++.exe --github-output
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-
-      - name: Select Windows compiler SDK
-        if: matrix.compiler == 'llvm-mingw'
-        shell: pwsh
-        env:
-          COMPILER_ROOT: ${{ steps.windows-llvm.outputs.root }}
-        run: |
-          "LLVM_MINGW_ROOT=$env:COMPILER_ROOT" >> $env:GITHUB_ENV
-
       - name: Locate Visual Studio developer environment
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
           $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio/Installer/vswhere.exe'
-          $installation = & $vswhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          $arch = $env:RUNNER_ARCH.ToLowerInvariant()
+          $tools = if ($arch -eq 'arm64') { 'ARM64' } else { 'x86.x64' }
+          $installation = & $vswhere -latest -products '*' -requires "Microsoft.VisualStudio.Component.VC.Tools.$tools" -property installationPath
           if ($LASTEXITCODE -ne 0 -or -not $installation) { throw 'Visual Studio C++ tools are required' }
           "VSDEVCMD_BAT=$($installation.Replace('\', '/'))/Common7/Tools/VsDevCmd.bat" >> $env:GITHUB_ENV
+          "VSDEVCMD_ARCH=$arch" >> $env:GITHUB_ENV
 
       - uses: actions/setup-go@v5
         with:
@@ -253,10 +253,6 @@ jobs:
               echo "LLVM_NATIVE_INSTALL_PREFIX=$GITHUB_WORKSPACE/package/sdk/$RID"
             fi
           } >> "$GITHUB_ENV"
-
-      - name: Install native ccache
-        id: ccache
-        uses: ./build/ci-infrastructure/vcpkg-cache/.github/actions/setup-ccache
 
       - name: Restore compiler cache
         id: compiler-cache

@@ -90,8 +90,11 @@ foreach ($triplet in ($matrix.include.triplet | Sort-Object -Unique)) {
 
 $contract = Get-Content build/ci-infrastructure/vcpkg-cache/compiler-contracts/release-obfuscation.json -Raw | ConvertFrom-Json
 $compiler = $contract.sources.'llvm-mingw'
-$asset = @($compiler.assets | Where-Object host -eq 'windows-x64')
-if ($asset.Count -ne 1) { throw 'One locked Windows x64 LLVM-MinGW compiler is required' }
-$url = "https://github.com/$($compiler.repository)/releases/download/$($compiler.release_tag)/$($asset[0].name)"
-Get-LockedArchive 'windows-compiler' $url $asset[0].sha256
+$compilerHosts = @($matrix.include | Where-Object compiler -eq 'llvm-mingw' | ForEach-Object { "windows-$($_.target)" } | Sort-Object -Unique)
+foreach ($compilerHost in $compilerHosts) {
+  $asset = @($compiler.assets | Where-Object host -eq $compilerHost)
+  if ($asset.Count -ne 1) { throw "One locked LLVM-MinGW compiler is required for $compilerHost" }
+  $url = "https://github.com/$($compiler.repository)/releases/download/$($compiler.release_tag)/$($asset[0].name)"
+  Get-LockedArchive "$compilerHost-compiler" $url $asset[0].sha256
+}
 "SaltsBase $($release.version): $($manifest.commit); producer CI $($manifest.ci.runId). Native SDK inputs prepared once for this run." >> $env:GITHUB_STEP_SUMMARY

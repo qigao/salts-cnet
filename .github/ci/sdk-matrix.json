@@ -45,6 +45,17 @@
       "package": true
     },
     {
+      "rid": "linux-gcc-arm64",
+      "runner": "ubuntu-24.04-arm",
+      "compiler": "gcc",
+      "sdk": "linux-gcc-arm64",
+      "target": "arm64",
+      "triplet": "arm64-linux",
+      "preset": "gcc-arm64-release-user",
+      "android_abi": "",
+      "package": false
+    },
+    {
       "rid": "windows-x64",
       "runner": "windows-2025",
       "compiler": "llvm-mingw",
@@ -56,6 +67,17 @@
       "package": true
     },
     {
+      "rid": "windows-arm64",
+      "runner": "windows-11-arm",
+      "compiler": "llvm-mingw",
+      "sdk": "windows-llvm-mingw-arm64",
+      "target": "arm64",
+      "triplet": "qigao-arm64-windows-llvm-mingw",
+      "preset": "llvm-mingw-native-arm64-release-user",
+      "android_abi": "",
+      "package": true
+    },
+    {
       "rid": "windows-msvc-x64",
       "runner": "windows-2025",
       "compiler": "msvc",
@@ -63,6 +85,17 @@
       "target": "x64",
       "triplet": "x64-windows",
       "preset": "msvc-release-user",
+      "android_abi": "",
+      "package": false
+    },
+    {
+      "rid": "windows-msvc-arm64",
+      "runner": "windows-11-arm",
+      "compiler": "msvc",
+      "sdk": "windows-msvc-arm64",
+      "target": "arm64",
+      "triplet": "arm64-windows",
+      "preset": "msvc-arm64-release-user",
       "android_abi": "",
       "package": false
     },
