@@ -43,6 +43,11 @@ on:
         description: Exact published vcpkg-cache version
         required: false
         type: string
+      publish_release:
+        description: Publish the qualified version from master after all native jobs pass
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -367,7 +372,9 @@ jobs:
         shell: pwsh
         run: |
           $prefix = [IO.Path]::GetFullPath('package/sdk/${{ matrix.rid }}')
-          @{schema=1; source=$env:GITHUB_SHA; profile='${{ matrix.rid }}';
+          $version = (Get-Content vcpkg.json -Raw | ConvertFrom-Json).'version-semver'
+          @{schema=1; version=$version; source=$env:GITHUB_SHA; profile='${{ matrix.rid }}';
+            triplet='${{ matrix.triplet }}'; compiler='${{ matrix.compiler }}';
             preset='${{ matrix.preset }}'; base_version=$env:SALTS_BASE_VERSION;
             cache_version=$env:VCPKG_CACHE_VERSION; native_tests=('${{ matrix.android_abi }}' -eq '')} |
             ConvertTo-Json | Set-Content "$prefix/salts-cnet-sdk-manifest.json" -Encoding utf8
@@ -381,10 +388,60 @@ jobs:
           compression-level: 0
           if-no-files-found: error
 
+  assemble:
+    name: Assemble qualified native release archives
+    needs: [prepare, qualify]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: salts-cnet-sdk-*-${{ github.sha }}
+          path: build/qualified-sdk
+      - name: Assemble immutable release inputs
+        run: python3 .github/ci/assemble-sdk-release.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: salts-cnet-release-${{ github.sha }}
+          path: dist/
+          compression-level: 0
+          if-no-files-found: error
+
+  publish:
+    name: Publish the explicitly requested native SDK release
+    if: github.event_name == 'workflow_dispatch' && inputs.publish_release && github.ref == 'refs/heads/master'
+    needs: assemble
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: salts-cnet-release-${{ github.sha }}
+          path: dist/
+      - name: Publish the exact qualified source and archives
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          version=$(python3 -c 'import json; print(json.load(open("vcpkg.json"))["version-semver"])')
+          tag=v$version
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test -z "$(git tag -l "$tag")"
+          (cd dist && sha256sum -c SHA256SUMS)
+          gh release create "$tag" dist/* --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "SaltsCNet $version" --generate-notes
+
   result:
     name: CI result
     if: ${{ always() }}
-    needs: [prepare, qualify]
+    needs: [prepare, qualify, assemble]
     runs-on: ubuntu-24.04
     steps:
       - name: Require every SDK qualification job
@@ -392,3 +449,4 @@ jobs:
         run: |
           test '${{ needs.prepare.result }}' = success
           test '${{ needs.qualify.result }}' = success
+          test '${{ needs.assemble.result }}' = success
