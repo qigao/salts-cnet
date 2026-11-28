@@ -76,6 +76,49 @@ spec("Crypto public primitives") {
     check_equal(n, 64u); check_equal(output, expected, 64);
   }
 
+  it("matches RFC 2202 HMAC-MD5 for short and long keys") {
+    uint8_t key[80], output[16], expected[16];
+    memset(key, 0x0b, 16);
+    from_hex(expected, sizeof(expected), "9294727a3638bb1c13f48ef8158bfc9d");
+    check_equal(salts_crypto_hmac_md5(key, 16, "Hi There", 8, output), SALTS_CRYPTO_OK);
+    check_equal(output, expected, sizeof(output));
+    memset(key, 0xaa, sizeof(key));
+    const char message[] = "Test Using Larger Than Block-Size Key - Hash Key First";
+    from_hex(expected, sizeof(expected), "6b1ab7fe4bd7bf8f0b62e6ce61b9d0cd");
+    check_equal(salts_crypto_hmac_md5(key, sizeof(key), message, sizeof(message) - 1, output), SALTS_CRYPTO_OK);
+    check_equal(output, expected, sizeof(output));
+    check_equal(salts_crypto_hmac_md5(NULL, 1, message, sizeof(message) - 1, output), SALTS_CRYPTO_EINVAL);
+    check_equal(output, expected, sizeof(output));
+  }
+
+  it("matches the DES-CBC vector and decrypts in place") {
+    uint8_t key[8], iv[8], output[24], expected[24];
+    const char plaintext[] = "Now is the time for all ";
+    from_hex(key, sizeof(key), "0123456789abcdef");
+    from_hex(iv, sizeof(iv), "1234567890abcdef");
+    from_hex(expected, sizeof(expected), "e5c7cdde872bf27c43e934008c389c0f683788499a7c05f6");
+    check_equal(salts_crypto_des_cbc_crypt(0, key, iv, plaintext, sizeof(output), output, sizeof(output)), SALTS_CRYPTO_OK);
+    check_equal(output, expected, sizeof(output));
+    check_equal(salts_crypto_des_cbc_crypt(1, key, iv, output, sizeof(output), output, sizeof(output)), SALTS_CRYPTO_OK);
+    check_equal(output, plaintext, sizeof(output));
+    check_equal(salts_crypto_des_cbc_crypt(0, key, iv, plaintext, sizeof(output) - 1, output, sizeof(output)), SALTS_CRYPTO_EINVAL);
+    check_equal(output, plaintext, sizeof(output));
+  }
+
+  it("matches NIST AES-128-CFB128 across a partial final block") {
+    uint8_t key[16], iv[16], plain[23], expected[23], output[24];
+    from_hex(key, sizeof(key), "2b7e151628aed2a6abf7158809cf4f3c");
+    from_hex(iv, sizeof(iv), "000102030405060708090a0b0c0d0e0f");
+    from_hex(plain, sizeof(plain), "6bc1bee22e409f96e93d7e117393172aae2d8a571e03ac");
+    from_hex(expected, sizeof(expected), "3b3fd92eb72dad20333449f8e83cfb4ac8a64537a0b3a9");
+    check_equal(salts_crypto_aes128_cfb_crypt(0, key, iv, plain, sizeof(plain), output, sizeof(output)), SALTS_CRYPTO_OK);
+    check_equal(output, expected, sizeof(expected));
+    check_equal(salts_crypto_aes128_cfb_crypt(1, key, iv, output, sizeof(plain), output + 1, sizeof(output) - 1), SALTS_CRYPTO_EINVAL);
+    check_equal(output, expected, sizeof(expected));
+    check_equal(salts_crypto_aes128_cfb_crypt(1, key, iv, output, sizeof(plain), output, sizeof(output)), SALTS_CRYPTO_OK);
+    check_equal(output, plain, sizeof(plain));
+  }
+
   it("matches RFC 4231 HMAC and RFC 6070 PBKDF2 and rejects zero iterations") {
     uint8_t key[20], output[64], expected[32]; size_t n;
     memset(key, 0x0b, sizeof(key));
