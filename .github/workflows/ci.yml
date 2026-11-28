@@ -7,6 +7,15 @@ on:
       - "cnet/**"
       - "sctp/**"
       - "vendor/**"
+      - "CMakeLists.txt"
+      - "CMakeOptions.cmake"
+      - "CMake*Presets.json"
+      - "cmake/**"
+      - "presets/**"
+      - "vcpkg*.json"
+      - ".env.example"
+      - ".github/ci/**"
+      - ".github/workflows/ci.yml"
   push:
     branches: [master]
     tags: ["v*"]
@@ -15,15 +24,38 @@ on:
       - "cnet/**"
       - "sctp/**"
       - "vendor/**"
+      - "CMakeLists.txt"
+      - "CMakeOptions.cmake"
+      - "CMake*Presets.json"
+      - "cmake/**"
+      - "presets/**"
+      - "vcpkg*.json"
+      - ".env.example"
+      - ".github/ci/**"
+      - ".github/workflows/ci.yml"
   workflow_dispatch:
+    inputs:
+      salts_base_version:
+        description: Exact published SaltsBase SDK version
+        required: false
+        type: string
+      vcpkg_cache_version:
+        description: Exact published vcpkg-cache version
+        required: false
+        type: string
+      publish_release:
+        description: Publish the qualified version from master after all native jobs pass
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: read
   packages: read
 
 env:
-  VCPKG_CACHE_VERSION: ${{ vars.VCPKG_CACHE_VERSION }}
-  SALTS_BASE_VERSION: ${{ vars.SALTS_BASE_VERSION }}
+  VCPKG_CACHE_VERSION: ${{ inputs.vcpkg_cache_version || '0.1.9' }}
+  SALTS_BASE_VERSION: ${{ inputs.salts_base_version || '0.1.11' }}
 
 concurrency:
   group: saltscore-ci-${{ github.event.pull_request.number || github.ref }}
@@ -119,10 +151,23 @@ jobs:
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           } finally { Pop-Location }
 
+      - uses: ./build/ci-infrastructure/vcpkg-cache/.github/actions/setup-llvm-mingw
+        if: matrix.compiler == 'llvm-mingw'
+        env:
+          QIGAO_PREPARED_INPUTS: ${{ github.workspace }}/build/ci-inputs
+        with:
+          target: ${{ matrix.target }}
+
+      - name: Install native ccache
+        id: ccache
+        uses: ./build/ci-infrastructure/vcpkg-cache/.github/actions/setup-ccache
+
       - uses: actions/setup-python@v5
         id: test-python
         with:
           python-version: '3.12'
+          # The pinned cryptography fixture uses Windows x64 wheels.
+          architecture: ${{ runner.os == 'Windows' && 'x64' || '' }}
 
       - name: Restore the prepared SaltsBase SDK
         shell: pwsh
@@ -176,39 +221,17 @@ jobs:
         run: |
           "VCPKG_INSTALLED_DIR=$env:SDK_ROOT" >> $env:GITHUB_ENV
 
-      - name: Restore prepared Windows LLVM-MinGW compiler
-        id: windows-llvm
-        if: matrix.compiler == 'llvm-mingw'
-        shell: pwsh
-        env:
-          QIGAO_PREPARED_INPUTS: ${{ github.workspace }}/build/ci-inputs
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $lockFile = 'build/ci-inputs/locks/windows-compiler.lock.json'
-          $lock = Get-Content $lockFile -Raw | ConvertFrom-Json
-          $payload = [IO.Path]::GetFileNameWithoutExtension(([Uri]$lock.source.url).AbsolutePath)
-          & python build/ci-infrastructure/vcpkg-cache/scripts/restore-native-dependency.py `
-            locked $lockFile --destination build/ci-llvm-mingw --payload $payload `
-            --executable bin/x86_64-w64-mingw32-clang.exe `
-            --executable bin/x86_64-w64-mingw32-clang++.exe --github-output
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-
-      - name: Select Windows compiler SDK
-        if: matrix.compiler == 'llvm-mingw'
-        shell: pwsh
-        env:
-          COMPILER_ROOT: ${{ steps.windows-llvm.outputs.root }}
-        run: |
-          "LLVM_MINGW_ROOT=$env:COMPILER_ROOT" >> $env:GITHUB_ENV
-
       - name: Locate Visual Studio developer environment
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
           $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio/Installer/vswhere.exe'
-          $installation = & $vswhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          $arch = $env:RUNNER_ARCH.ToLowerInvariant()
+          $tools = if ($arch -eq 'arm64') { 'ARM64' } else { 'x86.x64' }
+          $installation = & $vswhere -latest -products '*' -requires "Microsoft.VisualStudio.Component.VC.Tools.$tools" -property installationPath
           if ($LASTEXITCODE -ne 0 -or -not $installation) { throw 'Visual Studio C++ tools are required' }
           "VSDEVCMD_BAT=$($installation.Replace('\', '/'))/Common7/Tools/VsDevCmd.bat" >> $env:GITHUB_ENV
+          "VSDEVCMD_ARCH=$arch" >> $env:GITHUB_ENV
 
       - uses: actions/setup-go@v5
         with:
@@ -253,10 +276,6 @@ jobs:
               echo "LLVM_NATIVE_INSTALL_PREFIX=$GITHUB_WORKSPACE/package/sdk/$RID"
             fi
           } >> "$GITHUB_ENV"
-
-      - name: Install native ccache
-        id: ccache
-        uses: ./build/ci-infrastructure/vcpkg-cache/.github/actions/setup-ccache
 
       - name: Restore compiler cache
         id: compiler-cache
@@ -353,7 +372,9 @@ jobs:
         shell: pwsh
         run: |
           $prefix = [IO.Path]::GetFullPath('package/sdk/${{ matrix.rid }}')
-          @{schema=1; source=$env:GITHUB_SHA; profile='${{ matrix.rid }}';
+          $version = (Get-Content vcpkg.json -Raw | ConvertFrom-Json).'version-semver'
+          @{schema=1; version=$version; source=$env:GITHUB_SHA; profile='${{ matrix.rid }}';
+            triplet='${{ matrix.triplet }}'; compiler='${{ matrix.compiler }}';
             preset='${{ matrix.preset }}'; base_version=$env:SALTS_BASE_VERSION;
             cache_version=$env:VCPKG_CACHE_VERSION; native_tests=('${{ matrix.android_abi }}' -eq '')} |
             ConvertTo-Json | Set-Content "$prefix/salts-cnet-sdk-manifest.json" -Encoding utf8
@@ -367,15 +388,34 @@ jobs:
           compression-level: 0
           if-no-files-found: error
 
-  package:
-    name: Publish SaltsCore.Native 0.1.2
-    if: github.ref == 'refs/tags/v0.1.002'
-    needs: qualify
+  assemble:
+    name: Assemble qualified native release archives
+    needs: [prepare, qualify]
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: salts-cnet-sdk-*-${{ github.sha }}
+          path: build/qualified-sdk
+      - name: Assemble immutable release inputs
+        run: python3 .github/ci/assemble-sdk-release.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: salts-cnet-release-${{ github.sha }}
+          path: dist/
+          compression-level: 0
+          if-no-files-found: error
+
+  publish:
+    name: Publish the explicitly requested native SDK release
+    if: github.event_name == 'workflow_dispatch' && inputs.publish_release && github.ref == 'refs/heads/master'
+    needs: assemble
+    runs-on: ubuntu-24.04
     permissions:
       contents: write
-      packages: write
     steps:
       - uses: actions/checkout@v4
         with:
@@ -383,71 +423,25 @@ jobs:
           persist-credentials: false
       - uses: actions/download-artifact@v4
         with:
-          pattern: saltscore-sdk-*
-          path: package
-          merge-multiple: true
-      - uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: 8.0.x
-      - name: Pack immutable eight-RID SDK
+          name: salts-cnet-release-${{ github.sha }}
+          path: dist/
+      - name: Publish the exact qualified source and archives
+        env:
+          GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
           set -euo pipefail
+          version=$(python3 -c 'import json; print(json.load(open("vcpkg.json"))["version-semver"])')
+          tag=v$version
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
-          test "$(git rev-list -n 1 v0.1.002)" = "$GITHUB_SHA"
-          test "$(find package/sdk -maxdepth 2 -name saltscore-sdk-manifest.txt | wc -l)" -eq 8
-          dotnet pack packaging/nuget/SaltsCore.Native.csproj \
-            --configuration Release --output dist \
-            -p:PackageVersion=0.1.2 \
-            -p:PackageRoot="$GITHUB_WORKSPACE/package"
-          package=dist/SaltsCore.Native.0.1.2.nupkg
-          test -f "$package"
-          sha256sum "$package" > dist/SHA256SUMS
-      - name: Refuse an existing release or normalized package version
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          if gh release view v0.1.002 --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            echo 'GitHub Release v0.1.002 already exists' >&2
-            exit 1
-          fi
-          inventory="$RUNNER_TEMP/saltscore-packages.json"
-          error="$RUNNER_TEMP/saltscore-packages.err"
-          if gh api --paginate '/users/qigao/packages/nuget/SaltsCore.Native/versions?per_page=100' > "$inventory" 2> "$error"; then
-            python3 - "$inventory" <<'PY'
-          import json, sys
-          if any(item.get('name', '').lower() == '0.1.2' for item in json.load(open(sys.argv[1]))):
-              raise SystemExit('SaltsCore.Native 0.1.2 already exists')
-          PY
-          elif ! grep -Fq 'HTTP 404' "$error"; then
-            cat "$error" >&2
-            exit 1
-          fi
-      - name: Publish NuGet package and GitHub Release
-        shell: bash
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          config="$RUNNER_TEMP/saltscore-release-nuget.config"
-          printf '<configuration><packageSources><clear /></packageSources></configuration>\n' > "$config"
-          dotnet nuget add source https://nuget.pkg.github.com/qigao/index.json \
-            --name github --username qigao --password "$GITHUB_TOKEN" \
-            --store-password-in-clear-text --configfile "$config"
-          dotnet nuget push dist/SaltsCore.Native.0.1.2.nupkg \
-            --api-key "$GITHUB_TOKEN" --source github --configfile "$config"
-          gh release create v0.1.002 \
-            dist/SaltsCore.Native.0.1.2.nupkg dist/SHA256SUMS \
-            --repo "$GITHUB_REPOSITORY" --verify-tag --target "$GITHUB_SHA" \
-            --title 'SaltsCore 0.1.002' --generate-notes --latest
+          test -z "$(git tag -l "$tag")"
+          (cd dist && sha256sum -c SHA256SUMS)
+          gh release create "$tag" dist/* --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "SaltsCNet $version" --generate-notes
 
   result:
     name: CI result
     if: ${{ always() }}
-    needs: [prepare, qualify, package]
+    needs: [prepare, qualify, assemble]
     runs-on: ubuntu-24.04
     steps:
       - name: Require every SDK qualification job
@@ -455,6 +449,4 @@ jobs:
         run: |
           test '${{ needs.prepare.result }}' = success
           test '${{ needs.qualify.result }}' = success
-          if [[ '${{ github.ref }}' == refs/tags/v0.1.002 ]]; then
-            test '${{ needs.package.result }}' = success
-          fi
+          test '${{ needs.assemble.result }}' = success

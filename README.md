@@ -284,16 +284,15 @@ NativeIO socket/transport/accept headers and the retained startup repairs. Its C
 `<asn1.h>` and `<asn1_value.h>`, and coroutine headers use `<salts/coro_*.h>`.
 Consumers use these public headers directly without draft-layout aliases.
 
-Core CI selects eight published platform/compiler SDKs: Windows x64 MSVC and
-LLVM-MinGW, Linux x64 GCC and Clang, Linux ARM64 Clang, macOS ARM64 Clang,
-and Android arm64/x64 NDK. Each lane selects its exact manifest entry;
-no architecture or compiler substitution is performed.
-Windows ARM64 and macOS x64 still require producer SDKs.
+Core CI selects eleven production SDKs. Windows x64 and ARM64 use MSVC and
+LLVM-MinGW, Linux x64 and ARM64 use GCC and Clang, macOS ARM64 uses Clang,
+and Android x64 and ARM64 use the NDK. Each lane selects its exact Base
+manifest entry.
 ASan/UBSan additionally uses the ordinary Linux x64 Clang foundation and
 instruments this network graph; that does not qualify the prebuilt foundation
 under ASan/UBSan. TSan requires the matching `linux-clang-x64-tsan` SDK,
 published in SaltsBase 0.1.2, so its shared synchronization is instrumented too.
-There are ten qualification jobs, including sanitizer profiles.
+There are thirteen qualification jobs, including two sanitizer profiles.
 
 Android links Core's own `libcnet.so` with explicit 16 KiB maximum/common
 page alignment, matching the Base 0.1.3 SDK. Both Android CI profiles install
