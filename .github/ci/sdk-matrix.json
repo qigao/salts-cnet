@@ -78,28 +78,6 @@
       "package": true
     },
     {
-      "rid": "windows-msvc-x64",
-      "runner": "windows-2025",
-      "compiler": "msvc",
-      "sdk": "windows-msvc-x64",
-      "target": "x64",
-      "triplet": "x64-windows",
-      "preset": "msvc-release-user",
-      "android_abi": "",
-      "package": false
-    },
-    {
-      "rid": "windows-msvc-arm64",
-      "runner": "windows-11-arm",
-      "compiler": "msvc",
-      "sdk": "windows-msvc-arm64",
-      "target": "arm64",
-      "triplet": "arm64-windows",
-      "preset": "msvc-arm64-release-user",
-      "android_abi": "",
-      "package": false
-    },
-    {
       "rid": "android-x64",
       "runner": "ubuntu-24.04",
       "compiler": "ndk",
